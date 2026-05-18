@@ -120,6 +120,8 @@ Run:
 docker exec awg-forge awg-forge doctor
 ```
 
+Doctor checks host/container prerequisites, rendered configs, tunnel runtime state, `awg show` listen ports, enabled peers, stale client configs, latest handshakes, and transfer counters.
+
 No internet usually means `EXTERNAL_INTERFACE` is wrong, IPv4 forwarding is disabled, or host firewall/NAT rules conflict.
 
 If `doctor` warns about iptables, make sure `iptables -V` reports `nf_tables`.

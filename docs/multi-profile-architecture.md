@@ -178,6 +178,10 @@ Per tunnel:
 - rendered config succeeds
 - runtime path can be managed
 - last apply error is visible
+- runtime `awg show <interface>` listen port matches state
+- enabled clients exist as runtime peers
+- stale client configs are visible
+- latest handshake and transfer counters are visible when clients have connected
 
 ## AWG 2.0 Status
 
