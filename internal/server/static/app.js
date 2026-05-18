@@ -517,7 +517,7 @@ function doctorBadgeClass(level) {
 function healthBadgeClass(status) {
   if (status === "traffic flowing") return "ok";
   if (status === "disabled") return "";
-  if (status === "handshake only") return "warn";
+  if (status === "idle, handshake ok") return "ok";
   return "bad";
 }
 

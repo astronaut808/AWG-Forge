@@ -277,6 +277,8 @@ func (c *checker) checkClientRuntime(tunnel config.Tunnel, client config.Client,
 			msg += "; transfer " + peer.Transfer
 		}
 		c.ok(area+" handshake", msg)
+	} else if peer.Transfer != "" && peer.Transfer != "0 B received, 0 B sent" {
+		c.warn(area+" handshake", "no latest handshake reported by awg show, but transfer counters exist: "+peer.Transfer)
 	} else {
 		c.warn(area+" handshake", "no handshake yet; check client import, UDP reachability, and published port "+strconv.Itoa(tunnel.ListenPort)+"/udp")
 	}
