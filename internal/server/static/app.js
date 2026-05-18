@@ -136,6 +136,7 @@ function renderTunnelCard(tunnel) {
         <button class="primary" data-action="create-client" data-tunnel="${tunnel.id}">Create client</button>
         <button data-action="settings" data-tunnel="${tunnel.id}">Settings</button>
         <button data-action="protocol" data-tunnel="${tunnel.id}">Protocol</button>
+        <button data-action="health" data-tunnel="${tunnel.id}">Health</button>
         <button data-action="restart" data-tunnel="${tunnel.id}">Restart</button>
         <button class="danger" data-action="delete-tunnel" data-tunnel="${tunnel.id}">Delete</button>
       </div>
@@ -201,6 +202,7 @@ function bindAppEvents(active) {
       if (action === "create-client") openCreateClient(tunnel);
       if (action === "settings") openSettings(tunnel);
       if (action === "protocol") openProtocol(tunnel);
+      if (action === "health") await openHealth(tunnel);
       if (action === "restart") await restartTunnel(tunnel);
       if (action === "delete-tunnel") await deleteTunnel(tunnel);
       if (action === "qr") openQR(node.dataset.client);
@@ -468,10 +470,62 @@ async function openDoctor() {
   `);
 }
 
+async function openHealth(tunnel) {
+  showModal(`
+    <div class="modal-head">
+      <div><h2>Clients health</h2><p class="muted">${escapeHTML(tunnel.name)} · sampling traffic for 2 seconds...</p></div>
+      <button type="button" data-close>Close</button>
+    </div>
+    <p class="muted">Reading runtime handshakes and transfer counters.</p>
+  `);
+  const res = await api(`/api/tunnels/${tunnel.id}/health`);
+  if (!res.ok) return;
+  const payload = await res.json();
+  const health = payload.health || {};
+  const warnings = health.warnings || [];
+  const clients = health.clients || [];
+  showModal(`
+    <div class="modal-head">
+      <div><h2>Clients health</h2><p class="muted">${escapeHTML(health.name || tunnel.name)} · ${Number(health.sample_seconds || 0)} second sample</p></div>
+      <button type="button" data-close>Close</button>
+    </div>
+    ${warnings.length ? `<div class="notice">${warnings.map(escapeHTML).join("<br>")}</div>` : ""}
+    <div class="client-list">
+      ${clients.length ? clients.map((client) => `
+        <div class="client-row">
+          <div>
+            <strong>${escapeHTML(client.name)}</strong>
+            <span class="muted">${escapeHTML(client.address)} · ${escapeHTML(client.status)}${client.latest_handshake ? ` · handshake ${escapeHTML(client.latest_handshake)}` : ""}</span>
+            ${client.warning ? `<span class="muted">${escapeHTML(client.warning)}</span>` : ""}
+          </div>
+          <div class="actions">
+            <span class="badge ${healthBadgeClass(client.status)}">rx +${formatBytes(client.rx_delta_bytes)}</span>
+            <span class="badge ${healthBadgeClass(client.status)}">tx +${formatBytes(client.tx_delta_bytes)}</span>
+          </div>
+        </div>
+      `).join("") : `<p class="muted">No clients in this tunnel.</p>`}
+    </div>
+  `);
+}
+
 function doctorBadgeClass(level) {
   if (level === "ok") return "ok";
   if (level === "warn") return "warn";
   return "bad";
+}
+
+function healthBadgeClass(status) {
+  if (status === "traffic flowing") return "ok";
+  if (status === "disabled") return "";
+  if (status === "handshake only") return "warn";
+  return "bad";
+}
+
+function formatBytes(value) {
+  const bytes = Number(value || 0);
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(2)} MiB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(2)} KiB`;
+  return `${bytes} B`;
 }
 
 async function restartTunnel(tunnel) {

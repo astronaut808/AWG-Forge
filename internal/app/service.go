@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,6 +27,7 @@ const stateSchemaVersion = 2
 
 var clientNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_. -]{0,62}[A-Za-z0-9]$|^[A-Za-z0-9]$`)
 var tunnelNameRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{0,31}$`)
+var transferRE = regexp.MustCompile(`^transfer:\s+(.+?) received,\s+(.+?) sent$`)
 
 type Service struct {
 	cfg   config.Config
@@ -39,6 +41,30 @@ type TunnelStatus struct {
 	LastRenderAt time.Time
 	LastApplyAt  time.Time
 	LastError    string
+}
+
+type ClientHealth struct {
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Enabled         bool   `json:"enabled"`
+	Address         string `json:"address"`
+	Present         bool   `json:"present"`
+	Status          string `json:"status"`
+	LatestHandshake string `json:"latest_handshake"`
+	RxBytes         uint64 `json:"rx_bytes"`
+	TxBytes         uint64 `json:"tx_bytes"`
+	RxDeltaBytes    uint64 `json:"rx_delta_bytes"`
+	TxDeltaBytes    uint64 `json:"tx_delta_bytes"`
+	Warning         string `json:"warning,omitempty"`
+}
+
+type TunnelHealth struct {
+	TunnelID      string         `json:"tunnel_id"`
+	Name          string         `json:"name"`
+	InterfaceName string         `json:"interface"`
+	SampleSeconds int            `json:"sample_seconds"`
+	Warnings      []string       `json:"warnings"`
+	Clients       []ClientHealth `json:"clients"`
 }
 
 func New(cfg config.Config) *Service {
@@ -317,6 +343,12 @@ func (s *Service) UpdateTunnelSettings(tunnelID, name, subnet, dns, allowedIPs s
 	if err := s.store.Save(state); err != nil {
 		return config.Tunnel{}, err
 	}
+	if s.cfg.ApplyConfig && firewallRelevantChanged(old, state.Tunnels[idx]) {
+		if oldInterface != name {
+			_ = exec.Command("awg-quick", "down", oldInterface).Run()
+		}
+		_ = s.cleanupFirewallRules(old)
+	}
 	if oldInterface != name {
 		_ = s.store.DeleteRenderedTunnel(oldInterface)
 	}
@@ -346,6 +378,7 @@ func (s *Service) DeleteTunnel(tunnelID string) error {
 	}
 	if s.cfg.ApplyConfig {
 		_ = exec.Command("awg-quick", "down", tunnel.InterfaceName).Run()
+		_ = s.cleanupFirewallRules(tunnel)
 	}
 	return s.store.DeleteRenderedTunnel(tunnel.InterfaceName)
 }
@@ -581,6 +614,12 @@ func tunnelConfigChanged(old, next config.Tunnel) bool {
 		old.ProtocolProfileID != next.ProtocolProfileID
 }
 
+func firewallRelevantChanged(old, next config.Tunnel) bool {
+	return old.ListenPort != next.ListenPort ||
+		old.IPv4Subnet != next.IPv4Subnet ||
+		old.InterfaceName != next.InterfaceName
+}
+
 func (s *Service) SessionSecret() (string, error) {
 	if s.cfg.SessionSecret != "" {
 		return s.cfg.SessionSecret, nil
@@ -801,6 +840,91 @@ func (s *Service) TunnelStatusByID(tunnelID string) (TunnelStatus, error) {
 	}, nil
 }
 
+func (s *Service) TunnelHealthByID(tunnelID string, sampleSeconds int) (TunnelHealth, error) {
+	if sampleSeconds <= 0 {
+		sampleSeconds = 2
+	}
+	if sampleSeconds > 10 {
+		sampleSeconds = 10
+	}
+	state, err := s.Init()
+	if err != nil {
+		return TunnelHealth{}, err
+	}
+	idx, ok := tunnelIndexByID(state, tunnelID)
+	if !ok {
+		return TunnelHealth{}, errors.New("tunnel not found")
+	}
+	tunnel := state.Tunnels[idx]
+	first, err := runtimeAWGShow(tunnel.InterfaceName)
+	if err != nil {
+		return TunnelHealth{}, err
+	}
+	time.Sleep(time.Duration(sampleSeconds) * time.Second)
+	second, err := runtimeAWGShow(tunnel.InterfaceName)
+	if err != nil {
+		return TunnelHealth{}, err
+	}
+	health := TunnelHealth{
+		TunnelID:      tunnel.ID,
+		Name:          tunnel.Name,
+		InterfaceName: tunnel.InterfaceName,
+		SampleSeconds: sampleSeconds,
+	}
+	if !hasNATRule(tunnel.IPv4Subnet, s.cfg.ExternalInterface) {
+		health.Warnings = append(health.Warnings, "possible NAT issue: missing MASQUERADE for "+tunnel.IPv4Subnet+" on "+s.cfg.ExternalInterface)
+	}
+	if !hasFilterRule("FORWARD", "-i", tunnel.InterfaceName, "-j", "ACCEPT") || !hasFilterRule("FORWARD", "-o", tunnel.InterfaceName, "-j", "ACCEPT") {
+		health.Warnings = append(health.Warnings, "possible forwarding issue: missing FORWARD accept rules for "+tunnel.InterfaceName)
+	}
+	for _, client := range tunnel.Clients {
+		item := ClientHealth{
+			ID:      client.ID,
+			Name:    client.Name,
+			Enabled: client.Enabled,
+			Address: client.IPv4Address,
+			Status:  "disabled",
+		}
+		if !client.Enabled {
+			health.Clients = append(health.Clients, item)
+			continue
+		}
+		nextPeer, ok := second.Peers[client.PublicKey]
+		if !ok {
+			item.Status = "missing runtime peer"
+			item.Warning = "enabled client is not present in awg runtime"
+			health.Clients = append(health.Clients, item)
+			continue
+		}
+		item.Present = true
+		item.LatestHandshake = nextPeer.LatestHandshake
+		item.RxBytes = nextPeer.RxBytes
+		item.TxBytes = nextPeer.TxBytes
+		if prevPeer, ok := first.Peers[client.PublicKey]; ok {
+			item.RxDeltaBytes = byteDelta(prevPeer.RxBytes, nextPeer.RxBytes)
+			item.TxDeltaBytes = byteDelta(prevPeer.TxBytes, nextPeer.TxBytes)
+		}
+		switch {
+		case item.LatestHandshake == "":
+			item.Status = "never connected"
+			item.Warning = "no handshake yet"
+		case item.RxDeltaBytes > 0 && item.TxDeltaBytes == 0:
+			item.Status = "client sends traffic, server sends 0 bytes back"
+			item.Warning = "possible NAT, forwarding, route, DNS, or upstream firewall issue"
+		case item.RxDeltaBytes == 0 && item.TxDeltaBytes == 0:
+			item.Status = "handshake only"
+			item.Warning = "handshake exists, but traffic did not change during sample window"
+		case item.RxDeltaBytes == 0 && item.TxDeltaBytes > 0:
+			item.Status = "outbound only"
+			item.Warning = "server sent traffic, but client traffic did not increase during sample window"
+		default:
+			item.Status = "traffic flowing"
+		}
+		health.Clients = append(health.Clients, item)
+	}
+	return health, nil
+}
+
 func (s *Service) apply(tunnel config.Tunnel) error {
 	serverPath := filepath.Join(s.cfg.ConfigDir, "tunnels", tunnel.InterfaceName, "server.conf")
 	runtimePath := filepath.Join("/etc/amnezia/amneziawg", tunnel.InterfaceName+".conf")
@@ -808,7 +932,10 @@ func (s *Service) apply(tunnel config.Tunnel) error {
 		return err
 	}
 	if err := exec.Command("ip", "link", "show", tunnel.InterfaceName).Run(); err != nil {
-		return runCommand("awg-quick", "up", tunnel.InterfaceName)
+		if err := runCommand("awg-quick", "up", tunnel.InterfaceName); err != nil {
+			return err
+		}
+		return s.ensureFirewallRules(tunnel)
 	}
 	stripped, err := exec.Command("awg-quick", "strip", runtimePath).Output()
 	if err != nil {
@@ -819,7 +946,207 @@ func (s *Service) apply(tunnel config.Tunnel) error {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("awg syncconf failed: %s", strings.TrimSpace(string(out)))
 	}
+	return s.ensureFirewallRules(tunnel)
+}
+
+func (s *Service) ensureFirewallRules(tunnel config.Tunnel) error {
+	rules := []iptablesRule{
+		{table: "nat", args: []string{"POSTROUTING", "-s", tunnel.IPv4Subnet, "-o", s.cfg.ExternalInterface, "-j", "MASQUERADE"}, insert: true},
+		{args: []string{"INPUT", "-p", "udp", "-m", "udp", "--dport", strconv.Itoa(tunnel.ListenPort), "-j", "ACCEPT"}, insert: true},
+		{args: []string{"FORWARD", "-i", tunnel.InterfaceName, "-j", "ACCEPT"}, insert: true},
+		{args: []string{"FORWARD", "-o", tunnel.InterfaceName, "-j", "ACCEPT"}, insert: true},
+	}
+	for _, rule := range rules {
+		if err := deleteAllIPTablesRules(rule); err != nil {
+			return err
+		}
+		if err := ensureIPTablesRule(rule); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func (s *Service) cleanupFirewallRules(tunnel config.Tunnel) error {
+	rules := []iptablesRule{
+		{table: "nat", args: []string{"POSTROUTING", "-s", tunnel.IPv4Subnet, "-o", s.cfg.ExternalInterface, "-j", "MASQUERADE"}},
+		{args: []string{"INPUT", "-p", "udp", "-m", "udp", "--dport", strconv.Itoa(tunnel.ListenPort), "-j", "ACCEPT"}},
+		{args: []string{"FORWARD", "-i", tunnel.InterfaceName, "-j", "ACCEPT"}},
+		{args: []string{"FORWARD", "-o", tunnel.InterfaceName, "-j", "ACCEPT"}},
+	}
+	var errs []string
+	for _, rule := range rules {
+		if err := deleteAllIPTablesRules(rule); err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
+	if len(errs) > 0 {
+		return errors.New(strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+type iptablesRule struct {
+	table  string
+	args   []string
+	insert bool
+}
+
+func ensureIPTablesRule(rule iptablesRule) error {
+	if iptablesCheck(rule) == nil {
+		return nil
+	}
+	action := "-A"
+	if rule.insert {
+		action = "-I"
+	}
+	args := append([]string{}, iptablesTableArgs(rule.table)...)
+	args = append(args, action)
+	args = append(args, rule.args...)
+	if rule.insert {
+		args = append(args[:len(iptablesTableArgs(rule.table))+2], append([]string{"1"}, args[len(iptablesTableArgs(rule.table))+2:]...)...)
+	}
+	out, err := exec.Command("iptables", args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("iptables %s failed: %s", strings.Join(args, " "), strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func deleteAllIPTablesRules(rule iptablesRule) error {
+	for i := 0; i < 64; i++ {
+		if iptablesCheck(rule) != nil {
+			return nil
+		}
+		args := append([]string{}, iptablesTableArgs(rule.table)...)
+		args = append(args, "-D")
+		args = append(args, rule.args...)
+		out, err := exec.Command("iptables", args...).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("iptables %s failed: %s", strings.Join(args, " "), strings.TrimSpace(string(out)))
+		}
+	}
+	return fmt.Errorf("iptables duplicate cleanup limit reached for %s", strings.Join(rule.args, " "))
+}
+
+func iptablesCheck(rule iptablesRule) error {
+	args := append([]string{}, iptablesTableArgs(rule.table)...)
+	args = append(args, "-C")
+	args = append(args, rule.args...)
+	return exec.Command("iptables", args...).Run()
+}
+
+func iptablesTableArgs(table string) []string {
+	if table == "" {
+		return nil
+	}
+	return []string{"-t", table}
+}
+
+type runtimeInterface struct {
+	Peers map[string]runtimePeer
+}
+
+type runtimePeer struct {
+	LatestHandshake string
+	RxBytes         uint64
+	TxBytes         uint64
+}
+
+func runtimeAWGShow(interfaceName string) (runtimeInterface, error) {
+	out, err := exec.Command("awg", "show", interfaceName).CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			msg = err.Error()
+		}
+		return runtimeInterface{}, fmt.Errorf("awg show %s failed: %s", interfaceName, msg)
+	}
+	return parseRuntimeAWGShow(string(out)), nil
+}
+
+func parseRuntimeAWGShow(out string) runtimeInterface {
+	result := runtimeInterface{Peers: map[string]runtimePeer{}}
+	var currentKey string
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "peer: ") {
+			currentKey = strings.TrimSpace(strings.TrimPrefix(line, "peer: "))
+			result.Peers[currentKey] = runtimePeer{}
+			continue
+		}
+		if currentKey == "" {
+			continue
+		}
+		peer := result.Peers[currentKey]
+		switch {
+		case strings.HasPrefix(line, "latest handshake: "):
+			peer.LatestHandshake = strings.TrimSpace(strings.TrimPrefix(line, "latest handshake: "))
+		case transferRE.MatchString(line):
+			match := transferRE.FindStringSubmatch(line)
+			peer.RxBytes = parseByteQuantity(match[1])
+			peer.TxBytes = parseByteQuantity(match[2])
+		}
+		result.Peers[currentKey] = peer
+	}
+	return result
+}
+
+func parseByteQuantity(value string) uint64 {
+	fields := strings.Fields(strings.TrimSpace(value))
+	if len(fields) == 0 {
+		return 0
+	}
+	n, err := strconv.ParseFloat(fields[0], 64)
+	if err != nil {
+		return 0
+	}
+	unit := "B"
+	if len(fields) > 1 {
+		unit = strings.ToLower(fields[1])
+	}
+	multiplier := float64(1)
+	switch unit {
+	case "kib":
+		multiplier = 1024
+	case "mib":
+		multiplier = 1024 * 1024
+	case "gib":
+		multiplier = 1024 * 1024 * 1024
+	case "tib":
+		multiplier = 1024 * 1024 * 1024 * 1024
+	case "kb":
+		multiplier = 1000
+	case "mb":
+		multiplier = 1000 * 1000
+	case "gb":
+		multiplier = 1000 * 1000 * 1000
+	case "tb":
+		multiplier = 1000 * 1000 * 1000 * 1000
+	}
+	if n <= 0 {
+		return 0
+	}
+	return uint64(n * multiplier)
+}
+
+func byteDelta(before, after uint64) uint64 {
+	if after < before {
+		return 0
+	}
+	return after - before
+}
+
+func hasNATRule(subnet, externalInterface string) bool {
+	return exec.Command("iptables", "-t", "nat", "-C", "POSTROUTING", "-s", subnet, "-o", externalInterface, "-j", "MASQUERADE").Run() == nil
+}
+
+func hasFilterRule(chain string, args ...string) bool {
+	cmdArgs := append([]string{"-C", chain}, args...)
+	return exec.Command("iptables", cmdArgs...).Run() == nil
 }
 
 func runCommand(name string, args ...string) error {

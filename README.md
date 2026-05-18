@@ -120,7 +120,13 @@ Run:
 docker exec awg-forge awg-forge doctor
 ```
 
-Doctor checks host/container prerequisites, rendered configs, tunnel runtime state, `awg show` listen ports, enabled peers, stale client configs, latest handshakes, and transfer counters.
+Doctor checks host/container prerequisites, rendered configs, tunnel runtime state, firewall/NAT rules, `awg show` listen ports, enabled peers, stale client configs, latest handshakes, and transfer counters.
+
+The Web UI also has a per-tunnel **Health** action. It samples runtime traffic counters for a few seconds and shows each client status:
+
+- `traffic flowing`: handshake exists and rx/tx counters are moving;
+- `handshake only`: the tunnel handshakes, but traffic did not move during the sample window;
+- `client sends traffic, server sends 0 bytes back`: usually a NAT, forwarding, route, DNS, or upstream firewall problem.
 
 No internet usually means `EXTERNAL_INTERFACE` is wrong, IPv4 forwarding is disabled, or host firewall/NAT rules conflict.
 
