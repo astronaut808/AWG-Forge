@@ -1,0 +1,40 @@
+package protocol
+
+import "github.com/astronaut808/awg-forge/internal/config"
+
+type ConfigLine struct {
+	Key   string
+	Value string
+}
+
+type RenderContext struct {
+	State  config.State
+	Tunnel config.Tunnel
+}
+
+type ProtocolProfile interface {
+	ID() string
+	DisplayName() string
+	Version() string
+	GenerateDefaults() (config.ProtocolParams, error)
+	Validate(config.ProtocolParams) error
+	RenderServerInterface(RenderContext) ([]ConfigLine, error)
+	RenderServerPeer(RenderContext, config.Client) ([]ConfigLine, error)
+	RenderClientInterface(RenderContext, config.Client) ([]ConfigLine, error)
+	RenderClientPeer(RenderContext, config.Client) ([]ConfigLine, error)
+}
+
+func ByID(id string) (ProtocolProfile, bool) {
+	switch id {
+	case "awg_legacy_1_0":
+		return Legacy10{}, true
+	case "awg_1_5":
+		return AWG15{}, true
+	default:
+		return nil, false
+	}
+}
+
+func All() []ProtocolProfile {
+	return []ProtocolProfile{Legacy10{}, AWG15{}}
+}

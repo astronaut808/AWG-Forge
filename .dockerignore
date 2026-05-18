@@ -1,0 +1,6 @@
+.git
+data
+dist
+*.test
+coverage.out
+.DS_Store

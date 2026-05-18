@@ -1,0 +1,15 @@
+services:
+  awg-forge:
+    image: ghcr.io/astronaut808/awg-forge:latest
+    container_name: awg-forge
+    env_file: .env
+    network_mode: host
+    volumes:
+      - ./data:/etc/awg-forge
+      - /lib/modules:/lib/modules:ro
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    restart: unless-stopped

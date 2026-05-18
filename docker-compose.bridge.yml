@@ -1,0 +1,21 @@
+services:
+  awg-forge:
+    image: ghcr.io/astronaut808/awg-forge:latest
+    container_name: awg-forge
+    env_file: .env
+    environment:
+      WEBUI_HOST: 0.0.0.0
+    ports:
+      - "127.0.0.1:51821:51821/tcp"
+      - "51820-51840:51820-51840/udp"
+    volumes:
+      - ./data:/etc/awg-forge
+      - /lib/modules:/lib/modules:ro
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      - net.ipv4.ip_forward=1
+    restart: unless-stopped
