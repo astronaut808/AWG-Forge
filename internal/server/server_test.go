@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -68,6 +69,28 @@ func TestLoginPostDoesNotRequireOrigin(t *testing.T) {
 
 	if rr.Code == http.StatusForbidden {
 		t.Fatal("login POST should not be blocked by Origin validation")
+	}
+}
+
+func TestSessionExpiresInThirtyMinutes(t *testing.T) {
+	w := &web{sessions: []byte("test-secret")}
+	rr := httptest.NewRecorder()
+	w.setSession(rr)
+	cookies := rr.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("cookies = %d, want 1", len(cookies))
+	}
+	parts := strings.Split(cookies[0].Value, ".")
+	if len(parts) != 2 {
+		t.Fatalf("invalid session cookie %q", cookies[0].Value)
+	}
+	exp, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ttl := time.Until(time.Unix(exp, 0))
+	if ttl < 29*time.Minute || ttl > 31*time.Minute {
+		t.Fatalf("session ttl = %s, want about 30m", ttl)
 	}
 }
 

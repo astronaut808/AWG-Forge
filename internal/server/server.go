@@ -32,6 +32,8 @@ type web struct {
 	mu       sync.Mutex
 }
 
+const sessionTTL = 30 * time.Minute
+
 func Serve(cfg config.Config, service *app.Service) error {
 	secret, err := service.SessionSecret()
 	if err != nil {
@@ -554,7 +556,7 @@ func (w *web) allowLogin(ip string) bool {
 }
 
 func (w *web) setSession(rw http.ResponseWriter) {
-	exp := time.Now().Add(24 * time.Hour).Unix()
+	exp := time.Now().Add(sessionTTL).Unix()
 	payload := fmt.Sprintf("%d", exp)
 	sig := w.sign(payload)
 	http.SetCookie(rw, &http.Cookie{Name: "awg_forge_session", Value: payload + "." + sig, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode})
