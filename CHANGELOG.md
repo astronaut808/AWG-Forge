@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.1 - 2026-05-18
+
+### Added
+
+- Doctor runtime diagnostics for tunnel links, `awg show` port matching, runtime peers, stale client configs, handshakes, and transfer counters.
+
 ## v0.2.0 - 2026-05-18
 
 AWG 2.0 release.
