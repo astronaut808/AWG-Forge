@@ -54,7 +54,10 @@ func AmneziaImportConfig(state config.State, tunnel config.Tunnel, client config
 		"transport_proto":    "udp",
 	}
 	if tunnel.ProtocolProfileID == "awg_1_5" {
-		awgConfig["protocolVersion"] = "1.5"
+		awgConfig["protocol_version"] = "1.5"
+	}
+	if tunnel.ProtocolProfileID == "awg_2_0" {
+		awgConfig["protocol_version"] = "2"
 	}
 	payload := map[string]any{
 		"containers": []map[string]any{{

@@ -95,9 +95,9 @@ Implemented profiles:
 - `awg_legacy_1_0`: Legacy / 1.0 fields `Jc`, `Jmin`, `Jmax`, `S1`, `S2`, `H1-H4`
 - `awg_1_5`: 1.5-style profile with `I1-I5` support. Defaults include the DNS-like `I1` conversion packet plus small generated runtime-random packets for `I2-I5`.
 
-Reserved future profile:
+Validation-stage profile:
 
-- `awg_2_0`: must be added as a new tunnel profile only, never as an in-place conversion of Legacy/1.5 tunnels
+- `awg_2_0`: new tunnel profile only, never an in-place conversion of Legacy/1.5 tunnels
 
 Default tunnel suggestions:
 
@@ -179,18 +179,21 @@ Per tunnel:
 - runtime path can be managed
 - last apply error is visible
 
-## AWG 2.0 Readiness
+## AWG 2.0 Status
 
-2.0 must be implemented as a new `ProtocolProfile` plus a new tunnel. It should not modify existing Legacy/1.5 tunnels in place.
+2.0 is implemented as a new `ProtocolProfile` plus a new tunnel. It should not modify existing Legacy/1.5 tunnels in place.
 
-Required before enabling 2.0 in production UI:
+The concrete implementation plan lives in [AWG 2.0 Design](awg-2.0-design.md).
 
-- verify exact upstream config syntax against official docs and real generated configs
-- model `I1-I5`
-- model `S1-S4`
-- model `H1-H4` range syntax
-- validate `H1-H4` range overlap
-- require new keys/configs
-- add golden tests
+Validated:
+
+- `.conf` import with compatible desktop and iOS AmneziaVPN builds
+- real tunnel startup with Docker image tools
+- handshake and traffic on `awg20`
+
+Still pending:
+
+- native QR import validation
+- broader client-version compatibility matrix
 
 The architecture already reserves the multi-server shape for this: adding 2.0 should be additive, not a state rewrite.

@@ -1,49 +1,110 @@
 # Protocol Matrix
 
-awg-forge is a launcher and manager for existing AmneziaWG implementations. It does not implement a VPN protocol itself. The Go code renders config files and asks upstream `awg`, `awg-quick`, and `amneziawg-go` to run them.
+awg-forge is a launcher and manager for existing AmneziaWG implementations. It does not implement a VPN protocol itself. The Go code renders config files and asks upstream `awg`, `awg-quick`, and `amneziawg-go`/AmneziaWG tools to run them.
 
 ## Implemented
 
 | Profile | Status | Notes |
 | --- | --- | --- |
-| `awg_legacy_1_0` | Implemented | Renders AmneziaWG Legacy / 1.0 config fields: `Jc`, `Jmin`, `Jmax`, `S1`, `S2`, `H1`, `H2`, `H3`, `H4`. Defaults are generated for strong obfuscation, not WireGuard fallback. |
+| `awg_legacy_1_0` | Implemented | Renders AmneziaWG Legacy / 1.0 config fields: `Jc`, `Jmin`, `Jmax`, `S1`, `S2`, `H1`, `H2`, `H3`, `H4`. Defaults are generated for obfuscation, not WireGuard fallback. |
 | `awg_1_5` | Implemented | Adds `I1-I5` signature/masking packets to client configs. Defaults include the official DNS-like `I1` conversion packet plus small generated runtime-random signature packets for `I2-I5`. |
+| `awg_2_0` | Implemented | Uses `I1-I5`, adds `S3` and `S4`, supports `H1-H4` ranges, validates non-overlapping header ranges, and renders fresh tunnel/client configs. `.conf` import has been validated on desktop and iOS clients with compatible AmneziaVPN builds. |
 
 ## Planned, Not Implemented
 
 | Profile | Status | Notes |
 | --- | --- | --- |
-| `awg_2_0` | Planned | Uses `I1-I5`, adds `S3` and `S4`, supports `H1-H4` ranges, requires non-overlapping ranges, and requires new configs/keys when moving from Legacy / 1.0. |
 | `custom` | Planned | Reserved for explicit user-provided config parameters after validation rules are clear. |
 
-## Parameter Notes
+## Source Findings For AWG 2.0
 
-Official Amnezia docs list these AmneziaWG 2.0 ranges: `I1-I5` arbitrary hex-blob signature packets; `S1-S3` from 0 to 64 bytes; `S4` from 0 to 32 bytes; `Jc` from 0 to 10; `Jmin/Jmax` from 64 to 1024 bytes; and `H1-H4` from 0 to 4,294,967,295 with range support in 2.0.
+Official Amnezia docs say AmneziaWG 2.0 is supported by AmneziaVPN app version `4.8.12.9` and later. Existing AmneziaWG 1.0 installations are shown as Legacy, and moving to 2.0 requires new guest configuration files/keys; it is not an in-place upgrade.
 
-The `amneziawg-go` README documents that `Jc` controls junk packets before handshakes, `S1-S4` are message paddings, `H1-H4` can be single values or ranges, and `I1-I5` are sent before every handshake in order.
+Official Amnezia docs describe 2.0 changes versus 1.5:
 
-The `amneziawg-linux-kernel-module` README documents Legacy-compatible constraints and recommendations: all parameters except `Jc/Jmin/Jmax` must match between client and server; `Jc` recommended range is 4-12; `S1/S2` recommended range is 15-150; `S1 + 56` must not equal `S2`; `H1-H4` must be unique; and generated packet sizes should avoid MTU fragmentation.
+- adds `S3` and `S4`;
+- adds range support for `H1-H4`;
+- `H1-H4` ranges must not overlap;
+- removes older `j1-j3` and `itime`;
+- keeps `I1-I5`, introduced by 1.5.
 
-## Legacy / 1.0 Defaults
+Official 2.0 parameter ranges:
 
-`awg-forge` generates non-zero obfuscation defaults for Legacy / 1.0:
+| Parameter | Range / syntax | Notes |
+| --- | --- | --- |
+| `I1-I5` | CPS signature strings | Each value is a sequence of tags such as `<b 0x...>`, `<r N>`, `<rd N>`, `<rc N>`, `<t>`. Missing values are skipped. |
+| `S1-S3` | `0..64` | Fixed random prefix sizes for init, response, and cookie reply packets. |
+| `S4` | `0..32` | Fixed random prefix size for transport data packets. |
+| `Jc` | `0..10` in official docs | Number of junk packets after `I1-I5`. `amneziawg-go` README still says recommended `4..12`, so awg-forge should stay inside `0..10` for compatibility with the docs and AmneziaVPN UI. |
+| `Jmin`, `Jmax` | `64..1024`, with `Jmin <= Jmax` | Junk packet size range. Keep `Jmax` below the effective system MTU to avoid fragmentation. |
+| `H1-H4` | single `uint32` value or range `x-y` | 2.0 should use ranges by default. Ranges must not overlap. |
 
-| Parameter | Generated default |
+The `amneziawg-go` README confirms the config syntax for header ranges: either a single value like `1234` or a range like `123-456`. It also says unspecified parameters are treated as zero.
+
+Amnezia client `dev` maps config keys directly to INI names:
+
+- `Jc`, `Jmin`, `Jmax`;
+- `S1`, `S2`, `S3`, `S4`;
+- `H1`, `H2`, `H3`, `H4`;
+- `I1`, `I2`, `I3`, `I4`, `I5`;
+- `protocol_version` in imported native JSON, with AWG 2.0 represented as `"2"`.
+
+The current Amnezia client import path detects AWG 2.0 when a WireGuard/AWG config has all required Legacy fields plus both `S3` and `S4`. It detects AWG 1.5 when it has Legacy fields plus at least one `I1-I5`, but no `S3/S4`.
+
+## Rendering Rules By Profile
+
+| Field | Legacy / 1.0 | AWG 1.5 | AWG 2.0 |
+| --- | --- | --- | --- |
+| `Jc/Jmin/Jmax` | Client and server interface | Client and server interface | Client and server interface |
+| `S1/S2` | Client and server interface | Client and server interface | Client and server interface |
+| `S3/S4` | Not rendered | Not rendered | Client and server interface |
+| `H1-H4` | Single values | Single values | Ranges by default, single values allowed only for explicit custom params |
+| `I1-I5` | Not rendered by awg-forge Legacy profile | Client interface only in current 1.5-oriented profile | Client and server interface by default, because 2.0 server settings are inherited by generated configs |
+| `protocol_version` | Not an INI field | Not an INI field | Not an INI field; only native Amnezia JSON import metadata should use `"2"` |
+
+## Current Defaults
+
+`awg-forge` generates non-zero obfuscation defaults:
+
+| Parameter | Legacy / 1.0 and 1.5 generated default |
 | --- | --- |
-| `Jc` | random 4-12 |
-| `Jmin` | random 64-256 |
-| `Jmax` | random 768-1024, always greater than `Jmin` |
-| `S1` | random 15-150 |
-| `S2` | random 15-150, avoiding `S1 + 56 == S2` |
-| `H1-H4` | random unique non-zero values in the upstream recommended range |
+| `Jc` | random `4..10` |
+| `Jmin` | random `64..256` |
+| `Jmax` | random `768..1024`, always greater than `Jmin` |
+| `S1` | random `15..64` |
+| `S2` | random `15..64`, avoiding `S1 + 56 == S2` |
+| `H1-H4` | random unique non-zero single values |
+
+For AWG 2.0, defaults are:
+
+- `Jc`: random `4..10`;
+- `Jmin`: random `64..256`;
+- `Jmax`: random `768..1024`;
+- `S1-S3`: random `15..64`;
+- `S4`: random `8..32`;
+- `H1-H4`: non-overlapping ranges, not single values;
+- `I1`: the same DNS-like CPS value currently used by the 1.5 profile;
+- `I2-I5`: the same small CPS entropy chain currently used by the 1.5 profile.
 
 Zero-valued obfuscation parameters are treated as weak defaults because Amnezia docs note that all-zero behavior falls back toward standard WireGuard behavior.
 
-Before implementing 2.0 or changing 1.5 behavior, verify exact syntax against:
+## Validation Status For AWG 2.0
+
+Validated:
+
+- generated `.conf` imported and connected on a desktop client;
+- generated `.conf` imported and connected on iOS after updating to a compatible AmneziaVPN build;
+- Docker/server-side `awg show` reports 2.0 params, handshake, and traffic for `awg20`.
+
+Still experimental:
+
+- Amnezia native QR import for 2.0 and iOS;
+- exact QR/native JSON schema across AmneziaVPN platforms.
+
+## Sources
 
 - [AmneziaWG docs](https://docs.amnezia.org/documentation/amnezia-wg/)
-- [Converting AmneziaWG 1.0 to 1.5](https://docs.amnezia.org/documentation/instructions/upgrade-awg-config/)
 - [Using AmneziaWG 2.0 on self-hosted servers](https://docs.amnezia.org/documentation/instructions/new-amneziawg-selfhosted/)
-- [amnezia-vpn/amneziawg-go](https://github.com/amnezia-vpn/amneziawg-go)
-- [amnezia-vpn/amneziawg-tools](https://github.com/amnezia-vpn/amneziawg-tools)
-- [amnezia-vpn/amnezia-client](https://github.com/amnezia-vpn/amnezia-client)
+- [amnezia-vpn/amneziawg-go README](https://github.com/amnezia-vpn/amneziawg-go)
+- [amnezia-client `protocols_defs.h`](https://raw.githubusercontent.com/amnezia-vpn/amnezia-client/dev/client/protocols/protocols_defs.h)
+- [amnezia-client `importController.cpp`](https://raw.githubusercontent.com/amnezia-vpn/amnezia-client/dev/client/ui/controllers/importController.cpp)

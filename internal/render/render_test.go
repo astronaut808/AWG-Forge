@@ -97,6 +97,30 @@ func TestAWG15RendersSignaturePacketsInClientOnly(t *testing.T) {
 	}
 }
 
+func TestAWG20ServerGolden(t *testing.T) {
+	state := testAWG20State(true)
+	got, err := render.ServerConfig(state, state.Tunnels[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := readGolden(t, "testdata/golden/awg20_server.conf")
+	if got != want {
+		t.Fatalf("server config mismatch\nwant:\n%s\ngot:\n%s", want, got)
+	}
+}
+
+func TestAWG20ClientGolden(t *testing.T) {
+	state := testAWG20State(true)
+	got, err := render.ClientConfig(state, state.Tunnels[0], state.Tunnels[0].Clients[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := readGolden(t, "testdata/golden/awg20_client.conf")
+	if got != want {
+		t.Fatalf("client config mismatch\nwant:\n%s\ngot:\n%s", want, got)
+	}
+}
+
 func TestAutoMTUIsOmitted(t *testing.T) {
 	state := testState(true)
 	state.Tunnels[0].MTU = 0
@@ -114,6 +138,29 @@ func TestAutoMTUIsOmitted(t *testing.T) {
 	if strings.Contains(clientConfig, "\nMTU = ") {
 		t.Fatalf("client config should omit auto MTU:\n%s", clientConfig)
 	}
+}
+
+func testAWG20State(enabled bool) config.State {
+	state := testState(enabled)
+	state.Tunnels[0].Name = "awg20"
+	state.Tunnels[0].InterfaceName = "awg20"
+	state.Tunnels[0].ListenPort = 51830
+	state.Tunnels[0].ServerAddress = "10.20.0.1"
+	state.Tunnels[0].IPv4Subnet = "10.20.0.0/24"
+	state.Tunnels[0].ProtocolProfileID = "awg_2_0"
+	state.Tunnels[0].ProtocolParams = config.ProtocolParams{
+		"Jc": "7", "Jmin": "128", "Jmax": "900",
+		"S1": "22", "S2": "33", "S3": "44", "S4": "16",
+		"H1": "1000-1031", "H2": "2000-2031", "H3": "3000-3031", "H4": "4000-4031",
+		"I1": "<r 2><b 0x8580000100010000000004796162730679616e6465780272750000010001c00c000100010000026d000457fa27d1>",
+		"I2": "<r 8><t><r 16>",
+		"I3": "<rd 12><r 12>",
+		"I4": "<rc 16><r 10>",
+		"I5": "<r 32>",
+	}
+	state.Tunnels[0].Clients[0].TunnelID = "tunnel1"
+	state.Tunnels[0].Clients[0].IPv4Address = "10.20.0.2"
+	return state
 }
 
 func TestAmneziaImportConfigShape(t *testing.T) {
