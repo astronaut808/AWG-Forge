@@ -1,6 +1,6 @@
 # awg-forge
 
-awg-forge is a small self-hosted Docker manager for AmneziaWG. It provides a simple Web UI and CLI for creating, disabling, deleting, downloading, and QR-sharing client configs. QR sharing targets AmneziaVPN import format; plain `.conf` download remains available for clients that prefer file import.
+awg-forge is a small self-hosted Docker manager for AmneziaWG. It provides a simple Web UI and CLI for creating, disabling, deleting, downloading, and QR-sharing client configs. Plain `.conf` download is the recommended import path today; QR sharing is experimental, especially on AmneziaVPN for iOS.
 
 Supported profiles today: AmneziaWG Legacy / 1.0 and an AWG 1.5-oriented profile. awg-forge does not implement AmneziaWG itself; it renders configs and runs the existing upstream `awg`, `awg-quick`, and `amneziawg-go` tools.
 
@@ -90,7 +90,9 @@ Use the Web UI:
 2. Log in.
 3. Click `Create client`.
 4. Select the target tunnel/profile.
-5. Download the `.conf` or scan the QR code.
+5. Download the `.conf` and import it into AmneziaVPN.
+
+QR import is available in the UI for testing, but treat it as experimental on iOS. If AmneziaVPN imports a QR profile but the iOS system VPN indicator does not appear, delete that profile and import the `.conf` file instead.
 
 Or use the CLI:
 

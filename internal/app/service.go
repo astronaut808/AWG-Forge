@@ -47,7 +47,9 @@ func New(cfg config.Config) *Service {
 
 func (s *Service) Init() (config.State, error) {
 	if state, err := s.store.Load(); err == nil {
+		originalState := state
 		changed := false
+		protocolRepaired := false
 		if state.SchemaVersion == 0 {
 			state.SchemaVersion = stateSchemaVersion
 			changed = true
@@ -79,9 +81,22 @@ func (s *Service) Init() (config.State, error) {
 					changed = true
 				}
 			}
+			repaired, err := s.repairProtocolParams(&state.Tunnels[ti])
+			if err != nil {
+				return config.State{}, err
+			}
+			if repaired {
+				changed = true
+				protocolRepaired = true
+			}
 		}
 		if changed {
 			state.UpdatedAt = time.Now().UTC()
+			if protocolRepaired {
+				if _, err := s.store.BackupState(originalState, "repair-protocol-params"); err != nil {
+					return config.State{}, err
+				}
+			}
 			if err := s.store.Save(state); err != nil {
 				return config.State{}, err
 			}
@@ -111,6 +126,27 @@ func (s *Service) Init() (config.State, error) {
 		return config.State{}, err
 	}
 	return state, s.RenderAll()
+}
+
+func (s *Service) repairProtocolParams(tunnel *config.Tunnel) (bool, error) {
+	p, ok := protocol.ByID(tunnel.ProtocolProfileID)
+	if !ok {
+		return false, fmt.Errorf("unsupported protocol profile %q", tunnel.ProtocolProfileID)
+	}
+	if err := p.Validate(tunnel.ProtocolParams); err == nil {
+		return false, nil
+	}
+	params, err := p.GenerateDefaults()
+	if err != nil {
+		return false, err
+	}
+	if err := p.Validate(params); err != nil {
+		return false, err
+	}
+	tunnel.ProtocolParams = params
+	tunnel.ConfigRevision++
+	tunnel.UpdatedAt = time.Now().UTC()
+	return true, nil
 }
 
 func (s *Service) State() (config.State, error) {

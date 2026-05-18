@@ -9,6 +9,7 @@ import (
 	"github.com/astronaut808/awg-forge/internal/app"
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/protocol"
+	"github.com/astronaut808/awg-forge/internal/storage"
 )
 
 func TestClientIPAllocationAndReuse(t *testing.T) {
@@ -224,15 +225,51 @@ func TestProtocolParamsValidation(t *testing.T) {
 	if err := p.Validate(params); err != nil {
 		t.Fatal(err)
 	}
-	assertRange(t, params["Jc"], 4, 12)
+	assertRange(t, params["Jc"], 4, 10)
 	assertRange(t, params["Jmin"], 64, 256)
 	assertRange(t, params["Jmax"], 768, 1024)
-	assertRange(t, params["S1"], 15, 150)
-	assertRange(t, params["S2"], 15, 150)
+	assertRange(t, params["S1"], 15, 64)
+	assertRange(t, params["S2"], 15, 64)
 
-	params["Jc"] = "0"
+	params["Jc"] = "11"
 	if err := p.Validate(params); err == nil {
 		t.Fatal("expected invalid Jc")
+	}
+}
+
+func TestInitRepairsOutOfRangePersistedProtocolParams(t *testing.T) {
+	cfg := testConfig(t)
+	svc := app.New(cfg)
+	state, err := svc.Init()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.Tunnels[0].ProtocolParams["Jc"] = "11"
+	state.Tunnels[0].ProtocolParams["S1"] = "142"
+	oldRevision := state.Tunnels[0].ConfigRevision
+	if err := storage.New(cfg.ConfigDir).Save(state); err != nil {
+		t.Fatal(err)
+	}
+
+	repaired, err := svc.Init()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := repaired.Tunnels[0].ProtocolParams["Jc"]; got == "11" {
+		t.Fatalf("Jc was not repaired: %s", got)
+	}
+	if got := repaired.Tunnels[0].ProtocolParams["S1"]; got == "142" {
+		t.Fatalf("S1 was not repaired: %s", got)
+	}
+	if repaired.Tunnels[0].ConfigRevision <= oldRevision {
+		t.Fatal("expected config revision to increase after protocol repair")
+	}
+	matches, err := filepath.Glob(filepath.Join(cfg.ConfigDir, "backups", "state-*-repair-protocol-params.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("repair backups = %d, want 1", len(matches))
 	}
 }
 
@@ -242,8 +279,8 @@ func TestProtocolParamsRejectWeakOrInvalidLegacyCombinations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	params["S1"] = "15"
-	params["S2"] = "71"
+	params["S1"] = "0"
+	params["S2"] = "56"
 	if err := p.Validate(params); err == nil {
 		t.Fatal("expected S1+56 collision error")
 	}

@@ -79,6 +79,9 @@ func TestAWG15RendersSignaturePacketsInClientOnly(t *testing.T) {
 	if !strings.Contains(clientConfig, "\nI1 = <r 2><b 0x858") {
 		t.Fatalf("client config missing I1:\n%s", clientConfig)
 	}
+	if !strings.Contains(clientConfig, "\nAddress = 10.8.0.2/32\n") {
+		t.Fatalf("client config missing /32 address prefix:\n%s", clientConfig)
+	}
 	if !strings.Contains(clientConfig, "\nMTU = 1280\n") {
 		t.Fatalf("client config missing MTU:\n%s", clientConfig)
 	}
@@ -139,8 +142,14 @@ func TestAmneziaImportConfigShape(t *testing.T) {
 	if !strings.Contains(lastConfig, `"client_priv_key":"client-private-key"`) {
 		t.Fatalf("last_config missing client private key fields: %s", lastConfig)
 	}
+	if !strings.Contains(lastConfig, `"client_ip":"10.8.0.2/32"`) {
+		t.Fatalf("last_config missing client /32 address: %s", lastConfig)
+	}
 	if !strings.Contains(lastConfig, `[Interface]`) {
 		t.Fatalf("last_config missing raw config: %s", lastConfig)
+	}
+	if awg["port"] != "51820" {
+		t.Fatalf("unexpected QR container port type/value: %#v", awg["port"])
 	}
 }
 

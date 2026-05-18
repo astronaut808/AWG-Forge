@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"strconv"
 	"strings"
 
 	"github.com/astronaut808/awg-forge/internal/config"
@@ -26,7 +27,7 @@ func AmneziaImportConfig(state config.State, tunnel config.Tunnel, client config
 		"hostName":              state.ServerHost,
 		"port":                  tunnel.ListenPort,
 		"client_priv_key":       client.PrivateKey,
-		"client_ip":             client.IPv4Address,
+		"client_ip":             client.IPv4Address + "/32",
 		"server_pub_key":        tunnel.ServerPublicKey,
 		"allowed_ips":           splitAllowedIPs(tunnel.AllowedIPs),
 		"persistent_keep_alive": tunnel.Keepalive,
@@ -49,7 +50,7 @@ func AmneziaImportConfig(state config.State, tunnel config.Tunnel, client config
 	awgConfig := map[string]any{
 		"last_config":        string(lastConfigBytes),
 		"isThirdPartyConfig": true,
-		"port":               tunnel.ListenPort,
+		"port":               strconv.Itoa(tunnel.ListenPort),
 		"transport_proto":    "udp",
 	}
 	if tunnel.ProtocolProfileID == "awg_1_5" {

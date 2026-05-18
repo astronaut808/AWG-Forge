@@ -420,9 +420,10 @@ async function openQR(clientID) {
   const client = payload.client || {};
   showModal(`
     <div class="modal-head">
-      <div><h2>AmneziaVPN QR</h2><p class="muted">${escapeHTML(client.name || "Client")} · scan ${chunks.length > 1 ? "all QR codes in order" : "this QR code"} or download the config file.</p></div>
+      <div><h2>AmneziaVPN QR</h2><p class="muted">${escapeHTML(client.name || "Client")} · QR import is experimental on iOS. Use the config file if the VPN toggle does not start the system tunnel.</p></div>
       <button type="button" data-close>Close</button>
     </div>
+    <p class="notice">Recommended path: download the .conf file and import it in AmneziaVPN. QR remains available for testing and clients where QR import works correctly.</p>
     <div class="qr-list">
       ${chunks.map((chunk) => `
         <div class="qr-card">
