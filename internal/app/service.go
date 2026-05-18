@@ -24,6 +24,7 @@ import (
 )
 
 const stateSchemaVersion = 2
+const healthTrafficWarningThresholdBytes uint64 = 1024
 
 var clientNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_. -]{0,62}[A-Za-z0-9]$|^[A-Za-z0-9]$`)
 var tunnelNameRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{0,31}$`)
@@ -908,10 +909,10 @@ func (s *Service) TunnelHealthByID(tunnelID string, sampleSeconds int) (TunnelHe
 		case item.LatestHandshake == "":
 			item.Status = "never connected"
 			item.Warning = "no handshake yet"
-		case item.RxDeltaBytes > 0 && item.TxDeltaBytes == 0:
+		case item.RxDeltaBytes >= healthTrafficWarningThresholdBytes && item.TxDeltaBytes == 0:
 			item.Status = "client sends traffic, server sends 0 bytes back"
 			item.Warning = "possible NAT, forwarding, route, DNS, or upstream firewall issue"
-		case item.RxDeltaBytes == 0 && item.TxDeltaBytes == 0:
+		case item.RxDeltaBytes < healthTrafficWarningThresholdBytes && item.TxDeltaBytes == 0:
 			item.Status = "idle, handshake ok"
 		case item.RxDeltaBytes == 0 && item.TxDeltaBytes > 0:
 			item.Status = "outbound only"

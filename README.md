@@ -126,7 +126,7 @@ The Web UI also has a per-tunnel **Health** action. It samples runtime traffic c
 
 - `traffic flowing`: handshake exists and rx/tx counters are moving;
 - `idle, handshake ok`: the tunnel handshakes, but traffic did not move during the short sample window;
-- `client sends traffic, server sends 0 bytes back`: usually a NAT, forwarding, route, DNS, or upstream firewall problem.
+- `client sends traffic, server sends 0 bytes back`: usually a NAT, forwarding, route, DNS, or upstream firewall problem. Tiny rx deltas below 1 KiB are treated as idle noise.
 
 No internet usually means `EXTERNAL_INTERFACE` is wrong, IPv4 forwarding is disabled, or host firewall/NAT rules conflict.
 

@@ -9,6 +9,7 @@ Firewall reconciliation and client health diagnostics.
 - Per-tunnel Web UI Health action that samples runtime client counters and reports handshake, rx/tx totals, rx/tx deltas, and connection status.
 - Client health warnings for handshake-only connections and cases where clients send traffic but the server sends no bytes back.
 - Idle clients with a fresh handshake are now reported as `idle, handshake ok` instead of a warning.
+- Tiny client rx deltas below 1 KiB are treated as idle noise instead of NAT/forwarding failures.
 - Doctor checks for per-tunnel `MASQUERADE` and `FORWARD` firewall rules.
 - Tests for runtime transfer counter parsing and AWG 1.5 idempotent firewall rendering.
 
