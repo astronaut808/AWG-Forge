@@ -129,10 +129,10 @@ func (p Legacy10) RenderServerInterface(ctx RenderContext) ([]ConfigLine, error)
 }
 
 func baseInterfaceLines(ctx RenderContext) ([]ConfigLine, error) {
-	postUp := fmt.Sprintf("iptables -t nat -A POSTROUTING -s %s -o %s -j MASQUERADE; iptables -A INPUT -p udp -m udp --dport %d -j ACCEPT; iptables -A FORWARD -i %s -j ACCEPT; iptables -A FORWARD -o %s -j ACCEPT;",
-		ctx.Tunnel.IPv4Subnet, ctx.State.ExternalInterface, ctx.Tunnel.ListenPort, ctx.Tunnel.InterfaceName, ctx.Tunnel.InterfaceName)
-	postDown := fmt.Sprintf("iptables -t nat -D POSTROUTING -s %s -o %s -j MASQUERADE; iptables -D INPUT -p udp -m udp --dport %d -j ACCEPT; iptables -D FORWARD -i %s -j ACCEPT; iptables -D FORWARD -o %s -j ACCEPT;",
-		ctx.Tunnel.IPv4Subnet, ctx.State.ExternalInterface, ctx.Tunnel.ListenPort, ctx.Tunnel.InterfaceName, ctx.Tunnel.InterfaceName)
+	postUp := fmt.Sprintf("iptables -t nat -C POSTROUTING -s %s -o %s -j MASQUERADE || iptables -t nat -I POSTROUTING 1 -s %s -o %s -j MASQUERADE; iptables -C INPUT -p udp -m udp --dport %d -j ACCEPT || iptables -I INPUT 1 -p udp -m udp --dport %d -j ACCEPT; iptables -C FORWARD -i %s -j ACCEPT || iptables -I FORWARD 1 -i %s -j ACCEPT; iptables -C FORWARD -o %s -j ACCEPT || iptables -I FORWARD 1 -o %s -j ACCEPT;",
+		ctx.Tunnel.IPv4Subnet, ctx.State.ExternalInterface, ctx.Tunnel.IPv4Subnet, ctx.State.ExternalInterface, ctx.Tunnel.ListenPort, ctx.Tunnel.ListenPort, ctx.Tunnel.InterfaceName, ctx.Tunnel.InterfaceName, ctx.Tunnel.InterfaceName, ctx.Tunnel.InterfaceName)
+	postDown := fmt.Sprintf("while iptables -t nat -C POSTROUTING -s %s -o %s -j MASQUERADE; do iptables -t nat -D POSTROUTING -s %s -o %s -j MASQUERADE; done; while iptables -C INPUT -p udp -m udp --dport %d -j ACCEPT; do iptables -D INPUT -p udp -m udp --dport %d -j ACCEPT; done; while iptables -C FORWARD -i %s -j ACCEPT; do iptables -D FORWARD -i %s -j ACCEPT; done; while iptables -C FORWARD -o %s -j ACCEPT; do iptables -D FORWARD -o %s -j ACCEPT; done;",
+		ctx.Tunnel.IPv4Subnet, ctx.State.ExternalInterface, ctx.Tunnel.IPv4Subnet, ctx.State.ExternalInterface, ctx.Tunnel.ListenPort, ctx.Tunnel.ListenPort, ctx.Tunnel.InterfaceName, ctx.Tunnel.InterfaceName, ctx.Tunnel.InterfaceName, ctx.Tunnel.InterfaceName)
 	lines := []ConfigLine{
 		{"PrivateKey", ctx.Tunnel.ServerPrivateKey},
 		{"Address", ctx.Tunnel.ServerAddress + "/24"},

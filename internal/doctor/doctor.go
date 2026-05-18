@@ -63,6 +63,11 @@ func Check(cfg config.Config, service *app.Service) []Result {
 		} else {
 			c.ok("render "+tunnel.Name, "server config renders")
 		}
+		if cfg.ApplyConfig {
+			c.checkFirewallRules(cfg, tunnel)
+		} else {
+			c.warn("firewall "+tunnel.Name, "APPLY_CONFIG=false; firewall runtime rules are not expected")
+		}
 		c.checkTunnelRuntime(tunnel)
 	}
 	return c.results
@@ -143,6 +148,64 @@ func (c *checker) checkPort(tunnel config.Tunnel) {
 	}
 	_ = conn.Close()
 	c.ok("UDP "+tunnel.Name, fmt.Sprintf("listen port %d available", port))
+}
+
+func (c *checker) checkFirewallRules(cfg config.Config, tunnel config.Tunnel) {
+	if iptablesRuleExists("nat", "POSTROUTING", "-s", tunnel.IPv4Subnet, "-o", cfg.ExternalInterface, "-j", "MASQUERADE") {
+		c.ok("firewall "+tunnel.Name, "MASQUERADE exists for "+tunnel.IPv4Subnet+" on "+cfg.ExternalInterface)
+	} else {
+		c.fail("firewall "+tunnel.Name, "missing MASQUERADE for "+tunnel.IPv4Subnet+" on "+cfg.ExternalInterface)
+	}
+	inOK := iptablesRuleExists("", "FORWARD", "-i", tunnel.InterfaceName, "-j", "ACCEPT")
+	outOK := iptablesRuleExists("", "FORWARD", "-o", tunnel.InterfaceName, "-j", "ACCEPT")
+	switch {
+	case inOK && outOK:
+		c.ok("forward "+tunnel.Name, "FORWARD accepts traffic in and out of "+tunnel.InterfaceName)
+	case !inOK && !outOK:
+		c.fail("forward "+tunnel.Name, "missing FORWARD accept rules for "+tunnel.InterfaceName)
+	case !inOK:
+		c.fail("forward "+tunnel.Name, "missing FORWARD -i "+tunnel.InterfaceName+" accept rule")
+	default:
+		c.fail("forward "+tunnel.Name, "missing FORWARD -o "+tunnel.InterfaceName+" accept rule")
+	}
+	if count := iptablesRuleCount("nat", "POSTROUTING", "-s", tunnel.IPv4Subnet, "-o", cfg.ExternalInterface, "-j", "MASQUERADE"); count > 1 {
+		c.warn("firewall "+tunnel.Name, fmt.Sprintf("duplicate MASQUERADE rules found: %d; restart tunnel to reconcile", count))
+	}
+}
+
+func iptablesRuleExists(table, chain string, args ...string) bool {
+	cmdArgs := iptablesRuleArgs(table, "-C", chain, args...)
+	return exec.Command("iptables", cmdArgs...).Run() == nil
+}
+
+func iptablesRuleCount(table, chain string, args ...string) int {
+	cmdArgs := []string{}
+	if table != "" {
+		cmdArgs = append(cmdArgs, "-t", table)
+	}
+	cmdArgs = append(cmdArgs, "-S", chain)
+	out, err := exec.Command("iptables", cmdArgs...).CombinedOutput()
+	if err != nil {
+		return 0
+	}
+	want := "-A " + chain + " " + strings.Join(args, " ")
+	count := 0
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.TrimSpace(line) == want {
+			count++
+		}
+	}
+	return count
+}
+
+func iptablesRuleArgs(table, action, chain string, args ...string) []string {
+	out := []string{}
+	if table != "" {
+		out = append(out, "-t", table)
+	}
+	out = append(out, action, chain)
+	out = append(out, args...)
+	return out
 }
 
 func awgPortMatches(interfaceName string, port int) bool {

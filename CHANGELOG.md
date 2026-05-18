@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.2.2 - 2026-05-19
+
+Firewall reconciliation and client health diagnostics.
+
+### Added
+
+- Per-tunnel Web UI Health action that samples runtime client counters and reports handshake, rx/tx totals, rx/tx deltas, and connection status.
+- Client health warnings for handshake-only connections and cases where clients send traffic but the server sends no bytes back.
+- Doctor checks for per-tunnel `MASQUERADE` and `FORWARD` firewall rules.
+- Tests for runtime transfer counter parsing and AWG 1.5 idempotent firewall rendering.
+
+### Fixed
+
+- Tunnel settings changes can no longer leave stale NAT/firewall rules from an older subnet, port, or interface.
+- Firewall rules are now reconciled during apply/sync, including `awg syncconf` paths where `PostUp` is not re-run by `awg-quick`.
+- `PostUp` rules are idempotent and inserted before UFW/Docker forwarding rejects.
+- `PostDown` removes duplicate awg-forge firewall rules left by older versions.
+- The firewall fix applies to Legacy / 1.0, 1.5, and 2.0 tunnels.
+
 ## v0.2.1 - 2026-05-18
 
 ### Added

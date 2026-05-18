@@ -92,6 +92,9 @@ func TestAWG15RendersSignaturePacketsInClientOnly(t *testing.T) {
 	if !strings.Contains(serverConfig, "\nMTU = 1280\n") {
 		t.Fatalf("server config missing MTU:\n%s", serverConfig)
 	}
+	if !strings.Contains(serverConfig, "iptables -t nat -C POSTROUTING") || !strings.Contains(serverConfig, "iptables -I FORWARD 1 -i awg0 -j ACCEPT") {
+		t.Fatalf("server config should use idempotent firewall rules:\n%s", serverConfig)
+	}
 	if strings.Contains(serverConfig, "\nI1 = ") {
 		t.Fatalf("server config should not include 1.5 client-side I1:\n%s", serverConfig)
 	}

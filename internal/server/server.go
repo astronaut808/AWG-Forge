@@ -180,6 +180,8 @@ func (w *web) tunnelAPI(rw http.ResponseWriter, r *http.Request) {
 		w.deleteTunnelAPI(rw, r, id)
 	case "restart":
 		w.restartTunnelAPI(rw, r, id)
+	case "health":
+		w.tunnelHealthAPI(rw, r, id)
 	case "protocol":
 		w.updateProtocolAPI(rw, r, id)
 	case "regenerate":
@@ -187,6 +189,19 @@ func (w *web) tunnelAPI(rw http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(rw, http.StatusNotFound, "not found")
 	}
+}
+
+func (w *web) tunnelHealthAPI(rw http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodGet {
+		writeError(rw, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	health, err := w.service.TunnelHealthByID(id, 2)
+	if err != nil {
+		writeError(rw, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(rw, http.StatusOK, map[string]any{"health": health})
 }
 
 func (w *web) updateTunnelSettingsAPI(rw http.ResponseWriter, r *http.Request, id string) {
