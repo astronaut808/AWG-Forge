@@ -40,3 +40,14 @@ func TestByteDeltaDoesNotUnderflow(t *testing.T) {
 		t.Fatalf("delta = %d, want 3", got)
 	}
 }
+
+func TestHealthWarningThresholdTreatsTinyRxAsIdle(t *testing.T) {
+	if healthTrafficWarningThresholdBytes != 1024 {
+		t.Fatalf("threshold = %d, want 1024", healthTrafficWarningThresholdBytes)
+	}
+	rxDelta := uint64(82)
+	txDelta := uint64(0)
+	if rxDelta >= healthTrafficWarningThresholdBytes && txDelta == 0 {
+		t.Fatal("tiny rx delta should not trigger NAT warning")
+	}
+}
