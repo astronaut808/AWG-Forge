@@ -21,8 +21,9 @@ func Run(cfg config.Config, service *app.Service) error {
 	}
 	checkRoot()
 	checkPath("/dev/net/tun")
-	checkCommand("wg")
-	checkCommand("wg-quick")
+	checkCommand("awg")
+	checkCommand("awg-quick")
+	checkCommand("amneziawg-go")
 	checkCommand("iptables")
 	checkCommand("ip")
 	checkIPTables()
@@ -30,7 +31,7 @@ func Run(cfg config.Config, service *app.Service) error {
 	checkInterface(cfg.ExternalInterface)
 	checkDir(cfg.ConfigDir)
 	for _, tunnel := range state.Tunnels {
-		checkPort(tunnel.ListenPort)
+		checkPort(tunnel)
 		if _, err := render.ServerConfig(state, tunnel); err != nil {
 			fail("render "+tunnel.Name, err.Error())
 		} else {
@@ -98,14 +99,27 @@ func checkInterface(name string) {
 	}
 }
 
-func checkPort(port int) {
+func checkPort(tunnel config.Tunnel) {
+	port := tunnel.ListenPort
 	conn, err := net.ListenPacket("udp4", fmt.Sprintf(":%d", port))
 	if err != nil {
+		if awgPortMatches(tunnel.InterfaceName, port) {
+			ok(fmt.Sprintf("UDP listen port %d is already owned by %s", port, tunnel.InterfaceName))
+			return
+		}
 		fail("UDP listen port", err.Error())
 		return
 	}
 	_ = conn.Close()
-	ok("UDP listen port available")
+	ok(fmt.Sprintf("UDP listen port %d available", port))
+}
+
+func awgPortMatches(interfaceName string, port int) bool {
+	out, err := exec.Command("awg", "show", interfaceName, "listen-port").CombinedOutput()
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(out)) == fmt.Sprintf("%d", port)
 }
 
 func checkDir(dir string) {
