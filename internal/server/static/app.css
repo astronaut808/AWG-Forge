@@ -212,6 +212,15 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   text-align: center;
 }
 
+.notice {
+  margin: 0 0 14px;
+  border: 1px solid #f3cf72;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #fff8df;
+  color: #6f4d00;
+}
+
 .modal {
   width: min(760px, calc(100% - 28px));
   border: 1px solid var(--line);
@@ -264,9 +273,30 @@ textarea {
 
 .qr {
   display: block;
-  width: 320px;
+  width: 280px;
   max-width: 100%;
-  margin: 8px auto 18px;
+  margin: 8px auto 0;
+}
+
+.qr-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.qr-card {
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  padding: 12px;
+  background: #fff;
+  text-align: center;
+}
+
+.qr-label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 .toast {

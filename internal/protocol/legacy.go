@@ -34,7 +34,7 @@ func (Legacy10) GenerateDefaults() (config.ProtocolParams, error) {
 		return min + int(n.Int64()), nil
 	}
 
-	jc, err := randomInt(4, 12)
+	jc, err := randomInt(4, 10)
 	if err != nil {
 		return nil, err
 	}
@@ -49,16 +49,16 @@ func (Legacy10) GenerateDefaults() (config.ProtocolParams, error) {
 	if jmax <= jmin {
 		jmax = jmin + 64
 	}
-	s1, err := randomInt(15, 150)
+	s1, err := randomInt(15, 64)
 	if err != nil {
 		return nil, err
 	}
-	s2, err := randomInt(15, 150)
+	s2, err := randomInt(15, 64)
 	if err != nil {
 		return nil, err
 	}
 	for s1+56 == s2 {
-		s2, err = randomInt(15, 150)
+		s2, err = randomInt(15, 64)
 		if err != nil {
 			return nil, err
 		}
@@ -115,24 +115,24 @@ func (Legacy10) Validate(params config.ProtocolParams) error {
 		}
 	}
 	jc, err := strconv.Atoi(params["Jc"])
-	if err != nil || jc < 1 || jc > 128 {
-		return fmt.Errorf("Jc must be 1..128")
+	if err != nil || jc < 0 || jc > 10 {
+		return fmt.Errorf("Jc must be 0..10")
 	}
 	jmin, err := strconv.Atoi(params["Jmin"])
-	if err != nil || jmin < 1 || jmin >= 1280 {
-		return fmt.Errorf("Jmin must be 1..1279")
+	if err != nil || jmin < 64 || jmin > 1024 {
+		return fmt.Errorf("Jmin must be 64..1024")
 	}
 	jmax, err := strconv.Atoi(params["Jmax"])
-	if err != nil || jmax <= jmin || jmax > 1279 {
-		return fmt.Errorf("Jmax must be greater than Jmin and <= 1279")
+	if err != nil || jmax <= jmin || jmax > 1024 {
+		return fmt.Errorf("Jmax must be greater than Jmin and <= 1024")
 	}
 	s1, err := strconv.Atoi(params["S1"])
-	if err != nil || s1 < 0 || s1 > 1132 {
-		return fmt.Errorf("S1 must be 0..1132")
+	if err != nil || s1 < 0 || s1 > 64 {
+		return fmt.Errorf("S1 must be 0..64")
 	}
 	s2, err := strconv.Atoi(params["S2"])
-	if err != nil || s2 < 0 || s2 > 1188 {
-		return fmt.Errorf("S2 must be 0..1188")
+	if err != nil || s2 < 0 || s2 > 64 {
+		return fmt.Errorf("S2 must be 0..64")
 	}
 	if s1+56 == s2 {
 		return fmt.Errorf("S1 + 56 must not equal S2")
@@ -188,7 +188,7 @@ func (p Legacy10) RenderClientInterface(ctx RenderContext, client config.Client)
 	}
 	lines := []ConfigLine{
 		{"PrivateKey", client.PrivateKey},
-		{"Address", client.IPv4Address},
+		{"Address", client.IPv4Address + "/32"},
 		{"DNS", ctx.Tunnel.DNS},
 	}
 	if ctx.Tunnel.MTU > 0 {

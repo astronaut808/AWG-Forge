@@ -47,7 +47,9 @@ func New(cfg config.Config) *Service {
 
 func (s *Service) Init() (config.State, error) {
 	if state, err := s.store.Load(); err == nil {
+		originalState := state
 		changed := false
+		protocolRepaired := false
 		if state.SchemaVersion == 0 {
 			state.SchemaVersion = stateSchemaVersion
 			changed = true
@@ -68,8 +70,33 @@ func (s *Service) Init() (config.State, error) {
 			state.Tunnels = []config.Tunnel{tunnel}
 			changed = true
 		}
+		for ti := range state.Tunnels {
+			if state.Tunnels[ti].ConfigRevision == 0 {
+				state.Tunnels[ti].ConfigRevision = 1
+				changed = true
+			}
+			for ci := range state.Tunnels[ti].Clients {
+				if state.Tunnels[ti].Clients[ci].ConfigRevision == 0 {
+					state.Tunnels[ti].Clients[ci].ConfigRevision = state.Tunnels[ti].ConfigRevision
+					changed = true
+				}
+			}
+			repaired, err := s.repairProtocolParams(&state.Tunnels[ti])
+			if err != nil {
+				return config.State{}, err
+			}
+			if repaired {
+				changed = true
+				protocolRepaired = true
+			}
+		}
 		if changed {
 			state.UpdatedAt = time.Now().UTC()
+			if protocolRepaired {
+				if _, err := s.store.BackupState(originalState, "repair-protocol-params"); err != nil {
+					return config.State{}, err
+				}
+			}
 			if err := s.store.Save(state); err != nil {
 				return config.State{}, err
 			}
@@ -99,6 +126,27 @@ func (s *Service) Init() (config.State, error) {
 		return config.State{}, err
 	}
 	return state, s.RenderAll()
+}
+
+func (s *Service) repairProtocolParams(tunnel *config.Tunnel) (bool, error) {
+	p, ok := protocol.ByID(tunnel.ProtocolProfileID)
+	if !ok {
+		return false, fmt.Errorf("unsupported protocol profile %q", tunnel.ProtocolProfileID)
+	}
+	if err := p.Validate(tunnel.ProtocolParams); err == nil {
+		return false, nil
+	}
+	params, err := p.GenerateDefaults()
+	if err != nil {
+		return false, err
+	}
+	if err := p.Validate(params); err != nil {
+		return false, err
+	}
+	tunnel.ProtocolParams = params
+	tunnel.ConfigRevision++
+	tunnel.UpdatedAt = time.Now().UTC()
+	return true, nil
 }
 
 func (s *Service) State() (config.State, error) {
@@ -248,7 +296,8 @@ func (s *Service) UpdateTunnelSettings(tunnelID, name, subnet, dns, allowedIPs s
 	if subnet != state.Tunnels[idx].IPv4Subnet && len(state.Tunnels[idx].Clients) > 0 {
 		return config.Tunnel{}, errors.New("cannot change subnet while tunnel has clients")
 	}
-	oldInterface := state.Tunnels[idx].InterfaceName
+	old := state.Tunnels[idx]
+	oldInterface := old.InterfaceName
 	now := time.Now().UTC()
 	state.Tunnels[idx].Name = name
 	state.Tunnels[idx].InterfaceName = name
@@ -260,6 +309,9 @@ func (s *Service) UpdateTunnelSettings(tunnelID, name, subnet, dns, allowedIPs s
 	state.Tunnels[idx].Keepalive = keepalive
 	state.Tunnels[idx].MTU = mtu
 	state.Tunnels[idx].Enabled = enabled
+	if tunnelConfigChanged(old, state.Tunnels[idx]) {
+		state.Tunnels[idx].ConfigRevision++
+	}
 	state.Tunnels[idx].UpdatedAt = now
 	state.UpdatedAt = now
 	if err := s.store.Save(state); err != nil {
@@ -284,6 +336,9 @@ func (s *Service) DeleteTunnel(tunnelID string) error {
 		return errors.New("tunnel not found")
 	}
 	tunnel := state.Tunnels[idx]
+	if _, err := s.store.BackupState(state, "delete-"+tunnel.InterfaceName); err != nil {
+		return err
+	}
 	state.Tunnels = append(state.Tunnels[:idx], state.Tunnels[idx+1:]...)
 	state.UpdatedAt = time.Now().UTC()
 	if err := s.store.Save(state); err != nil {
@@ -332,6 +387,7 @@ func (s *Service) newTunnel(spec tunnelSpec) (config.Tunnel, error) {
 		ServerPublicKey:   pub,
 		ProtocolProfileID: spec.ProfileID,
 		ProtocolParams:    params,
+		ConfigRevision:    1,
 		Clients:           []config.Client{},
 		CreatedAt:         now,
 		UpdatedAt:         now,
@@ -377,7 +433,8 @@ func (s *Service) AddClientToTunnel(tunnelID, name string) (config.Client, error
 	client := config.Client{
 		ID: randomID(), TunnelID: state.Tunnels[idx].ID, Name: name, Enabled: true, IPv4Address: ip,
 		PrivateKey: priv, PublicKey: pub, PresharedKey: psk,
-		CreatedAt: now, UpdatedAt: now,
+		ConfigRevision: state.Tunnels[idx].ConfigRevision,
+		CreatedAt:      now, UpdatedAt: now,
 	}
 	state.Tunnels[idx].Clients = append(state.Tunnels[idx].Clients, client)
 	state.Tunnels[idx].UpdatedAt = now
@@ -448,7 +505,12 @@ func (s *Service) ClientConfig(id string) (string, error) {
 	if !ok {
 		return "", errors.New("client not found")
 	}
-	return render.ClientConfig(state, tunnel, client)
+	conf, err := render.ClientConfig(state, tunnel, client)
+	if err != nil {
+		return "", err
+	}
+	_ = s.markClientConfigDelivered(id)
+	return conf, nil
 }
 
 func (s *Service) ClientConfigForDownload(id string) (string, config.Client, error) {
@@ -464,7 +526,59 @@ func (s *Service) ClientConfigForDownload(id string) (string, config.Client, err
 	if err != nil {
 		return "", config.Client{}, err
 	}
+	_ = s.markClientConfigDelivered(id)
 	return conf, client, nil
+}
+
+func (s *Service) ClientAmneziaImportConfig(id string) ([]byte, config.Client, error) {
+	state, err := s.Init()
+	if err != nil {
+		return nil, config.Client{}, err
+	}
+	tunnel, client, ok := findClient(state, id)
+	if !ok {
+		return nil, config.Client{}, errors.New("client not found")
+	}
+	payload, err := render.AmneziaImportConfig(state, tunnel, client)
+	if err != nil {
+		return nil, config.Client{}, err
+	}
+	_ = s.markClientConfigDelivered(id)
+	return payload, client, nil
+}
+
+func (s *Service) markClientConfigDelivered(id string) error {
+	state, err := s.Init()
+	if err != nil {
+		return err
+	}
+	for ti := range state.Tunnels {
+		for ci := range state.Tunnels[ti].Clients {
+			if state.Tunnels[ti].Clients[ci].ID == id {
+				if state.Tunnels[ti].Clients[ci].ConfigRevision == state.Tunnels[ti].ConfigRevision {
+					return nil
+				}
+				now := time.Now().UTC()
+				state.Tunnels[ti].Clients[ci].ConfigRevision = state.Tunnels[ti].ConfigRevision
+				state.Tunnels[ti].Clients[ci].UpdatedAt = now
+				state.Tunnels[ti].UpdatedAt = now
+				state.UpdatedAt = now
+				return s.store.Save(state)
+			}
+		}
+	}
+	return errors.New("client not found")
+}
+
+func tunnelConfigChanged(old, next config.Tunnel) bool {
+	return old.ListenPort != next.ListenPort ||
+		old.ServerAddress != next.ServerAddress ||
+		old.IPv4Subnet != next.IPv4Subnet ||
+		old.DNS != next.DNS ||
+		old.AllowedIPs != next.AllowedIPs ||
+		old.Keepalive != next.Keepalive ||
+		old.MTU != next.MTU ||
+		old.ProtocolProfileID != next.ProtocolProfileID
 }
 
 func (s *Service) SessionSecret() (string, error) {
@@ -580,6 +694,7 @@ func (s *Service) UpdateTunnelProtocol(tunnelID, profileID string, params config
 	now := time.Now().UTC()
 	state.Tunnels[idx].ProtocolProfileID = profileID
 	state.Tunnels[idx].ProtocolParams = params
+	state.Tunnels[idx].ConfigRevision++
 	state.Tunnels[idx].UpdatedAt = now
 	state.UpdatedAt = now
 	if err := s.store.Save(state); err != nil {

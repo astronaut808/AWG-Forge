@@ -1,6 +1,12 @@
 package render_test
 
 import (
+	"bytes"
+	"compress/zlib"
+	"encoding/base64"
+	"encoding/binary"
+	"encoding/json"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -73,6 +79,9 @@ func TestAWG15RendersSignaturePacketsInClientOnly(t *testing.T) {
 	if !strings.Contains(clientConfig, "\nI1 = <r 2><b 0x858") {
 		t.Fatalf("client config missing I1:\n%s", clientConfig)
 	}
+	if !strings.Contains(clientConfig, "\nAddress = 10.8.0.2/32\n") {
+		t.Fatalf("client config missing /32 address prefix:\n%s", clientConfig)
+	}
 	if !strings.Contains(clientConfig, "\nMTU = 1280\n") {
 		t.Fatalf("client config missing MTU:\n%s", clientConfig)
 	}
@@ -105,6 +114,83 @@ func TestAutoMTUIsOmitted(t *testing.T) {
 	if strings.Contains(clientConfig, "\nMTU = ") {
 		t.Fatalf("client config should omit auto MTU:\n%s", clientConfig)
 	}
+}
+
+func TestAmneziaImportConfigShape(t *testing.T) {
+	state := testState(true)
+	payload, err := render.AmneziaImportConfig(state, state.Tunnels[0], state.Tunnels[0].Clients[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded["defaultContainer"] != "amnezia-awg" {
+		t.Fatalf("unexpected default container: %#v", decoded["defaultContainer"])
+	}
+	containers, ok := decoded["containers"].([]any)
+	if !ok || len(containers) != 1 {
+		t.Fatalf("unexpected containers: %#v", decoded["containers"])
+	}
+	container := containers[0].(map[string]any)
+	if container["container"] != "amnezia-awg" {
+		t.Fatalf("unexpected container: %#v", container["container"])
+	}
+	awg := container["awg"].(map[string]any)
+	lastConfig := awg["last_config"].(string)
+	if !strings.Contains(lastConfig, `"client_priv_key":"client-private-key"`) {
+		t.Fatalf("last_config missing client private key fields: %s", lastConfig)
+	}
+	if !strings.Contains(lastConfig, `"client_ip":"10.8.0.2/32"`) {
+		t.Fatalf("last_config missing client /32 address: %s", lastConfig)
+	}
+	if !strings.Contains(lastConfig, `[Interface]`) {
+		t.Fatalf("last_config missing raw config: %s", lastConfig)
+	}
+	if awg["port"] != "51820" {
+		t.Fatalf("unexpected QR container port type/value: %#v", awg["port"])
+	}
+}
+
+func TestAmneziaQRTextIsBase64URLQtCompressedPayload(t *testing.T) {
+	payload := []byte(`{"hello":"amnezia"}`)
+	texts, err := render.AmneziaQRTexts(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(texts) != 1 {
+		t.Fatalf("expected single small QR payload, got %d", len(texts))
+	}
+	compressed, err := base64.RawURLEncoding.DecodeString(texts[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := qUncompress(t, compressed)
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("payload mismatch: %q", got)
+	}
+}
+
+func qUncompress(t *testing.T, data []byte) []byte {
+	t.Helper()
+	if len(data) < 4 {
+		t.Fatalf("compressed payload too short: %d", len(data))
+	}
+	wantLen := binary.BigEndian.Uint32(data[:4])
+	zr, err := zlib.NewReader(bytes.NewReader(data[4:]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zr.Close()
+	got, err := io.ReadAll(zr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uint32(len(got)) != wantLen {
+		t.Fatalf("unexpected qCompress length: got %d want %d", len(got), wantLen)
+	}
+	return got
 }
 
 func readGolden(t *testing.T, path string) string {

@@ -19,6 +19,8 @@ import (
 
 	"github.com/astronaut808/awg-forge/internal/app"
 	"github.com/astronaut808/awg-forge/internal/config"
+	"github.com/astronaut808/awg-forge/internal/doctor"
+	"github.com/astronaut808/awg-forge/internal/render"
 )
 
 //go:embed static/*
@@ -29,23 +31,33 @@ type web struct {
 	service  *app.Service
 	sessions []byte
 	limits   map[string][]time.Time
+	idem     map[string]*idempotencyEntry
 	mu       sync.Mutex
 }
 
 const sessionTTL = 30 * time.Minute
+const idempotencyTTL = 10 * time.Minute
+
+type idempotencyEntry struct {
+	status    int
+	body      []byte
+	createdAt time.Time
+	ready     chan struct{}
+}
 
 func Serve(cfg config.Config, service *app.Service) error {
 	secret, err := service.SessionSecret()
 	if err != nil {
 		return err
 	}
-	w := &web{cfg: cfg, service: service, sessions: []byte(secret), limits: map[string][]time.Time{}}
+	w := &web{cfg: cfg, service: service, sessions: []byte(secret), limits: map[string][]time.Time{}, idem: map[string]*idempotencyEntry{}}
 	mux := http.NewServeMux()
 	mux.Handle("/static/", w.securityHandler(http.FileServer(http.FS(staticFiles))))
 	mux.HandleFunc("/", w.security(w.index))
 	mux.HandleFunc("/api/login", w.security(w.loginAPI))
 	mux.HandleFunc("/api/logout", w.security(w.requireAuth(w.logoutAPI)))
 	mux.HandleFunc("/api/state", w.security(w.requireAuth(w.stateAPI)))
+	mux.HandleFunc("/api/doctor", w.security(w.requireAuth(w.doctorAPI)))
 	mux.HandleFunc("/api/tunnels", w.security(w.requireAuth(w.tunnelsAPI)))
 	mux.HandleFunc("/api/tunnels/", w.security(w.requireAuth(w.tunnelAPI)))
 	mux.HandleFunc("/api/clients", w.security(w.requireAuth(w.clientsAPI)))
@@ -123,27 +135,35 @@ func (w *web) stateAPI(rw http.ResponseWriter, r *http.Request) {
 	writeJSON(rw, http.StatusOK, w.publicState(state))
 }
 
+func (w *web) doctorAPI(rw http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(rw, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	writeJSON(rw, http.StatusOK, map[string]any{"results": doctor.Check(w.cfg, w.service)})
+}
+
 func (w *web) tunnelsAPI(rw http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost || !w.validOrigin(r) {
 		writeError(rw, http.StatusForbidden, "forbidden")
 		return
 	}
-	var req struct {
-		Profile string `json:"profile"`
-		Name    string `json:"name"`
-		Port    int    `json:"port"`
-		Subnet  string `json:"subnet"`
-	}
-	if err := readJSON(r, &req); err != nil {
-		writeError(rw, http.StatusBadRequest, "invalid json")
-		return
-	}
-	tunnel, err := w.service.CreateTunnel(req.Profile, req.Name, req.Subnet, req.Port)
-	if err != nil {
-		writeError(rw, http.StatusBadRequest, err.Error())
-		return
-	}
-	writeJSON(rw, http.StatusCreated, map[string]any{"tunnel": publicTunnel(tunnel, app.TunnelStatus{})})
+	w.withIdempotency(rw, r, "create-tunnel", func() (int, any) {
+		var req struct {
+			Profile string `json:"profile"`
+			Name    string `json:"name"`
+			Port    int    `json:"port"`
+			Subnet  string `json:"subnet"`
+		}
+		if err := readJSON(r, &req); err != nil {
+			return http.StatusBadRequest, errorPayload("invalid json")
+		}
+		tunnel, err := w.service.CreateTunnel(req.Profile, req.Name, req.Subnet, req.Port)
+		if err != nil {
+			return http.StatusBadRequest, errorPayload(err.Error())
+		}
+		return http.StatusCreated, map[string]any{"tunnel": publicTunnel(tunnel, app.TunnelStatus{})}
+	})
 }
 
 func (w *web) tunnelAPI(rw http.ResponseWriter, r *http.Request) {
@@ -174,26 +194,26 @@ func (w *web) updateTunnelSettingsAPI(rw http.ResponseWriter, r *http.Request, i
 		writeError(rw, http.StatusForbidden, "forbidden")
 		return
 	}
-	var req struct {
-		Name       string `json:"name"`
-		Port       int    `json:"port"`
-		Subnet     string `json:"subnet"`
-		DNS        string `json:"dns"`
-		AllowedIPs string `json:"allowed_ips"`
-		Keepalive  int    `json:"keepalive"`
-		MTU        int    `json:"mtu"`
-		Enabled    bool   `json:"enabled"`
-	}
-	if err := readJSON(r, &req); err != nil {
-		writeError(rw, http.StatusBadRequest, "invalid json")
-		return
-	}
-	tunnel, err := w.service.UpdateTunnelSettings(id, req.Name, req.Subnet, req.DNS, req.AllowedIPs, req.Keepalive, req.MTU, req.Port, req.Enabled)
-	if err != nil {
-		writeError(rw, http.StatusBadRequest, err.Error())
-		return
-	}
-	writeJSON(rw, http.StatusOK, map[string]any{"tunnel": publicTunnel(tunnel, app.TunnelStatus{})})
+	w.withIdempotency(rw, r, "update-tunnel-settings:"+id, func() (int, any) {
+		var req struct {
+			Name       string `json:"name"`
+			Port       int    `json:"port"`
+			Subnet     string `json:"subnet"`
+			DNS        string `json:"dns"`
+			AllowedIPs string `json:"allowed_ips"`
+			Keepalive  int    `json:"keepalive"`
+			MTU        int    `json:"mtu"`
+			Enabled    bool   `json:"enabled"`
+		}
+		if err := readJSON(r, &req); err != nil {
+			return http.StatusBadRequest, errorPayload("invalid json")
+		}
+		tunnel, err := w.service.UpdateTunnelSettings(id, req.Name, req.Subnet, req.DNS, req.AllowedIPs, req.Keepalive, req.MTU, req.Port, req.Enabled)
+		if err != nil {
+			return http.StatusBadRequest, errorPayload(err.Error())
+		}
+		return http.StatusOK, map[string]any{"tunnel": publicTunnel(tunnel, app.TunnelStatus{})}
+	})
 }
 
 func (w *web) deleteTunnelAPI(rw http.ResponseWriter, r *http.Request, id string) {
@@ -201,11 +221,12 @@ func (w *web) deleteTunnelAPI(rw http.ResponseWriter, r *http.Request, id string
 		writeError(rw, http.StatusForbidden, "forbidden")
 		return
 	}
-	if err := w.service.DeleteTunnel(id); err != nil {
-		writeError(rw, http.StatusBadRequest, err.Error())
-		return
-	}
-	writeJSON(rw, http.StatusOK, map[string]any{"ok": true})
+	w.withIdempotency(rw, r, "delete-tunnel:"+id, func() (int, any) {
+		if err := w.service.DeleteTunnel(id); err != nil {
+			return http.StatusBadRequest, errorPayload(err.Error())
+		}
+		return http.StatusOK, map[string]any{"ok": true}
+	})
 }
 
 func (w *web) restartTunnelAPI(rw http.ResponseWriter, r *http.Request, id string) {
@@ -213,11 +234,12 @@ func (w *web) restartTunnelAPI(rw http.ResponseWriter, r *http.Request, id strin
 		writeError(rw, http.StatusForbidden, "forbidden")
 		return
 	}
-	if err := w.service.RestartTunnelByID(id); err != nil {
-		writeError(rw, http.StatusBadRequest, err.Error())
-		return
-	}
-	writeJSON(rw, http.StatusOK, map[string]any{"ok": true})
+	w.withIdempotency(rw, r, "restart-tunnel:"+id, func() (int, any) {
+		if err := w.service.RestartTunnelByID(id); err != nil {
+			return http.StatusBadRequest, errorPayload(err.Error())
+		}
+		return http.StatusOK, map[string]any{"ok": true}
+	})
 }
 
 func (w *web) updateProtocolAPI(rw http.ResponseWriter, r *http.Request, id string) {
@@ -225,19 +247,19 @@ func (w *web) updateProtocolAPI(rw http.ResponseWriter, r *http.Request, id stri
 		writeError(rw, http.StatusForbidden, "forbidden")
 		return
 	}
-	var req struct {
-		Profile string                `json:"profile"`
-		Params  config.ProtocolParams `json:"params"`
-	}
-	if err := readJSON(r, &req); err != nil {
-		writeError(rw, http.StatusBadRequest, "invalid json")
-		return
-	}
-	if err := w.service.UpdateTunnelProtocol(id, req.Profile, req.Params); err != nil {
-		writeError(rw, http.StatusBadRequest, err.Error())
-		return
-	}
-	writeJSON(rw, http.StatusOK, map[string]any{"ok": true})
+	w.withIdempotency(rw, r, "update-protocol:"+id, func() (int, any) {
+		var req struct {
+			Profile string                `json:"profile"`
+			Params  config.ProtocolParams `json:"params"`
+		}
+		if err := readJSON(r, &req); err != nil {
+			return http.StatusBadRequest, errorPayload("invalid json")
+		}
+		if err := w.service.UpdateTunnelProtocol(id, req.Profile, req.Params); err != nil {
+			return http.StatusBadRequest, errorPayload(err.Error())
+		}
+		return http.StatusOK, map[string]any{"ok": true}
+	})
 }
 
 func (w *web) regenerateProtocolAPI(rw http.ResponseWriter, r *http.Request, id string) {
@@ -245,15 +267,16 @@ func (w *web) regenerateProtocolAPI(rw http.ResponseWriter, r *http.Request, id 
 		writeError(rw, http.StatusForbidden, "forbidden")
 		return
 	}
-	var req struct {
-		Profile string `json:"profile"`
-	}
-	_ = readJSON(r, &req)
-	if err := w.service.RegenerateTunnelProtocol(id, req.Profile); err != nil {
-		writeError(rw, http.StatusBadRequest, err.Error())
-		return
-	}
-	writeJSON(rw, http.StatusOK, map[string]any{"ok": true})
+	w.withIdempotency(rw, r, "regenerate-protocol:"+id, func() (int, any) {
+		var req struct {
+			Profile string `json:"profile"`
+		}
+		_ = readJSON(r, &req)
+		if err := w.service.RegenerateTunnelProtocol(id, req.Profile); err != nil {
+			return http.StatusBadRequest, errorPayload(err.Error())
+		}
+		return http.StatusOK, map[string]any{"ok": true}
+	})
 }
 
 func (w *web) clientsAPI(rw http.ResponseWriter, r *http.Request) {
@@ -261,20 +284,20 @@ func (w *web) clientsAPI(rw http.ResponseWriter, r *http.Request) {
 		writeError(rw, http.StatusForbidden, "forbidden")
 		return
 	}
-	var req struct {
-		TunnelID string `json:"tunnel_id"`
-		Name     string `json:"name"`
-	}
-	if err := readJSON(r, &req); err != nil {
-		writeError(rw, http.StatusBadRequest, "invalid json")
-		return
-	}
-	client, err := w.service.AddClientToTunnel(req.TunnelID, req.Name)
-	if err != nil {
-		writeError(rw, http.StatusBadRequest, err.Error())
-		return
-	}
-	writeJSON(rw, http.StatusCreated, map[string]any{"client": publicClient(client)})
+	w.withIdempotency(rw, r, "create-client", func() (int, any) {
+		var req struct {
+			TunnelID string `json:"tunnel_id"`
+			Name     string `json:"name"`
+		}
+		if err := readJSON(r, &req); err != nil {
+			return http.StatusBadRequest, errorPayload("invalid json")
+		}
+		client, err := w.service.AddClientToTunnel(req.TunnelID, req.Name)
+		if err != nil {
+			return http.StatusBadRequest, errorPayload(err.Error())
+		}
+		return http.StatusCreated, map[string]any{"client": publicClient(client)}
+	})
 }
 
 func (w *web) clientAPI(rw http.ResponseWriter, r *http.Request) {
@@ -291,6 +314,8 @@ func (w *web) clientAPI(rw http.ResponseWriter, r *http.Request) {
 		w.setClientEnabledAPI(rw, r, id, false)
 	case "delete":
 		w.deleteClientAPI(rw, r, id)
+	case "qr":
+		w.clientQRAPI(rw, r, id)
 	case "qr.png":
 		w.clientQRPNG(rw, r, id)
 	default:
@@ -303,11 +328,16 @@ func (w *web) setClientEnabledAPI(rw http.ResponseWriter, r *http.Request, id st
 		writeError(rw, http.StatusForbidden, "forbidden")
 		return
 	}
-	if err := w.service.SetClientEnabled(id, enabled); err != nil {
-		writeError(rw, http.StatusNotFound, err.Error())
-		return
+	action := "disable-client:"
+	if enabled {
+		action = "enable-client:"
 	}
-	writeJSON(rw, http.StatusOK, map[string]any{"ok": true})
+	w.withIdempotency(rw, r, action+id, func() (int, any) {
+		if err := w.service.SetClientEnabled(id, enabled); err != nil {
+			return http.StatusNotFound, errorPayload(err.Error())
+		}
+		return http.StatusOK, map[string]any{"ok": true}
+	})
 }
 
 func (w *web) deleteClientAPI(rw http.ResponseWriter, r *http.Request, id string) {
@@ -315,11 +345,12 @@ func (w *web) deleteClientAPI(rw http.ResponseWriter, r *http.Request, id string
 		writeError(rw, http.StatusForbidden, "forbidden")
 		return
 	}
-	if err := w.service.RemoveClient(id); err != nil {
-		writeError(rw, http.StatusNotFound, err.Error())
-		return
-	}
-	writeJSON(rw, http.StatusOK, map[string]any{"ok": true})
+	w.withIdempotency(rw, r, "delete-client:"+id, func() (int, any) {
+		if err := w.service.RemoveClient(id); err != nil {
+			return http.StatusNotFound, errorPayload(err.Error())
+		}
+		return http.StatusOK, map[string]any{"ok": true}
+	})
 }
 
 func (w *web) clientConfig(rw http.ResponseWriter, r *http.Request) {
@@ -339,18 +370,58 @@ func (w *web) clientQRPNG(rw http.ResponseWriter, r *http.Request, id string) {
 		writeError(rw, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	conf, err := w.service.ClientConfig(id)
+	payload, _, err := w.service.ClientAmneziaImportConfig(id)
 	if err != nil {
 		http.NotFound(rw, r)
 		return
 	}
-	png, err := qrcode.Encode(conf, qrcode.Medium, 320)
+	texts, err := render.AmneziaQRTexts(payload)
+	if err != nil || len(texts) == 0 {
+		writeError(rw, http.StatusInternalServerError, "qr failed")
+		return
+	}
+	png, err := qrcode.Encode(texts[0], qrcode.High, 512)
 	if err != nil {
 		writeError(rw, http.StatusInternalServerError, "qr failed")
 		return
 	}
 	rw.Header().Set("Content-Type", "image/png")
 	_, _ = rw.Write(png)
+}
+
+func (w *web) clientQRAPI(rw http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodGet {
+		writeError(rw, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	payload, client, err := w.service.ClientAmneziaImportConfig(id)
+	if err != nil {
+		http.NotFound(rw, r)
+		return
+	}
+	texts, err := render.AmneziaQRTexts(payload)
+	if err != nil {
+		writeError(rw, http.StatusInternalServerError, "qr failed")
+		return
+	}
+	chunks := make([]map[string]any, 0, len(texts))
+	for i, text := range texts {
+		png, err := qrcode.Encode(text, qrcode.High, 512)
+		if err != nil {
+			writeError(rw, http.StatusInternalServerError, "qr failed")
+			return
+		}
+		chunks = append(chunks, map[string]any{
+			"index": i + 1,
+			"total": len(texts),
+			"png":   base64.StdEncoding.EncodeToString(png),
+		})
+	}
+	writeJSON(rw, http.StatusOK, map[string]any{
+		"kind":   "amnezia",
+		"client": publicClient(client),
+		"chunks": chunks,
+	})
 }
 
 func (w *web) publicState(state config.State) map[string]any {
@@ -360,8 +431,9 @@ func (w *web) publicState(state config.State) map[string]any {
 		tunnels = append(tunnels, publicTunnel(tunnel, status))
 	}
 	return map[string]any{
-		"authenticated": true,
-		"server_host":   state.ServerHost,
+		"authenticated":       true,
+		"server_host":         state.ServerHost,
+		"published_udp_ports": w.cfg.PublishedUDPPorts,
 		"profiles": []map[string]any{
 			profileMeta("awg_legacy_1_0", "1.0", "Legacy", true),
 			profileMeta("awg_1_5", "1.5", "Modern", true),
@@ -398,8 +470,9 @@ func publicTunnel(tunnel config.Tunnel, status app.TunnelStatus) map[string]any 
 		"keepalive":   tunnel.Keepalive,
 		"mtu":         tunnel.MTU,
 		"profile":     tunnel.ProtocolProfileID,
+		"revision":    tunnel.ConfigRevision,
 		"params":      orderedParams(tunnel.ProtocolProfileID, tunnel.ProtocolParams),
-		"clients":     publicClients(tunnel.Clients),
+		"clients":     publicClients(tunnel),
 		"status": map[string]any{
 			"up":            status.Up,
 			"apply_enabled": status.ApplyEnabled,
@@ -410,23 +483,29 @@ func publicTunnel(tunnel config.Tunnel, status app.TunnelStatus) map[string]any 
 	}
 }
 
-func publicClients(clients []config.Client) []map[string]any {
-	out := make([]map[string]any, 0, len(clients))
-	for _, client := range clients {
-		out = append(out, publicClient(client))
+func publicClients(tunnel config.Tunnel) []map[string]any {
+	out := make([]map[string]any, 0, len(tunnel.Clients))
+	for _, client := range tunnel.Clients {
+		out = append(out, publicClientForTunnel(tunnel, client))
 	}
 	return out
 }
 
 func publicClient(client config.Client) map[string]any {
+	return publicClientForTunnel(config.Tunnel{}, client)
+}
+
+func publicClientForTunnel(tunnel config.Tunnel, client config.Client) map[string]any {
 	return map[string]any{
-		"id":         client.ID,
-		"tunnel_id":  client.TunnelID,
-		"name":       client.Name,
-		"enabled":    client.Enabled,
-		"address":    client.IPv4Address,
-		"created_at": client.CreatedAt,
-		"updated_at": client.UpdatedAt,
+		"id":               client.ID,
+		"tunnel_id":        client.TunnelID,
+		"name":             client.Name,
+		"enabled":          client.Enabled,
+		"address":          client.IPv4Address,
+		"revision":         client.ConfigRevision,
+		"needs_new_config": tunnel.ConfigRevision > 0 && client.ConfigRevision < tunnel.ConfigRevision,
+		"created_at":       client.CreatedAt,
+		"updated_at":       client.UpdatedAt,
 	}
 }
 
@@ -593,14 +672,75 @@ func readJSON(r *http.Request, dst any) error {
 	return json.NewDecoder(r.Body).Decode(dst)
 }
 
+func (w *web) withIdempotency(rw http.ResponseWriter, r *http.Request, action string, fn func() (int, any)) {
+	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if key == "" {
+		status, payload := fn()
+		writeJSON(rw, status, payload)
+		return
+	}
+	cacheKey := action + ":" + key
+	entry, owner := w.idempotencyEntry(cacheKey)
+	if !owner {
+		<-entry.ready
+		writeCachedJSON(rw, entry.status, entry.body)
+		return
+	}
+	status, payload := fn()
+	body, err := json.Marshal(payload)
+	if err != nil {
+		status = http.StatusInternalServerError
+		body, _ = json.Marshal(errorPayload("failed to encode response"))
+	}
+	w.finishIdempotency(cacheKey, status, body)
+	writeCachedJSON(rw, status, body)
+}
+
+func (w *web) idempotencyEntry(key string) (*idempotencyEntry, bool) {
+	now := time.Now()
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for k, entry := range w.idem {
+		if now.Sub(entry.createdAt) > idempotencyTTL {
+			delete(w.idem, k)
+		}
+	}
+	if entry, ok := w.idem[key]; ok {
+		return entry, false
+	}
+	entry := &idempotencyEntry{createdAt: now, ready: make(chan struct{})}
+	w.idem[key] = entry
+	return entry, true
+}
+
+func (w *web) finishIdempotency(key string, status int, body []byte) {
+	w.mu.Lock()
+	entry := w.idem[key]
+	entry.status = status
+	entry.body = body
+	close(entry.ready)
+	w.mu.Unlock()
+}
+
 func writeJSON(rw http.ResponseWriter, status int, payload any) {
 	rw.Header().Set("Content-Type", "application/json")
 	rw.WriteHeader(status)
 	_ = json.NewEncoder(rw).Encode(payload)
 }
 
+func writeCachedJSON(rw http.ResponseWriter, status int, body []byte) {
+	rw.Header().Set("Content-Type", "application/json")
+	rw.WriteHeader(status)
+	_, _ = rw.Write(body)
+	_, _ = rw.Write([]byte("\n"))
+}
+
 func writeError(rw http.ResponseWriter, status int, message string) {
-	writeJSON(rw, status, map[string]any{"error": message})
+	writeJSON(rw, status, errorPayload(message))
+}
+
+func errorPayload(message string) map[string]any {
+	return map[string]any{"error": message}
 }
 
 func configFilename(client config.Client) string {

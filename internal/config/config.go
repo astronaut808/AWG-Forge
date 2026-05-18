@@ -29,6 +29,7 @@ type Config struct {
 	MTU                 int
 	ProtocolProfile     string
 	ApplyConfig         bool
+	PublishedUDPPorts   string
 }
 
 func FromEnv() (Config, error) {
@@ -49,6 +50,7 @@ func FromEnv() (Config, error) {
 		MTU:                 getenvInt("MTU", 0),
 		ProtocolProfile:     getenv("PROTOCOL_PROFILE", "awg_legacy_1_0"),
 		ApplyConfig:         getenvBool("APPLY_CONFIG", false),
+		PublishedUDPPorts:   os.Getenv("PUBLISHED_UDP_PORTS"),
 	}
 	if cfg.WebUIHost == "0.0.0.0" || cfg.WebUIHost == "::" {
 		if cfg.Password == "" {

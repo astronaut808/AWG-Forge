@@ -142,3 +142,46 @@ func TestClientConfigDownloadUsesClientNameFilename(t *testing.T) {
 		t.Fatalf("Content-Disposition = %q, want %q", got, want)
 	}
 }
+
+func TestIdempotentCreateClientDoesNotCreateDuplicate(t *testing.T) {
+	cfg := config.Config{
+		ConfigDir:           t.TempDir(),
+		TunnelName:          "awg0",
+		ServerHost:          "vpn.example.com",
+		ListenPort:          51820,
+		WebUIHost:           "127.0.0.1",
+		WebUIPort:           51821,
+		ExternalInterface:   "eth0",
+		IPv4Subnet:          "10.8.0.0/24",
+		DNS:                 "1.1.1.1",
+		AllowedIPs:          "0.0.0.0/0",
+		PersistentKeepalive: 0,
+		MTU:                 0,
+		ProtocolProfile:     "awg_legacy_1_0",
+	}
+	svc := app.New(cfg)
+	state, err := svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := &web{service: svc, idem: map[string]*idempotencyEntry{}}
+
+	body := `{"tunnel_id":"` + state.Tunnels[0].ID + `","name":"phone"}`
+	for i := 0; i < 2; i++ {
+		r := httptest.NewRequest(http.MethodPost, "/api/clients", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Idempotency-Key", "same-create-key")
+		rr := httptest.NewRecorder()
+		w.clientsAPI(rr, r)
+		if rr.Code != http.StatusCreated {
+			t.Fatalf("request %d status = %d", i+1, rr.Code)
+		}
+	}
+	state, err = svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(state.Tunnels[0].Clients); got != 1 {
+		t.Fatalf("clients = %d, want 1", got)
+	}
+}

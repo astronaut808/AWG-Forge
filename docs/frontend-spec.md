@@ -19,7 +19,7 @@ awg-forge UI is a static HTML/CSS/JavaScript admin app backed by the Go JSON API
 - `internal/server/static/app.js`: UI state, modals, API calls.
 - `internal/server/server.go`: static file serving plus JSON API.
 
-The static UI talks to endpoints under `/api/*`. Client config download remains a protected file response at `/clients/config/<id>`, and QR PNGs are served at `/api/clients/<id>/qr.png`.
+The static UI talks to endpoints under `/api/*`. Client config download remains a protected file response at `/clients/config/<id>` and is the recommended import path. AmneziaVPN QR import uses `/api/clients/<id>/qr`, which returns one or more QR PNG payloads for sequential scanning; `/api/clients/<id>/qr.png` is kept as a first-image compatibility endpoint. QR import is experimental on iOS until the Amnezia native QR schema is verified against the real app.
 
 ## Information Architecture
 
@@ -126,6 +126,8 @@ Create client:
 - Requires client name.
 - Creates the client in that tunnel only.
 - Redirects to QR/download flow.
+- Shows `.conf` download as the recommended path.
+- Labels QR as experimental on iOS and tells users to use `.conf` if the iOS system VPN tunnel does not start.
 
 ## API Expectations
 
@@ -144,6 +146,7 @@ The frontend uses JSON APIs:
 - `POST /api/clients/<id>/enable`
 - `POST /api/clients/<id>/disable`
 - `DELETE /api/clients/<id>/delete`
+- `GET /api/clients/<id>/qr`
 - `GET /api/clients/<id>/qr.png`
 - `GET /clients/config/<id>`
 

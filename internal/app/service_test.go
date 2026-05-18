@@ -9,6 +9,7 @@ import (
 	"github.com/astronaut808/awg-forge/internal/app"
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/protocol"
+	"github.com/astronaut808/awg-forge/internal/storage"
 )
 
 func TestClientIPAllocationAndReuse(t *testing.T) {
@@ -113,6 +114,70 @@ func TestCreateTunnelRejectsPortAndSubnetCollisions(t *testing.T) {
 	}
 }
 
+func TestDeleteTunnelCreatesStateBackup(t *testing.T) {
+	cfg := testConfig(t)
+	svc := app.New(cfg)
+	if _, err := svc.CreateTunnel("awg_1_5", "awg15", "10.15.0.0/24", 51825); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DeleteTunnel("awg15"); err != nil {
+		t.Fatal(err)
+	}
+	matches, err := filepath.Glob(filepath.Join(cfg.ConfigDir, "backups", "state-*-delete-awg15.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("backups = %d, want 1", len(matches))
+	}
+	info, err := os.Stat(matches[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("backup permissions = %o, want 0600", info.Mode().Perm())
+	}
+}
+
+func TestTunnelSettingsChangeMarksClientConfigStaleUntilDownloaded(t *testing.T) {
+	svc := app.New(testConfig(t))
+	client, err := svc.AddClient("phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tunnel := state.Tunnels[0]
+	if client.ConfigRevision != tunnel.ConfigRevision {
+		t.Fatalf("client revision = %d, tunnel revision = %d", client.ConfigRevision, tunnel.ConfigRevision)
+	}
+	if _, err := svc.UpdateTunnelSettings(tunnel.ID, tunnel.Name, tunnel.IPv4Subnet, tunnel.DNS, tunnel.AllowedIPs, tunnel.Keepalive, 1280, tunnel.ListenPort, tunnel.Enabled); err != nil {
+		t.Fatal(err)
+	}
+	state, err = svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Tunnels[0].ConfigRevision <= tunnel.ConfigRevision {
+		t.Fatal("expected tunnel config revision to increase")
+	}
+	if state.Tunnels[0].Clients[0].ConfigRevision >= state.Tunnels[0].ConfigRevision {
+		t.Fatal("expected client config to be stale")
+	}
+	if _, _, err := svc.ClientConfigForDownload(client.ID); err != nil {
+		t.Fatal(err)
+	}
+	state, err = svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Tunnels[0].Clients[0].ConfigRevision != state.Tunnels[0].ConfigRevision {
+		t.Fatal("expected config download to mark client fresh")
+	}
+}
+
 func TestSessionSecretIsGeneratedAndPersisted(t *testing.T) {
 	cfg := testConfig(t)
 	svc := app.New(cfg)
@@ -160,15 +225,51 @@ func TestProtocolParamsValidation(t *testing.T) {
 	if err := p.Validate(params); err != nil {
 		t.Fatal(err)
 	}
-	assertRange(t, params["Jc"], 4, 12)
+	assertRange(t, params["Jc"], 4, 10)
 	assertRange(t, params["Jmin"], 64, 256)
 	assertRange(t, params["Jmax"], 768, 1024)
-	assertRange(t, params["S1"], 15, 150)
-	assertRange(t, params["S2"], 15, 150)
+	assertRange(t, params["S1"], 15, 64)
+	assertRange(t, params["S2"], 15, 64)
 
-	params["Jc"] = "0"
+	params["Jc"] = "11"
 	if err := p.Validate(params); err == nil {
 		t.Fatal("expected invalid Jc")
+	}
+}
+
+func TestInitRepairsOutOfRangePersistedProtocolParams(t *testing.T) {
+	cfg := testConfig(t)
+	svc := app.New(cfg)
+	state, err := svc.Init()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.Tunnels[0].ProtocolParams["Jc"] = "11"
+	state.Tunnels[0].ProtocolParams["S1"] = "142"
+	oldRevision := state.Tunnels[0].ConfigRevision
+	if err := storage.New(cfg.ConfigDir).Save(state); err != nil {
+		t.Fatal(err)
+	}
+
+	repaired, err := svc.Init()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := repaired.Tunnels[0].ProtocolParams["Jc"]; got == "11" {
+		t.Fatalf("Jc was not repaired: %s", got)
+	}
+	if got := repaired.Tunnels[0].ProtocolParams["S1"]; got == "142" {
+		t.Fatalf("S1 was not repaired: %s", got)
+	}
+	if repaired.Tunnels[0].ConfigRevision <= oldRevision {
+		t.Fatal("expected config revision to increase after protocol repair")
+	}
+	matches, err := filepath.Glob(filepath.Join(cfg.ConfigDir, "backups", "state-*-repair-protocol-params.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("repair backups = %d, want 1", len(matches))
 	}
 }
 
@@ -178,8 +279,8 @@ func TestProtocolParamsRejectWeakOrInvalidLegacyCombinations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	params["S1"] = "15"
-	params["S2"] = "71"
+	params["S1"] = "0"
+	params["S2"] = "56"
 	if err := p.Validate(params); err == nil {
 		t.Fatal("expected S1+56 collision error")
 	}
