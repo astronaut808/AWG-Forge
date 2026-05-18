@@ -912,8 +912,7 @@ func (s *Service) TunnelHealthByID(tunnelID string, sampleSeconds int) (TunnelHe
 			item.Status = "client sends traffic, server sends 0 bytes back"
 			item.Warning = "possible NAT, forwarding, route, DNS, or upstream firewall issue"
 		case item.RxDeltaBytes == 0 && item.TxDeltaBytes == 0:
-			item.Status = "handshake only"
-			item.Warning = "handshake exists, but traffic did not change during sample window"
+			item.Status = "idle, handshake ok"
 		case item.RxDeltaBytes == 0 && item.TxDeltaBytes > 0:
 			item.Status = "outbound only"
 			item.Warning = "server sent traffic, but client traffic did not increase during sample window"
