@@ -437,7 +437,7 @@ func (w *web) publicState(state config.State) map[string]any {
 		"profiles": []map[string]any{
 			profileMeta("awg_legacy_1_0", "1.0", "Legacy", true),
 			profileMeta("awg_1_5", "1.5", "Modern", true),
-			profileMeta("awg_2_0", "2.0", "Planned", false),
+			profileMeta("awg_2_0", "2.0", "Modern", true),
 		},
 		"tunnels": tunnels,
 	}
@@ -521,8 +521,10 @@ func orderedParams(profileID string, params config.ProtocolParams) []map[string]
 func protocolParamKeys(profileID string) []string {
 	keys := []string{"Jc", "Jmin", "Jmax", "S1", "S2", "H1", "H2", "H3", "H4"}
 	switch profileID {
-	case "awg_1_5", "awg_2_0":
+	case "awg_1_5":
 		keys = append(keys, "I1", "I2", "I3", "I4", "I5")
+	case "awg_2_0":
+		keys = append(keys, "S3", "S4", "I1", "I2", "I3", "I4", "I5")
 	}
 	sort.Strings(keys)
 	return keys

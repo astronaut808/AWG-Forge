@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- AWG 2.0 profile support with `S3/S4`, ranged `H1-H4`, `I1-I5`, validation, and golden tests.
+- AWG 2.0 tunnel creation through the existing multi-profile UI.
+- AWG 2.0 `.conf` import validated on desktop and iOS clients with compatible AmneziaVPN builds.
+
+### Notes
+
+- `.conf` remains the recommended import path.
+- QR import remains experimental until native Amnezia QR schema is verified across platforms.
+
 ## v0.1.0 - 2026-05-18
 
 Initial public release of awg-forge.

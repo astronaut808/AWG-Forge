@@ -87,7 +87,7 @@ function renderApp() {
       <div class="section-head">
         <div>
           <h2>${escapeHTML(profileTitles[activeProfile] || activeProfile)}</h2>
-          <p class="muted">${active.available ? "Create and manage independent tunnels for this profile." : "This profile is reserved for the next protocol implementation."}</p>
+          <p class="muted">${profileHelp(active)}</p>
         </div>
         <button class="primary" data-action="create-tunnel" ${active.available ? "" : "disabled"}>Create tunnel</button>
       </div>
@@ -99,12 +99,18 @@ function renderApp() {
 
 function renderTunnels(profile, tunnels) {
   if (!profile.available) {
-    return `<div class="empty"><strong>2.0 is not enabled yet</strong><p class="muted">We will enable creation after exact upstream syntax, ranges, and golden tests are implemented.</p></div>`;
+    return `<div class="empty"><strong>This profile is not enabled yet</strong><p class="muted">We will enable creation after exact upstream syntax, ranges, and golden tests are implemented.</p></div>`;
   }
   if (tunnels.length === 0) {
     return `<div class="empty"><strong>No tunnels for ${escapeHTML(profile.tab)} yet</strong><p class="muted">Create a tunnel first, then add clients inside it.</p><button class="primary" data-action="create-tunnel">Create tunnel</button></div>`;
   }
   return `<div class="grid">${tunnels.map(renderTunnelCard).join("")}</div>`;
+}
+
+function profileHelp(profile) {
+  if (!profile.available) return "This profile is reserved for the next protocol implementation.";
+  if (profile.id === "awg_2_0") return "Create AWG 2.0 tunnels. Use .conf import for production clients; QR remains experimental.";
+  return "Create and manage independent tunnels for this profile.";
 }
 
 function renderTunnelCard(tunnel) {
@@ -420,7 +426,7 @@ async function openQR(clientID) {
   const client = payload.client || {};
   showModal(`
     <div class="modal-head">
-      <div><h2>AmneziaVPN QR</h2><p class="muted">${escapeHTML(client.name || "Client")} · QR import is experimental on iOS. Use the config file if the VPN toggle does not start the system tunnel.</p></div>
+      <div><h2>AmneziaVPN QR</h2><p class="muted">${escapeHTML(client.name || "Client")} · QR import is experimental. Use the config file if the VPN tunnel does not start.</p></div>
       <button type="button" data-close>Close</button>
     </div>
     <p class="notice">Recommended path: download the .conf file and import it in AmneziaVPN. QR remains available for testing and clients where QR import works correctly.</p>

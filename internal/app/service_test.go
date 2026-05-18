@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/astronaut808/awg-forge/internal/app"
@@ -98,6 +99,31 @@ func TestCreateParallelTunnelAndClient(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(cfg.ConfigDir, "tunnels", "awg15", "server.conf")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCreateAWG20TunnelAndClient(t *testing.T) {
+	cfg := testConfig(t)
+	svc := app.New(cfg)
+	tunnel, err := svc.CreateTunnel("awg_2_0", "awg20", "10.20.0.0/24", 51830)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := svc.AddClientToTunnel(tunnel.ID, "phone20")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.IPv4Address != "10.20.0.2" {
+		t.Fatalf("client IP = %s, want 10.20.0.2", client.IPv4Address)
+	}
+	conf, err := svc.ClientConfig(client.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"S3 = ", "S4 = ", "H1 = ", "I1 = "} {
+		if !strings.Contains(conf, want) {
+			t.Fatalf("AWG 2.0 client config missing %q:\n%s", want, conf)
+		}
 	}
 }
 

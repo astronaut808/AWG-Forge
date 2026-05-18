@@ -19,7 +19,7 @@ awg-forge UI is a static HTML/CSS/JavaScript admin app backed by the Go JSON API
 - `internal/server/static/app.js`: UI state, modals, API calls.
 - `internal/server/server.go`: static file serving plus JSON API.
 
-The static UI talks to endpoints under `/api/*`. Client config download remains a protected file response at `/clients/config/<id>` and is the recommended import path. AmneziaVPN QR import uses `/api/clients/<id>/qr`, which returns one or more QR PNG payloads for sequential scanning; `/api/clients/<id>/qr.png` is kept as a first-image compatibility endpoint. QR import is experimental on iOS until the Amnezia native QR schema is verified against the real app.
+The static UI talks to endpoints under `/api/*`. Client config download remains a protected file response at `/clients/config/<id>` and is the recommended import path. AmneziaVPN QR import uses `/api/clients/<id>/qr`, which returns one or more QR PNG payloads for sequential scanning; `/api/clients/<id>/qr.png` is kept as a first-image compatibility endpoint. QR import remains experimental until the Amnezia native QR schema is verified across platforms.
 
 ## Information Architecture
 
@@ -41,7 +41,7 @@ Tab behavior:
 
 - `1.0`: Legacy / 1.0 tunnels.
 - `1.5`: AWG 1.5 tunnels.
-- `2.0`: visible but disabled/planned until backend profile syntax is verified.
+- `2.0`: visible and enabled; `.conf` import is validated on desktop and iOS with compatible AmneziaVPN builds.
 
 Tunnel card content:
 
@@ -105,7 +105,7 @@ AWG 1.5 fields:
 - Legacy fields
 - `I1-I5`
 
-AWG 2.0 fields are not enabled until the backend profile is implemented and tested.
+AWG 2.0 fields include `S3`, `S4`, `H1-H4` ranges, and `I1-I5`.
 
 The protocol modal must not show `I1-I5` for Legacy / 1.0.
 
