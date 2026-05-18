@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## v0.2.0 - 2026-05-18
+
+AWG 2.0 release.
 
 ### Added
 
