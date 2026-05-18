@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/astronaut808/awg-forge/internal/config"
 )
@@ -52,6 +54,43 @@ func (s Store) Save(state config.State) error {
 		return err
 	}
 	return os.WriteFile(s.StatePath(), b, 0600)
+}
+
+func (s Store) BackupState(state config.State, reason string) (string, error) {
+	dir := filepath.Join(s.dir, "backups")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return "", err
+	}
+	if err := os.Chmod(dir, 0700); err != nil {
+		return "", err
+	}
+	b, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	reason = sanitizeBackupReason(reason)
+	name := "state-" + time.Now().UTC().Format("20060102-150405") + "-" + reason + ".json"
+	path := filepath.Join(dir, name)
+	return path, os.WriteFile(path, b, 0600)
+}
+
+func sanitizeBackupReason(reason string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(reason) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '-' || r == '_':
+			b.WriteRune(r)
+		case r == ' ':
+			b.WriteByte('-')
+		}
+	}
+	out := strings.Trim(b.String(), "-_")
+	if out == "" {
+		return "backup"
+	}
+	return out
 }
 
 func (s Store) WriteRenderedTunnel(tunnel config.Tunnel, serverConf string, clients map[string]string) error {

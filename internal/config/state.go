@@ -30,6 +30,7 @@ type Tunnel struct {
 	ServerPublicKey   string         `json:"server_public_key"`
 	ProtocolProfileID string         `json:"protocol_profile_id"`
 	ProtocolParams    ProtocolParams `json:"protocol_params"`
+	ConfigRevision    int            `json:"config_revision"`
 	Clients           []Client       `json:"clients"`
 	LastRenderAt      time.Time      `json:"last_render_at,omitempty"`
 	LastApplyAt       time.Time      `json:"last_apply_at,omitempty"`
@@ -39,14 +40,15 @@ type Tunnel struct {
 }
 
 type Client struct {
-	ID           string    `json:"id"`
-	TunnelID     string    `json:"tunnel_id"`
-	Name         string    `json:"name"`
-	Enabled      bool      `json:"enabled"`
-	IPv4Address  string    `json:"ipv4_address"`
-	PrivateKey   string    `json:"private_key"`
-	PublicKey    string    `json:"public_key"`
-	PresharedKey string    `json:"preshared_key"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID             string    `json:"id"`
+	TunnelID       string    `json:"tunnel_id"`
+	Name           string    `json:"name"`
+	Enabled        bool      `json:"enabled"`
+	IPv4Address    string    `json:"ipv4_address"`
+	PrivateKey     string    `json:"private_key"`
+	PublicKey      string    `json:"public_key"`
+	PresharedKey   string    `json:"preshared_key"`
+	ConfigRevision int       `json:"config_revision"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }

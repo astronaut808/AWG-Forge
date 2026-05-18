@@ -1,6 +1,12 @@
 package render_test
 
 import (
+	"bytes"
+	"compress/zlib"
+	"encoding/base64"
+	"encoding/binary"
+	"encoding/json"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -105,6 +111,77 @@ func TestAutoMTUIsOmitted(t *testing.T) {
 	if strings.Contains(clientConfig, "\nMTU = ") {
 		t.Fatalf("client config should omit auto MTU:\n%s", clientConfig)
 	}
+}
+
+func TestAmneziaImportConfigShape(t *testing.T) {
+	state := testState(true)
+	payload, err := render.AmneziaImportConfig(state, state.Tunnels[0], state.Tunnels[0].Clients[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded["defaultContainer"] != "amnezia-awg" {
+		t.Fatalf("unexpected default container: %#v", decoded["defaultContainer"])
+	}
+	containers, ok := decoded["containers"].([]any)
+	if !ok || len(containers) != 1 {
+		t.Fatalf("unexpected containers: %#v", decoded["containers"])
+	}
+	container := containers[0].(map[string]any)
+	if container["container"] != "amnezia-awg" {
+		t.Fatalf("unexpected container: %#v", container["container"])
+	}
+	awg := container["awg"].(map[string]any)
+	lastConfig := awg["last_config"].(string)
+	if !strings.Contains(lastConfig, `"client_priv_key":"client-private-key"`) {
+		t.Fatalf("last_config missing client private key fields: %s", lastConfig)
+	}
+	if !strings.Contains(lastConfig, `[Interface]`) {
+		t.Fatalf("last_config missing raw config: %s", lastConfig)
+	}
+}
+
+func TestAmneziaQRTextIsBase64URLQtCompressedPayload(t *testing.T) {
+	payload := []byte(`{"hello":"amnezia"}`)
+	texts, err := render.AmneziaQRTexts(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(texts) != 1 {
+		t.Fatalf("expected single small QR payload, got %d", len(texts))
+	}
+	compressed, err := base64.RawURLEncoding.DecodeString(texts[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := qUncompress(t, compressed)
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("payload mismatch: %q", got)
+	}
+}
+
+func qUncompress(t *testing.T, data []byte) []byte {
+	t.Helper()
+	if len(data) < 4 {
+		t.Fatalf("compressed payload too short: %d", len(data))
+	}
+	wantLen := binary.BigEndian.Uint32(data[:4])
+	zr, err := zlib.NewReader(bytes.NewReader(data[4:]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zr.Close()
+	got, err := io.ReadAll(zr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uint32(len(got)) != wantLen {
+		t.Fatalf("unexpected qCompress length: got %d want %d", len(got), wantLen)
+	}
+	return got
 }
 
 func readGolden(t *testing.T, path string) string {

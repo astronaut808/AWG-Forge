@@ -5,6 +5,7 @@ services:
     env_file: .env
     environment:
       WEBUI_HOST: 0.0.0.0
+      PUBLISHED_UDP_PORTS: 51820-51840
     ports:
       - "127.0.0.1:51821:51821/tcp"
       - "51820-51840:51820-51840/udp"
