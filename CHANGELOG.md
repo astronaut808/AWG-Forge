@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.1 - 2026-05-18
+
+### Added
+
+- Doctor runtime diagnostics for tunnel links, `awg show` port matching, runtime peers, stale client configs, handshakes, and transfer counters.
+
 ## v0.2.0 - 2026-05-18
 
 AWG 2.0 release.
@@ -9,7 +15,6 @@ AWG 2.0 release.
 - AWG 2.0 profile support with `S3/S4`, ranged `H1-H4`, `I1-I5`, validation, and golden tests.
 - AWG 2.0 tunnel creation through the existing multi-profile UI.
 - AWG 2.0 `.conf` import validated on desktop and iOS clients with compatible AmneziaVPN builds.
-- Doctor runtime diagnostics for tunnel links, `awg show` port matching, runtime peers, stale client configs, handshakes, and transfer counters.
 
 ### Notes
 
