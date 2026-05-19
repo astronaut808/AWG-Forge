@@ -4,6 +4,7 @@ const toast = document.querySelector("#toast");
 
 let state = null;
 let activeProfile = localStorage.getItem("awg-forge.profile") || "awg_legacy_1_0";
+let activeTheme = initialTheme();
 
 const profileTitles = {
   awg_legacy_1_0: "AmneziaWG Legacy / 1.0",
@@ -11,8 +12,26 @@ const profileTitles = {
   awg_2_0: "AmneziaWG 2.0",
 };
 
+applyTheme(activeTheme);
 initParallax();
 init();
+
+function initialTheme() {
+  const stored = localStorage.getItem("awg-forge.theme");
+  if (stored === "light" || stored === "dark") return stored;
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function applyTheme(theme) {
+  activeTheme = theme === "dark" ? "dark" : "light";
+  document.documentElement.dataset.theme = activeTheme;
+}
+
+function toggleTheme() {
+  applyTheme(activeTheme === "dark" ? "light" : "dark");
+  localStorage.setItem("awg-forge.theme", activeTheme);
+  renderApp();
+}
 
 function initParallax() {
   const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -113,6 +132,7 @@ function renderApp() {
         </div>
       </div>
       <div class="toolbar">
+        <button class="ghost theme-toggle" data-action="theme" aria-label="${themeToggleLabel()}" title="${themeToggleLabel()}">${themeIcon()}</button>
         <button class="ghost" data-action="doctor">Doctor</button>
         <button class="ghost" data-action="refresh">Refresh</button>
         <button class="ghost" data-action="logout">Log out</button>
@@ -243,6 +263,7 @@ function bindAppEvents(active) {
       const action = node.dataset.action;
       const tunnel = findTunnel(node.dataset.tunnel);
       if (action === "refresh") await loadState();
+      if (action === "theme") toggleTheme();
       if (action === "doctor") await openDoctor();
       if (action === "logout") await logout();
       if (action === "create-tunnel") openCreateTunnel(active);
@@ -580,6 +601,26 @@ function brandIcon() {
     <svg viewBox="0 0 32 32" focusable="false" aria-hidden="true">
       <path d="M16 3.5 25 7v7.2c0 5.9-3.6 11.2-9 14.1-5.4-2.9-9-8.2-9-14.1V7l9-3.5Z"></path>
       <path d="M11 17.2h10M11 12.6h10M13.7 21.8h4.6"></path>
+    </svg>
+  `;
+}
+
+function themeToggleLabel() {
+  return activeTheme === "dark" ? "Switch to light theme" : "Switch to dark theme";
+}
+
+function themeIcon() {
+  if (activeTheme === "dark") {
+    return `
+      <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+        <circle cx="12" cy="12" r="4"></circle>
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path>
+      </svg>
+    `;
+  }
+  return `
+    <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+      <path d="M21 12.8A8.5 8.5 0 1 1 11.2 3 6.5 6.5 0 0 0 21 12.8Z"></path>
     </svg>
   `;
 }

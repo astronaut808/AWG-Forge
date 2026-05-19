@@ -8,6 +8,7 @@ Web UI refresh.
 
 - New polished Web UI visual system with glass-style topbar, profile tabs, panels, dialogs, and toast surfaces.
 - Inline awg-forge shield mark in the login and dashboard headers.
+- Topbar theme toggle with sun/moon icons and persisted light/dark theme selection.
 - Subtle pointer parallax for background lighting, grid layers, and major UI surfaces on desktop pointer devices.
 - Light/dark theme tokens with semantic colors, focus rings, and reduced-transparency fallbacks.
 - `prefers-reduced-motion` support that disables decorative motion and interaction scaling.
