@@ -127,6 +127,13 @@ textarea { font: inherit; }
   backdrop-filter: var(--glass);
 }
 
+.topbar,
+.tabs,
+.panel {
+  transform: translate3d(var(--parallax-surface-x, 0), var(--parallax-surface-y, 0), 0);
+  will-change: transform;
+}
+
 .topbar {
   z-index: 10;
   display: flex;
@@ -342,6 +349,8 @@ textarea:focus-visible {
   padding: 15px;
   background: color-mix(in srgb, var(--surface-solid), transparent 6%);
   box-shadow: var(--shadow-soft);
+  transform: translate3d(var(--parallax-card-x, 0), var(--parallax-card-y, 0), 0);
+  will-change: transform;
 }
 
 .card-head {
@@ -674,7 +683,11 @@ textarea {
   .button:active { transform: none; }
 
   body::before,
-  body::after {
+  body::after,
+  .topbar,
+  .tabs,
+  .panel,
+  .card {
     transform: none;
     will-change: auto;
   }

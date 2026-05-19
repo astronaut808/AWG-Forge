@@ -29,6 +29,10 @@ function initParallax() {
     document.documentElement.style.setProperty("--parallax-glow-y", `${(-nextY * 10).toFixed(2)}px`);
     document.documentElement.style.setProperty("--parallax-grid-x", `${(nextX * 6).toFixed(2)}px`);
     document.documentElement.style.setProperty("--parallax-grid-y", `${(nextY * 4).toFixed(2)}px`);
+    document.documentElement.style.setProperty("--parallax-surface-x", `${(nextX * 2.4).toFixed(2)}px`);
+    document.documentElement.style.setProperty("--parallax-surface-y", `${(nextY * 1.8).toFixed(2)}px`);
+    document.documentElement.style.setProperty("--parallax-card-x", `${(-nextX * 1.4).toFixed(2)}px`);
+    document.documentElement.style.setProperty("--parallax-card-y", `${(-nextY * 1.1).toFixed(2)}px`);
   };
 
   window.addEventListener("pointermove", (event) => {

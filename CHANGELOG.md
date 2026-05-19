@@ -8,7 +8,7 @@ Web UI refresh.
 
 - New polished Web UI visual system with glass-style topbar, profile tabs, panels, dialogs, and toast surfaces.
 - Inline awg-forge shield mark in the login and dashboard headers.
-- Subtle pointer parallax for background lighting and grid layers on desktop pointer devices.
+- Subtle pointer parallax for background lighting, grid layers, and major UI surfaces on desktop pointer devices.
 - Light/dark theme tokens with semantic colors, focus rings, and reduced-transparency fallbacks.
 - `prefers-reduced-motion` support that disables decorative motion and interaction scaling.
 - Clearer status indicators for tunnel state, client enabled state, stale configs, and health values.
