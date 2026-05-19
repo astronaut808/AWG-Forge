@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.3.0 - 2026-05-19
+
+Web UI refresh.
+
+### Added
+
+- New polished Web UI visual system with glass-style topbar, profile tabs, panels, dialogs, and toast surfaces.
+- Inline awg-forge shield mark in the login and dashboard headers.
+- Topbar theme toggle with sun/moon icons and persisted light/dark theme selection.
+- Subtle pointer parallax for background lighting, grid layers, and major UI surfaces on desktop pointer devices.
+- Light/dark theme tokens with semantic colors, focus rings, and reduced-transparency fallbacks.
+- `prefers-reduced-motion` support that disables decorative motion and interaction scaling.
+- Clearer status indicators for tunnel state, client enabled state, stale configs, and health values.
+
+### Changed
+
+- Improved dashboard spacing and layout rhythm so topbar, profile tabs, and content panels no longer overlap.
+- Reworked responsive layout for mobile screens, including stacked toolbar actions, forms, tunnel facts, and client rows.
+- Limited tunnel cards to two columns on wide screens and one column on narrower screens for better readability.
+- Simplified empty tunnel states to avoid looking like drop zones and kept a single `Create tunnel` action per profile.
+- Improved modal headers and close controls while preserving existing API behavior and form flows.
+- Rendered endpoint, subnet, DNS, MTU, interface, and client address values with monospace styling for easier scanning.
+- Improved login layout, tunnel cards, client list headers, QR panels, doctor output, and health panels.
+
+### Notes
+
+- No backend routes, API payloads, storage format, or protocol rendering behavior changed in this release.
+- The frontend remains plain embedded HTML/CSS/JavaScript with no Node, npm, React, Vue, Tailwind, or build pipeline.
+
 ## v0.2.2 - 2026-05-19
 
 Firewall reconciliation and client health diagnostics.

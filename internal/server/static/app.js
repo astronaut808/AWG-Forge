@@ -4,6 +4,7 @@ const toast = document.querySelector("#toast");
 
 let state = null;
 let activeProfile = localStorage.getItem("awg-forge.profile") || "awg_legacy_1_0";
+let activeTheme = initialTheme();
 
 const profileTitles = {
   awg_legacy_1_0: "AmneziaWG Legacy / 1.0",
@@ -11,7 +12,60 @@ const profileTitles = {
   awg_2_0: "AmneziaWG 2.0",
 };
 
+applyTheme(activeTheme);
+initParallax();
 init();
+
+function initialTheme() {
+  const stored = localStorage.getItem("awg-forge.theme");
+  if (stored === "light" || stored === "dark") return stored;
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function applyTheme(theme) {
+  activeTheme = theme === "dark" ? "dark" : "light";
+  document.documentElement.dataset.theme = activeTheme;
+}
+
+function toggleTheme() {
+  applyTheme(activeTheme === "dark" ? "light" : "dark");
+  localStorage.setItem("awg-forge.theme", activeTheme);
+  renderApp();
+}
+
+function initParallax() {
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  const finePointer = window.matchMedia("(pointer: fine)");
+  if (reduceMotion.matches || !finePointer.matches) return;
+
+  let frame = 0;
+  let nextX = 0;
+  let nextY = 0;
+
+  const apply = () => {
+    frame = 0;
+    document.documentElement.style.setProperty("--parallax-glow-x", `${(-nextX * 14).toFixed(2)}px`);
+    document.documentElement.style.setProperty("--parallax-glow-y", `${(-nextY * 10).toFixed(2)}px`);
+    document.documentElement.style.setProperty("--parallax-grid-x", `${(nextX * 6).toFixed(2)}px`);
+    document.documentElement.style.setProperty("--parallax-grid-y", `${(nextY * 4).toFixed(2)}px`);
+    document.documentElement.style.setProperty("--parallax-surface-x", `${(nextX * 2.4).toFixed(2)}px`);
+    document.documentElement.style.setProperty("--parallax-surface-y", `${(nextY * 1.8).toFixed(2)}px`);
+    document.documentElement.style.setProperty("--parallax-card-x", `${(-nextX * 1.4).toFixed(2)}px`);
+    document.documentElement.style.setProperty("--parallax-card-y", `${(-nextY * 1.1).toFixed(2)}px`);
+  };
+
+  window.addEventListener("pointermove", (event) => {
+    nextX = event.clientX / window.innerWidth - 0.5;
+    nextY = event.clientY / window.innerHeight - 0.5;
+    if (!frame) frame = requestAnimationFrame(apply);
+  }, { passive: true });
+
+  window.addEventListener("pointerleave", () => {
+    nextX = 0;
+    nextY = 0;
+    if (!frame) frame = requestAnimationFrame(apply);
+  }, { passive: true });
+}
 
 async function init() {
   await loadState();
@@ -33,20 +87,25 @@ async function loadState() {
 
 function renderLogin() {
   app.innerHTML = `
-    <section class="panel login">
+    <section class="login-shell">
+      <div class="panel login">
       <div class="brand">
-        <h1>awg-forge</h1>
-        <p>Secure admin access</p>
+        <span class="brand-mark" aria-hidden="true">${brandIcon()}</span>
+        <div>
+          <h1>awg-forge</h1>
+          <p>Secure admin access</p>
+        </div>
       </div>
-      <form id="login-form" class="form-grid" style="margin-top:18px">
+      <form id="login-form" class="form-grid login-form">
         <div>
           <label for="password">Password</label>
           <input id="password" name="password" type="password" autocomplete="current-password" autofocus>
         </div>
         <div class="form-actions">
-          <button class="primary" type="submit">Log in</button>
+          <button class="primary wide" type="submit">Log in</button>
         </div>
       </form>
+      </div>
     </section>
   `;
   document.querySelector("#login-form").addEventListener("submit", async (event) => {
@@ -66,10 +125,14 @@ function renderApp() {
   app.innerHTML = `
     <header class="topbar">
       <div class="brand">
-        <h1>awg-forge</h1>
-        <p>${escapeHTML(state.server_host)} · ${state.tunnels.length} tunnel(s)</p>
+        <span class="brand-mark" aria-hidden="true">${brandIcon()}</span>
+        <div>
+          <h1>awg-forge</h1>
+          <p><span class="mono">${escapeHTML(state.server_host)}</span> · ${state.tunnels.length} tunnel(s)</p>
+        </div>
       </div>
       <div class="toolbar">
+        <button class="ghost theme-toggle" data-action="theme" aria-label="${themeToggleLabel()}" title="${themeToggleLabel()}">${themeIcon()}</button>
         <button class="ghost" data-action="doctor">Doctor</button>
         <button class="ghost" data-action="refresh">Refresh</button>
         <button class="ghost" data-action="logout">Log out</button>
@@ -99,10 +162,10 @@ function renderApp() {
 
 function renderTunnels(profile, tunnels) {
   if (!profile.available) {
-    return `<div class="empty"><strong>This profile is not enabled yet</strong><p class="muted">We will enable creation after exact upstream syntax, ranges, and golden tests are implemented.</p></div>`;
+    return `<div class="empty"><span class="empty-icon">!</span><strong>This profile is not enabled yet</strong><p class="muted">Creation is disabled until syntax, ranges, and golden tests are ready.</p></div>`;
   }
   if (tunnels.length === 0) {
-    return `<div class="empty"><strong>No tunnels for ${escapeHTML(profile.tab)} yet</strong><p class="muted">Create a tunnel first, then add clients inside it.</p><button class="primary" data-action="create-tunnel">Create tunnel</button></div>`;
+    return `<div class="empty"><span class="empty-icon">+</span><strong>No tunnels for ${escapeHTML(profile.tab)} yet</strong><p class="muted">Create a tunnel first, then add clients inside it.</p></div>`;
   }
   return `<div class="grid">${tunnels.map(renderTunnelCard).join("")}</div>`;
 }
@@ -121,18 +184,18 @@ function renderTunnelCard(tunnel) {
       <div class="card-head">
         <div>
           <h3>${escapeHTML(tunnel.name)}</h3>
-          <p class="muted">${escapeHTML(tunnel.interface)} · ${escapeHTML(tunnel.profile)}</p>
+          <p class="muted"><span class="mono">${escapeHTML(tunnel.interface)}</span> · ${escapeHTML(profileTitles[tunnel.profile] || tunnel.profile)}</p>
         </div>
         <span class="badge ${up ? "ok" : "bad"}">${up ? "up" : "down"}</span>
       </div>
       <div class="facts">
-        <div class="fact"><span>Endpoint</span><strong>${escapeHTML(state.server_host)}:${tunnel.listen_port}</strong></div>
-        <div class="fact"><span>Subnet</span><strong>${escapeHTML(tunnel.subnet)}</strong></div>
-        <div class="fact"><span>DNS</span><strong>${escapeHTML(tunnel.dns)}</strong></div>
-        <div class="fact"><span>MTU</span><strong>${formatMTU(tunnel.mtu)}</strong></div>
+        <div class="fact"><span>Endpoint</span><strong class="mono">${escapeHTML(state.server_host)}:${tunnel.listen_port}</strong></div>
+        <div class="fact"><span>Subnet</span><strong class="mono">${escapeHTML(tunnel.subnet)}</strong></div>
+        <div class="fact"><span>DNS</span><strong class="mono">${escapeHTML(tunnel.dns)}</strong></div>
+        <div class="fact"><span>MTU</span><strong class="mono">${formatMTU(tunnel.mtu)}</strong></div>
         <div class="fact"><span>Clients</span><strong>${clients.filter((client) => client.enabled).length}/${clients.length}</strong></div>
       </div>
-      <div class="actions">
+      <div class="actions card-actions">
         <button class="primary" data-action="create-client" data-tunnel="${tunnel.id}">Create client</button>
         <button data-action="settings" data-tunnel="${tunnel.id}">Settings</button>
         <button data-action="protocol" data-tunnel="${tunnel.id}">Protocol</button>
@@ -141,7 +204,11 @@ function renderTunnelCard(tunnel) {
         <button class="danger" data-action="delete-tunnel" data-tunnel="${tunnel.id}">Delete</button>
       </div>
       <div class="client-list">
-        ${clients.length ? clients.map((client) => renderClientRow(tunnel, client)).join("") : `<p class="muted">No clients yet.</p>`}
+        <div class="client-list-head">
+          <strong>Clients</strong>
+          <span class="muted">${clients.length ? `${clients.length} total` : "No clients yet"}</span>
+        </div>
+        ${clients.length ? clients.map((client) => renderClientRow(tunnel, client)).join("") : `<div class="empty-inline">Create the first client for this tunnel.</div>`}
       </div>
       ${portWarning(tunnel)}
       ${tunnel.status?.last_error ? `<p class="badge bad">${escapeHTML(tunnel.status.last_error)}</p>` : ""}
@@ -170,10 +237,10 @@ function renderClientRow(tunnel, client) {
   return `
     <div class="client-row">
       <div>
-        <strong>${escapeHTML(client.name)}</strong>
-        <span class="muted">${escapeHTML(client.address)} · ${client.enabled ? "enabled" : "disabled"}${client.needs_new_config ? " · needs new config" : ""}</span>
+        <strong><span class="status-dot ${client.enabled ? "ok" : "off"}"></span>${escapeHTML(client.name)}</strong>
+        <span class="muted"><span class="mono">${escapeHTML(client.address)}</span> · ${client.enabled ? "enabled" : "disabled"}${client.needs_new_config ? " · needs new config" : ""}</span>
       </div>
-      <div class="actions">
+      <div class="actions row-actions">
         ${client.needs_new_config ? `<span class="badge warn">stale</span>` : ""}
         <a class="button" href="/clients/config/${client.id}">Config</a>
         <button data-action="qr" data-client="${client.id}">QR</button>
@@ -196,6 +263,7 @@ function bindAppEvents(active) {
       const action = node.dataset.action;
       const tunnel = findTunnel(node.dataset.tunnel);
       if (action === "refresh") await loadState();
+      if (action === "theme") toggleTheme();
       if (action === "doctor") await openDoctor();
       if (action === "logout") await logout();
       if (action === "create-tunnel") openCreateTunnel(active);
@@ -219,7 +287,7 @@ function openCreateTunnel(profile) {
     <form id="modal-form">
       <div class="modal-head">
         <div><h2>Create ${escapeHTML(profile.tab)} tunnel</h2><p class="muted">Each tunnel has its own port, subnet, keys, and clients.</p></div>
-        <button type="button" data-close>Close</button>
+        <button class="icon-button" type="button" data-close aria-label="Close">&times;</button>
       </div>
       <div class="form-grid">
         <div><label>Name / interface</label><input name="name" value="${escapeAttr(suggestion.name)}"></div>
@@ -295,7 +363,7 @@ function openCreateClient(tunnel) {
     <form id="modal-form">
       <div class="modal-head">
         <div><h2>Create client</h2><p class="muted">${escapeHTML(tunnel.name)} · ${escapeHTML(tunnel.profile)}</p></div>
-        <button type="button" data-close>Close</button>
+        <button class="icon-button" type="button" data-close aria-label="Close">&times;</button>
       </div>
       <div><label>Client name</label><input name="name" autofocus></div>
       <div class="form-actions"><button class="primary" type="submit">Create client</button></div>
@@ -324,7 +392,7 @@ function openSettings(tunnel) {
     <form id="modal-form">
       <div class="modal-head">
         <div><h2>Tunnel settings</h2><p class="muted">${escapeHTML(tunnel.profile)}</p></div>
-        <button type="button" data-close>Close</button>
+        <button class="icon-button" type="button" data-close aria-label="Close">&times;</button>
       </div>
       <div class="form-grid">
         <div><label>Name / interface</label><input name="name" value="${escapeAttr(tunnel.name)}"></div>
@@ -379,7 +447,7 @@ function openProtocol(tunnel) {
     <form id="modal-form">
       <div class="modal-head">
         <div><h2>Protocol parameters</h2><p class="muted">${escapeHTML(tunnel.name)} · ${escapeHTML(tunnel.profile)}</p></div>
-        <button type="button" data-close>Close</button>
+        <button class="icon-button" type="button" data-close aria-label="Close">&times;</button>
       </div>
       <div class="form-grid">
         ${params.map(({ key, value }) => `
@@ -429,7 +497,7 @@ async function openQR(clientID) {
   showModal(`
     <div class="modal-head">
       <div><h2>AmneziaVPN QR</h2><p class="muted">${escapeHTML(client.name || "Client")} · QR import is experimental. Use the config file if the VPN tunnel does not start.</p></div>
-      <button type="button" data-close>Close</button>
+      <button class="icon-button" type="button" data-close aria-label="Close">&times;</button>
     </div>
     <p class="notice">Recommended path: download the .conf file and import it in AmneziaVPN. QR remains available for testing and clients where QR import works correctly.</p>
     <div class="qr-list">
@@ -454,7 +522,7 @@ async function openDoctor() {
   showModal(`
     <div class="modal-head">
       <div><h2>Doctor</h2><p class="muted">Runtime, tools, network, and tunnel checks.</p></div>
-      <button type="button" data-close>Close</button>
+      <button class="icon-button" type="button" data-close aria-label="Close">&times;</button>
     </div>
     <div class="client-list">
       ${results.map((result) => `
@@ -474,7 +542,7 @@ async function openHealth(tunnel) {
   showModal(`
     <div class="modal-head">
       <div><h2>Clients health</h2><p class="muted">${escapeHTML(tunnel.name)} · sampling traffic for 2 seconds...</p></div>
-      <button type="button" data-close>Close</button>
+      <button class="icon-button" type="button" data-close aria-label="Close">&times;</button>
     </div>
     <p class="muted">Reading runtime handshakes and transfer counters.</p>
   `);
@@ -487,7 +555,7 @@ async function openHealth(tunnel) {
   showModal(`
     <div class="modal-head">
       <div><h2>Clients health</h2><p class="muted">${escapeHTML(health.name || tunnel.name)} · ${Number(health.sample_seconds || 0)} second sample</p></div>
-      <button type="button" data-close>Close</button>
+      <button class="icon-button" type="button" data-close aria-label="Close">&times;</button>
     </div>
     ${warnings.length ? `<div class="notice">${warnings.map(escapeHTML).join("<br>")}</div>` : ""}
     <div class="client-list">
@@ -495,7 +563,7 @@ async function openHealth(tunnel) {
         <div class="client-row">
           <div>
             <strong>${escapeHTML(client.name)}</strong>
-            <span class="muted">${escapeHTML(client.address)} · ${escapeHTML(client.status)}${client.latest_handshake ? ` · handshake ${escapeHTML(client.latest_handshake)}` : ""}</span>
+            <span class="muted"><span class="mono">${escapeHTML(client.address)}</span> · ${escapeHTML(client.status)}${client.latest_handshake ? ` · handshake ${escapeHTML(client.latest_handshake)}` : ""}</span>
             ${client.warning ? `<span class="muted">${escapeHTML(client.warning)}</span>` : ""}
           </div>
           <div class="actions">
@@ -526,6 +594,35 @@ function formatBytes(value) {
   if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(2)} MiB`;
   if (bytes >= 1024) return `${(bytes / 1024).toFixed(2)} KiB`;
   return `${bytes} B`;
+}
+
+function brandIcon() {
+  return `
+    <svg viewBox="0 0 32 32" focusable="false" aria-hidden="true">
+      <path d="M16 3.5 25 7v7.2c0 5.9-3.6 11.2-9 14.1-5.4-2.9-9-8.2-9-14.1V7l9-3.5Z"></path>
+      <path d="M11 17.2h10M11 12.6h10M13.7 21.8h4.6"></path>
+    </svg>
+  `;
+}
+
+function themeToggleLabel() {
+  return activeTheme === "dark" ? "Switch to light theme" : "Switch to dark theme";
+}
+
+function themeIcon() {
+  if (activeTheme === "dark") {
+    return `
+      <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+        <circle cx="12" cy="12" r="4"></circle>
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path>
+      </svg>
+    `;
+  }
+  return `
+    <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+      <path d="M21 12.8A8.5 8.5 0 1 1 11.2 3 6.5 6.5 0 0 0 21 12.8Z"></path>
+    </svg>
+  `;
 }
 
 async function restartTunnel(tunnel) {
