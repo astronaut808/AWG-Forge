@@ -14,6 +14,7 @@ const profileTitles = {
 
 applyTheme(activeTheme);
 initParallax();
+initModalBehavior();
 init();
 
 function initialTheme() {
@@ -30,7 +31,7 @@ function applyTheme(theme) {
 function toggleTheme() {
   applyTheme(activeTheme === "dark" ? "light" : "dark");
   localStorage.setItem("awg-forge.theme", activeTheme);
-  renderApp();
+  if (state) renderApp();
 }
 
 function initParallax() {
@@ -67,6 +68,18 @@ function initParallax() {
   }, { passive: true });
 }
 
+function initModalBehavior() {
+  if (!modal) return;
+
+  modal.addEventListener("click", (event) => {
+    if (event.target === modal) modal.close();
+  });
+
+  modal.addEventListener("cancel", () => {
+    // Native Esc close is fine. This hook is left intentionally simple.
+  });
+}
+
 async function init() {
   await loadState();
 }
@@ -74,6 +87,7 @@ async function init() {
 async function loadState() {
   const res = await fetch("/api/state");
   if (res.status === 401) {
+    state = null;
     renderLogin();
     return;
   }
@@ -89,46 +103,79 @@ function renderLogin() {
   app.innerHTML = `
     <section class="login-shell">
       <div class="panel login">
-      <div class="brand">
-        <span class="brand-mark" aria-hidden="true">${brandIcon()}</span>
-        <div>
-          <h1>awg-forge</h1>
-          <p>Secure admin access</p>
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">${brandIcon()}</span>
+          <div>
+            <h1>awg-forge</h1>
+            <p>Secure admin access</p>
+          </div>
         </div>
-      </div>
-      <form id="login-form" class="form-grid login-form">
-        <div>
-          <label for="password">Password</label>
-          <input id="password" name="password" type="password" autocomplete="current-password" autofocus>
-        </div>
-        <div class="form-actions">
-          <button class="primary wide" type="submit">Log in</button>
-        </div>
-      </form>
+        <form id="login-form" class="form-grid login-form">
+          <div>
+            <label for="password">Password</label>
+            <input id="password" name="password" type="password" autocomplete="current-password" autofocus>
+          </div>
+          <div class="form-actions">
+            <button class="primary wide" type="submit">Log in</button>
+          </div>
+        </form>
       </div>
     </section>
   `;
-  document.querySelector("#login-form").addEventListener("submit", async (event) => {
+
+  const form = document.querySelector("#login-form");
+  form.addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (!beginSubmit(event.currentTarget)) return;
+
     const password = document.querySelector("#password").value;
-    const res = await api("/api/login", { method: "POST", body: { password } });
-    if (res.ok) await loadState();
+    const res = await api("/api/login", {
+      method: "POST",
+      body: { password },
+    });
+
+    if (res.ok) {
+      resetSubmit(event.currentTarget);
+      await loadState();
+      return;
+    }
+
+    resetSubmit(event.currentTarget);
   });
 }
 
 function renderApp() {
+  if (!state) {
+    renderLogin();
+    return;
+  }
+
   const profiles = state.profiles || [];
+  if (profiles.length === 0) {
+    app.innerHTML = `
+      <section class="panel empty">
+        <span class="empty-icon">!</span>
+        <strong>No profiles available</strong>
+        <p class="muted">Backend returned an empty profile list.</p>
+      </section>
+    `;
+    return;
+  }
+
   const active = profiles.find((profile) => profile.id === activeProfile) || profiles[0];
   activeProfile = active.id;
   localStorage.setItem("awg-forge.profile", activeProfile);
-  const tunnels = state.tunnels.filter((tunnel) => tunnel.profile === activeProfile);
+
+  const allTunnels = state.tunnels || [];
+  const tunnels = allTunnels.filter((tunnel) => tunnel.profile === activeProfile);
+
   app.innerHTML = `
     <header class="topbar">
       <div class="brand">
         <span class="brand-mark" aria-hidden="true">${brandIcon()}</span>
         <div>
           <h1>awg-forge</h1>
-          <p><span class="mono">${escapeHTML(state.server_host)}</span> · ${state.tunnels.length} tunnel(s)</p>
+          <p><span class="mono">${escapeHTML(state.server_host)}</span> · ${allTunnels.length} tunnel(s)</p>
         </div>
       </div>
       <div class="toolbar">
@@ -140,7 +187,7 @@ function renderApp() {
     </header>
     <nav class="tabs" aria-label="Protocol profiles">
       ${profiles.map((profile) => `
-        <button class="tab ${profile.id === activeProfile ? "active" : ""}" data-profile="${profile.id}">
+        <button class="tab ${profile.id === activeProfile ? "active" : ""}" data-profile="${escapeAttr(profile.id)}">
           <strong>${escapeHTML(profile.tab)}</strong>
           <span>${escapeHTML(profile.label)}</span>
         </button>
@@ -157,17 +204,20 @@ function renderApp() {
       ${renderTunnels(active, tunnels)}
     </section>
   `;
-  bindAppEvents(active, tunnels);
+
+  bindAppEvents(active);
 }
 
 function renderTunnels(profile, tunnels) {
   if (!profile.available) {
     return `<div class="empty"><span class="empty-icon">!</span><strong>This profile is not enabled yet</strong><p class="muted">Creation is disabled until syntax, ranges, and golden tests are ready.</p></div>`;
   }
+
   if (tunnels.length === 0) {
     return `<div class="empty"><span class="empty-icon">+</span><strong>No tunnels for ${escapeHTML(profile.tab)} yet</strong><p class="muted">Create a tunnel first, then add clients inside it.</p></div>`;
   }
-  return `<div class="grid">${tunnels.map(renderTunnelCard).join("")}</div>`;
+
+  return `<div class="grid ${tunnels.length === 1 ? "single" : ""}">${tunnels.map(renderTunnelCard).join("")}</div>`;
 }
 
 function profileHelp(profile) {
@@ -179,6 +229,7 @@ function profileHelp(profile) {
 function renderTunnelCard(tunnel) {
   const clients = tunnel.clients || [];
   const up = tunnel.status?.up;
+
   return `
     <article class="card">
       <div class="card-head">
@@ -189,19 +240,19 @@ function renderTunnelCard(tunnel) {
         <span class="badge ${up ? "ok" : "bad"}">${up ? "up" : "down"}</span>
       </div>
       <div class="facts">
-        <div class="fact"><span>Endpoint</span><strong class="mono">${escapeHTML(state.server_host)}:${tunnel.listen_port}</strong></div>
+        <div class="fact"><span>Endpoint</span><strong class="mono">${escapeHTML(state.server_host)}:${escapeHTML(tunnel.listen_port)}</strong></div>
         <div class="fact"><span>Subnet</span><strong class="mono">${escapeHTML(tunnel.subnet)}</strong></div>
         <div class="fact"><span>DNS</span><strong class="mono">${escapeHTML(tunnel.dns)}</strong></div>
         <div class="fact"><span>MTU</span><strong class="mono">${formatMTU(tunnel.mtu)}</strong></div>
         <div class="fact"><span>Clients</span><strong>${clients.filter((client) => client.enabled).length}/${clients.length}</strong></div>
       </div>
       <div class="actions card-actions">
-        <button class="primary" data-action="create-client" data-tunnel="${tunnel.id}">Create client</button>
-        <button data-action="settings" data-tunnel="${tunnel.id}">Settings</button>
-        <button data-action="protocol" data-tunnel="${tunnel.id}">Protocol</button>
-        <button data-action="health" data-tunnel="${tunnel.id}">Health</button>
-        <button data-action="restart" data-tunnel="${tunnel.id}">Restart</button>
-        <button class="danger" data-action="delete-tunnel" data-tunnel="${tunnel.id}">Delete</button>
+        <button class="primary" data-action="create-client" data-tunnel="${escapeAttr(tunnel.id)}">Create client</button>
+        <button data-action="settings" data-tunnel="${escapeAttr(tunnel.id)}">Settings</button>
+        <button data-action="protocol" data-tunnel="${escapeAttr(tunnel.id)}">Protocol</button>
+        <button data-action="health" data-tunnel="${escapeAttr(tunnel.id)}">Health</button>
+        <button data-action="restart" data-tunnel="${escapeAttr(tunnel.id)}">Restart</button>
+        <button class="danger" data-action="delete-tunnel" data-tunnel="${escapeAttr(tunnel.id)}">Delete</button>
       </div>
       <div class="client-list">
         <div class="client-list-head">
@@ -218,18 +269,22 @@ function renderTunnelCard(tunnel) {
 
 function portWarning(tunnel) {
   if (!state.published_udp_ports || portInRanges(tunnel.listen_port, state.published_udp_ports)) return "";
-  return `<p class="badge warn">Port ${tunnel.listen_port} is outside published UDP range ${escapeHTML(state.published_udp_ports)}</p>`;
+  return `<p class="badge warn">Port ${escapeHTML(tunnel.listen_port)} is outside published UDP range ${escapeHTML(state.published_udp_ports)}</p>`;
 }
 
 function portInRanges(port, spec) {
+  const numericPort = Number(port);
+
   return String(spec).split(",").some((part) => {
     const trimmed = part.trim();
     if (!trimmed) return false;
+
     if (trimmed.includes("-")) {
       const [min, max] = trimmed.split("-").map((value) => Number(value.trim()));
-      return port >= min && port <= max;
+      return numericPort >= min && numericPort <= max;
     }
-    return port === Number(trimmed);
+
+    return numericPort === Number(trimmed);
   });
 }
 
@@ -242,10 +297,10 @@ function renderClientRow(tunnel, client) {
       </div>
       <div class="actions row-actions">
         ${client.needs_new_config ? `<span class="badge warn">stale</span>` : ""}
-        <a class="button" href="/clients/config/${client.id}">Config</a>
-        <button data-action="qr" data-client="${client.id}">QR</button>
-        <button data-action="${client.enabled ? "disable-client" : "enable-client"}" data-client="${client.id}">${client.enabled ? "Disable" : "Enable"}</button>
-        <button class="danger" data-action="delete-client" data-client="${client.id}">Delete</button>
+        <a class="button" href="/clients/config/${encodeURIComponent(client.id)}">Config</a>
+        <button data-action="qr" data-client="${escapeAttr(client.id)}">QR</button>
+        <button data-action="${client.enabled ? "disable-client" : "enable-client"}" data-client="${escapeAttr(client.id)}">${client.enabled ? "Disable" : "Enable"}</button>
+        <button class="danger" data-action="delete-client" data-client="${escapeAttr(client.id)}">Delete</button>
       </div>
     </div>
   `;
@@ -258,22 +313,24 @@ function bindAppEvents(active) {
       renderApp();
     });
   });
+
   document.querySelectorAll("[data-action]").forEach((node) => {
     node.addEventListener("click", async () => {
       const action = node.dataset.action;
-      const tunnel = findTunnel(node.dataset.tunnel);
+      const tunnel = node.dataset.tunnel ? findTunnel(node.dataset.tunnel) : null;
+
       if (action === "refresh") await loadState();
       if (action === "theme") toggleTheme();
       if (action === "doctor") await openDoctor();
       if (action === "logout") await logout();
       if (action === "create-tunnel") openCreateTunnel(active);
-      if (action === "create-client") openCreateClient(tunnel);
-      if (action === "settings") openSettings(tunnel);
-      if (action === "protocol") openProtocol(tunnel);
-      if (action === "health") await openHealth(tunnel);
-      if (action === "restart") await restartTunnel(tunnel);
-      if (action === "delete-tunnel") await deleteTunnel(tunnel);
-      if (action === "qr") openQR(node.dataset.client);
+      if (action === "create-client" && tunnel) openCreateClient(tunnel);
+      if (action === "settings" && tunnel) openSettings(tunnel);
+      if (action === "protocol" && tunnel) openProtocol(tunnel);
+      if (action === "health" && tunnel) await openHealth(tunnel);
+      if (action === "restart" && tunnel) await restartTunnel(tunnel);
+      if (action === "delete-tunnel" && tunnel) await deleteTunnel(tunnel);
+      if (action === "qr") await openQR(node.dataset.client);
       if (action === "enable-client") await setClient(node.dataset.client, true);
       if (action === "disable-client") await setClient(node.dataset.client, false);
       if (action === "delete-client") await deleteClient(node.dataset.client);
@@ -290,17 +347,20 @@ function openCreateTunnel(profile) {
         <button class="icon-button" type="button" data-close aria-label="Close">&times;</button>
       </div>
       <div class="form-grid">
-        <div><label>Name / interface</label><input name="name" value="${escapeAttr(suggestion.name)}"></div>
-        <div><label>Listen port</label><input name="port" inputmode="numeric" value="${suggestion.port}"></div>
+        <div><label>Name / interface</label><input name="name" value="${escapeAttr(suggestion.name)}" autofocus></div>
+        <div><label>Listen port</label><input name="port" inputmode="numeric" value="${escapeAttr(suggestion.port)}"></div>
         <div><label>IPv4 subnet</label><input name="subnet" value="${escapeAttr(suggestion.subnet)}"></div>
       </div>
       <div class="form-actions"><button class="primary" type="submit">Create tunnel</button></div>
     </form>
   `;
+
   showModal(body);
+
   document.querySelector("#modal-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     if (!beginSubmit(event.currentTarget)) return;
+
     const form = new FormData(event.currentTarget);
     const res = await api("/api/tunnels", {
       method: "POST",
@@ -312,18 +372,30 @@ function openCreateTunnel(profile) {
         subnet: form.get("subnet"),
       },
     });
-    if (res.ok) closeModalAndReload(profile.id);
+
+    if (res.ok) {
+      await closeModalAndReload(profile.id);
+      return;
+    }
+
+    resetSubmit(event.currentTarget);
   });
 }
 
 function nextTunnelSuggestion(profile) {
-  const existing = state.tunnels.filter((tunnel) => tunnel.profile === profile.id);
+  const existing = (state.tunnels || []).filter((tunnel) => tunnel.profile === profile.id);
   if (existing.length === 0) {
-    return { name: profile.suggested_name, port: profile.suggested_port, subnet: profile.suggested_subnet };
+    return {
+      name: profile.suggested_name,
+      port: profile.suggested_port,
+      subnet: profile.suggested_subnet,
+    };
   }
+
   const n = existing.length + 1;
   const baseName = String(profile.suggested_name || "awg");
   const subnet = nextSubnet(profile.suggested_subnet, n);
+
   return {
     name: `${baseName}-${n}`,
     port: Number(profile.suggested_port) + existing.length,
@@ -335,6 +407,7 @@ function nextSubnet(suggestedSubnet, n) {
   const fallback = String(suggestedSubnet || "10.8.0.0/24");
   const match = fallback.match(/^(\d+)\.(\d+)\.(\d+)\.0\/24$/);
   if (!match) return fallback;
+
   const thirdOctet = Math.min(254, Number(match[3]) + n - 1);
   return `${match[1]}.${match[2]}.${thirdOctet}.0/24`;
 }
@@ -349,7 +422,7 @@ function isPresetMTU(mtu) {
 
 function mtuOption(current, value, label) {
   const selected = value === -1 ? !isPresetMTU(current) : Number(current || 0) === value;
-  return `<option value="${value}" ${selected ? "selected" : ""}>${label}</option>`;
+  return `<option value="${value}" ${selected ? "selected" : ""}>${escapeHTML(label)}</option>`;
 }
 
 function selectedMTU(form) {
@@ -369,21 +442,31 @@ function openCreateClient(tunnel) {
       <div class="form-actions"><button class="primary" type="submit">Create client</button></div>
     </form>
   `;
+
   showModal(body);
+
   document.querySelector("#modal-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     if (!beginSubmit(event.currentTarget)) return;
+
     const form = new FormData(event.currentTarget);
     const res = await api("/api/clients", {
       method: "POST",
       idempotencyKey: formIdempotencyKey(event.currentTarget),
-      body: { tunnel_id: tunnel.id, name: form.get("name") },
+      body: {
+        tunnel_id: tunnel.id,
+        name: form.get("name"),
+      },
     });
+
     if (res.ok) {
       const payload = await res.json();
       await loadState();
-      openQR(payload.client.id);
+      await openQR(payload.client.id);
+      return;
     }
+
+    resetSubmit(event.currentTarget);
   });
 }
 
@@ -395,12 +478,12 @@ function openSettings(tunnel) {
         <button class="icon-button" type="button" data-close aria-label="Close">&times;</button>
       </div>
       <div class="form-grid">
-        <div><label>Name / interface</label><input name="name" value="${escapeAttr(tunnel.name)}"></div>
-        <div><label>Listen port</label><input name="port" inputmode="numeric" value="${tunnel.listen_port}"></div>
+        <div><label>Name / interface</label><input name="name" value="${escapeAttr(tunnel.name)}" autofocus></div>
+        <div><label>Listen port</label><input name="port" inputmode="numeric" value="${escapeAttr(tunnel.listen_port)}"></div>
         <div><label>IPv4 subnet</label><input name="subnet" value="${escapeAttr(tunnel.subnet)}"></div>
         <div><label>DNS</label><input name="dns" value="${escapeAttr(tunnel.dns)}"></div>
         <div><label>Allowed IPs</label><input name="allowed_ips" value="${escapeAttr(tunnel.allowed_ips)}"></div>
-        <div><label>Persistent keepalive</label><input name="keepalive" inputmode="numeric" value="${tunnel.keepalive}"></div>
+        <div><label>Persistent keepalive</label><input name="keepalive" inputmode="numeric" value="${escapeAttr(tunnel.keepalive)}"></div>
         <div>
           <label>MTU</label>
           <select name="mtu_mode">
@@ -412,18 +495,21 @@ function openSettings(tunnel) {
             ${mtuOption(tunnel.mtu, -1, "Custom")}
           </select>
         </div>
-        <div><label>Custom MTU</label><input name="mtu_custom" inputmode="numeric" value="${isPresetMTU(tunnel.mtu) ? "" : tunnel.mtu}"></div>
+        <div><label>Custom MTU</label><input name="mtu_custom" inputmode="numeric" value="${isPresetMTU(tunnel.mtu) ? "" : escapeAttr(tunnel.mtu)}"></div>
         <div><label><input name="enabled" type="checkbox" ${tunnel.enabled ? "checked" : ""}> Enabled</label></div>
       </div>
       <div class="form-actions"><button class="primary" type="submit">Save settings</button></div>
     </form>
   `;
+
   showModal(body);
+
   document.querySelector("#modal-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     if (!beginSubmit(event.currentTarget)) return;
+
     const form = new FormData(event.currentTarget);
-    const res = await api(`/api/tunnels/${tunnel.id}/settings`, {
+    const res = await api(`/api/tunnels/${encodeURIComponent(tunnel.id)}/settings`, {
       method: "PATCH",
       idempotencyKey: formIdempotencyKey(event.currentTarget),
       body: {
@@ -437,7 +523,13 @@ function openSettings(tunnel) {
         enabled: form.get("enabled") === "on",
       },
     });
-    if (res.ok) closeModalAndReload(tunnel.profile);
+
+    if (res.ok) {
+      await closeModalAndReload(tunnel.profile);
+      return;
+    }
+
+    resetSubmit(event.currentTarget);
   });
 }
 
@@ -453,7 +545,7 @@ function openProtocol(tunnel) {
         ${params.map(({ key, value }) => `
           <div>
             <label>${escapeHTML(key)}</label>
-            ${key.startsWith("I") ? `<textarea name="${escapeAttr(key)}">${escapeHTML(value || "")}</textarea>` : `<input name="${escapeAttr(key)}" value="${escapeAttr(value || "")}">`}
+            ${String(key).startsWith("I") ? `<textarea name="${escapeAttr(key)}">${escapeHTML(value || "")}</textarea>` : `<input name="${escapeAttr(key)}" value="${escapeAttr(value || "")}">`}
           </div>
         `).join("")}
       </div>
@@ -463,37 +555,56 @@ function openProtocol(tunnel) {
       </div>
     </form>
   `;
+
   showModal(body);
-  document.querySelector("[data-regenerate]").addEventListener("click", async () => {
+
+  const regenerate = document.querySelector("[data-regenerate]");
+  regenerate.addEventListener("click", async () => {
     if (!confirm("Regenerate protocol parameters? Clients in this tunnel must import fresh configs.")) return;
-    const res = await api(`/api/tunnels/${tunnel.id}/regenerate`, {
+
+    const res = await api(`/api/tunnels/${encodeURIComponent(tunnel.id)}/regenerate`, {
       method: "POST",
       idempotencyKey: newIdempotencyKey(),
       body: { profile: tunnel.profile },
     });
-    if (res.ok) closeModalAndReload(tunnel.profile);
+
+    if (res.ok) await closeModalAndReload(tunnel.profile);
   });
+
   document.querySelector("#modal-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     if (!beginSubmit(event.currentTarget)) return;
+
     const form = new FormData(event.currentTarget);
     const nextParams = {};
     for (const { key } of params) nextParams[key] = String(form.get(key) || "").trim();
-    const res = await api(`/api/tunnels/${tunnel.id}/protocol`, {
+
+    const res = await api(`/api/tunnels/${encodeURIComponent(tunnel.id)}/protocol`, {
       method: "PATCH",
       idempotencyKey: formIdempotencyKey(event.currentTarget),
-      body: { profile: tunnel.profile, params: nextParams },
+      body: {
+        profile: tunnel.profile,
+        params: nextParams,
+      },
     });
-    if (res.ok) closeModalAndReload(tunnel.profile);
+
+    if (res.ok) {
+      await closeModalAndReload(tunnel.profile);
+      return;
+    }
+
+    resetSubmit(event.currentTarget);
   });
 }
 
 async function openQR(clientID) {
-  const res = await api(`/api/clients/${clientID}/qr`);
+  const res = await api(`/api/clients/${encodeURIComponent(clientID)}/qr`);
   if (!res.ok) return;
+
   const payload = await res.json();
   const chunks = payload.chunks || [];
   const client = payload.client || {};
+
   showModal(`
     <div class="modal-head">
       <div><h2>AmneziaVPN QR</h2><p class="muted">${escapeHTML(client.name || "Client")} · QR import is experimental. Use the config file if the VPN tunnel does not start.</p></div>
@@ -504,12 +615,12 @@ async function openQR(clientID) {
       ${chunks.map((chunk) => `
         <div class="qr-card">
           <div class="qr-label">QR ${Number(chunk.index)} of ${Number(chunk.total)}</div>
-          <img class="qr" alt="AmneziaVPN QR ${Number(chunk.index)} of ${Number(chunk.total)}" src="data:image/png;base64,${chunk.png}">
+          <img class="qr" alt="AmneziaVPN QR ${Number(chunk.index)} of ${Number(chunk.total)}" src="data:image/png;base64,${escapeAttr(chunk.png)}">
         </div>
       `).join("")}
     </div>
     <div class="form-actions">
-      <a class="button primary" href="/clients/config/${clientID}">Download config</a>
+      <a class="button primary" href="/clients/config/${encodeURIComponent(clientID)}">Download config</a>
     </div>
   `);
 }
@@ -517,8 +628,10 @@ async function openQR(clientID) {
 async function openDoctor() {
   const res = await api("/api/doctor");
   if (!res.ok) return;
+
   const payload = await res.json();
   const results = payload.results || [];
+
   showModal(`
     <div class="modal-head">
       <div><h2>Doctor</h2><p class="muted">Runtime, tools, network, and tunnel checks.</p></div>
@@ -529,7 +642,7 @@ async function openDoctor() {
         <div class="client-row">
           <div>
             <strong>${escapeHTML(result.area)}</strong>
-            <span class="muted">${escapeHTML(result.message)}</span>
+            <span class="muted doctor-message mono">${escapeHTML(result.message)}</span>
           </div>
           <span class="badge ${doctorBadgeClass(result.level)}">${escapeHTML(result.level)}</span>
         </div>
@@ -546,12 +659,15 @@ async function openHealth(tunnel) {
     </div>
     <p class="muted">Reading runtime handshakes and transfer counters.</p>
   `);
-  const res = await api(`/api/tunnels/${tunnel.id}/health`);
+
+  const res = await api(`/api/tunnels/${encodeURIComponent(tunnel.id)}/health`);
   if (!res.ok) return;
+
   const payload = await res.json();
   const health = payload.health || {};
   const warnings = health.warnings || [];
   const clients = health.clients || [];
+
   showModal(`
     <div class="modal-head">
       <div><h2>Clients health</h2><p class="muted">${escapeHTML(health.name || tunnel.name)} · ${Number(health.sample_seconds || 0)} second sample</p></div>
@@ -618,6 +734,7 @@ function themeIcon() {
       </svg>
     `;
   }
+
   return `
     <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
       <path d="M21 12.8A8.5 8.5 0 1 1 11.2 3 6.5 6.5 0 0 0 21 12.8Z"></path>
@@ -626,42 +743,72 @@ function themeIcon() {
 }
 
 async function restartTunnel(tunnel) {
-  const res = await api(`/api/tunnels/${tunnel.id}/restart`, { method: "POST", idempotencyKey: newIdempotencyKey(), body: {} });
-  if (res.ok) closeModalAndReload(tunnel.profile);
+  const res = await api(`/api/tunnels/${encodeURIComponent(tunnel.id)}/restart`, {
+    method: "POST",
+    idempotencyKey: newIdempotencyKey(),
+    body: {},
+  });
+
+  if (res.ok) await closeModalAndReload(tunnel.profile);
 }
 
 async function deleteTunnel(tunnel) {
   if (!confirm(`Delete tunnel ${tunnel.name} and all its clients?`)) return;
-  const res = await api(`/api/tunnels/${tunnel.id}/delete`, { method: "DELETE", idempotencyKey: newIdempotencyKey() });
-  if (res.ok) closeModalAndReload(tunnel.profile);
+
+  const res = await api(`/api/tunnels/${encodeURIComponent(tunnel.id)}/delete`, {
+    method: "DELETE",
+    idempotencyKey: newIdempotencyKey(),
+  });
+
+  if (res.ok) await closeModalAndReload(tunnel.profile);
 }
 
 async function setClient(clientID, enabled) {
-  const res = await api(`/api/clients/${clientID}/${enabled ? "enable" : "disable"}`, { method: "POST", idempotencyKey: newIdempotencyKey(), body: {} });
+  const res = await api(`/api/clients/${encodeURIComponent(clientID)}/${enabled ? "enable" : "disable"}`, {
+    method: "POST",
+    idempotencyKey: newIdempotencyKey(),
+    body: {},
+  });
+
   if (res.ok) await loadState();
 }
 
 async function deleteClient(clientID) {
   if (!confirm("Delete this client?")) return;
-  const res = await api(`/api/clients/${clientID}/delete`, { method: "DELETE", idempotencyKey: newIdempotencyKey() });
+
+  const res = await api(`/api/clients/${encodeURIComponent(clientID)}/delete`, {
+    method: "DELETE",
+    idempotencyKey: newIdempotencyKey(),
+  });
+
   if (res.ok) await loadState();
 }
 
 async function logout() {
-  await api("/api/logout", { method: "POST", body: {} });
+  await api("/api/logout", {
+    method: "POST",
+    body: {},
+  });
+
   state = null;
   renderLogin();
 }
 
 async function api(url, options = {}) {
-  const init = { method: options.method || "GET", headers: {} };
+  const init = {
+    method: options.method || "GET",
+    headers: {},
+  };
+
   if (options.idempotencyKey) {
     init.headers["Idempotency-Key"] = options.idempotencyKey;
   }
+
   if (options.body !== undefined) {
     init.headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(options.body);
   }
+
   const res = await fetch(url, init);
   if (!res.ok) showToast(await errorText(res));
   return res;
@@ -669,17 +816,29 @@ async function api(url, options = {}) {
 
 function beginSubmit(form) {
   if (form.dataset.submitting === "true") return false;
+
   form.dataset.submitting = "true";
   form.querySelectorAll("button").forEach((button) => {
     if (button.type !== "button") button.disabled = true;
   });
+
   return true;
+}
+
+function resetSubmit(form) {
+  if (!form) return;
+
+  form.dataset.submitting = "false";
+  form.querySelectorAll("button").forEach((button) => {
+    button.disabled = false;
+  });
 }
 
 function formIdempotencyKey(form) {
   if (!form.dataset.idempotencyKey) {
     form.dataset.idempotencyKey = newIdempotencyKey();
   }
+
   return form.dataset.idempotencyKey;
 }
 
@@ -699,8 +858,15 @@ async function errorText(res) {
 
 function showModal(html) {
   modal.innerHTML = `<div class="modal-body">${html}</div>`;
-  modal.querySelectorAll("[data-close]").forEach((button) => button.addEventListener("click", () => modal.close()));
+
+  modal.querySelectorAll("[data-close]").forEach((button) => {
+    button.addEventListener("click", () => modal.close());
+  });
+
   modal.showModal();
+
+  const autofocus = modal.querySelector("[autofocus]");
+  if (autofocus) autofocus.focus();
 }
 
 async function closeModalAndReload(profileID) {
@@ -710,7 +876,7 @@ async function closeModalAndReload(profileID) {
 }
 
 function findTunnel(id) {
-  return state.tunnels.find((tunnel) => tunnel.id === id);
+  return (state?.tunnels || []).find((tunnel) => tunnel.id === id);
 }
 
 function showToast(message) {

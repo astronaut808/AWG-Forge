@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.3.1 - 2026-05-19
+
+Web UI typography and diagnostics polish.
+
+### Added
+
+- Bundled local JetBrains Mono webfont assets for offline-safe Web UI rendering in Docker and embedded deployments.
+- Added `@font-face` definitions for JetBrains Mono Regular, Medium, SemiBold, and Bold.
+- Added monospace diagnostic message styling for Doctor output.
+- Added reusable `code`, `pre`, `kbd`, `samp`, and `.mono` typography rules for config-like values and diagnostic text.
+
+### Changed
+
+- Updated the UI monospace stack to prefer local JetBrains Mono before system monospace fallbacks.
+- Improved readability of endpoints, subnets, DNS values, MTU values, interfaces, client addresses, and Doctor messages.
+- Rendered Doctor result messages as compact diagnostic blocks with preserved line breaks and better wrapping.
+- Improved modal scrolling behavior on smaller screens.
+- Improved toast animation by replacing `display` toggling with opacity and transform transitions.
+- Disabled monospace ligatures for `.mono` values so IPs, ports, subnets, and config fragments remain visually exact.
+
+### Notes
+
+- No backend routes, API payloads, storage format, tunnel rendering, protocol generation, or firewall behavior changed in this release.
+- JetBrains Mono is served locally from `/static/fonts/` and does not require CDN access.
+
 ## v0.3.0 - 2026-05-19
 
 Web UI refresh.
@@ -18,7 +43,7 @@ Web UI refresh.
 
 - Improved dashboard spacing and layout rhythm so topbar, profile tabs, and content panels no longer overlap.
 - Reworked responsive layout for mobile screens, including stacked toolbar actions, forms, tunnel facts, and client rows.
-- Limited tunnel cards to two columns on wide screens and one column on narrower screens for better readability.
+- Limited tunnel cards to two columns on wide screens, expanded single-tunnel views to full width, and used one column on narrower screens for better readability.
 - Simplified empty tunnel states to avoid looking like drop zones and kept a single `Create tunnel` action per profile.
 - Improved modal headers and close controls while preserving existing API behavior and form flows.
 - Rendered endpoint, subnet, DNS, MTU, interface, and client address values with monospace styling for easier scanning.
