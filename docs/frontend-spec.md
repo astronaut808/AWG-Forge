@@ -133,7 +133,8 @@ The frontend uses JSON APIs:
 
 - `POST /api/login`
 - `POST /api/logout`
-- `GET /api/state`
+- `GET /api/state` with `apply_enabled` for maintenance dry-run UI state
+- `POST /api/firewall/repair`
 - `POST /api/tunnels`
 - `PATCH /api/tunnels/<id>/settings`
 - `PATCH /api/tunnels/<id>/protocol`

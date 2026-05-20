@@ -21,6 +21,7 @@
 - `Protocol`: protocol params и regenerate.
 - `Health`: handshake и runtime traffic counters по клиентам.
 - `Doctor`: системная и runtime диагностика.
+- `Repair firewall`: ручное восстановление managed firewall rules из Doctor modal.
 - `Backup`: скачать encrypted backup с отдельным паролем.
 - `Support`: скачать support bundle без секретов.
 - `Updates`: проверка, есть ли новые upstream refs у используемых AmneziaWG tools.
@@ -39,6 +40,8 @@
 docker exec awg-forge awg-forge doctor
 docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge backup /tmp/awg-forge.afbackup
 docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore /tmp/awg-forge.afbackup
+docker exec awg-forge awg-forge firewall check
+docker exec awg-forge awg-forge firewall repair
 docker exec awg-forge awg-forge support-bundle
 docker exec awg-forge awg-forge updates
 docker exec awg-forge awg-forge client add phone
@@ -60,6 +63,8 @@ awg-forge render
 awg-forge doctor
 BACKUP_PASSWORD='long-random-backup-password' awg-forge backup ./awg-forge.afbackup
 BACKUP_PASSWORD='long-random-backup-password' awg-forge restore ./awg-forge.afbackup
+awg-forge firewall check
+awg-forge firewall repair
 awg-forge support-bundle
 awg-forge updates
 ```

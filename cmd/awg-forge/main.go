@@ -13,6 +13,7 @@ import (
 	"github.com/astronaut808/awg-forge/internal/backup"
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/doctor"
+	"github.com/astronaut808/awg-forge/internal/firewall"
 	"github.com/astronaut808/awg-forge/internal/server"
 	"github.com/astronaut808/awg-forge/internal/support"
 	"github.com/astronaut808/awg-forge/internal/updates"
@@ -60,6 +61,8 @@ func run(args []string) error {
 		return runRestore(cfg, args[1:])
 	case "support-bundle":
 		return runSupportBundle(cfg, svc, args[1:])
+	case "firewall":
+		return runFirewall(svc, args[1:])
 	case "client":
 		return runClient(svc, args[1:])
 	case "tunnel":
@@ -153,7 +156,59 @@ func runClient(svc *app.Service, args []string) error {
 }
 
 func usage() error {
-	return errors.New("usage: awg-forge init|serve|render|doctor|backup|restore|support-bundle|updates|client|tunnel")
+	return errors.New("usage: awg-forge init|serve|render|doctor|backup|restore|support-bundle|updates|firewall|client|tunnel")
+}
+
+func runFirewall(svc *app.Service, args []string) error {
+	if len(args) != 1 {
+		return errors.New("usage: awg-forge firewall check|repair")
+	}
+	var (
+		report firewall.Report
+		err    error
+	)
+	switch args[0] {
+	case "check":
+		report, err = svc.FirewallCheck()
+	case "repair":
+		report, err = svc.FirewallRepair()
+	default:
+		return errors.New("usage: awg-forge firewall check|repair")
+	}
+	if err != nil {
+		printFirewallReport(report)
+		return err
+	}
+	printFirewallReport(report)
+	return nil
+}
+
+func printFirewallReport(report firewall.Report) {
+	if !report.ApplyEnabled {
+		fmt.Println("WARN firewall: APPLY_CONFIG=false; runtime firewall rules are not managed")
+		return
+	}
+	if len(report.Results) == 0 {
+		fmt.Println("OK   firewall: no enabled tunnels")
+		return
+	}
+	for _, result := range report.Results {
+		level := "OK"
+		if result.Status == "missing" || result.Status == "error" {
+			level = "FAIL"
+		}
+		if result.Status == "duplicate" {
+			level = "WARN"
+		}
+		fmt.Printf("%-4s firewall %s/%s: %s", level, result.Tunnel, result.Rule, result.Status)
+		if result.Count != 1 {
+			fmt.Printf(" (%d)", result.Count)
+		}
+		if result.Message != "" {
+			fmt.Printf("; %s", result.Message)
+		}
+		fmt.Println()
+	}
 }
 
 func runBackup(cfg config.Config, svc *app.Service, args []string) error {

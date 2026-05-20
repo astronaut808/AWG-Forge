@@ -92,6 +92,33 @@ Restore checks:
 
 Restore does not apply runtime automatically. After restore, restart the container or explicitly restart tunnels.
 
+## Firewall Check / Repair
+
+`doctor` reports missing or duplicate managed firewall rules. To check manually:
+
+```bash
+docker exec awg-forge awg-forge firewall check
+```
+
+To restore managed rules:
+
+```bash
+docker exec awg-forge awg-forge firewall repair
+```
+
+Repair only reconciles expected awg-forge rules for enabled tunnels:
+
+- `nat POSTROUTING MASQUERADE` for the tunnel subnet;
+- `INPUT udp --dport <port> ACCEPT`;
+- `FORWARD -i <interface> ACCEPT`;
+- `FORWARD -o <interface> ACCEPT`.
+
+Repair removes duplicates only for these managed rules and adds missing rules. It does not touch unrelated firewall rules. Disabled tunnels do not receive new rules.
+
+When `APPLY_CONFIG=false`, `firewall check/repair` does not change anything and reports a warning.
+
+In the UI, use `Doctor` -> `Repair firewall`. When `APPLY_CONFIG=false`, the button is visually unavailable and explains why; when `APPLY_CONFIG=true`, the action requires confirmation.
+
 ## Health In UI
 
 The tunnel `Health` action samples runtime counters and shows client status.

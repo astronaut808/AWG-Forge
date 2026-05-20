@@ -11,6 +11,14 @@
 - Added encrypted backups with `awg-forge backup [output.afbackup]` using a separate `BACKUP_PASSWORD`.
 - Added safe CLI restore with `awg-forge restore <backup.afbackup>`, password verification, schema checks, checksum checks, and a pre-restore encrypted backup.
 - Added Web UI encrypted backup download with a dedicated backup password prompt.
+- Added `awg-forge firewall check` and `awg-forge firewall repair` for manual runtime firewall reconciliation.
+- Added Web UI firewall repair action inside the Doctor modal.
+- Added shared firewall rule modeling and tests for expected rules, missing rules, duplicates, and disabled tunnel handling.
+
+### Changed
+
+- Runtime tunnel apply now uses the same firewall repair logic as manual maintenance.
+- Doctor firewall diagnostics now point missing and duplicate managed rules to `awg-forge firewall repair`.
 
 ## v0.4.0 - 2026-05-20
 

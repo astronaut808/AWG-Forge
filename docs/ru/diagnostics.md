@@ -92,6 +92,33 @@ Restore проверяет:
 
 Restore не применяет runtime автоматически. После restore перезапусти контейнер или явно перезапусти туннели.
 
+## Firewall Check / Repair
+
+`doctor` показывает missing или duplicate managed firewall rules. Для ручной проверки:
+
+```bash
+docker exec awg-forge awg-forge firewall check
+```
+
+Для восстановления managed rules:
+
+```bash
+docker exec awg-forge awg-forge firewall repair
+```
+
+Repair делает только ожидаемые awg-forge rules для enabled tunnels:
+
+- `nat POSTROUTING MASQUERADE` для tunnel subnet;
+- `INPUT udp --dport <port> ACCEPT`;
+- `FORWARD -i <interface> ACCEPT`;
+- `FORWARD -o <interface> ACCEPT`.
+
+Repair удаляет дубли только этих managed rules и добавляет отсутствующие. Чужие firewall rules не трогает. Disabled tunnels не получают новые rules.
+
+Если `APPLY_CONFIG=false`, `firewall check/repair` ничего не меняет и показывает предупреждение.
+
+В UI эта операция доступна через `Doctor` -> `Repair firewall`. Если `APPLY_CONFIG=false`, кнопка визуально недоступна и показывает причину; если `APPLY_CONFIG=true`, действие требует подтверждения.
+
 ## Health В UI
 
 Кнопка `Health` на туннеле делает короткий sample runtime counters и показывает состояние клиентов.

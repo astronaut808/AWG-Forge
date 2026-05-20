@@ -321,7 +321,7 @@ function bindAppEvents(active) {
       const action = node.dataset.action;
       const tunnel = node.dataset.tunnel ? findTunnel(node.dataset.tunnel) : null;
 
-      if (action === "refresh") await loadState();
+      if (action === "refresh") await refreshState();
       if (action === "theme") toggleTheme();
       if (action === "doctor") await openDoctor();
       if (action === "backup") openBackup();
@@ -607,11 +607,22 @@ async function openDoctor() {
 
   const payload = await res.json();
   const results = payload.results || [];
+  const repairAvailable = Boolean(state?.apply_enabled);
+  const repairReason = "Firewall repair is unavailable because APPLY_CONFIG=false";
 
   showModal(`
     <div class="modal-head">
       <div><h2>Doctor</h2><p class="muted">Runtime, tools, network, and tunnel checks.</p></div>
       <button class="icon-button" type="button" data-close aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-actions">
+      <button
+        type="button"
+        class="${repairAvailable ? "" : "is-disabled"}"
+        data-modal-action="repair-firewall"
+        aria-disabled="${repairAvailable ? "false" : "true"}"
+        title="${repairAvailable ? "Repair managed firewall rules" : repairReason}"
+      >Repair firewall</button>
     </div>
     <div class="client-list">
       ${results.map((result) => `
@@ -625,6 +636,26 @@ async function openDoctor() {
       `).join("")}
     </div>
   `);
+
+  modal.querySelector("[data-modal-action='repair-firewall']")?.addEventListener("click", repairFirewall);
+}
+
+async function repairFirewall() {
+  if (!state?.apply_enabled) {
+    showToast("Firewall repair is unavailable: APPLY_CONFIG=false");
+    return;
+  }
+  if (!confirm("Repair managed firewall rules for enabled tunnels?")) return;
+  const res = await api("/api/firewall/repair", { method: "POST", body: {} });
+  if (!res.ok) return;
+  const payload = await res.json();
+  const firewall = payload.firewall || {};
+  if (firewall.apply_enabled === false) {
+    showToast("Firewall repair skipped: APPLY_CONFIG=false");
+  } else {
+    showToast("Firewall rules repaired");
+  }
+  await openDoctor();
 }
 
 function openBackup() {
@@ -871,6 +902,11 @@ async function logout() {
   renderLogin();
 }
 
+async function refreshState() {
+  await loadState();
+  showToast("Refreshed");
+}
+
 async function api(url, options = {}) {
   const init = {
     method: options.method || "GET",
@@ -1000,9 +1036,10 @@ function findTunnel(id) {
 }
 
 function showToast(message) {
+  window.clearTimeout(showToast.timer);
   toast.textContent = message;
   toast.classList.add("show");
-  window.setTimeout(() => toast.classList.remove("show"), 3600);
+  showToast.timer = window.setTimeout(() => toast.classList.remove("show"), 3600);
 }
 
 function escapeHTML(value) {

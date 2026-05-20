@@ -21,6 +21,7 @@ Main workflow:
 - `Protocol`: protocol params and regenerate.
 - `Health`: handshake and runtime traffic counters for clients.
 - `Doctor`: system and runtime diagnostics.
+- `Repair firewall`: manually restore managed firewall rules from the Doctor modal.
 - `Backup`: download an encrypted backup with a dedicated password.
 - `Support`: download a support bundle without secrets.
 - `Updates`: check whether bundled AmneziaWG upstream refs are behind.
@@ -39,6 +40,8 @@ After such changes, download fresh `.conf` files for affected clients.
 docker exec awg-forge awg-forge doctor
 docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge backup /tmp/awg-forge.afbackup
 docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore /tmp/awg-forge.afbackup
+docker exec awg-forge awg-forge firewall check
+docker exec awg-forge awg-forge firewall repair
 docker exec awg-forge awg-forge support-bundle
 docker exec awg-forge awg-forge updates
 docker exec awg-forge awg-forge client add phone
@@ -60,6 +63,8 @@ awg-forge render
 awg-forge doctor
 BACKUP_PASSWORD='long-random-backup-password' awg-forge backup ./awg-forge.afbackup
 BACKUP_PASSWORD='long-random-backup-password' awg-forge restore ./awg-forge.afbackup
+awg-forge firewall check
+awg-forge firewall repair
 awg-forge support-bundle
 awg-forge updates
 ```

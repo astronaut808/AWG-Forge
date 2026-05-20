@@ -61,6 +61,7 @@ func Serve(cfg config.Config, service *app.Service) error {
 	mux.HandleFunc("/api/state", w.security(w.requireAuth(w.stateAPI)))
 	mux.HandleFunc("/api/backup", w.security(w.requireAuth(w.backupAPI)))
 	mux.HandleFunc("/api/doctor", w.security(w.requireAuth(w.doctorAPI)))
+	mux.HandleFunc("/api/firewall/repair", w.security(w.requireAuth(w.firewallRepairAPI)))
 	mux.HandleFunc("/api/support-bundle", w.security(w.requireAuth(w.supportBundleAPI)))
 	mux.HandleFunc("/api/updates", w.security(w.requireAuth(w.updatesAPI)))
 	mux.HandleFunc("/api/tunnels", w.security(w.requireAuth(w.tunnelsAPI)))
@@ -146,6 +147,19 @@ func (w *web) doctorAPI(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(rw, http.StatusOK, map[string]any{"results": doctor.Check(w.cfg, w.service)})
+}
+
+func (w *web) firewallRepairAPI(rw http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost || !w.validOrigin(r) {
+		writeError(rw, http.StatusForbidden, "forbidden")
+		return
+	}
+	report, err := w.service.FirewallRepair()
+	if err != nil {
+		writeJSON(rw, http.StatusInternalServerError, map[string]any{"error": err.Error(), "firewall": report})
+		return
+	}
+	writeJSON(rw, http.StatusOK, map[string]any{"firewall": report})
 }
 
 func (w *web) backupAPI(rw http.ResponseWriter, r *http.Request) {
@@ -440,6 +454,7 @@ func (w *web) publicState(state config.State) map[string]any {
 	}
 	return map[string]any{
 		"authenticated":       true,
+		"apply_enabled":       w.cfg.ApplyConfig,
 		"server_host":         state.ServerHost,
 		"published_udp_ports": w.cfg.PublishedUDPPorts,
 		"profiles": []map[string]any{
