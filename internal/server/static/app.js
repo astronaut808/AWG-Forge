@@ -106,7 +106,7 @@ function renderLogin() {
         <div class="brand">
           <span class="brand-mark" aria-hidden="true">${brandIcon()}</span>
           <div>
-            <h1>awg-forge</h1>
+            ${brandTitle()}
             <p>Secure admin access</p>
           </div>
         </div>
@@ -174,13 +174,15 @@ function renderApp() {
       <div class="brand">
         <span class="brand-mark" aria-hidden="true">${brandIcon()}</span>
         <div>
-          <h1>awg-forge</h1>
+          ${brandTitle()}
           <p><span class="mono">${escapeHTML(state.server_host)}</span> · ${allTunnels.length} tunnel(s)</p>
         </div>
       </div>
       <div class="toolbar">
         <button class="ghost theme-toggle" data-action="theme" aria-label="${themeToggleLabel()}" title="${themeToggleLabel()}">${themeIcon()}</button>
         <button class="ghost" data-action="doctor">Doctor</button>
+        <button class="ghost" data-action="backup">Backup</button>
+        <button class="ghost" data-action="support-bundle">Support</button>
         <button class="ghost" data-action="updates">Updates</button>
         <button class="ghost" data-action="refresh">Refresh</button>
         <button class="ghost" data-action="logout">Log out</button>
@@ -322,6 +324,8 @@ function bindAppEvents(active) {
       if (action === "refresh") await loadState();
       if (action === "theme") toggleTheme();
       if (action === "doctor") await openDoctor();
+      if (action === "backup") openBackup();
+      if (action === "support-bundle") await downloadSupportBundle();
       if (action === "updates") await openUpdates();
       if (action === "logout") await logout();
       if (action === "create-tunnel") openCreateTunnel(active);
@@ -623,6 +627,39 @@ async function openDoctor() {
   `);
 }
 
+function openBackup() {
+  showModal(`
+    <form id="modal-form">
+      <div class="modal-head">
+        <div><h2>Encrypted backup</h2><p class="muted">Contains private keys and client PSKs. Store it safely.</p></div>
+        <button class="icon-button" type="button" data-close aria-label="Close">&times;</button>
+      </div>
+      <div class="notice">Use a dedicated backup password. It is required to restore this archive and is not stored by awg-forge.</div>
+      <div><label>Backup password</label><input name="password" type="password" autocomplete="new-password" minlength="8" autofocus></div>
+      <div class="form-actions"><button class="primary" type="submit">Download backup</button></div>
+    </form>
+  `);
+
+  document.querySelector("#modal-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!beginSubmit(event.currentTarget)) return;
+
+    const form = new FormData(event.currentTarget);
+    const res = await fetch("/api/backup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: form.get("password") }),
+    });
+    if (!res.ok) {
+      showToast(await errorText(res));
+      resetSubmit(event.currentTarget);
+      return;
+    }
+    await downloadBlobResponse(res, "awg-forge-backup.afbackup");
+    modal.close();
+  });
+}
+
 async function openUpdates() {
   showModal(`
     <div class="modal-head">
@@ -746,6 +783,18 @@ function brandIcon() {
       <path d="M16 3.5 25 7v7.2c0 5.9-3.6 11.2-9 14.1-5.4-2.9-9-8.2-9-14.1V7l9-3.5Z"></path>
       <path d="M11 17.2h10M11 12.6h10M13.7 21.8h4.6"></path>
     </svg>
+  `;
+}
+
+function brandTitle() {
+  return `
+    <h1 class="brand-title">
+      <span>awg-forge</span>
+      <a class="brand-by" href="https://github.com/astronaut808" target="_blank" rel="noopener noreferrer" aria-label="Open astronaut808 GitHub profile">
+        <span>by</span>
+        <strong>astronaut808</strong>
+      </a>
+    </h1>
   `;
 }
 
@@ -917,6 +966,33 @@ function downloadClientConfig(clientID) {
   document.body.appendChild(link);
   link.click();
   link.remove();
+}
+
+async function downloadSupportBundle() {
+  const res = await fetch("/api/support-bundle");
+  if (!res.ok) {
+    showToast(await errorText(res));
+    return;
+  }
+  await downloadBlobResponse(res, "awg-forge-support.zip");
+}
+
+async function downloadBlobResponse(res, fallbackName) {
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filenameFromDisposition(res.headers.get("Content-Disposition")) || fallbackName;
+  link.rel = "noopener";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function filenameFromDisposition(value) {
+  const match = String(value || "").match(/filename="([^"]+)"/);
+  return match ? match[1] : "";
 }
 
 function findTunnel(id) {

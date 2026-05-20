@@ -130,7 +130,7 @@ body {
   position: relative;
   min-height: 100vh;
   margin: 0;
-  padding: 20px 0 48px;
+  padding: 20px 0 74px;
   color: var(--foreground);
   font: 14px/1.5 ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
   text-rendering: geometricPrecision;
@@ -210,6 +210,7 @@ pre {
 .tabs,
 .panel,
 .modal,
+.app-footer,
 .toast {
   border: 1px solid var(--border);
   background: var(--surface);
@@ -273,6 +274,47 @@ pre {
   font-size: 22px;
   font-weight: 780;
   line-height: 1.1;
+}
+
+.brand-title {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+  line-height: 1;
+}
+
+.brand-by {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--border), transparent 30%);
+  border-radius: var(--radius-pill);
+  min-height: 20px;
+  padding: 0 7px;
+  background: color-mix(in srgb, var(--surface-strong), transparent 24%);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.1;
+  text-decoration: none;
+  transform: translateY(1px);
+}
+
+.brand-by strong {
+  color: var(--foreground);
+  font-weight: 760;
+}
+
+.brand-by:hover {
+  border-color: color-mix(in srgb, var(--primary), transparent 54%);
+  background: color-mix(in srgb, var(--primary), transparent 88%);
+  color: var(--foreground);
+}
+
+.brand-by:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 4px var(--focus);
 }
 
 .brand p,
@@ -782,7 +824,7 @@ textarea {
 .toast {
   position: fixed;
   right: 18px;
-  bottom: 18px;
+  bottom: 64px;
   z-index: 30;
   display: block;
   max-width: 420px;
@@ -799,6 +841,56 @@ textarea {
   opacity: 1;
   pointer-events: auto;
   transform: translateY(0) scale(1);
+}
+
+.app-footer {
+  position: fixed;
+  left: 50%;
+  bottom: 14px;
+  z-index: 20;
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  border-radius: var(--radius-pill);
+  padding: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  transform: translateX(-50%);
+}
+
+.footer-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  min-height: 30px;
+  border-radius: var(--radius-pill);
+  padding: 0 10px;
+  color: var(--muted);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.footer-button-icon {
+  width: 34px;
+  min-width: 34px;
+  padding: 0;
+}
+
+.footer-button svg {
+  width: 17px;
+  height: 17px;
+  fill: currentColor;
+}
+
+.footer-button:hover {
+  background: var(--surface-strong);
+  color: var(--foreground);
+}
+
+.footer-button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 4px var(--focus);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -837,6 +929,7 @@ textarea {
   .tabs,
   .panel,
   .modal,
+  .app-footer,
   .toast {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
@@ -855,6 +948,7 @@ textarea {
   .tabs,
   .panel,
   .modal,
+  .app-footer,
   .toast {
     background: var(--surface-solid);
   }
@@ -872,7 +966,7 @@ textarea {
 
 @media (max-width: 760px) {
   body {
-    padding: 10px 0 28px;
+    padding: 10px 0 68px;
   }
 
   .shell {
@@ -928,6 +1022,17 @@ textarea {
 
   .modal-body {
     max-height: calc(100vh - 20px);
+  }
+
+  .app-footer {
+    bottom: 10px;
+  }
+
+  .toast {
+    right: 10px;
+    bottom: 58px;
+    left: 10px;
+    max-width: none;
   }
 }
 

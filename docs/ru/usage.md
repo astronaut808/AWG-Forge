@@ -21,6 +21,8 @@
 - `Protocol`: protocol params и regenerate.
 - `Health`: handshake и runtime traffic counters по клиентам.
 - `Doctor`: системная и runtime диагностика.
+- `Backup`: скачать encrypted backup с отдельным паролем.
+- `Support`: скачать support bundle без секретов.
 - `Updates`: проверка, есть ли новые upstream refs у используемых AmneziaWG tools.
 - `Restart`: перезапустить туннель.
 - `Delete`: удалить туннель или клиента.
@@ -35,6 +37,9 @@
 
 ```bash
 docker exec awg-forge awg-forge doctor
+docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge backup /tmp/awg-forge.afbackup
+docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore /tmp/awg-forge.afbackup
+docker exec awg-forge awg-forge support-bundle
 docker exec awg-forge awg-forge updates
 docker exec awg-forge awg-forge client add phone
 docker exec awg-forge awg-forge client add laptop awg15
@@ -53,6 +58,9 @@ awg-forge init
 awg-forge serve
 awg-forge render
 awg-forge doctor
+BACKUP_PASSWORD='long-random-backup-password' awg-forge backup ./awg-forge.afbackup
+BACKUP_PASSWORD='long-random-backup-password' awg-forge restore ./awg-forge.afbackup
+awg-forge support-bundle
 awg-forge updates
 ```
 

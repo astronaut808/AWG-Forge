@@ -10,9 +10,11 @@ import (
 	"time"
 
 	"github.com/astronaut808/awg-forge/internal/app"
+	"github.com/astronaut808/awg-forge/internal/backup"
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/doctor"
 	"github.com/astronaut808/awg-forge/internal/server"
+	"github.com/astronaut808/awg-forge/internal/support"
 	"github.com/astronaut808/awg-forge/internal/updates"
 )
 
@@ -52,6 +54,12 @@ func run(args []string) error {
 		return svc.RenderAll()
 	case "doctor":
 		return doctor.Run(cfg, svc)
+	case "backup":
+		return runBackup(cfg, svc, args[1:])
+	case "restore":
+		return runRestore(cfg, args[1:])
+	case "support-bundle":
+		return runSupportBundle(cfg, svc, args[1:])
 	case "client":
 		return runClient(svc, args[1:])
 	case "tunnel":
@@ -145,7 +153,60 @@ func runClient(svc *app.Service, args []string) error {
 }
 
 func usage() error {
-	return errors.New("usage: awg-forge init|serve|render|doctor|updates|client|tunnel")
+	return errors.New("usage: awg-forge init|serve|render|doctor|backup|restore|support-bundle|updates|client|tunnel")
+}
+
+func runBackup(cfg config.Config, svc *app.Service, args []string) error {
+	if len(args) > 1 {
+		return errors.New("usage: BACKUP_PASSWORD=... awg-forge backup [output.afbackup]")
+	}
+	password := os.Getenv("BACKUP_PASSWORD")
+	if password == "" {
+		return errors.New("BACKUP_PASSWORD is required")
+	}
+	path := ""
+	if len(args) == 1 {
+		path = args[0]
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	written, err := backup.WriteFile(ctx, cfg, svc, password, path)
+	if err != nil {
+		return err
+	}
+	fmt.Println(written)
+	return nil
+}
+
+func runRestore(cfg config.Config, args []string) error {
+	if len(args) != 1 {
+		return errors.New("usage: BACKUP_PASSWORD=... awg-forge restore <backup.afbackup>")
+	}
+	password := os.Getenv("BACKUP_PASSWORD")
+	if password == "" {
+		return errors.New("BACKUP_PASSWORD is required")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return backup.Restore(ctx, cfg, password, args[0])
+}
+
+func runSupportBundle(cfg config.Config, svc *app.Service, args []string) error {
+	if len(args) > 1 {
+		return errors.New("usage: awg-forge support-bundle [output.zip]")
+	}
+	path := ""
+	if len(args) == 1 {
+		path = args[0]
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	written, err := support.WriteFile(ctx, cfg, svc, path)
+	if err != nil {
+		return err
+	}
+	fmt.Println(written)
+	return nil
 }
 
 func runUpdates() error {

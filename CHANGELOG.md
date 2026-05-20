@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Added Support bundle generation from CLI with `awg-forge support-bundle [output.zip]`.
+- Added authenticated Web UI support bundle download via `/api/support-bundle`.
+- Support bundles include redacted config/state summaries, Doctor results, runtime command output, and config directory file inventory without rendered config contents.
+- Added tests to ensure support bundles do not leak private keys, preshared keys, passwords, or session secrets.
+- Added encrypted backups with `awg-forge backup [output.afbackup]` using a separate `BACKUP_PASSWORD`.
+- Added safe CLI restore with `awg-forge restore <backup.afbackup>`, password verification, schema checks, checksum checks, and a pre-restore encrypted backup.
+- Added Web UI encrypted backup download with a dedicated backup password prompt.
+
 ## v0.4.0 - 2026-05-20
 
 Runtime safety, subnet correctness, and manual AmneziaWG update checks.

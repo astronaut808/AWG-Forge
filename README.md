@@ -32,6 +32,8 @@ QR import не используется. Он был убран, потому ч
 - IPv4 egress с согласованием NAT/firewall rules.
 - Health view для клиентов: handshake и rx/tx counters.
 - Doctor diagnostics для инструментов, runtime, firewall, ports, peers, handshakes и stale configs.
+- Support bundle без секретов для безопасной передачи диагностики.
+- Encrypted backup/restore с отдельным backup password.
 - Откат state/configs при ошибке применения runtime-конфига.
 - Проверка обновлений upstream AmneziaWG без автоматического изменения системы.
 - Статический HTML/CSS/JavaScript frontend без Node/npm build pipeline.
@@ -79,6 +81,8 @@ Host networking — рекомендуемый production-режим, потом
 
 ```bash
 docker exec awg-forge awg-forge doctor
+docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge backup /tmp/awg-forge.afbackup
+docker exec awg-forge awg-forge support-bundle
 ```
 
 Создай клиента в UI, импортируй скачанный `.conf` в AmneziaVPN и проверь IPv4 egress:

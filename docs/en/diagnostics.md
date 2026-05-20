@@ -26,6 +26,72 @@ Doctor checks:
 - stale client configs;
 - handshakes and transfer counters.
 
+## Support Bundle
+
+Support bundles are meant for sharing diagnostics without private keys or full configs.
+
+In the UI, click `Support` to download a `.zip`.
+
+In Docker:
+
+```bash
+docker exec awg-forge awg-forge support-bundle
+```
+
+With an explicit file name:
+
+```bash
+docker exec awg-forge awg-forge support-bundle /tmp/awg-forge-support.zip
+docker cp awg-forge:/tmp/awg-forge-support.zip .
+```
+
+The bundle includes:
+
+- redacted config/state summary;
+- Doctor results;
+- runtime `ip`, `iptables`, and `awg show` output;
+- config directory inventory without `.conf` contents.
+
+The bundle should not include:
+
+- private keys;
+- preshared keys;
+- password;
+- session secret;
+- rendered server/client configs;
+- raw protocol parameter values.
+
+## Encrypted Backup / Restore
+
+Backups are different from support bundles: they contain secret material, including `state.json`, private keys, preshared keys, and rendered `.conf` files.
+
+Backups are always encrypted with a dedicated password:
+
+```bash
+docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge backup /tmp/awg-forge.afbackup
+docker cp awg-forge:/tmp/awg-forge.afbackup .
+```
+
+Restore requires the same password:
+
+```bash
+docker cp awg-forge.afbackup awg-forge:/tmp/awg-forge.afbackup
+docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore /tmp/awg-forge.afbackup
+```
+
+Before replacing the current config directory, restore keeps an encrypted pre-restore backup in `backups/` inside the restored config directory.
+
+Restore checks:
+
+- password and ciphertext integrity;
+- `metadata.json`;
+- schema version;
+- file checksums;
+- valid `state.json`;
+- server config rendering.
+
+Restore does not apply runtime automatically. After restore, restart the container or explicitly restart tunnels.
+
 ## Health In UI
 
 The tunnel `Health` action samples runtime counters and shows client status.

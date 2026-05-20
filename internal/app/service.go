@@ -24,7 +24,6 @@ import (
 	"github.com/astronaut808/awg-forge/internal/storage"
 )
 
-const stateSchemaVersion = 2
 const healthTrafficWarningThresholdBytes uint64 = 1024
 
 var clientNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_. -]{0,62}[A-Za-z0-9]$|^[A-Za-z0-9]$`)
@@ -97,7 +96,7 @@ func (s *Service) Init() (config.State, error) {
 		changed := false
 		protocolRepaired := false
 		if state.SchemaVersion == 0 {
-			state.SchemaVersion = stateSchemaVersion
+			state.SchemaVersion = config.CurrentStateSchemaVersion
 			changed = true
 		}
 		if state.SessionSecret == "" {
@@ -167,7 +166,7 @@ func (s *Service) Init() (config.State, error) {
 		return config.State{}, err
 	}
 	state := config.State{
-		SchemaVersion:     stateSchemaVersion,
+		SchemaVersion:     config.CurrentStateSchemaVersion,
 		SessionSecret:     secret,
 		ServerHost:        s.cfg.ServerHost,
 		ExternalInterface: s.cfg.ExternalInterface,
