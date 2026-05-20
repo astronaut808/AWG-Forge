@@ -21,6 +21,7 @@
 - Runtime tunnel apply now uses the same firewall repair logic as manual maintenance.
 - Doctor firewall diagnostics now point missing and duplicate managed rules to `awg-forge firewall repair`.
 - Topbar maintenance actions are grouped under `Maintenance`, and primary buttons use a calmer hover/border treatment.
+- Documentation now describes Maintenance hub actions instead of the old separate topbar maintenance buttons.
 
 ## v0.4.0 - 2026-05-20
 
