@@ -10,9 +10,12 @@ import (
 	"time"
 
 	"github.com/astronaut808/awg-forge/internal/app"
+	"github.com/astronaut808/awg-forge/internal/backup"
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/doctor"
+	"github.com/astronaut808/awg-forge/internal/firewall"
 	"github.com/astronaut808/awg-forge/internal/server"
+	"github.com/astronaut808/awg-forge/internal/support"
 	"github.com/astronaut808/awg-forge/internal/updates"
 )
 
@@ -52,6 +55,14 @@ func run(args []string) error {
 		return svc.RenderAll()
 	case "doctor":
 		return doctor.Run(cfg, svc)
+	case "backup":
+		return runBackup(cfg, svc, args[1:])
+	case "restore":
+		return runRestore(cfg, args[1:])
+	case "support-bundle":
+		return runSupportBundle(cfg, svc, args[1:])
+	case "firewall":
+		return runFirewall(svc, args[1:])
 	case "client":
 		return runClient(svc, args[1:])
 	case "tunnel":
@@ -145,7 +156,112 @@ func runClient(svc *app.Service, args []string) error {
 }
 
 func usage() error {
-	return errors.New("usage: awg-forge init|serve|render|doctor|updates|client|tunnel")
+	return errors.New("usage: awg-forge init|serve|render|doctor|backup|restore|support-bundle|updates|firewall|client|tunnel")
+}
+
+func runFirewall(svc *app.Service, args []string) error {
+	if len(args) != 1 {
+		return errors.New("usage: awg-forge firewall check|repair")
+	}
+	var (
+		report firewall.Report
+		err    error
+	)
+	switch args[0] {
+	case "check":
+		report, err = svc.FirewallCheck()
+	case "repair":
+		report, err = svc.FirewallRepair()
+	default:
+		return errors.New("usage: awg-forge firewall check|repair")
+	}
+	if err != nil {
+		printFirewallReport(report)
+		return err
+	}
+	printFirewallReport(report)
+	return nil
+}
+
+func printFirewallReport(report firewall.Report) {
+	if !report.ApplyEnabled {
+		fmt.Println("WARN firewall: APPLY_CONFIG=false; runtime firewall rules are not managed")
+		return
+	}
+	if len(report.Results) == 0 {
+		fmt.Println("OK   firewall: no enabled tunnels")
+		return
+	}
+	for _, result := range report.Results {
+		level := "OK"
+		if result.Status == "missing" || result.Status == "error" {
+			level = "FAIL"
+		}
+		if result.Status == "duplicate" {
+			level = "WARN"
+		}
+		fmt.Printf("%-4s firewall %s/%s: %s", level, result.Tunnel, result.Rule, result.Status)
+		if result.Count != 1 {
+			fmt.Printf(" (%d)", result.Count)
+		}
+		if result.Message != "" {
+			fmt.Printf("; %s", result.Message)
+		}
+		fmt.Println()
+	}
+}
+
+func runBackup(cfg config.Config, svc *app.Service, args []string) error {
+	if len(args) > 1 {
+		return errors.New("usage: BACKUP_PASSWORD=... awg-forge backup [output.afbackup]")
+	}
+	password := os.Getenv("BACKUP_PASSWORD")
+	if password == "" {
+		return errors.New("BACKUP_PASSWORD is required")
+	}
+	path := ""
+	if len(args) == 1 {
+		path = args[0]
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	written, err := backup.WriteFile(ctx, cfg, svc, password, path)
+	if err != nil {
+		return err
+	}
+	fmt.Println(written)
+	return nil
+}
+
+func runRestore(cfg config.Config, args []string) error {
+	if len(args) != 1 {
+		return errors.New("usage: BACKUP_PASSWORD=... awg-forge restore <backup.afbackup>")
+	}
+	password := os.Getenv("BACKUP_PASSWORD")
+	if password == "" {
+		return errors.New("BACKUP_PASSWORD is required")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return backup.Restore(ctx, cfg, password, args[0])
+}
+
+func runSupportBundle(cfg config.Config, svc *app.Service, args []string) error {
+	if len(args) > 1 {
+		return errors.New("usage: awg-forge support-bundle [output.zip]")
+	}
+	path := ""
+	if len(args) == 1 {
+		path = args[0]
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	written, err := support.WriteFile(ctx, cfg, svc, path)
+	if err != nil {
+		return err
+	}
+	fmt.Println(written)
+	return nil
 }
 
 func runUpdates() error {

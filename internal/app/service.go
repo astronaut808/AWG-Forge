@@ -18,13 +18,13 @@ import (
 	"time"
 
 	"github.com/astronaut808/awg-forge/internal/config"
+	"github.com/astronaut808/awg-forge/internal/firewall"
 	"github.com/astronaut808/awg-forge/internal/keys"
 	"github.com/astronaut808/awg-forge/internal/protocol"
 	"github.com/astronaut808/awg-forge/internal/render"
 	"github.com/astronaut808/awg-forge/internal/storage"
 )
 
-const stateSchemaVersion = 2
 const healthTrafficWarningThresholdBytes uint64 = 1024
 
 var clientNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_. -]{0,62}[A-Za-z0-9]$|^[A-Za-z0-9]$`)
@@ -97,7 +97,7 @@ func (s *Service) Init() (config.State, error) {
 		changed := false
 		protocolRepaired := false
 		if state.SchemaVersion == 0 {
-			state.SchemaVersion = stateSchemaVersion
+			state.SchemaVersion = config.CurrentStateSchemaVersion
 			changed = true
 		}
 		if state.SessionSecret == "" {
@@ -167,7 +167,7 @@ func (s *Service) Init() (config.State, error) {
 		return config.State{}, err
 	}
 	state := config.State{
-		SchemaVersion:     stateSchemaVersion,
+		SchemaVersion:     config.CurrentStateSchemaVersion,
 		SessionSecret:     secret,
 		ServerHost:        s.cfg.ServerHost,
 		ExternalInterface: s.cfg.ExternalInterface,
@@ -1120,6 +1120,22 @@ func (s *Service) TunnelHealthByID(tunnelID string, sampleSeconds int) (TunnelHe
 	return health, nil
 }
 
+func (s *Service) FirewallCheck() (firewall.Report, error) {
+	state, err := s.Init()
+	if err != nil {
+		return firewall.Report{}, err
+	}
+	return firewall.Check(s.cfg, state, firewall.IPTablesRunner{}), nil
+}
+
+func (s *Service) FirewallRepair() (firewall.Report, error) {
+	state, err := s.Init()
+	if err != nil {
+		return firewall.Report{}, err
+	}
+	return firewall.Repair(s.cfg, state, firewall.IPTablesRunner{})
+}
+
 func (s *Service) apply(tunnel config.Tunnel) error {
 	serverPath := filepath.Join(s.cfg.ConfigDir, "tunnels", tunnel.InterfaceName, "server.conf")
 	runtimePath := filepath.Join("/etc/amnezia/amneziawg", tunnel.InterfaceName+".conf")
@@ -1145,21 +1161,8 @@ func (s *Service) apply(tunnel config.Tunnel) error {
 }
 
 func (s *Service) ensureFirewallRules(tunnel config.Tunnel) error {
-	rules := []iptablesRule{
-		{table: "nat", args: []string{"POSTROUTING", "-s", tunnel.IPv4Subnet, "-o", s.cfg.ExternalInterface, "-j", "MASQUERADE"}, insert: true},
-		{args: []string{"INPUT", "-p", "udp", "-m", "udp", "--dport", strconv.Itoa(tunnel.ListenPort), "-j", "ACCEPT"}, insert: true},
-		{args: []string{"FORWARD", "-i", tunnel.InterfaceName, "-j", "ACCEPT"}, insert: true},
-		{args: []string{"FORWARD", "-o", tunnel.InterfaceName, "-j", "ACCEPT"}, insert: true},
-	}
-	for _, rule := range rules {
-		if err := deleteAllIPTablesRules(rule); err != nil {
-			return err
-		}
-		if err := ensureIPTablesRule(rule); err != nil {
-			return err
-		}
-	}
-	return nil
+	_, err := firewall.Repair(s.cfg, config.State{Tunnels: []config.Tunnel{tunnel}}, firewall.IPTablesRunner{})
+	return err
 }
 
 func (s *Service) cleanupFirewallRules(tunnel config.Tunnel) error {
@@ -1182,30 +1185,8 @@ func (s *Service) cleanupFirewallRules(tunnel config.Tunnel) error {
 }
 
 type iptablesRule struct {
-	table  string
-	args   []string
-	insert bool
-}
-
-func ensureIPTablesRule(rule iptablesRule) error {
-	if iptablesCheck(rule) == nil {
-		return nil
-	}
-	action := "-A"
-	if rule.insert {
-		action = "-I"
-	}
-	args := append([]string{}, iptablesTableArgs(rule.table)...)
-	args = append(args, action)
-	args = append(args, rule.args...)
-	if rule.insert {
-		args = append(args[:len(iptablesTableArgs(rule.table))+2], append([]string{"1"}, args[len(iptablesTableArgs(rule.table))+2:]...)...)
-	}
-	out, err := exec.Command("iptables", args...).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("iptables %s failed: %s", strings.Join(args, " "), strings.TrimSpace(string(out)))
-	}
-	return nil
+	table string
+	args  []string
 }
 
 func deleteAllIPTablesRules(rule iptablesRule) error {

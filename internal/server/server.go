@@ -18,8 +18,10 @@ import (
 	"time"
 
 	"github.com/astronaut808/awg-forge/internal/app"
+	"github.com/astronaut808/awg-forge/internal/backup"
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/doctor"
+	"github.com/astronaut808/awg-forge/internal/support"
 	"github.com/astronaut808/awg-forge/internal/updates"
 )
 
@@ -57,7 +59,10 @@ func Serve(cfg config.Config, service *app.Service) error {
 	mux.HandleFunc("/api/login", w.security(w.loginAPI))
 	mux.HandleFunc("/api/logout", w.security(w.requireAuth(w.logoutAPI)))
 	mux.HandleFunc("/api/state", w.security(w.requireAuth(w.stateAPI)))
+	mux.HandleFunc("/api/backup", w.security(w.requireAuth(w.backupAPI)))
 	mux.HandleFunc("/api/doctor", w.security(w.requireAuth(w.doctorAPI)))
+	mux.HandleFunc("/api/firewall/repair", w.security(w.requireAuth(w.firewallRepairAPI)))
+	mux.HandleFunc("/api/support-bundle", w.security(w.requireAuth(w.supportBundleAPI)))
 	mux.HandleFunc("/api/updates", w.security(w.requireAuth(w.updatesAPI)))
 	mux.HandleFunc("/api/tunnels", w.security(w.requireAuth(w.tunnelsAPI)))
 	mux.HandleFunc("/api/tunnels/", w.security(w.requireAuth(w.tunnelAPI)))
@@ -142,6 +147,60 @@ func (w *web) doctorAPI(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(rw, http.StatusOK, map[string]any{"results": doctor.Check(w.cfg, w.service)})
+}
+
+func (w *web) firewallRepairAPI(rw http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost || !w.validOrigin(r) {
+		writeError(rw, http.StatusForbidden, "forbidden")
+		return
+	}
+	report, err := w.service.FirewallRepair()
+	if err != nil {
+		writeJSON(rw, http.StatusInternalServerError, map[string]any{"error": err.Error(), "firewall": report})
+		return
+	}
+	writeJSON(rw, http.StatusOK, map[string]any{"firewall": report})
+}
+
+func (w *web) backupAPI(rw http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost || !w.validOrigin(r) {
+		writeError(rw, http.StatusForbidden, "forbidden")
+		return
+	}
+	var req struct {
+		Password string `json:"password"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(rw, http.StatusBadRequest, "invalid json")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	archive, err := backup.Create(ctx, w.cfg, w.service, req.Password, backup.Options{})
+	if err != nil {
+		writeError(rw, http.StatusBadRequest, err.Error())
+		return
+	}
+	rw.Header().Set("Content-Type", "application/octet-stream")
+	rw.Header().Set("Content-Disposition", `attachment; filename="`+archive.Name+`"`)
+	_, _ = rw.Write(archive.Data)
+}
+
+func (w *web) supportBundleAPI(rw http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(rw, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	bundle, err := support.Generate(ctx, w.cfg, w.service, support.Options{})
+	if err != nil {
+		writeError(rw, http.StatusInternalServerError, err.Error())
+		return
+	}
+	rw.Header().Set("Content-Type", "application/zip")
+	rw.Header().Set("Content-Disposition", `attachment; filename="`+bundle.Name+`"`)
+	_, _ = rw.Write(bundle.Data)
 }
 
 func (w *web) updatesAPI(rw http.ResponseWriter, r *http.Request) {
@@ -395,6 +454,7 @@ func (w *web) publicState(state config.State) map[string]any {
 	}
 	return map[string]any{
 		"authenticated":       true,
+		"apply_enabled":       w.cfg.ApplyConfig,
 		"server_host":         state.ServerHost,
 		"published_udp_ports": w.cfg.PublishedUDPPorts,
 		"profiles": []map[string]any{

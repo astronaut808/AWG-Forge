@@ -26,6 +26,99 @@ Doctor проверяет:
 - stale client configs;
 - handshakes и transfer counters.
 
+## Support Bundle
+
+Support bundle нужен, чтобы передать диагностику без приватных ключей и полных конфигов.
+
+В UI открой `Maintenance` -> `Support bundle`, чтобы скачать `.zip`.
+
+В Docker:
+
+```bash
+docker exec awg-forge awg-forge support-bundle
+```
+
+С заданным именем файла:
+
+```bash
+docker exec awg-forge awg-forge support-bundle /tmp/awg-forge-support.zip
+docker cp awg-forge:/tmp/awg-forge-support.zip .
+```
+
+Bundle включает:
+
+- redacted config/state summary;
+- Doctor results;
+- runtime output `ip`, `iptables`, `awg show`;
+- inventory config directory без содержимого `.conf`.
+
+Bundle не должен включать:
+
+- private keys;
+- preshared keys;
+- password;
+- session secret;
+- rendered server/client configs;
+- raw protocol parameter values.
+
+## Encrypted Backup / Restore
+
+Backup отличается от support bundle: он содержит секретный материал, включая `state.json`, private keys, preshared keys и rendered `.conf`.
+
+Backup всегда шифруется отдельным паролем:
+
+```bash
+docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge backup /tmp/awg-forge.afbackup
+docker cp awg-forge:/tmp/awg-forge.afbackup .
+```
+
+Restore требует тот же пароль:
+
+```bash
+docker cp awg-forge.afbackup awg-forge:/tmp/awg-forge.afbackup
+docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore /tmp/awg-forge.afbackup
+```
+
+Перед заменой текущего config directory restore сохраняет encrypted pre-restore backup в `backups/` внутри восстановленного config directory.
+
+Restore проверяет:
+
+- пароль и целостность шифротекста;
+- `metadata.json`;
+- schema version;
+- checksums файлов;
+- валидность `state.json`;
+- возможность render server configs.
+
+Restore не применяет runtime автоматически. После restore перезапусти контейнер или явно перезапусти туннели.
+
+## Firewall Check / Repair
+
+`doctor` показывает missing или duplicate managed firewall rules. Для ручной проверки:
+
+```bash
+docker exec awg-forge awg-forge firewall check
+```
+
+Для восстановления managed rules:
+
+```bash
+docker exec awg-forge awg-forge firewall repair
+```
+
+Repair делает только ожидаемые awg-forge rules для enabled tunnels:
+
+- `nat POSTROUTING MASQUERADE` для tunnel subnet;
+- `INPUT udp --dport <port> ACCEPT`;
+- `FORWARD -i <interface> ACCEPT`;
+- `FORWARD -o <interface> ACCEPT`.
+
+Repair удаляет дубли только этих managed rules и добавляет отсутствующие. Чужие firewall rules не трогает. Disabled tunnels не получают новые rules.
+
+Если `APPLY_CONFIG=false`, `firewall check/repair` ничего не меняет и показывает предупреждение.
+
+В UI эта операция доступна через `Doctor` -> `Repair firewall`. Если `APPLY_CONFIG=false`, кнопка визуально недоступна и показывает причину; если `APPLY_CONFIG=true`, действие требует подтверждения.
+
 ## Health В UI
 
 Кнопка `Health` на туннеле делает короткий sample runtime counters и показывает состояние клиентов.

@@ -106,7 +106,7 @@ function renderLogin() {
         <div class="brand">
           <span class="brand-mark" aria-hidden="true">${brandIcon()}</span>
           <div>
-            <h1>awg-forge</h1>
+            ${brandTitle()}
             <p>Secure admin access</p>
           </div>
         </div>
@@ -174,14 +174,13 @@ function renderApp() {
       <div class="brand">
         <span class="brand-mark" aria-hidden="true">${brandIcon()}</span>
         <div>
-          <h1>awg-forge</h1>
+          ${brandTitle()}
           <p><span class="mono">${escapeHTML(state.server_host)}</span> · ${allTunnels.length} tunnel(s)</p>
         </div>
       </div>
       <div class="toolbar">
         <button class="ghost theme-toggle" data-action="theme" aria-label="${themeToggleLabel()}" title="${themeToggleLabel()}">${themeIcon()}</button>
-        <button class="ghost" data-action="doctor">Doctor</button>
-        <button class="ghost" data-action="updates">Updates</button>
+        <button class="ghost" data-action="maintenance">Maintenance</button>
         <button class="ghost" data-action="refresh">Refresh</button>
         <button class="ghost" data-action="logout">Log out</button>
       </div>
@@ -319,9 +318,12 @@ function bindAppEvents(active) {
       const action = node.dataset.action;
       const tunnel = node.dataset.tunnel ? findTunnel(node.dataset.tunnel) : null;
 
-      if (action === "refresh") await loadState();
+      if (action === "refresh") await refreshState();
       if (action === "theme") toggleTheme();
+      if (action === "maintenance") openMaintenance();
       if (action === "doctor") await openDoctor();
+      if (action === "backup") openBackup();
+      if (action === "support-bundle") await downloadSupportBundle();
       if (action === "updates") await openUpdates();
       if (action === "logout") await logout();
       if (action === "create-tunnel") openCreateTunnel(active);
@@ -603,11 +605,22 @@ async function openDoctor() {
 
   const payload = await res.json();
   const results = payload.results || [];
+  const repairAvailable = Boolean(state?.apply_enabled);
+  const repairReason = "Firewall repair is unavailable because APPLY_CONFIG=false";
 
   showModal(`
     <div class="modal-head">
       <div><h2>Doctor</h2><p class="muted">Runtime, tools, network, and tunnel checks.</p></div>
       <button class="icon-button" type="button" data-close aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-actions">
+      <button
+        type="button"
+        class="${repairAvailable ? "" : "is-disabled"}"
+        data-modal-action="repair-firewall"
+        aria-disabled="${repairAvailable ? "false" : "true"}"
+        title="${repairAvailable ? "Repair managed firewall rules" : repairReason}"
+      >Repair firewall</button>
     </div>
     <div class="client-list">
       ${results.map((result) => `
@@ -621,6 +634,160 @@ async function openDoctor() {
       `).join("")}
     </div>
   `);
+
+  modal.querySelector("[data-modal-action='repair-firewall']")?.addEventListener("click", repairFirewall);
+}
+
+function openMaintenance() {
+  const repairAvailable = Boolean(state?.apply_enabled);
+  const repairReason = "APPLY_CONFIG=false";
+  const items = [
+    {
+      action: "doctor",
+      title: "Doctor",
+      badge: "check",
+      badgeClass: "warn",
+      text: "Runtime tools, ports, tunnels, firewall, peers, handshakes, and stale configs.",
+      button: "Open Doctor",
+    },
+    {
+      action: "repair-firewall",
+      title: "Firewall repair",
+      badge: repairAvailable ? "live" : "disabled",
+      badgeClass: repairAvailable ? "ok" : "warn",
+      text: repairAvailable
+        ? "Reconcile managed NAT, INPUT, and FORWARD rules for enabled tunnels."
+        : "Runtime firewall repair is disabled in dry-run mode.",
+      button: "Repair firewall",
+      disabled: !repairAvailable,
+      reason: repairReason,
+    },
+    {
+      action: "backup",
+      title: "Encrypted backup",
+      badge: "encrypted",
+      badgeClass: "ok",
+      text: "Export state, rendered configs, and metadata with a dedicated backup password.",
+      button: "Download backup",
+    },
+    {
+      action: "support-bundle",
+      title: "Support bundle",
+      badge: "redacted",
+      badgeClass: "ok",
+      text: "Download diagnostics without private keys, PSKs, session secrets, or full configs.",
+      button: "Download bundle",
+    },
+    {
+      action: "updates",
+      title: "Updates",
+      badge: "manual",
+      badgeClass: "warn",
+      text: "Compare pinned AmneziaWG refs against upstream. Running containers are never updated automatically.",
+      button: "Check updates",
+    },
+    {
+      action: "restore",
+      title: "Restore",
+      badge: "CLI only",
+      badgeClass: "warn",
+      text: "Restore remains CLI-only for safety. Use BACKUP_PASSWORD with awg-forge restore.",
+      button: "CLI only",
+      disabled: true,
+      reason: "Restore is intentionally available only from CLI",
+    },
+  ];
+
+  showModal(`
+    <div class="modal-head">
+      <div><h2>Maintenance</h2><p class="muted">Production operations, diagnostics, backups, and update checks.</p></div>
+      <button class="icon-button" type="button" data-close aria-label="Close">&times;</button>
+    </div>
+    <div class="maintenance-grid">
+      ${items.map((item) => `
+        <section class="maintenance-card">
+          <div class="maintenance-card-head">
+            <h3>${escapeHTML(item.title)}</h3>
+            <span class="badge ${item.badgeClass}">${escapeHTML(item.badge)}</span>
+          </div>
+          <p class="muted">${escapeHTML(item.text)}</p>
+          <button
+            type="button"
+            class="${item.disabled ? "is-disabled" : ""}"
+            data-maintenance-action="${escapeAttr(item.action)}"
+            aria-disabled="${item.disabled ? "true" : "false"}"
+            title="${escapeAttr(item.disabled ? item.reason : item.title)}"
+          >${escapeHTML(item.button)}</button>
+        </section>
+      `).join("")}
+    </div>
+  `);
+
+  modal.querySelectorAll("[data-maintenance-action]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const action = button.dataset.maintenanceAction;
+      if (button.getAttribute("aria-disabled") === "true") {
+        showToast(button.title || "Action unavailable");
+        return;
+      }
+      if (action === "doctor") await openDoctor();
+      if (action === "repair-firewall") await repairFirewall();
+      if (action === "backup") openBackup();
+      if (action === "support-bundle") await downloadSupportBundle();
+      if (action === "updates") await openUpdates();
+    });
+  });
+}
+
+async function repairFirewall() {
+  if (!state?.apply_enabled) {
+    showToast("Firewall repair is unavailable: APPLY_CONFIG=false");
+    return;
+  }
+  if (!confirm("Repair managed firewall rules for enabled tunnels?")) return;
+  const res = await api("/api/firewall/repair", { method: "POST", body: {} });
+  if (!res.ok) return;
+  const payload = await res.json();
+  const firewall = payload.firewall || {};
+  if (firewall.apply_enabled === false) {
+    showToast("Firewall repair skipped: APPLY_CONFIG=false");
+  } else {
+    showToast("Firewall rules repaired");
+  }
+  await openDoctor();
+}
+
+function openBackup() {
+  showModal(`
+    <form id="modal-form">
+      <div class="modal-head">
+        <div><h2>Encrypted backup</h2><p class="muted">Contains private keys and client PSKs. Store it safely.</p></div>
+        <button class="icon-button" type="button" data-close aria-label="Close">&times;</button>
+      </div>
+      <div class="notice">Use a dedicated backup password. It is required to restore this archive and is not stored by awg-forge.</div>
+      <div><label>Backup password</label><input name="password" type="password" autocomplete="new-password" minlength="8" autofocus></div>
+      <div class="form-actions"><button class="primary" type="submit">Download backup</button></div>
+    </form>
+  `);
+
+  document.querySelector("#modal-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!beginSubmit(event.currentTarget)) return;
+
+    const form = new FormData(event.currentTarget);
+    const res = await fetch("/api/backup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: form.get("password") }),
+    });
+    if (!res.ok) {
+      showToast(await errorText(res));
+      resetSubmit(event.currentTarget);
+      return;
+    }
+    await downloadBlobResponse(res, "awg-forge-backup.afbackup");
+    modal.close();
+  });
 }
 
 async function openUpdates() {
@@ -749,6 +916,18 @@ function brandIcon() {
   `;
 }
 
+function brandTitle() {
+  return `
+    <h1 class="brand-title">
+      <span>awg-forge</span>
+      <a class="brand-by" href="https://github.com/astronaut808" target="_blank" rel="noopener noreferrer" aria-label="Open astronaut808 GitHub profile">
+        <span>by</span>
+        <strong>astronaut808</strong>
+      </a>
+    </h1>
+  `;
+}
+
 function themeToggleLabel() {
   return activeTheme === "dark" ? "Switch to light theme" : "Switch to dark theme";
 }
@@ -820,6 +999,11 @@ async function logout() {
 
   state = null;
   renderLogin();
+}
+
+async function refreshState() {
+  await loadState();
+  showToast("Refreshed");
 }
 
 async function api(url, options = {}) {
@@ -919,14 +1103,42 @@ function downloadClientConfig(clientID) {
   link.remove();
 }
 
+async function downloadSupportBundle() {
+  const res = await fetch("/api/support-bundle");
+  if (!res.ok) {
+    showToast(await errorText(res));
+    return;
+  }
+  await downloadBlobResponse(res, "awg-forge-support.zip");
+}
+
+async function downloadBlobResponse(res, fallbackName) {
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filenameFromDisposition(res.headers.get("Content-Disposition")) || fallbackName;
+  link.rel = "noopener";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function filenameFromDisposition(value) {
+  const match = String(value || "").match(/filename="([^"]+)"/);
+  return match ? match[1] : "";
+}
+
 function findTunnel(id) {
   return (state?.tunnels || []).find((tunnel) => tunnel.id === id);
 }
 
 function showToast(message) {
+  window.clearTimeout(showToast.timer);
   toast.textContent = message;
   toast.classList.add("show");
-  window.setTimeout(() => toast.classList.remove("show"), 3600);
+  showToast.timer = window.setTimeout(() => toast.classList.remove("show"), 3600);
 }
 
 function escapeHTML(value) {

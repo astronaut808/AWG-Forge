@@ -27,6 +27,7 @@ Primary areas:
 
 - Profile tabs: `1.0`, `1.5`, `2.0`
 - Tunnel cards inside each profile
+- Maintenance hub for Doctor, firewall repair, encrypted backup, support bundle, update checks, and CLI-only restore guidance
 - Tunnel settings modal
 - Protocol parameters modal
 - Client creation modal
@@ -133,7 +134,8 @@ The frontend uses JSON APIs:
 
 - `POST /api/login`
 - `POST /api/logout`
-- `GET /api/state`
+- `GET /api/state` with `apply_enabled` for maintenance dry-run UI state
+- `POST /api/firewall/repair`
 - `POST /api/tunnels`
 - `PATCH /api/tunnels/<id>/settings`
 - `PATCH /api/tunnels/<id>/protocol`

@@ -51,6 +51,15 @@ Tunnel actions:
 - Restart;
 - Delete.
 
+Maintenance-действия сгруппированы в отдельном modal `Maintenance`:
+
+- Doctor;
+- Repair firewall;
+- Encrypted backup;
+- Support bundle;
+- Updates;
+- Restore guidance, только CLI.
+
 ## Settings
 
 Editable fields:
@@ -121,8 +130,9 @@ Frontend использует:
 
 - `POST /api/login`;
 - `POST /api/logout`;
-- `GET /api/state`;
+- `GET /api/state` с `apply_enabled` для отображения dry-run режима maintenance-действий;
 - `GET /api/doctor`;
+- `POST /api/firewall/repair`;
 - `GET /api/updates`;
 - `POST /api/tunnels`;
 - `PATCH /api/tunnels/<id>/settings`;
