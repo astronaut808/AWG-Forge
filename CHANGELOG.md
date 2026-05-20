@@ -1,5 +1,52 @@
 # Changelog
 
+## v0.4.0 - 2026-05-20
+
+Runtime safety, subnet correctness, and manual AmneziaWG update checks.
+
+### Added
+
+- Added reproducible AmneziaWG tool pinning through `build/amneziawg.refs`.
+- Added `awg-forge updates` to compare bundled AmneziaWG refs with upstream GitHub commits.
+- Added Web UI `Updates` modal for checking bundled AmneziaWG component status.
+- Added `/api/updates` for authenticated UI update checks.
+- Added `Makefile` helpers for local and Docker workflows:
+  - `make updates-local`;
+  - `make updates-docker`;
+  - `make update-amneziawg-refs`;
+  - `make docker-build`;
+  - `make ci`.
+- Added `scripts/update-amneziawg-refs.sh` to update pinned AmneziaWG refs for manual PR-based upgrades.
+- Added build metadata for awg-forge version, awg-forge commit, pinned `amneziawg-go`, and pinned `amneziawg-tools`.
+- Added Russian and English README entrypoints, plus split Russian and English docs for setup, configuration, usage, diagnostics, updates, development, and security.
+- Added tests for non-`/24` subnet allocation and rendering across Legacy / 1.0, 1.5, and 2.0.
+- Added tests for apply failure rollback and stricter Origin/Host validation.
+
+### Changed
+
+- Docker builds now fetch pinned AmneziaWG commits instead of cloning floating upstream `HEAD`.
+- Docker image labels and environment metadata now expose awg-forge and pinned AmneziaWG build refs.
+- GitHub Docker workflow passes awg-forge version and commit metadata into image builds.
+- Server configs now render the actual tunnel subnet prefix instead of hardcoding `/24`.
+- Tunnel subnet input is normalized to canonical IPv4 CIDR form.
+- Client IP allocation now works across supported IPv4 CIDR sizes, not only the last octet of `/24`.
+- Supported tunnel subnet sizes are constrained to `/16` through `/30` to avoid accidental huge allocations or unusable networks.
+- Apply failures for mutating operations now roll back state and rendered configs so the UI does not show changes that failed to apply.
+- Runtime apply errors now return server errors for mutating API calls instead of looking like validation failures.
+- Web UI closes the active dialog and refreshes state after apply failures so runtime errors are visible.
+- Web UI now automatically starts the `.conf` download after a client is created successfully.
+- Removed experimental QR generation, QR API routes, and QR actions from the Web UI. `.conf` download is now the only supported client import path.
+- Origin/Host validation is stricter:
+  - same-origin public requests are allowed;
+  - localhost and SSH tunnel usage remain supported;
+  - opaque origins such as `null` and browser-extension origins are rejected for mutating requests;
+  - POST requests without Origin/Referer are only allowed for loopback hosts.
+
+### Notes
+
+- awg-forge only detects AmneziaWG upstream updates. It never updates tools inside a running container.
+- AmneziaWG upgrades remain manual: update pinned refs, rebuild the Docker image, test real tunnels/clients, then release a new awg-forge image.
+
 ## v0.3.1 - 2026-05-19
 
 Web UI typography and diagnostics polish.

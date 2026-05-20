@@ -231,7 +231,7 @@ func (c *checker) checkTunnelRuntime(tunnel config.Tunnel) {
 		c.warn(area, "tunnel disabled")
 	}
 	if tunnel.ProtocolProfileID == "awg_2_0" {
-		c.ok("compat "+tunnel.Name, "AWG 2.0 requires compatible AmneziaVPN clients; use .conf import, QR is experimental")
+		c.ok("compat "+tunnel.Name, "AWG 2.0 requires compatible AmneziaVPN clients; use .conf import")
 	}
 	show, err := awgShow(tunnel.InterfaceName)
 	if err != nil {

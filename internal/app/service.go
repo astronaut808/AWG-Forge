@@ -3,7 +3,9 @@ package app
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -11,7 +13,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -68,6 +69,24 @@ type TunnelHealth struct {
 	Clients       []ClientHealth `json:"clients"`
 }
 
+type ApplyError struct {
+	Err error
+}
+
+func (e *ApplyError) Error() string {
+	if e == nil || e.Err == nil {
+		return "apply failed"
+	}
+	return "apply failed: " + e.Err.Error()
+}
+
+func (e *ApplyError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
 func New(cfg config.Config) *Service {
 	return &Service{cfg: cfg, store: storage.New(cfg.ConfigDir)}
 }
@@ -98,6 +117,13 @@ func (s *Service) Init() (config.State, error) {
 			changed = true
 		}
 		for ti := range state.Tunnels {
+			networkRepaired, err := repairTunnelNetwork(&state.Tunnels[ti])
+			if err != nil {
+				return config.State{}, err
+			}
+			if networkRepaired {
+				changed = true
+			}
 			if state.Tunnels[ti].ConfigRevision == 0 {
 				state.Tunnels[ti].ConfigRevision = 1
 				changed = true
@@ -176,6 +202,31 @@ func (s *Service) repairProtocolParams(tunnel *config.Tunnel) (bool, error) {
 	return true, nil
 }
 
+func repairTunnelNetwork(tunnel *config.Tunnel) (bool, error) {
+	normalized, _, err := normalizeIPv4CIDR(tunnel.IPv4Subnet)
+	if err != nil {
+		return false, err
+	}
+	serverIP, err := serverAddress(normalized)
+	if err != nil {
+		return false, err
+	}
+	changed := false
+	if tunnel.IPv4Subnet != normalized {
+		tunnel.IPv4Subnet = normalized
+		changed = true
+	}
+	if tunnel.ServerAddress != serverIP {
+		tunnel.ServerAddress = serverIP
+		changed = true
+	}
+	if changed {
+		tunnel.ConfigRevision++
+		tunnel.UpdatedAt = time.Now().UTC()
+	}
+	return changed, nil
+}
+
 func (s *Service) State() (config.State, error) {
 	return s.Init()
 }
@@ -226,6 +277,11 @@ func (s *Service) CreateTunnel(profileID, name, subnet string, port int) (config
 	if subnet == "" {
 		subnet = suggestedSubnet
 	}
+	normalizedSubnet, _, err := normalizeIPv4CIDR(subnet)
+	if err != nil {
+		return config.Tunnel{}, err
+	}
+	subnet = normalizedSubnet
 	if !tunnelNameRE.MatchString(name) {
 		return config.Tunnel{}, errors.New("tunnel name must start with a letter and contain only letters, numbers, dots, underscores, or dashes")
 	}
@@ -233,6 +289,10 @@ func (s *Service) CreateTunnel(profileID, name, subnet string, port int) (config
 		return config.Tunnel{}, errors.New("listen port must be between 1 and 65535")
 	}
 	state, err := s.Init()
+	if err != nil {
+		return config.Tunnel{}, err
+	}
+	previousState, err := cloneState(state)
 	if err != nil {
 		return config.Tunnel{}, err
 	}
@@ -262,7 +322,16 @@ func (s *Service) CreateTunnel(profileID, name, subnet string, port int) (config
 	if err := s.store.Save(state); err != nil {
 		return config.Tunnel{}, err
 	}
-	return tunnel, s.RenderTunnel(tunnel.ID)
+	if err := s.RenderTunnel(tunnel.ID); err != nil {
+		var applyErr *ApplyError
+		if errors.As(err, &applyErr) {
+			if rollbackErr := s.rollbackRenderedState(previousState, "", tunnel.InterfaceName); rollbackErr != nil {
+				return config.Tunnel{}, fmt.Errorf("%w; rollback failed: %v", err, rollbackErr)
+			}
+		}
+		return config.Tunnel{}, err
+	}
+	return tunnel, nil
 }
 
 func (s *Service) UpdateTunnelSettings(tunnelID, name, subnet, dns, allowedIPs string, keepalive, mtu, port int, enabled bool) (config.Tunnel, error) {
@@ -273,6 +342,10 @@ func (s *Service) UpdateTunnelSettings(tunnelID, name, subnet, dns, allowedIPs s
 	idx, ok := tunnelIndexByID(state, tunnelID)
 	if !ok {
 		return config.Tunnel{}, errors.New("tunnel not found")
+	}
+	previousState, err := cloneState(state)
+	if err != nil {
+		return config.Tunnel{}, err
 	}
 	name = strings.TrimSpace(name)
 	subnet = strings.TrimSpace(subnet)
@@ -302,6 +375,11 @@ func (s *Service) UpdateTunnelSettings(tunnelID, name, subnet, dns, allowedIPs s
 	if mtu != 0 && (mtu < 576 || mtu > 1500) {
 		return config.Tunnel{}, errors.New("MTU must be auto or between 576 and 1500")
 	}
+	normalizedSubnet, _, err := normalizeIPv4CIDR(subnet)
+	if err != nil {
+		return config.Tunnel{}, err
+	}
+	subnet = normalizedSubnet
 	serverIP, err := serverAddress(subnet)
 	if err != nil {
 		return config.Tunnel{}, err
@@ -353,7 +431,20 @@ func (s *Service) UpdateTunnelSettings(tunnelID, name, subnet, dns, allowedIPs s
 	if oldInterface != name {
 		_ = s.store.DeleteRenderedTunnel(oldInterface)
 	}
-	return state.Tunnels[idx], s.RenderTunnel(state.Tunnels[idx].ID)
+	if err := s.RenderTunnel(state.Tunnels[idx].ID); err != nil {
+		var applyErr *ApplyError
+		if errors.As(err, &applyErr) {
+			deleteRendered := []string{}
+			if oldInterface != name {
+				deleteRendered = append(deleteRendered, name)
+			}
+			if rollbackErr := s.rollbackRenderedState(previousState, old.ID, deleteRendered...); rollbackErr != nil {
+				return config.Tunnel{}, fmt.Errorf("%w; rollback failed: %v", err, rollbackErr)
+			}
+		}
+		return config.Tunnel{}, err
+	}
+	return state.Tunnels[idx], nil
 }
 
 func (s *Service) DeleteTunnel(tunnelID string) error {
@@ -368,6 +459,10 @@ func (s *Service) DeleteTunnel(tunnelID string) error {
 	if !ok {
 		return errors.New("tunnel not found")
 	}
+	previousState, err := cloneState(state)
+	if err != nil {
+		return err
+	}
 	tunnel := state.Tunnels[idx]
 	if _, err := s.store.BackupState(state, "delete-"+tunnel.InterfaceName); err != nil {
 		return err
@@ -378,8 +473,18 @@ func (s *Service) DeleteTunnel(tunnelID string) error {
 		return err
 	}
 	if s.cfg.ApplyConfig {
-		_ = exec.Command("awg-quick", "down", tunnel.InterfaceName).Run()
-		_ = s.cleanupFirewallRules(tunnel)
+		if err := exec.Command("awg-quick", "down", tunnel.InterfaceName).Run(); err != nil {
+			if rollbackErr := s.rollbackRenderedState(previousState, tunnel.ID); rollbackErr != nil {
+				return fmt.Errorf("%w; rollback failed: %v", &ApplyError{Err: err}, rollbackErr)
+			}
+			return &ApplyError{Err: err}
+		}
+		if err := s.cleanupFirewallRules(tunnel); err != nil {
+			if rollbackErr := s.rollbackRenderedState(previousState, tunnel.ID); rollbackErr != nil {
+				return fmt.Errorf("%w; rollback failed: %v", &ApplyError{Err: err}, rollbackErr)
+			}
+			return &ApplyError{Err: err}
+		}
 	}
 	return s.store.DeleteRenderedTunnel(tunnel.InterfaceName)
 }
@@ -400,7 +505,11 @@ func (s *Service) newTunnel(spec tunnelSpec) (config.Tunnel, error) {
 	if err := p.Validate(params); err != nil {
 		return config.Tunnel{}, err
 	}
-	serverIP, err := serverAddress(spec.IPv4Subnet)
+	normalizedSubnet, _, err := normalizeIPv4CIDR(spec.IPv4Subnet)
+	if err != nil {
+		return config.Tunnel{}, err
+	}
+	serverIP, err := serverAddress(normalizedSubnet)
 	if err != nil {
 		return config.Tunnel{}, err
 	}
@@ -412,7 +521,7 @@ func (s *Service) newTunnel(spec tunnelSpec) (config.Tunnel, error) {
 		Enabled:           true,
 		ListenPort:        spec.ListenPort,
 		ServerAddress:     serverIP,
-		IPv4Subnet:        spec.IPv4Subnet,
+		IPv4Subnet:        normalizedSubnet,
 		DNS:               s.cfg.DNS,
 		AllowedIPs:        s.cfg.AllowedIPs,
 		Keepalive:         s.cfg.PersistentKeepalive,
@@ -451,6 +560,10 @@ func (s *Service) AddClientToTunnel(tunnelID, name string) (config.Client, error
 	if !ok {
 		return config.Client{}, errors.New("tunnel not found")
 	}
+	previousState, err := cloneState(state)
+	if err != nil {
+		return config.Client{}, err
+	}
 	ip, err := nextClientIP(state.Tunnels[idx])
 	if err != nil {
 		return config.Client{}, err
@@ -476,11 +589,24 @@ func (s *Service) AddClientToTunnel(tunnelID, name string) (config.Client, error
 	if err := s.store.Save(state); err != nil {
 		return config.Client{}, err
 	}
-	return client, s.RenderTunnel(state.Tunnels[idx].ID)
+	if err := s.RenderTunnel(state.Tunnels[idx].ID); err != nil {
+		var applyErr *ApplyError
+		if errors.As(err, &applyErr) {
+			if rollbackErr := s.rollbackRenderedState(previousState, state.Tunnels[idx].ID); rollbackErr != nil {
+				return config.Client{}, fmt.Errorf("%w; rollback failed: %v", err, rollbackErr)
+			}
+		}
+		return config.Client{}, err
+	}
+	return client, nil
 }
 
 func (s *Service) RemoveClient(id string) error {
 	state, err := s.Init()
+	if err != nil {
+		return err
+	}
+	previousState, err := cloneState(state)
 	if err != nil {
 		return err
 	}
@@ -501,7 +627,16 @@ func (s *Service) RemoveClient(id string) error {
 			if err := s.store.Save(state); err != nil {
 				return err
 			}
-			return s.RenderTunnel(state.Tunnels[ti].ID)
+			if err := s.RenderTunnel(state.Tunnels[ti].ID); err != nil {
+				var applyErr *ApplyError
+				if errors.As(err, &applyErr) {
+					if rollbackErr := s.rollbackRenderedState(previousState, state.Tunnels[ti].ID); rollbackErr != nil {
+						return fmt.Errorf("%w; rollback failed: %v", err, rollbackErr)
+					}
+				}
+				return err
+			}
+			return nil
 		}
 	}
 	return errors.New("client not found")
@@ -509,6 +644,10 @@ func (s *Service) RemoveClient(id string) error {
 
 func (s *Service) SetClientEnabled(id string, enabled bool) error {
 	state, err := s.Init()
+	if err != nil {
+		return err
+	}
+	previousState, err := cloneState(state)
 	if err != nil {
 		return err
 	}
@@ -523,7 +662,16 @@ func (s *Service) SetClientEnabled(id string, enabled bool) error {
 				if err := s.store.Save(state); err != nil {
 					return err
 				}
-				return s.RenderTunnel(state.Tunnels[ti].ID)
+				if err := s.RenderTunnel(state.Tunnels[ti].ID); err != nil {
+					var applyErr *ApplyError
+					if errors.As(err, &applyErr) {
+						if rollbackErr := s.rollbackRenderedState(previousState, state.Tunnels[ti].ID); rollbackErr != nil {
+							return fmt.Errorf("%w; rollback failed: %v", err, rollbackErr)
+						}
+					}
+					return err
+				}
+				return nil
 			}
 		}
 	}
@@ -562,23 +710,6 @@ func (s *Service) ClientConfigForDownload(id string) (string, config.Client, err
 	}
 	_ = s.markClientConfigDelivered(id)
 	return conf, client, nil
-}
-
-func (s *Service) ClientAmneziaImportConfig(id string) ([]byte, config.Client, error) {
-	state, err := s.Init()
-	if err != nil {
-		return nil, config.Client{}, err
-	}
-	tunnel, client, ok := findClient(state, id)
-	if !ok {
-		return nil, config.Client{}, errors.New("client not found")
-	}
-	payload, err := render.AmneziaImportConfig(state, tunnel, client)
-	if err != nil {
-		return nil, config.Client{}, err
-	}
-	_ = s.markClientConfigDelivered(id)
-	return payload, client, nil
 }
 
 func (s *Service) markClientConfigDelivered(id string) error {
@@ -638,7 +769,7 @@ func (s *Service) RenderAll() error {
 		return err
 	}
 	for _, tunnel := range state.Tunnels {
-		if err := s.RenderTunnel(tunnel.ID); err != nil {
+		if err := s.renderTunnel(tunnel.ID, false); err != nil {
 			return err
 		}
 	}
@@ -646,14 +777,49 @@ func (s *Service) RenderAll() error {
 }
 
 func (s *Service) RenderTunnel(tunnelID string) error {
+	return s.renderTunnel(tunnelID, true)
+}
+
+func (s *Service) renderTunnel(tunnelID string, failOnApply bool) error {
 	state, err := s.Init()
 	if err != nil {
 		return err
 	}
-	return s.renderTunnelFromState(state, tunnelID)
+	return s.renderTunnelFromState(state, tunnelID, failOnApply)
 }
 
-func (s *Service) renderTunnelFromState(state config.State, tunnelID string) error {
+func (s *Service) renderTunnelFromState(state config.State, tunnelID string, failOnApply bool) error {
+	idx, ok := tunnelIndexByID(state, tunnelID)
+	if !ok {
+		return errors.New("tunnel not found")
+	}
+	if err := s.writeRenderedTunnelFiles(state, tunnelID); err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	state.Tunnels[idx].LastRenderAt = now
+	state.Tunnels[idx].LastApplyError = ""
+	if s.cfg.ApplyConfig && state.Tunnels[idx].Enabled {
+		if err := s.apply(state.Tunnels[idx]); err != nil {
+			state.Tunnels[idx].LastApplyError = err.Error()
+			state.Tunnels[idx].UpdatedAt = now
+			state.UpdatedAt = now
+			if saveErr := s.store.Save(state); saveErr != nil {
+				return fmt.Errorf("apply failed: %w; additionally failed to save state: %v", err, saveErr)
+			}
+			if failOnApply {
+				return &ApplyError{Err: err}
+			}
+			return nil
+		}
+		state.Tunnels[idx].LastApplyAt = now
+	}
+	state.Tunnels[idx].UpdatedAt = now
+	state.UpdatedAt = now
+	return s.store.Save(state)
+}
+
+func (s *Service) writeRenderedTunnelFiles(state config.State, tunnelID string) error {
 	idx, ok := tunnelIndexByID(state, tunnelID)
 	if !ok {
 		return errors.New("tunnel not found")
@@ -671,25 +837,24 @@ func (s *Service) renderTunnelFromState(state config.State, tunnelID string) err
 		}
 		clients[c.ID] = conf
 	}
-	if err := s.store.WriteRenderedTunnel(tunnel, serverConf, clients); err != nil {
+	return s.store.WriteRenderedTunnel(tunnel, serverConf, clients)
+}
+
+func (s *Service) rollbackRenderedState(previous config.State, tunnelID string, deleteRendered ...string) error {
+	if err := s.store.Save(previous); err != nil {
 		return err
 	}
-	now := time.Now().UTC()
-	state.Tunnels[idx].LastRenderAt = now
-	state.Tunnels[idx].LastApplyError = ""
-	if s.cfg.ApplyConfig && tunnel.Enabled {
-		if err := s.apply(state.Tunnels[idx]); err != nil {
-			state.Tunnels[idx].LastApplyError = err.Error()
-			state.Tunnels[idx].UpdatedAt = now
-			state.UpdatedAt = now
-			_ = s.store.Save(state)
-			return nil
+	if tunnelID != "" {
+		if err := s.writeRenderedTunnelFiles(previous, tunnelID); err != nil {
+			return err
 		}
-		state.Tunnels[idx].LastApplyAt = now
 	}
-	state.Tunnels[idx].UpdatedAt = now
-	state.UpdatedAt = now
-	return s.store.Save(state)
+	for _, interfaceName := range deleteRendered {
+		if err := s.store.DeleteRenderedTunnel(interfaceName); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Service) UpdateProtocol(profileID string, params config.ProtocolParams) error {
@@ -731,6 +896,10 @@ func (s *Service) UpdateTunnelProtocol(tunnelID, profileID string, params config
 	if !ok {
 		return errors.New("tunnel not found")
 	}
+	previousState, err := cloneState(state)
+	if err != nil {
+		return err
+	}
 	now := time.Now().UTC()
 	state.Tunnels[idx].ProtocolProfileID = profileID
 	state.Tunnels[idx].ProtocolParams = params
@@ -740,7 +909,16 @@ func (s *Service) UpdateTunnelProtocol(tunnelID, profileID string, params config
 	if err := s.store.Save(state); err != nil {
 		return err
 	}
-	return s.RenderTunnel(tunnelID)
+	if err := s.RenderTunnel(tunnelID); err != nil {
+		var applyErr *ApplyError
+		if errors.As(err, &applyErr) {
+			if rollbackErr := s.rollbackRenderedState(previousState, tunnelID); rollbackErr != nil {
+				return fmt.Errorf("%w; rollback failed: %v", err, rollbackErr)
+			}
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *Service) RegenerateProtocol(profileID string) error {
@@ -1205,44 +1383,57 @@ func (s *Service) sessionSecretValue() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b[:]), nil
 }
 
+func normalizeIPv4CIDR(cidr string) (string, *net.IPNet, error) {
+	ip, ipnet, err := net.ParseCIDR(strings.TrimSpace(cidr))
+	if err != nil {
+		return "", nil, err
+	}
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return "", nil, errors.New("IPv4 subnet required")
+	}
+	ones, bits := ipnet.Mask.Size()
+	if bits != 32 {
+		return "", nil, errors.New("IPv4 subnet required")
+	}
+	if ones < 16 {
+		return "", nil, errors.New("subnet too large")
+	}
+	if ones > 30 {
+		return "", nil, errors.New("subnet too small")
+	}
+	network := ip4.Mask(ipnet.Mask)
+	normalized := &net.IPNet{IP: network, Mask: ipnet.Mask}
+	return fmt.Sprintf("%s/%d", network.String(), ones), normalized, nil
+}
+
 func serverAddress(cidr string) (string, error) {
-	ip, ipnet, err := net.ParseCIDR(cidr)
+	_, ipnet, err := normalizeIPv4CIDR(cidr)
 	if err != nil {
 		return "", err
 	}
-	ip = ip.To4()
-	if ip == nil {
-		return "", errors.New("IPv4 subnet required")
-	}
-	next := append(net.IP(nil), ip...)
-	next[3]++
-	if !ipnet.Contains(next) {
+	network := ipv4ToUint(ipnet.IP)
+	broadcast := broadcastIPv4(ipnet)
+	if network+1 >= broadcast {
 		return "", errors.New("subnet too small")
 	}
-	return next.String(), nil
+	return uintToIPv4(network + 1).String(), nil
 }
 
 func nextClientIP(tunnel config.Tunnel) (string, error) {
-	ip, ipnet, err := net.ParseCIDR(tunnel.IPv4Subnet)
+	_, ipnet, err := normalizeIPv4CIDR(tunnel.IPv4Subnet)
 	if err != nil {
 		return "", err
-	}
-	base := ip.To4()
-	if base == nil {
-		return "", errors.New("IPv4 subnet required")
 	}
 	used := map[string]bool{tunnel.ServerAddress: true}
 	for _, c := range tunnel.Clients {
 		used[c.IPv4Address] = true
 	}
-	var usedIPs []string
-	for k := range used {
-		usedIPs = append(usedIPs, k)
-	}
-	sort.Strings(usedIPs)
-	for i := 2; i < 255; i++ {
-		candidate := net.IPv4(base[0], base[1], base[2], byte(i)).String()
-		if ipnet.Contains(net.ParseIP(candidate)) && !used[candidate] {
+	network := ipv4ToUint(ipnet.IP)
+	broadcast := broadcastIPv4(ipnet)
+	for n := network + 2; n < broadcast; n++ {
+		candidate := uintToIPv4(n).String()
+		if !used[candidate] {
 			return candidate, nil
 		}
 	}
@@ -1250,10 +1441,38 @@ func nextClientIP(tunnel config.Tunnel) (string, error) {
 }
 
 func subnetsOverlap(a, b string) bool {
-	aIP, aNet, errA := net.ParseCIDR(a)
-	bIP, bNet, errB := net.ParseCIDR(b)
+	_, aNet, errA := normalizeIPv4CIDR(a)
+	_, bNet, errB := normalizeIPv4CIDR(b)
 	if errA != nil || errB != nil {
 		return false
 	}
-	return aNet.Contains(bIP) || bNet.Contains(aIP)
+	return aNet.Contains(bNet.IP) || bNet.Contains(aNet.IP)
+}
+
+func cloneState(state config.State) (config.State, error) {
+	b, err := json.Marshal(state)
+	if err != nil {
+		return config.State{}, err
+	}
+	var cloned config.State
+	if err := json.Unmarshal(b, &cloned); err != nil {
+		return config.State{}, err
+	}
+	return cloned, nil
+}
+
+func ipv4ToUint(ip net.IP) uint32 {
+	return binary.BigEndian.Uint32(ip.To4())
+}
+
+func uintToIPv4(v uint32) net.IP {
+	var b [4]byte
+	binary.BigEndian.PutUint32(b[:], v)
+	return net.IPv4(b[0], b[1], b[2], b[3])
+}
+
+func broadcastIPv4(ipnet *net.IPNet) uint32 {
+	network := ipv4ToUint(ipnet.IP)
+	mask := binary.BigEndian.Uint32(ipnet.Mask)
+	return network | ^mask
 }

@@ -12,11 +12,20 @@ import (
 	"github.com/astronaut808/awg-forge/internal/config"
 )
 
-func TestValidOriginAllowsMissingOriginAndReferer(t *testing.T) {
+func TestValidOriginAllowsMissingOriginAndRefererForLoopback(t *testing.T) {
 	w := &web{}
 	r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:51821/login", nil)
 	if !w.validOrigin(r) {
 		t.Fatal("missing Origin and Referer should be allowed for localhost/tunnel login")
+	}
+}
+
+func TestValidOriginRejectsMissingOriginAndRefererForPublicHost(t *testing.T) {
+	w := &web{}
+	r := httptest.NewRequest(http.MethodPost, "https://admin.example.com/api/login", nil)
+	r.Host = "admin.example.com"
+	if w.validOrigin(r) {
+		t.Fatal("missing Origin and Referer should be rejected for public hosts")
 	}
 }
 
@@ -38,6 +47,16 @@ func TestValidOriginAllowsMatchingOrigin(t *testing.T) {
 	}
 }
 
+func TestValidOriginAllowsPublishedSameOrigin(t *testing.T) {
+	w := &web{}
+	r := httptest.NewRequest(http.MethodPost, "https://admin.example.com/api/clients", nil)
+	r.Host = "admin.example.com"
+	r.Header.Set("Origin", "https://admin.example.com")
+	if !w.validOrigin(r) {
+		t.Fatal("published same-origin request should be allowed")
+	}
+}
+
 func TestValidOriginAllowsLoopbackAlias(t *testing.T) {
 	w := &web{}
 	r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:51821/login", nil)
@@ -47,22 +66,22 @@ func TestValidOriginAllowsLoopbackAlias(t *testing.T) {
 	}
 }
 
-func TestValidOriginAllowsOpaqueLocalBrowserOrigins(t *testing.T) {
+func TestValidOriginRejectsOpaqueOrigins(t *testing.T) {
 	w := &web{}
 	for _, origin := range []string{"null", "browser-extension://abc123"} {
 		r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:51821/clients/create", nil)
 		r.Header.Set("Origin", origin)
-		if !w.validOrigin(r) {
-			t.Fatalf("origin %q should be allowed for local authenticated UI", origin)
+		if w.validOrigin(r) {
+			t.Fatalf("origin %q should be rejected", origin)
 		}
 	}
 }
 
-func TestLoginPostDoesNotRequireOrigin(t *testing.T) {
+func TestLoginPostAcceptsSameOrigin(t *testing.T) {
 	w := &web{sessions: []byte("test-secret"), limits: map[string][]time.Time{}, cfg: config.Config{Password: "secret"}}
 	r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:51821/api/login", strings.NewReader(`{"password":"secret"}`))
 	r.Header.Set("Content-Type", "application/json")
-	r.Header.Set("Origin", "browser-extension://extension")
+	r.Header.Set("Origin", "http://127.0.0.1:51821")
 	rr := httptest.NewRecorder()
 
 	w.loginAPI(rr, r)
@@ -168,9 +187,10 @@ func TestIdempotentCreateClientDoesNotCreateDuplicate(t *testing.T) {
 
 	body := `{"tunnel_id":"` + state.Tunnels[0].ID + `","name":"phone"}`
 	for i := 0; i < 2; i++ {
-		r := httptest.NewRequest(http.MethodPost, "/api/clients", strings.NewReader(body))
+		r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/clients", strings.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
 		r.Header.Set("Idempotency-Key", "same-create-key")
+		r.Header.Set("Origin", "http://127.0.0.1")
 		rr := httptest.NewRecorder()
 		w.clientsAPI(rr, r)
 		if rr.Code != http.StatusCreated {
@@ -183,5 +203,49 @@ func TestIdempotentCreateClientDoesNotCreateDuplicate(t *testing.T) {
 	}
 	if got := len(state.Tunnels[0].Clients); got != 1 {
 		t.Fatalf("clients = %d, want 1", got)
+	}
+}
+
+func TestApplyFailureReturnsServerErrorForMutation(t *testing.T) {
+	cfg := config.Config{
+		ConfigDir:           t.TempDir(),
+		TunnelName:          "awg0",
+		ServerHost:          "vpn.example.com",
+		ListenPort:          51820,
+		WebUIHost:           "127.0.0.1",
+		WebUIPort:           51821,
+		ExternalInterface:   "eth0",
+		IPv4Subnet:          "10.8.0.0/24",
+		DNS:                 "1.1.1.1",
+		AllowedIPs:          "0.0.0.0/0",
+		PersistentKeepalive: 0,
+		MTU:                 0,
+		ProtocolProfile:     "awg_legacy_1_0",
+		ApplyConfig:         true,
+	}
+	svc := app.New(cfg)
+	state, err := svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := &web{service: svc, idem: map[string]*idempotencyEntry{}}
+
+	body := `{"tunnel_id":"` + state.Tunnels[0].ID + `","name":"phone"}`
+	r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/clients", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Idempotency-Key", "apply-fails")
+	r.Header.Set("Origin", "http://127.0.0.1")
+	rr := httptest.NewRecorder()
+	w.clientsAPI(rr, r)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d; body = %s", rr.Code, http.StatusInternalServerError, rr.Body.String())
+	}
+	state, err = svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(state.Tunnels[0].Clients); got != 0 {
+		t.Fatalf("clients = %d, want 0", got)
 	}
 }

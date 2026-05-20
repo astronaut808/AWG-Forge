@@ -1,0 +1,72 @@
+# Development
+
+## Requirements
+
+- Go `1.26.3`;
+- Docker for image/runtime testing.
+
+## Common Commands
+
+```bash
+make test
+make vet
+make build
+make ci
+make docker-build
+```
+
+## Local UI Run
+
+For local development, runtime tunnel changes usually do not need to be applied:
+
+```bash
+CONFIG_DIR=/private/tmp/awg-forge-dev \
+WEBUI_HOST=127.0.0.1 \
+WEBUI_PORT=51821 \
+PASSWORD=test \
+APPLY_CONFIG=false \
+SERVER_HOST=127.0.0.1 \
+go run ./cmd/awg-forge serve
+```
+
+Open:
+
+```text
+http://127.0.0.1:51821
+```
+
+## Pre-commit Checks
+
+```bash
+make ci
+git diff --check
+```
+
+`make ci` runs:
+
+- `go test ./...`;
+- `go vet ./...`;
+- `go build ./...`.
+
+## Frontend
+
+Frontend files:
+
+- `internal/server/static/index.html`;
+- `internal/server/static/app.css`;
+- `internal/server/static/app.js`.
+
+The frontend remains static HTML/CSS/JavaScript with no Node, npm, React, Vue, or build pipeline.
+
+## Backend
+
+Main areas:
+
+- `cmd/awg-forge`: CLI entrypoint;
+- `internal/app`: service layer, state mutations, rollback, rendering/apply orchestration;
+- `internal/config`: env/state model;
+- `internal/protocol`: protocol profiles and validation;
+- `internal/render`: server/client config rendering;
+- `internal/server`: Web UI/API;
+- `internal/doctor`: diagnostics;
+- `internal/updates`: AmneziaWG upstream update checks.

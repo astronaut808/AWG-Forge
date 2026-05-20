@@ -181,6 +181,7 @@ function renderApp() {
       <div class="toolbar">
         <button class="ghost theme-toggle" data-action="theme" aria-label="${themeToggleLabel()}" title="${themeToggleLabel()}">${themeIcon()}</button>
         <button class="ghost" data-action="doctor">Doctor</button>
+        <button class="ghost" data-action="updates">Updates</button>
         <button class="ghost" data-action="refresh">Refresh</button>
         <button class="ghost" data-action="logout">Log out</button>
       </div>
@@ -222,7 +223,7 @@ function renderTunnels(profile, tunnels) {
 
 function profileHelp(profile) {
   if (!profile.available) return "This profile is reserved for the next protocol implementation.";
-  if (profile.id === "awg_2_0") return "Create AWG 2.0 tunnels. Use .conf import for production clients; QR remains experimental.";
+  if (profile.id === "awg_2_0") return "Create AWG 2.0 tunnels. Use .conf import for production clients.";
   return "Create and manage independent tunnels for this profile.";
 }
 
@@ -298,7 +299,6 @@ function renderClientRow(tunnel, client) {
       <div class="actions row-actions">
         ${client.needs_new_config ? `<span class="badge warn">stale</span>` : ""}
         <a class="button" href="/clients/config/${encodeURIComponent(client.id)}">Config</a>
-        <button data-action="qr" data-client="${escapeAttr(client.id)}">QR</button>
         <button data-action="${client.enabled ? "disable-client" : "enable-client"}" data-client="${escapeAttr(client.id)}">${client.enabled ? "Disable" : "Enable"}</button>
         <button class="danger" data-action="delete-client" data-client="${escapeAttr(client.id)}">Delete</button>
       </div>
@@ -322,6 +322,7 @@ function bindAppEvents(active) {
       if (action === "refresh") await loadState();
       if (action === "theme") toggleTheme();
       if (action === "doctor") await openDoctor();
+      if (action === "updates") await openUpdates();
       if (action === "logout") await logout();
       if (action === "create-tunnel") openCreateTunnel(active);
       if (action === "create-client" && tunnel) openCreateClient(tunnel);
@@ -330,7 +331,6 @@ function bindAppEvents(active) {
       if (action === "health" && tunnel) await openHealth(tunnel);
       if (action === "restart" && tunnel) await restartTunnel(tunnel);
       if (action === "delete-tunnel" && tunnel) await deleteTunnel(tunnel);
-      if (action === "qr") await openQR(node.dataset.client);
       if (action === "enable-client") await setClient(node.dataset.client, true);
       if (action === "disable-client") await setClient(node.dataset.client, false);
       if (action === "delete-client") await deleteClient(node.dataset.client);
@@ -461,8 +461,8 @@ function openCreateClient(tunnel) {
 
     if (res.ok) {
       const payload = await res.json();
-      await loadState();
-      await openQR(payload.client.id);
+      await closeModalAndReload(tunnel.profile);
+      if (payload.client?.id) downloadClientConfig(payload.client.id);
       return;
     }
 
@@ -597,34 +597,6 @@ function openProtocol(tunnel) {
   });
 }
 
-async function openQR(clientID) {
-  const res = await api(`/api/clients/${encodeURIComponent(clientID)}/qr`);
-  if (!res.ok) return;
-
-  const payload = await res.json();
-  const chunks = payload.chunks || [];
-  const client = payload.client || {};
-
-  showModal(`
-    <div class="modal-head">
-      <div><h2>AmneziaVPN QR</h2><p class="muted">${escapeHTML(client.name || "Client")} · QR import is experimental. Use the config file if the VPN tunnel does not start.</p></div>
-      <button class="icon-button" type="button" data-close aria-label="Close">&times;</button>
-    </div>
-    <p class="notice">Recommended path: download the .conf file and import it in AmneziaVPN. QR remains available for testing and clients where QR import works correctly.</p>
-    <div class="qr-list">
-      ${chunks.map((chunk) => `
-        <div class="qr-card">
-          <div class="qr-label">QR ${Number(chunk.index)} of ${Number(chunk.total)}</div>
-          <img class="qr" alt="AmneziaVPN QR ${Number(chunk.index)} of ${Number(chunk.total)}" src="data:image/png;base64,${escapeAttr(chunk.png)}">
-        </div>
-      `).join("")}
-    </div>
-    <div class="form-actions">
-      <a class="button primary" href="/clients/config/${encodeURIComponent(clientID)}">Download config</a>
-    </div>
-  `);
-}
-
 async function openDoctor() {
   const res = await api("/api/doctor");
   if (!res.ok) return;
@@ -645,6 +617,45 @@ async function openDoctor() {
             <span class="muted doctor-message mono">${escapeHTML(result.message)}</span>
           </div>
           <span class="badge ${doctorBadgeClass(result.level)}">${escapeHTML(result.level)}</span>
+        </div>
+      `).join("")}
+    </div>
+  `);
+}
+
+async function openUpdates() {
+  showModal(`
+    <div class="modal-head">
+      <div><h2>Updates</h2><p class="muted">Checking pinned AmneziaWG refs against upstream. Updates are manual.</p></div>
+      <button class="icon-button" type="button" data-close aria-label="Close">&times;</button>
+    </div>
+    <p class="muted">Contacting GitHub...</p>
+  `);
+
+  const res = await api("/api/updates");
+  if (!res.ok) return;
+
+  const payload = await res.json();
+  const report = payload.updates || {};
+  const info = report.build_info || {};
+  const components = report.components || [];
+
+  showModal(`
+    <div class="modal-head">
+      <div><h2>Updates</h2><p class="muted">awg-forge ${escapeHTML(info.version || "dev")} · manual updates only</p></div>
+      <button class="icon-button" type="button" data-close aria-label="Close">&times;</button>
+    </div>
+    <div class="notice">awg-forge never updates AmneziaWG inside the running container. If upstream changed, update pinned refs in awg-forge, rebuild, test, and release a new image.</div>
+    <div class="client-list">
+      ${components.map((component) => `
+        <div class="client-row">
+          <div>
+            <strong>${escapeHTML(component.name)}</strong>
+            <span class="muted mono">${escapeHTML(component.repository)}</span>
+            <span class="muted">pinned <span class="mono">${escapeHTML(shortRef(component.current_ref))}</span>${component.latest_ref ? ` · upstream <span class="mono">${escapeHTML(shortRef(component.latest_ref))}</span> (${escapeHTML(component.default_branch)})` : ""}</span>
+            ${component.error ? `<span class="muted">${escapeHTML(component.error)}</span>` : ""}
+          </div>
+          <span class="badge ${updateBadgeClass(component.status)}">${escapeHTML(updateLabel(component.status))}</span>
         </div>
       `).join("")}
     </div>
@@ -696,6 +707,23 @@ function doctorBadgeClass(level) {
   if (level === "ok") return "ok";
   if (level === "warn") return "warn";
   return "bad";
+}
+
+function updateBadgeClass(status) {
+  if (status === "current") return "ok";
+  if (status === "newer_available") return "warn";
+  return "bad";
+}
+
+function updateLabel(status) {
+  if (status === "newer_available") return "newer available";
+  if (status === "current") return "current";
+  return "unknown";
+}
+
+function shortRef(ref) {
+  const value = String(ref || "unknown");
+  return value.length > 12 ? value.slice(0, 12) : value;
 }
 
 function healthBadgeClass(status) {
@@ -810,7 +838,13 @@ async function api(url, options = {}) {
   }
 
   const res = await fetch(url, init);
-  if (!res.ok) showToast(await errorText(res));
+  if (!res.ok) {
+    const message = await errorText(res);
+    const isApplyFailure = message.includes("apply failed");
+    if (isApplyFailure && modal?.open) modal.close();
+    showToast(message);
+    if (isApplyFailure) window.setTimeout(() => loadState(), 100);
+  }
   return res;
 }
 
@@ -873,6 +907,16 @@ async function closeModalAndReload(profileID) {
   modal.close();
   if (profileID) activeProfile = profileID;
   await loadState();
+}
+
+function downloadClientConfig(clientID) {
+  const link = document.createElement("a");
+  link.href = `/clients/config/${encodeURIComponent(clientID)}`;
+  link.download = "";
+  link.rel = "noopener";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
 }
 
 function findTunnel(id) {

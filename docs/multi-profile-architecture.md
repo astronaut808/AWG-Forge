@@ -152,7 +152,7 @@ Client creation always targets one tunnel:
 4. Generate client private/public/preshared keys.
 5. Render only that tunnel.
 6. Apply only that tunnel when `APPLY_CONFIG=true`.
-7. Redirect to QR/download.
+7. Refresh the dashboard and offer the protected `.conf` download.
 
 Deleting a client frees that IP inside the same tunnel. Disabled clients stay in state but are not rendered into server peers.
 
@@ -197,7 +197,7 @@ Validated:
 
 Still pending:
 
-- native QR import validation
+- native Amnezia import validation
 - broader client-version compatibility matrix
 
 The architecture already reserves the multi-server shape for this: adding 2.0 should be additive, not a state rewrite.
