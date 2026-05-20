@@ -14,19 +14,25 @@
 
 ## Действия В UI
 
+Tunnel actions:
+
 - `Create tunnel`: создать новый туннель внутри выбранного профиля.
 - `Create client`: создать клиента внутри конкретного туннеля.
 - `Config`: скачать `.conf` существующего клиента.
 - `Settings`: настройки туннеля.
 - `Protocol`: protocol params и regenerate.
 - `Health`: handshake и runtime traffic counters по клиентам.
+- `Restart`: перезапустить туннель.
+- `Delete`: удалить туннель или клиента.
+
+Maintenance actions доступны через кнопку `Maintenance`:
+
 - `Doctor`: системная и runtime диагностика.
 - `Repair firewall`: ручное восстановление managed firewall rules из Doctor modal.
 - `Backup`: скачать encrypted backup с отдельным паролем.
-- `Support`: скачать support bundle без секретов.
+- `Support bundle`: скачать support bundle без секретов.
 - `Updates`: проверка, есть ли новые upstream refs у используемых AmneziaWG tools.
-- `Restart`: перезапустить туннель.
-- `Delete`: удалить туннель или клиента.
+- `Restore`: подсказка по CLI-only restore.
 
 ## Stale Configs
 

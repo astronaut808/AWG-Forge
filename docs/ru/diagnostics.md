@@ -30,7 +30,7 @@ Doctor проверяет:
 
 Support bundle нужен, чтобы передать диагностику без приватных ключей и полных конфигов.
 
-В UI нажми `Support`, чтобы скачать `.zip`.
+В UI открой `Maintenance` -> `Support bundle`, чтобы скачать `.zip`.
 
 В Docker:
 

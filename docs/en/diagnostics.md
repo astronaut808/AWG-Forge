@@ -30,7 +30,7 @@ Doctor checks:
 
 Support bundles are meant for sharing diagnostics without private keys or full configs.
 
-In the UI, click `Support` to download a `.zip`.
+In the UI, open `Maintenance` -> `Support bundle` to download a `.zip`.
 
 In Docker:
 

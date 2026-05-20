@@ -14,19 +14,25 @@ Main workflow:
 
 ## UI Actions
 
+Tunnel actions:
+
 - `Create tunnel`: create a new tunnel inside the selected profile.
 - `Create client`: create a client inside a specific tunnel.
 - `Config`: download an existing client's `.conf`.
 - `Settings`: tunnel settings.
 - `Protocol`: protocol params and regenerate.
 - `Health`: handshake and runtime traffic counters for clients.
+- `Restart`: restart a tunnel.
+- `Delete`: delete a tunnel or client.
+
+Maintenance actions are available through the `Maintenance` button:
+
 - `Doctor`: system and runtime diagnostics.
 - `Repair firewall`: manually restore managed firewall rules from the Doctor modal.
 - `Backup`: download an encrypted backup with a dedicated password.
-- `Support`: download a support bundle without secrets.
+- `Support bundle`: download a support bundle without secrets.
 - `Updates`: check whether bundled AmneziaWG upstream refs are behind.
-- `Restart`: restart a tunnel.
-- `Delete`: delete a tunnel or client.
+- `Restore`: CLI-only restore guidance.
 
 ## Stale Configs
 
