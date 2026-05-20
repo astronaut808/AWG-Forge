@@ -14,11 +14,13 @@
 - Added `awg-forge firewall check` and `awg-forge firewall repair` for manual runtime firewall reconciliation.
 - Added Web UI firewall repair action inside the Doctor modal.
 - Added shared firewall rule modeling and tests for expected rules, missing rules, duplicates, and disabled tunnel handling.
+- Added Web UI Maintenance hub for Doctor, firewall repair, encrypted backups, support bundles, update checks, and CLI-only restore guidance.
 
 ### Changed
 
 - Runtime tunnel apply now uses the same firewall repair logic as manual maintenance.
 - Doctor firewall diagnostics now point missing and duplicate managed rules to `awg-forge firewall repair`.
+- Topbar maintenance actions are grouped under `Maintenance`, and primary buttons use a calmer hover/border treatment.
 
 ## v0.4.0 - 2026-05-20
 

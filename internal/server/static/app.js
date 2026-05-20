@@ -180,10 +180,7 @@ function renderApp() {
       </div>
       <div class="toolbar">
         <button class="ghost theme-toggle" data-action="theme" aria-label="${themeToggleLabel()}" title="${themeToggleLabel()}">${themeIcon()}</button>
-        <button class="ghost" data-action="doctor">Doctor</button>
-        <button class="ghost" data-action="backup">Backup</button>
-        <button class="ghost" data-action="support-bundle">Support</button>
-        <button class="ghost" data-action="updates">Updates</button>
+        <button class="ghost" data-action="maintenance">Maintenance</button>
         <button class="ghost" data-action="refresh">Refresh</button>
         <button class="ghost" data-action="logout">Log out</button>
       </div>
@@ -323,6 +320,7 @@ function bindAppEvents(active) {
 
       if (action === "refresh") await refreshState();
       if (action === "theme") toggleTheme();
+      if (action === "maintenance") openMaintenance();
       if (action === "doctor") await openDoctor();
       if (action === "backup") openBackup();
       if (action === "support-bundle") await downloadSupportBundle();
@@ -638,6 +636,107 @@ async function openDoctor() {
   `);
 
   modal.querySelector("[data-modal-action='repair-firewall']")?.addEventListener("click", repairFirewall);
+}
+
+function openMaintenance() {
+  const repairAvailable = Boolean(state?.apply_enabled);
+  const repairReason = "APPLY_CONFIG=false";
+  const items = [
+    {
+      action: "doctor",
+      title: "Doctor",
+      badge: "check",
+      badgeClass: "warn",
+      text: "Runtime tools, ports, tunnels, firewall, peers, handshakes, and stale configs.",
+      button: "Open Doctor",
+    },
+    {
+      action: "repair-firewall",
+      title: "Firewall repair",
+      badge: repairAvailable ? "live" : "disabled",
+      badgeClass: repairAvailable ? "ok" : "warn",
+      text: repairAvailable
+        ? "Reconcile managed NAT, INPUT, and FORWARD rules for enabled tunnels."
+        : "Runtime firewall repair is disabled in dry-run mode.",
+      button: "Repair firewall",
+      disabled: !repairAvailable,
+      reason: repairReason,
+    },
+    {
+      action: "backup",
+      title: "Encrypted backup",
+      badge: "encrypted",
+      badgeClass: "ok",
+      text: "Export state, rendered configs, and metadata with a dedicated backup password.",
+      button: "Download backup",
+    },
+    {
+      action: "support-bundle",
+      title: "Support bundle",
+      badge: "redacted",
+      badgeClass: "ok",
+      text: "Download diagnostics without private keys, PSKs, session secrets, or full configs.",
+      button: "Download bundle",
+    },
+    {
+      action: "updates",
+      title: "Updates",
+      badge: "manual",
+      badgeClass: "warn",
+      text: "Compare pinned AmneziaWG refs against upstream. Running containers are never updated automatically.",
+      button: "Check updates",
+    },
+    {
+      action: "restore",
+      title: "Restore",
+      badge: "CLI only",
+      badgeClass: "warn",
+      text: "Restore remains CLI-only for safety. Use BACKUP_PASSWORD with awg-forge restore.",
+      button: "CLI only",
+      disabled: true,
+      reason: "Restore is intentionally available only from CLI",
+    },
+  ];
+
+  showModal(`
+    <div class="modal-head">
+      <div><h2>Maintenance</h2><p class="muted">Production operations, diagnostics, backups, and update checks.</p></div>
+      <button class="icon-button" type="button" data-close aria-label="Close">&times;</button>
+    </div>
+    <div class="maintenance-grid">
+      ${items.map((item) => `
+        <section class="maintenance-card">
+          <div class="maintenance-card-head">
+            <h3>${escapeHTML(item.title)}</h3>
+            <span class="badge ${item.badgeClass}">${escapeHTML(item.badge)}</span>
+          </div>
+          <p class="muted">${escapeHTML(item.text)}</p>
+          <button
+            type="button"
+            class="${item.disabled ? "is-disabled" : ""}"
+            data-maintenance-action="${escapeAttr(item.action)}"
+            aria-disabled="${item.disabled ? "true" : "false"}"
+            title="${escapeAttr(item.disabled ? item.reason : item.title)}"
+          >${escapeHTML(item.button)}</button>
+        </section>
+      `).join("")}
+    </div>
+  `);
+
+  modal.querySelectorAll("[data-maintenance-action]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const action = button.dataset.maintenanceAction;
+      if (button.getAttribute("aria-disabled") === "true") {
+        showToast(button.title || "Action unavailable");
+        return;
+      }
+      if (action === "doctor") await openDoctor();
+      if (action === "repair-firewall") await repairFirewall();
+      if (action === "backup") openBackup();
+      if (action === "support-bundle") await downloadSupportBundle();
+      if (action === "updates") await openUpdates();
+    });
+  });
 }
 
 async function repairFirewall() {

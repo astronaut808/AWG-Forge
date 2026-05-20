@@ -51,6 +51,15 @@ Tunnel actions:
 - Restart;
 - Delete.
 
+Maintenance-действия сгруппированы в отдельном modal `Maintenance`:
+
+- Doctor;
+- Repair firewall;
+- Encrypted backup;
+- Support bundle;
+- Updates;
+- Restore guidance, только CLI.
+
 ## Settings
 
 Editable fields:
