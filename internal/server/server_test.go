@@ -249,3 +249,46 @@ func TestApplyFailureReturnsServerErrorForMutation(t *testing.T) {
 		t.Fatalf("clients = %d, want 0", got)
 	}
 }
+
+func TestDeleteTunnelApplyFailureReturnsServerError(t *testing.T) {
+	cfg := config.Config{
+		ConfigDir:           t.TempDir(),
+		TunnelName:          "awg0",
+		ServerHost:          "vpn.example.com",
+		ListenPort:          51820,
+		WebUIHost:           "127.0.0.1",
+		WebUIPort:           51821,
+		ExternalInterface:   "eth0",
+		IPv4Subnet:          "10.8.0.0/24",
+		DNS:                 "1.1.1.1",
+		AllowedIPs:          "0.0.0.0/0",
+		PersistentKeepalive: 0,
+		MTU:                 0,
+		ProtocolProfile:     "awg_legacy_1_0",
+	}
+	svc := app.New(cfg)
+	tunnel, err := svc.CreateTunnel("awg_1_5", "awg15", "10.15.0.0/24", 51825)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.ApplyConfig = true
+	svc = app.New(cfg)
+	w := &web{service: svc, idem: map[string]*idempotencyEntry{}}
+
+	r := httptest.NewRequest(http.MethodDelete, "http://127.0.0.1/api/tunnels/"+tunnel.ID+"/delete", nil)
+	r.Header.Set("Idempotency-Key", "delete-apply-fails")
+	r.Header.Set("Origin", "http://127.0.0.1")
+	rr := httptest.NewRecorder()
+	w.deleteTunnelAPI(rr, r, tunnel.ID)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d; body = %s", rr.Code, http.StatusInternalServerError, rr.Body.String())
+	}
+	state, err := svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(state.Tunnels); got != 2 {
+		t.Fatalf("tunnels = %d, want rolled back 2", got)
+	}
+}

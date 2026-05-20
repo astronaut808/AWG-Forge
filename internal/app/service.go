@@ -438,7 +438,7 @@ func (s *Service) UpdateTunnelSettings(tunnelID, name, subnet, dns, allowedIPs s
 			if oldInterface != name {
 				deleteRendered = append(deleteRendered, name)
 			}
-			if rollbackErr := s.rollbackRenderedState(previousState, old.ID, deleteRendered...); rollbackErr != nil {
+			if rollbackErr := s.rollbackRuntimeState(previousState, old.ID, deleteRendered...); rollbackErr != nil {
 				return config.Tunnel{}, fmt.Errorf("%w; rollback failed: %v", err, rollbackErr)
 			}
 		}
@@ -474,13 +474,13 @@ func (s *Service) DeleteTunnel(tunnelID string) error {
 	}
 	if s.cfg.ApplyConfig {
 		if err := exec.Command("awg-quick", "down", tunnel.InterfaceName).Run(); err != nil {
-			if rollbackErr := s.rollbackRenderedState(previousState, tunnel.ID); rollbackErr != nil {
+			if rollbackErr := s.rollbackRuntimeState(previousState, tunnel.ID); rollbackErr != nil {
 				return fmt.Errorf("%w; rollback failed: %v", &ApplyError{Err: err}, rollbackErr)
 			}
 			return &ApplyError{Err: err}
 		}
 		if err := s.cleanupFirewallRules(tunnel); err != nil {
-			if rollbackErr := s.rollbackRenderedState(previousState, tunnel.ID); rollbackErr != nil {
+			if rollbackErr := s.rollbackRuntimeState(previousState, tunnel.ID); rollbackErr != nil {
 				return fmt.Errorf("%w; rollback failed: %v", &ApplyError{Err: err}, rollbackErr)
 			}
 			return &ApplyError{Err: err}
@@ -853,6 +853,23 @@ func (s *Service) rollbackRenderedState(previous config.State, tunnelID string, 
 		if err := s.store.DeleteRenderedTunnel(interfaceName); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (s *Service) rollbackRuntimeState(previous config.State, tunnelID string, deleteRendered ...string) error {
+	if err := s.rollbackRenderedState(previous, tunnelID, deleteRendered...); err != nil {
+		return err
+	}
+	if !s.cfg.ApplyConfig || tunnelID == "" {
+		return nil
+	}
+	idx, ok := tunnelIndexByID(previous, tunnelID)
+	if !ok || !previous.Tunnels[idx].Enabled {
+		return nil
+	}
+	if err := s.apply(previous.Tunnels[idx]); err != nil {
+		return fmt.Errorf("runtime rollback apply failed: %w", err)
 	}
 	return nil
 }

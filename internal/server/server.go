@@ -249,7 +249,7 @@ func (w *web) deleteTunnelAPI(rw http.ResponseWriter, r *http.Request, id string
 	}
 	w.withIdempotency(rw, r, "delete-tunnel:"+id, func() (int, any) {
 		if err := w.service.DeleteTunnel(id); err != nil {
-			return http.StatusBadRequest, errorPayload(err.Error())
+			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
 		}
 		return http.StatusOK, map[string]any{"ok": true}
 	})
