@@ -1,0 +1,110 @@
+# awg-forge
+
+[README на русском](README.md)
+
+awg-forge is a self-hosted AmneziaWG manager for Docker. It provides a small Go backend, a static Web UI, and a CLI for running AmneziaWG tunnels and managing client `.conf` files.
+
+awg-forge does not implement a custom VPN protocol. It renders AmneziaWG configs and manages the existing upstream `awg`, `awg-quick`, and `amneziawg-go` tools bundled in the Docker image.
+
+## Status
+
+Supported profiles:
+
+- AmneziaWG Legacy / 1.0;
+- AmneziaWG 1.5-oriented profile;
+- AmneziaWG 2.0.
+
+Supported client import path:
+
+- `.conf` download.
+
+QR import is not exposed. It was removed because `.conf` import is the most reliable path across current AmneziaVPN clients.
+
+## Features
+
+- Web UI with `1.0`, `1.5`, and `2.0` profile tabs.
+- Multiple tunnels per profile.
+- Client creation, disable, enable, delete, and config download.
+- Automatic `.conf` download after successful client creation.
+- Tunnel settings: port, subnet, DNS, allowed IPs, keepalive, MTU, and enabled state.
+- Protocol parameter generation and validation for Legacy / 1.0, 1.5, and 2.0.
+- Safe non-zero obfuscation defaults for new tunnels.
+- IPv4 egress with NAT/firewall reconciliation.
+- Client health view with handshake and rx/tx counters.
+- Doctor diagnostics for tools, runtime, firewall, ports, peers, handshakes, and stale configs.
+- State/config rollback when runtime config apply fails.
+- Upstream AmneziaWG update checks without automatic system changes.
+- Static HTML/CSS/JavaScript frontend with no Node/npm build pipeline.
+
+## Quick Start
+
+```bash
+cp .env.example .env
+mkdir -p data
+docker compose up -d
+```
+
+By default the Web UI listens on `127.0.0.1:51821`. Open it through an SSH tunnel:
+
+```bash
+ssh -L 51821:127.0.0.1:51821 user@server
+```
+
+Then open:
+
+```text
+http://127.0.0.1:51821
+```
+
+Host networking is the recommended production mode because tunnels created in the UI can use any free UDP ports without changing Docker port mappings.
+
+## Documentation
+
+- [Russian README](README.md)
+- [English documentation](docs/en/README.md)
+- [Setup](docs/en/setup.md)
+- [Configuration](docs/en/configuration.md)
+- [Web UI and CLI](docs/en/usage.md)
+- [Diagnostics and troubleshooting](docs/en/diagnostics.md)
+- [AmneziaWG updates](docs/en/updates.md)
+- [Development](docs/en/development.md)
+- [Security](docs/en/security.md)
+- [Frontend product plan](docs/frontend-spec.md)
+- [Multi-profile / multi-tunnel architecture](docs/multi-profile-architecture.md)
+- [Protocol matrix](docs/protocol-matrix.md)
+- [AWG 2.0 design](docs/awg-2.0-design.md)
+- [Changelog](CHANGELOG.md)
+
+## Minimal Check After Startup
+
+```bash
+docker exec awg-forge awg-forge doctor
+```
+
+Create a client in the UI, import the downloaded `.conf` into AmneziaVPN, and check IPv4 egress:
+
+```bash
+curl -4 https://ifconfig.co
+```
+
+The response should show the server egress IP.
+
+## Development
+
+```bash
+make ci
+```
+
+Run locally without applying runtime tunnel changes:
+
+```bash
+CONFIG_DIR=/private/tmp/awg-forge-dev \
+WEBUI_HOST=127.0.0.1 \
+WEBUI_PORT=51821 \
+PASSWORD=test \
+APPLY_CONFIG=false \
+SERVER_HOST=127.0.0.1 \
+go run ./cmd/awg-forge serve
+```
+
+More details: [Development](docs/en/development.md).

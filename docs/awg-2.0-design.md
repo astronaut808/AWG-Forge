@@ -20,7 +20,7 @@ Current product behavior:
 - `1.5` tab remains for current 1.5-oriented tunnels.
 - `2.0` tab is enabled after profile, rendering, validation, and golden tests.
 - `.conf` import has been validated on desktop and iOS clients with compatible AmneziaVPN builds.
-- QR import remains experimental.
+- Native Amnezia import payloads are not exposed in the product.
 
 ## Parameter Model
 
@@ -182,18 +182,18 @@ PersistentKeepalive = <keepalive>
 Endpoint = <server-host>:<port>
 ```
 
-## Amnezia Native Import / QR
+## Amnezia Native Import
 
 Keep `.conf` download as the supported path.
 
-For QR/native JSON import:
+For a future native JSON import path:
 
 - include all params in `last_config`;
 - include raw INI config in `last_config.config`;
 - set container to `amnezia-awg`;
 - set protocol key to `awg`;
 - set `protocol_version` to `"2"`;
-- keep QR marked experimental until tested on real iOS and Android clients.
+- keep it hidden until tested on real iOS and Android clients.
 
 ## UI
 
@@ -219,7 +219,7 @@ Implemented tests:
 - `S4 > 32` rejection;
 - missing `S3/S4` rejection;
 - CPS syntax tests shared with 1.5;
-- QR payload has `protocol_version = "2"` if QR is offered.
+- native import payload has `protocol_version = "2"` if native import is offered in the future.
 
 ## Validation
 
@@ -232,6 +232,6 @@ Validated:
 
 Still pending:
 
-1. Native QR import verification.
-2. Cross-platform QR schema validation.
+1. Native import verification.
+2. Cross-platform native import schema validation.
 3. Wider compatibility matrix for iOS, Android, desktop, and client versions.

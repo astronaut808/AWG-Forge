@@ -779,35 +779,6 @@ textarea {
   grid-template-columns: 1fr;
 }
 
-.qr {
-  display: block;
-  width: 280px;
-  max-width: 100%;
-  margin: 10px auto 0;
-  border-radius: var(--radius-sm);
-}
-
-.qr-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 12px;
-}
-
-.qr-card {
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
-  padding: 14px;
-  background: var(--surface-solid);
-  text-align: center;
-}
-
-.qr-label {
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 780;
-  text-transform: uppercase;
-}
-
 .toast {
   position: fixed;
   right: 18px;

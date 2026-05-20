@@ -38,6 +38,107 @@ func TestClientIPAllocationAndReuse(t *testing.T) {
 	}
 }
 
+func TestClientIPAllocationSupportsNon24Subnet(t *testing.T) {
+	cfg := testConfig(t)
+	svc := app.New(cfg)
+	tunnel, err := svc.CreateTunnel("awg_legacy_1_0", "awg25", "10.30.0.128/25", 51825)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := svc.AddClientToTunnel(tunnel.ID, "phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tunnel.ServerAddress != "10.30.0.129" {
+		t.Fatalf("server address = %s, want 10.30.0.129", tunnel.ServerAddress)
+	}
+	if client.IPv4Address != "10.30.0.130" {
+		t.Fatalf("client IP = %s, want 10.30.0.130", client.IPv4Address)
+	}
+	serverConf, err := os.ReadFile(filepath.Join(cfg.ConfigDir, "tunnels", "awg25", "server.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(serverConf), "Address = 10.30.0.129/25") {
+		t.Fatalf("server config did not render /25 address:\n%s", serverConf)
+	}
+}
+
+func TestNon24SubnetRendersForModernProfiles(t *testing.T) {
+	cases := []struct {
+		profile string
+		name    string
+		subnet  string
+		port    int
+		address string
+	}{
+		{"awg_1_5", "awg15x", "10.50.0.128/25", 51835, "Address = 10.50.0.129/25"},
+		{"awg_2_0", "awg20x", "10.60.0.128/25", 51836, "Address = 10.60.0.129/25"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.profile, func(t *testing.T) {
+			cfg := testConfig(t)
+			svc := app.New(cfg)
+			tunnel, err := svc.CreateTunnel(tc.profile, tc.name, tc.subnet, tc.port)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := svc.AddClientToTunnel(tunnel.ID, "phone"); err != nil {
+				t.Fatal(err)
+			}
+			serverConf, err := os.ReadFile(filepath.Join(cfg.ConfigDir, "tunnels", tc.name, "server.conf"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(serverConf), tc.address) {
+				t.Fatalf("server config did not render expected address %q:\n%s", tc.address, serverConf)
+			}
+		})
+	}
+}
+
+func TestSmallSubnetAllowsOnlyAvailableClientIPs(t *testing.T) {
+	svc := app.New(testConfig(t))
+	tunnel, err := svc.CreateTunnel("awg_legacy_1_0", "awg30", "10.40.0.0/30", 51830)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := svc.AddClientToTunnel(tunnel.ID, "only-client")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.IPv4Address != "10.40.0.2" {
+		t.Fatalf("client IP = %s, want 10.40.0.2", client.IPv4Address)
+	}
+	if _, err := svc.AddClientToTunnel(tunnel.ID, "second-client"); err == nil {
+		t.Fatal("expected no free client IPs")
+	}
+}
+
+func TestCreateTunnelCanonicalizesHostCIDR(t *testing.T) {
+	svc := app.New(testConfig(t))
+	tunnel, err := svc.CreateTunnel("awg_legacy_1_0", "awghost", "10.31.0.42/24", 51831)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tunnel.IPv4Subnet != "10.31.0.0/24" {
+		t.Fatalf("subnet = %s, want 10.31.0.0/24", tunnel.IPv4Subnet)
+	}
+	if tunnel.ServerAddress != "10.31.0.1" {
+		t.Fatalf("server address = %s, want 10.31.0.1", tunnel.ServerAddress)
+	}
+}
+
+func TestCreateTunnelRejectsUnsafeSubnetSizes(t *testing.T) {
+	svc := app.New(testConfig(t))
+	if _, err := svc.CreateTunnel("awg_legacy_1_0", "too-large", "10.0.0.0/8", 51832); err == nil {
+		t.Fatal("expected subnet too large error")
+	}
+	if _, err := svc.CreateTunnel("awg_legacy_1_0", "too-small", "10.32.0.0/31", 51833); err == nil {
+		t.Fatal("expected subnet too small error")
+	}
+}
+
 func TestInvalidClientNameRejected(t *testing.T) {
 	svc := app.New(testConfig(t))
 	if _, err := svc.AddClient("../bad"); err == nil {
@@ -67,6 +168,153 @@ func TestConfigFilesWrittenWithCorrectPermissions(t *testing.T) {
 		if got := info.Mode().Perm(); got != want[i] {
 			t.Fatalf("%s permission = %o, want %o", path, got, want[i])
 		}
+	}
+}
+
+func TestCreateClientApplyFailureRollsBackState(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.ApplyConfig = true
+	svc := app.New(cfg)
+	client, err := svc.AddClient("phone")
+	if err == nil {
+		t.Fatal("expected apply error")
+	}
+	if !strings.Contains(err.Error(), "apply failed") {
+		t.Fatalf("error = %q, want apply failed", err.Error())
+	}
+	if client.ID != "" {
+		t.Fatal("expected no created client to be returned with apply error")
+	}
+	state, stateErr := svc.State()
+	if stateErr != nil {
+		t.Fatal(stateErr)
+	}
+	if len(state.Tunnels[0].Clients) != 0 {
+		t.Fatalf("clients = %d, want 0", len(state.Tunnels[0].Clients))
+	}
+	if _, err := os.Stat(filepath.Join(cfg.ConfigDir, "tunnels", "awg0", "server.conf")); err != nil {
+		t.Fatal(err)
+	}
+	matches, err := filepath.Glob(filepath.Join(cfg.ConfigDir, "tunnels", "awg0", "clients", "*.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("rendered client configs = %d, want 0", len(matches))
+	}
+}
+
+func TestCreateTunnelApplyFailureRollsBackState(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.ApplyConfig = true
+	svc := app.New(cfg)
+	if _, err := svc.CreateTunnel("awg_1_5", "awg15", "10.15.0.0/24", 51825); err == nil {
+		t.Fatal("expected apply error")
+	}
+	state, err := svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Tunnels) != 1 {
+		t.Fatalf("tunnels = %d, want 1", len(state.Tunnels))
+	}
+	if _, err := os.Stat(filepath.Join(cfg.ConfigDir, "tunnels", "awg15")); !os.IsNotExist(err) {
+		t.Fatalf("expected rolled back rendered tunnel dir, stat err = %v", err)
+	}
+}
+
+func TestTunnelSettingsApplyFailureRollsBackState(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.ApplyConfig = true
+	svc := app.New(cfg)
+	state, err := svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := state.Tunnels[0]
+	if _, err := svc.UpdateTunnelSettings(original.ID, original.Name, original.IPv4Subnet, original.DNS, original.AllowedIPs, original.Keepalive, 1280, original.ListenPort, original.Enabled); err == nil {
+		t.Fatal("expected apply error")
+	}
+	state, err = svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := state.Tunnels[0].MTU; got != original.MTU {
+		t.Fatalf("MTU = %d, want rolled back %d", got, original.MTU)
+	}
+}
+
+func TestProtocolApplyFailureRollsBackState(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.ApplyConfig = true
+	svc := app.New(cfg)
+	state, err := svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalProfile := state.Tunnels[0].ProtocolProfileID
+	if err := svc.RegenerateTunnelProtocol(state.Tunnels[0].ID, "awg_2_0"); err == nil {
+		t.Fatal("expected apply error")
+	}
+	state, err = svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := state.Tunnels[0].ProtocolProfileID; got != originalProfile {
+		t.Fatalf("profile = %s, want rolled back %s", got, originalProfile)
+	}
+}
+
+func TestClientMutationsApplyFailureRollBackState(t *testing.T) {
+	cfg := testConfig(t)
+	svc := app.New(cfg)
+	client, err := svc.AddClient("phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.ApplyConfig = true
+	svc = app.New(cfg)
+
+	if err := svc.SetClientEnabled(client.ID, false); err == nil {
+		t.Fatal("expected disable apply error")
+	}
+	state, err := svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.Tunnels[0].Clients[0].Enabled {
+		t.Fatal("expected disable to roll back")
+	}
+
+	if err := svc.RemoveClient(client.ID); err == nil {
+		t.Fatal("expected remove apply error")
+	}
+	state, err = svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Tunnels[0].Clients) != 1 {
+		t.Fatalf("clients = %d, want rolled back 1", len(state.Tunnels[0].Clients))
+	}
+}
+
+func TestDeleteTunnelApplyFailureRollsBackState(t *testing.T) {
+	cfg := testConfig(t)
+	svc := app.New(cfg)
+	if _, err := svc.CreateTunnel("awg_1_5", "awg15", "10.15.0.0/24", 51825); err != nil {
+		t.Fatal(err)
+	}
+	cfg.ApplyConfig = true
+	svc = app.New(cfg)
+	if err := svc.DeleteTunnel("awg15"); err == nil {
+		t.Fatal("expected apply error")
+	}
+	state, err := svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Tunnels) != 2 {
+		t.Fatalf("tunnels = %d, want rolled back 2", len(state.Tunnels))
 	}
 }
 

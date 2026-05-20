@@ -1,15 +1,19 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/astronaut808/awg-forge/internal/app"
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/doctor"
 	"github.com/astronaut808/awg-forge/internal/server"
+	"github.com/astronaut808/awg-forge/internal/updates"
 )
 
 func main() {
@@ -22,6 +26,9 @@ func main() {
 func run(args []string) error {
 	if len(args) == 0 {
 		return usage()
+	}
+	if args[0] == "updates" {
+		return runUpdates()
 	}
 	cfg, err := config.FromEnv()
 	if err != nil {
@@ -138,5 +145,37 @@ func runClient(svc *app.Service, args []string) error {
 }
 
 func usage() error {
-	return errors.New("usage: awg-forge init|serve|render|doctor|client|tunnel")
+	return errors.New("usage: awg-forge init|serve|render|doctor|updates|client|tunnel")
+}
+
+func runUpdates() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+	report := updates.Check(ctx)
+	info := report.BuildInfo
+	fmt.Printf("awg-forge: %s (%s)\n", info.Version, info.Commit)
+	fmt.Println("AmneziaWG update mode: manual")
+	for _, component := range report.Components {
+		fmt.Printf("\n%s\n", component.Name)
+		fmt.Printf("  repository: %s\n", component.Repository)
+		fmt.Printf("  pinned:     %s\n", shortRef(component.CurrentRef))
+		if component.Error != "" {
+			fmt.Printf("  status:     unknown (%s)\n", component.Error)
+			continue
+		}
+		fmt.Printf("  upstream:   %s (%s)\n", shortRef(component.LatestRef), component.DefaultBranch)
+		fmt.Printf("  status:     %s\n", strings.ReplaceAll(component.Status, "_", " "))
+	}
+	return nil
+}
+
+func shortRef(ref string) string {
+	ref = strings.TrimSpace(ref)
+	if len(ref) > 12 {
+		return ref[:12]
+	}
+	if ref == "" {
+		return "unknown"
+	}
+	return ref
 }

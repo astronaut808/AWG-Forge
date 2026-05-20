@@ -96,10 +96,10 @@ Validated:
 - generated `.conf` imported and connected on iOS after updating to a compatible AmneziaVPN build;
 - Docker/server-side `awg show` reports 2.0 params, handshake, and traffic for `awg20`.
 
-Still experimental:
+Not implemented:
 
-- Amnezia native QR import for 2.0 and iOS;
-- exact QR/native JSON schema across AmneziaVPN platforms.
+- Amnezia native import payloads for 2.0 and iOS;
+- exact native import schema across AmneziaVPN platforms.
 
 ## Sources
 

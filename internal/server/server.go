@@ -1,11 +1,13 @@
 package server
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"embed"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -15,12 +17,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/skip2/go-qrcode"
-
 	"github.com/astronaut808/awg-forge/internal/app"
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/doctor"
-	"github.com/astronaut808/awg-forge/internal/render"
+	"github.com/astronaut808/awg-forge/internal/updates"
 )
 
 //go:embed static/*
@@ -58,6 +58,7 @@ func Serve(cfg config.Config, service *app.Service) error {
 	mux.HandleFunc("/api/logout", w.security(w.requireAuth(w.logoutAPI)))
 	mux.HandleFunc("/api/state", w.security(w.requireAuth(w.stateAPI)))
 	mux.HandleFunc("/api/doctor", w.security(w.requireAuth(w.doctorAPI)))
+	mux.HandleFunc("/api/updates", w.security(w.requireAuth(w.updatesAPI)))
 	mux.HandleFunc("/api/tunnels", w.security(w.requireAuth(w.tunnelsAPI)))
 	mux.HandleFunc("/api/tunnels/", w.security(w.requireAuth(w.tunnelAPI)))
 	mux.HandleFunc("/api/clients", w.security(w.requireAuth(w.clientsAPI)))
@@ -143,6 +144,16 @@ func (w *web) doctorAPI(rw http.ResponseWriter, r *http.Request) {
 	writeJSON(rw, http.StatusOK, map[string]any{"results": doctor.Check(w.cfg, w.service)})
 }
 
+func (w *web) updatesAPI(rw http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(rw, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
+	defer cancel()
+	writeJSON(rw, http.StatusOK, map[string]any{"updates": updates.Check(ctx)})
+}
+
 func (w *web) tunnelsAPI(rw http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost || !w.validOrigin(r) {
 		writeError(rw, http.StatusForbidden, "forbidden")
@@ -160,7 +171,7 @@ func (w *web) tunnelsAPI(rw http.ResponseWriter, r *http.Request) {
 		}
 		tunnel, err := w.service.CreateTunnel(req.Profile, req.Name, req.Subnet, req.Port)
 		if err != nil {
-			return http.StatusBadRequest, errorPayload(err.Error())
+			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
 		}
 		return http.StatusCreated, map[string]any{"tunnel": publicTunnel(tunnel, app.TunnelStatus{})}
 	})
@@ -225,7 +236,7 @@ func (w *web) updateTunnelSettingsAPI(rw http.ResponseWriter, r *http.Request, i
 		}
 		tunnel, err := w.service.UpdateTunnelSettings(id, req.Name, req.Subnet, req.DNS, req.AllowedIPs, req.Keepalive, req.MTU, req.Port, req.Enabled)
 		if err != nil {
-			return http.StatusBadRequest, errorPayload(err.Error())
+			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
 		}
 		return http.StatusOK, map[string]any{"tunnel": publicTunnel(tunnel, app.TunnelStatus{})}
 	})
@@ -238,7 +249,7 @@ func (w *web) deleteTunnelAPI(rw http.ResponseWriter, r *http.Request, id string
 	}
 	w.withIdempotency(rw, r, "delete-tunnel:"+id, func() (int, any) {
 		if err := w.service.DeleteTunnel(id); err != nil {
-			return http.StatusBadRequest, errorPayload(err.Error())
+			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
 		}
 		return http.StatusOK, map[string]any{"ok": true}
 	})
@@ -251,7 +262,7 @@ func (w *web) restartTunnelAPI(rw http.ResponseWriter, r *http.Request, id strin
 	}
 	w.withIdempotency(rw, r, "restart-tunnel:"+id, func() (int, any) {
 		if err := w.service.RestartTunnelByID(id); err != nil {
-			return http.StatusBadRequest, errorPayload(err.Error())
+			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
 		}
 		return http.StatusOK, map[string]any{"ok": true}
 	})
@@ -271,7 +282,7 @@ func (w *web) updateProtocolAPI(rw http.ResponseWriter, r *http.Request, id stri
 			return http.StatusBadRequest, errorPayload("invalid json")
 		}
 		if err := w.service.UpdateTunnelProtocol(id, req.Profile, req.Params); err != nil {
-			return http.StatusBadRequest, errorPayload(err.Error())
+			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
 		}
 		return http.StatusOK, map[string]any{"ok": true}
 	})
@@ -288,7 +299,7 @@ func (w *web) regenerateProtocolAPI(rw http.ResponseWriter, r *http.Request, id 
 		}
 		_ = readJSON(r, &req)
 		if err := w.service.RegenerateTunnelProtocol(id, req.Profile); err != nil {
-			return http.StatusBadRequest, errorPayload(err.Error())
+			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
 		}
 		return http.StatusOK, map[string]any{"ok": true}
 	})
@@ -309,7 +320,7 @@ func (w *web) clientsAPI(rw http.ResponseWriter, r *http.Request) {
 		}
 		client, err := w.service.AddClientToTunnel(req.TunnelID, req.Name)
 		if err != nil {
-			return http.StatusBadRequest, errorPayload(err.Error())
+			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
 		}
 		return http.StatusCreated, map[string]any{"client": publicClient(client)}
 	})
@@ -329,10 +340,6 @@ func (w *web) clientAPI(rw http.ResponseWriter, r *http.Request) {
 		w.setClientEnabledAPI(rw, r, id, false)
 	case "delete":
 		w.deleteClientAPI(rw, r, id)
-	case "qr":
-		w.clientQRAPI(rw, r, id)
-	case "qr.png":
-		w.clientQRPNG(rw, r, id)
 	default:
 		writeError(rw, http.StatusNotFound, "not found")
 	}
@@ -349,7 +356,7 @@ func (w *web) setClientEnabledAPI(rw http.ResponseWriter, r *http.Request, id st
 	}
 	w.withIdempotency(rw, r, action+id, func() (int, any) {
 		if err := w.service.SetClientEnabled(id, enabled); err != nil {
-			return http.StatusNotFound, errorPayload(err.Error())
+			return mutationErrorStatus(err, http.StatusNotFound), errorPayload(err.Error())
 		}
 		return http.StatusOK, map[string]any{"ok": true}
 	})
@@ -362,7 +369,7 @@ func (w *web) deleteClientAPI(rw http.ResponseWriter, r *http.Request, id string
 	}
 	w.withIdempotency(rw, r, "delete-client:"+id, func() (int, any) {
 		if err := w.service.RemoveClient(id); err != nil {
-			return http.StatusNotFound, errorPayload(err.Error())
+			return mutationErrorStatus(err, http.StatusNotFound), errorPayload(err.Error())
 		}
 		return http.StatusOK, map[string]any{"ok": true}
 	})
@@ -378,65 +385,6 @@ func (w *web) clientConfig(rw http.ResponseWriter, r *http.Request) {
 	rw.Header().Set("Content-Type", "application/octet-stream")
 	rw.Header().Set("Content-Disposition", `attachment; filename="`+configFilename(client)+`.conf"`)
 	_, _ = rw.Write([]byte(conf))
-}
-
-func (w *web) clientQRPNG(rw http.ResponseWriter, r *http.Request, id string) {
-	if r.Method != http.MethodGet {
-		writeError(rw, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	payload, _, err := w.service.ClientAmneziaImportConfig(id)
-	if err != nil {
-		http.NotFound(rw, r)
-		return
-	}
-	texts, err := render.AmneziaQRTexts(payload)
-	if err != nil || len(texts) == 0 {
-		writeError(rw, http.StatusInternalServerError, "qr failed")
-		return
-	}
-	png, err := qrcode.Encode(texts[0], qrcode.High, 512)
-	if err != nil {
-		writeError(rw, http.StatusInternalServerError, "qr failed")
-		return
-	}
-	rw.Header().Set("Content-Type", "image/png")
-	_, _ = rw.Write(png)
-}
-
-func (w *web) clientQRAPI(rw http.ResponseWriter, r *http.Request, id string) {
-	if r.Method != http.MethodGet {
-		writeError(rw, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	payload, client, err := w.service.ClientAmneziaImportConfig(id)
-	if err != nil {
-		http.NotFound(rw, r)
-		return
-	}
-	texts, err := render.AmneziaQRTexts(payload)
-	if err != nil {
-		writeError(rw, http.StatusInternalServerError, "qr failed")
-		return
-	}
-	chunks := make([]map[string]any, 0, len(texts))
-	for i, text := range texts {
-		png, err := qrcode.Encode(text, qrcode.High, 512)
-		if err != nil {
-			writeError(rw, http.StatusInternalServerError, "qr failed")
-			return
-		}
-		chunks = append(chunks, map[string]any{
-			"index": i + 1,
-			"total": len(texts),
-			"png":   base64.StdEncoding.EncodeToString(png),
-		})
-	}
-	writeJSON(rw, http.StatusOK, map[string]any{
-		"kind":   "amnezia",
-		"client": publicClient(client),
-		"chunks": chunks,
-	})
 }
 
 func (w *web) publicState(state config.State) map[string]any {
@@ -524,6 +472,14 @@ func publicClientForTunnel(tunnel config.Tunnel, client config.Client) map[strin
 	}
 }
 
+func mutationErrorStatus(err error, fallback int) int {
+	var applyErr *app.ApplyError
+	if errors.As(err, &applyErr) {
+		return http.StatusInternalServerError
+	}
+	return fallback
+}
+
 func orderedParams(profileID string, params config.ProtocolParams) []map[string]string {
 	keys := protocolParamKeys(profileID)
 	out := make([]map[string]string, 0, len(keys))
@@ -587,22 +543,19 @@ func (w *web) validOrigin(r *http.Request) bool {
 	if ref := r.Header.Get("Referer"); ref != "" {
 		return safeRequestSource(ref, r.Host)
 	}
-	return true
+	return requestHostIsLoopback(r.Host)
 }
 
 func safeRequestSource(raw, requestHost string) bool {
-	if raw == "null" {
-		return true
-	}
 	u, err := url.Parse(raw)
 	if err != nil {
 		return false
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return true
+		return false
 	}
 	if u.Host == "" {
-		return true
+		return false
 	}
 	return sameRequestHost(u.Host, requestHost)
 }
@@ -614,6 +567,11 @@ func sameRequestHost(a, b string) bool {
 	ah, ap := splitHostPort(a)
 	bh, bp := splitHostPort(b)
 	return ap == bp && isLoopbackHost(ah) && isLoopbackHost(bh)
+}
+
+func requestHostIsLoopback(hostport string) bool {
+	host, _ := splitHostPort(hostport)
+	return isLoopbackHost(host)
 }
 
 func splitHostPort(hostport string) (string, string) {
