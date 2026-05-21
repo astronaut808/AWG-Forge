@@ -2,6 +2,7 @@
 
 English documentation:
 
+- [Quick install](quick-install.md)
 - [Setup](setup.md)
 - [Configuration](configuration.md)
 - [Web UI and CLI](usage.md)

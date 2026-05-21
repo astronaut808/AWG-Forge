@@ -3,6 +3,7 @@
 Русская пользовательская документация:
 
 - [README EN](../../README.en.md)
+- [Быстрая установка](quick-install.md)
 - [Установка и запуск](setup.md)
 - [Конфигурация](configuration.md)
 - [Web UI и CLI](usage.md)

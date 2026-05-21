@@ -41,7 +41,19 @@ QR import не используется. Он был убран, потому ч
 
 ## Быстрый Старт
 
+Интерактивная установка на Linux/VPS:
+
 ```bash
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh | sudo bash
+```
+
+Скрипт создаст рабочую директорию `/opt/awg-forge`, сгенерирует `.env`, пароль, `SESSION_SECRET`, определит внешний интерфейс, запустит Docker Compose и покажет SSH tunnel команду.
+
+Ручной запуск:
+
+```bash
+git clone https://github.com/astronaut808/awg-forge.git
+cd awg-forge
 cp .env.example .env
 mkdir -p data
 docker compose up -d
@@ -65,6 +77,7 @@ Host networking — рекомендуемый production-режим, потом
 
 - [README EN](README.en.md)
 - [Документация на русском](docs/ru/README.md)
+- [Быстрая установка](docs/ru/quick-install.md)
 - [Установка и запуск](docs/ru/setup.md)
 - [Конфигурация](docs/ru/configuration.md)
 - [Web UI и CLI](docs/ru/usage.md)

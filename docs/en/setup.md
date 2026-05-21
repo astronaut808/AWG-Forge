@@ -4,6 +4,16 @@
 
 Host networking is the recommended production mode for awg-forge. In this mode, tunnels created in the UI can use any free UDP ports without changing Docker port mappings.
 
+Interactive quick start:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh | sudo bash
+```
+
+More details: [Quick install](quick-install.md).
+
+Manual setup:
+
 ```bash
 cp .env.example .env
 mkdir -p data

@@ -41,7 +41,19 @@ QR import is not exposed. It was removed because `.conf` import is the most reli
 
 ## Quick Start
 
+Interactive install on Linux/VPS:
+
 ```bash
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh | sudo bash
+```
+
+The script creates `/opt/awg-forge`, generates `.env`, password, `SESSION_SECRET`, detects the external interface, starts Docker Compose, and prints the SSH tunnel command.
+
+Manual start:
+
+```bash
+git clone https://github.com/astronaut808/awg-forge.git
+cd awg-forge
 cp .env.example .env
 mkdir -p data
 docker compose up -d
@@ -65,6 +77,7 @@ Host networking is the recommended production mode because tunnels created in th
 
 - [Russian README](README.md)
 - [English documentation](docs/en/README.md)
+- [Quick install](docs/en/quick-install.md)
 - [Setup](docs/en/setup.md)
 - [Configuration](docs/en/configuration.md)
 - [Web UI and CLI](docs/en/usage.md)
