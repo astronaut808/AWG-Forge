@@ -4,6 +4,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"os"
@@ -159,6 +161,51 @@ func TestRestoreRejectsMissingMetadata(t *testing.T) {
 	}
 }
 
+func TestRestoreRejectsFilesNotListedInMetadata(t *testing.T) {
+	stateJSON := `{"schema_version":2}`
+	metadata := testMetadata([]FileMeta{testFileMeta("state.json", []byte(stateJSON))})
+	archive := encryptedTestZip(t,
+		testZipEntry{name: "metadata.json", data: mustJSON(t, metadata)},
+		testZipEntry{name: "state.json", data: []byte(stateJSON)},
+		testZipEntry{name: "tunnels/awg0/server.conf", data: []byte("unexpected")},
+	)
+	cfg := testConfig(t)
+	err := Restore(context.Background(), cfg, testPassword, writeTempArchive(t, archive))
+	if err == nil || !strings.Contains(err.Error(), "not listed in metadata") {
+		t.Fatalf("restore error = %v, want unlisted file rejection", err)
+	}
+}
+
+func TestRestoreRejectsDuplicateArchiveFiles(t *testing.T) {
+	stateJSON := `{"schema_version":2}`
+	metadata := testMetadata([]FileMeta{testFileMeta("state.json", []byte(stateJSON))})
+	archive := encryptedTestZip(t,
+		testZipEntry{name: "metadata.json", data: mustJSON(t, metadata)},
+		testZipEntry{name: "state.json", data: []byte(stateJSON)},
+		testZipEntry{name: "state.json", data: []byte(stateJSON)},
+	)
+	cfg := testConfig(t)
+	err := Restore(context.Background(), cfg, testPassword, writeTempArchive(t, archive))
+	if err == nil || !strings.Contains(err.Error(), "state.json is duplicated") {
+		t.Fatalf("restore error = %v, want duplicate file rejection", err)
+	}
+}
+
+func TestRestoreRejectsDuplicateMetadataFiles(t *testing.T) {
+	stateJSON := `{"schema_version":2}`
+	meta := testFileMeta("state.json", []byte(stateJSON))
+	metadata := testMetadata([]FileMeta{meta, meta})
+	archive := encryptedTestZip(t,
+		testZipEntry{name: "metadata.json", data: mustJSON(t, metadata)},
+		testZipEntry{name: "state.json", data: []byte(stateJSON)},
+	)
+	cfg := testConfig(t)
+	err := Restore(context.Background(), cfg, testPassword, writeTempArchive(t, archive))
+	if err == nil || !strings.Contains(err.Error(), "metadata file state.json is duplicated") {
+		t.Fatalf("restore error = %v, want duplicate metadata rejection", err)
+	}
+}
+
 func TestRestoreRejectsZipSlipPaths(t *testing.T) {
 	for _, name := range []string{"../escape", "tunnels/../../escape", `tunnels\..\escape`} {
 		t.Run(name, func(t *testing.T) {
@@ -231,6 +278,57 @@ func writeTempArchive(t *testing.T, data []byte) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+type testZipEntry struct {
+	name string
+	data []byte
+}
+
+func encryptedTestZip(t *testing.T, entries ...testZipEntry) []byte {
+	t.Helper()
+	var plain bytes.Buffer
+	zw := zip.NewWriter(&plain)
+	for _, entry := range entries {
+		w, err := zw.Create(entry.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write(entry.data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	encrypted, err := encrypt(plain.Bytes(), testPassword, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encrypted
+}
+
+func testMetadata(files []FileMeta) Metadata {
+	return Metadata{
+		Format:        formatVersion,
+		SchemaVersion: config.CurrentStateSchemaVersion,
+		CreatedAt:     "2026-01-01T00:00:00Z",
+		Files:         files,
+	}
+}
+
+func testFileMeta(path string, data []byte) FileMeta {
+	sum := sha256.Sum256(data)
+	return FileMeta{Path: path, Size: int64(len(data)), SHA256: hex.EncodeToString(sum[:])}
+}
+
+func mustJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
 }
 
 func mutatePlainZip(t *testing.T, data []byte, mutate func(string, []byte) []byte) []byte {

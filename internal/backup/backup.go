@@ -360,6 +360,9 @@ func readPlainZip(data []byte) ([]restoreFile, Metadata, config.State, error) {
 		if err != nil {
 			return nil, Metadata{}, config.State{}, err
 		}
+		if file.FileInfo().IsDir() {
+			continue
+		}
 		rc, err := file.Open()
 		if err != nil {
 			return nil, Metadata{}, config.State{}, err
@@ -371,11 +374,17 @@ func readPlainZip(data []byte) ([]restoreFile, Metadata, config.State, error) {
 		}
 		switch name {
 		case "metadata.json":
+			if hasMeta {
+				return nil, Metadata{}, config.State{}, errors.New("backup metadata.json is duplicated")
+			}
 			if err := json.Unmarshal(b, &metadata); err != nil {
 				return nil, Metadata{}, config.State{}, err
 			}
 			hasMeta = true
 		case "state.json":
+			if hasState {
+				return nil, Metadata{}, config.State{}, errors.New("backup state.json is duplicated")
+			}
 			if err := json.Unmarshal(b, &state); err != nil {
 				return nil, Metadata{}, config.State{}, err
 			}
@@ -406,19 +415,45 @@ func readPlainZip(data []byte) ([]restoreFile, Metadata, config.State, error) {
 func verifyChecksums(files []restoreFile, metas []FileMeta) error {
 	data := map[string][]byte{}
 	for _, file := range files {
-		data[file.Path] = file.Data
+		clean, err := cleanArchivePath(file.Path)
+		if err != nil {
+			return err
+		}
+		if _, ok := data[clean]; ok {
+			return fmt.Errorf("backup file %s is duplicated", clean)
+		}
+		data[clean] = file.Data
 	}
+	expected := map[string]FileMeta{}
 	for _, meta := range metas {
-		b, ok := data[meta.Path]
+		clean, err := cleanArchivePath(meta.Path)
+		if err != nil {
+			return err
+		}
+		if clean != meta.Path {
+			return fmt.Errorf("backup metadata path %s is not normalized", meta.Path)
+		}
+		if _, ok := expected[clean]; ok {
+			return fmt.Errorf("backup metadata file %s is duplicated", clean)
+		}
+		expected[clean] = meta
+	}
+	for path := range data {
+		if _, ok := expected[path]; !ok {
+			return fmt.Errorf("backup file %s is not listed in metadata", path)
+		}
+	}
+	for path, meta := range expected {
+		b, ok := data[path]
 		if !ok {
-			return fmt.Errorf("backup file %s is missing", meta.Path)
+			return fmt.Errorf("backup file %s is missing", path)
 		}
 		if int64(len(b)) != meta.Size {
-			return fmt.Errorf("backup file %s size mismatch", meta.Path)
+			return fmt.Errorf("backup file %s size mismatch", path)
 		}
 		sum := sha256.Sum256(b)
 		if hex.EncodeToString(sum[:]) != meta.SHA256 {
-			return fmt.Errorf("backup file %s checksum mismatch", meta.Path)
+			return fmt.Errorf("backup file %s checksum mismatch", path)
 		}
 	}
 	return nil
