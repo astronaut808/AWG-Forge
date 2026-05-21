@@ -278,6 +278,27 @@ EOF
   ok "created $ENV_FILE"
 }
 
+doctor_has_failures() {
+  grep -q '^FAIL ' "$1"
+}
+
+post_start_reconcile() {
+  muted "Reconciling runtime tunnel and managed firewall rules..."
+  sleep 2
+  if docker exec "$APP_NAME" awg-forge tunnel restart >/tmp/awg-forge-install-restart.log 2>&1; then
+    ok "runtime tunnel restarted"
+  else
+    warn "runtime tunnel restart reported an issue"
+    cat /tmp/awg-forge-install-restart.log || true
+  fi
+  if docker exec "$APP_NAME" awg-forge firewall repair >/tmp/awg-forge-install-firewall.log 2>&1; then
+    ok "firewall repair completed"
+  else
+    warn "firewall repair reported an issue"
+    cat /tmp/awg-forge-install-firewall.log || true
+  fi
+}
+
 print_next_steps() {
   local server_host="$1"
   local webui_host="$2"
@@ -436,16 +457,17 @@ main() {
   $compose up -d --force-recreate
 
   printf '\n'
+  post_start_reconcile
+  printf '\n'
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     if docker exec "$APP_NAME" awg-forge doctor >/tmp/awg-forge-install-doctor.log 2>&1; then
       cat /tmp/awg-forge-install-doctor.log
-      if grep -q '^FAIL ' /tmp/awg-forge-install-doctor.log; then
-        warn "doctor completed with failures; inspect output above"
-      else
+      if ! doctor_has_failures /tmp/awg-forge-install-doctor.log; then
         ok "doctor completed"
+        print_next_steps "$server_host" "$webui_host" "$webui_port" "$password" "$profile" "$compose"
+        return
       fi
-      print_next_steps "$server_host" "$webui_host" "$webui_port" "$password" "$profile" "$compose"
-      return
+      warn "doctor still reports failures; retrying"
     fi
     sleep 2
   done

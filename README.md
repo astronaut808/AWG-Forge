@@ -80,6 +80,12 @@ cd /opt/awg-forge
 sudo ./uninstall.sh
 ```
 
+Удаление без клонирования репозитория:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/uninstall.sh | sudo bash
+```
+
 ## Документация
 
 - [README EN](README.en.md)
