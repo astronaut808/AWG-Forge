@@ -240,7 +240,7 @@ function renderTunnelCard(tunnel) {
         <span class="badge ${up ? "ok" : "bad"}">${up ? "up" : "down"}</span>
       </div>
       <div class="facts">
-        <div class="fact"><span>Endpoint</span><strong class="mono">${escapeHTML(tunnelEndpointHost(tunnel))}:${escapeHTML(tunnel.listen_port)}</strong></div>
+        <div class="fact"><span>Endpoint</span><div class="endpoint-value"><strong class="mono">${escapeHTML(tunnelEndpointHost(tunnel))}:${escapeHTML(tunnel.listen_port)}</strong><small>${tunnel.server_host ? "custom" : "inherited"}</small></div></div>
         <div class="fact"><span>Subnet</span><strong class="mono">${escapeHTML(tunnel.subnet)}</strong></div>
         <div class="fact"><span>DNS</span><strong class="mono">${escapeHTML(tunnel.dns)}</strong></div>
         <div class="fact"><span>MTU</span><strong class="mono">${formatMTU(tunnel.mtu)}</strong></div>

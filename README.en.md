@@ -73,6 +73,8 @@ http://127.0.0.1:51821
 
 Host networking is the recommended production mode because tunnels created in the UI can use any free UDP ports without changing Docker port mappings.
 
+`SERVER_HOST` defines the default endpoint host for client configs. Individual tunnels can override it in the Web UI through `Tunnel settings` → `Server host`. See [Configuration](docs/en/configuration.md).
+
 Uninstall:
 
 ```bash

@@ -18,6 +18,7 @@
 - Added self-contained interactive `install.sh` quick installer for Linux/VPS Docker host-network setup.
 - Added MIT license, contributing guide, security policy, and Dependabot config for public repository readiness.
 - Added `uninstall.sh` to remove runtime interfaces, managed firewall rules, containers, and optionally local install files.
+- Added per-tunnel `Server host` override in Web UI settings for client config endpoints.
 
 ### Changed
 
@@ -25,9 +26,12 @@
 - Doctor firewall diagnostics now point missing and duplicate managed rules to `awg-forge firewall repair`.
 - Topbar maintenance actions are grouped under `Maintenance`, and primary buttons use a calmer hover/border treatment.
 - Documentation now describes Maintenance hub actions instead of the old separate topbar maintenance buttons.
+- Tunnel endpoint cards now show whether the host is inherited from global `SERVER_HOST` or customized per tunnel.
 - `.env.example` now includes `SESSION_SECRET` so generated installs can keep stable UI sessions explicitly.
 - `.gitignore` and `.dockerignore` now exclude local env files, backups, configs, and support archives.
 - The quick installer now detects stale AWG-like interfaces before startup and recreates the container when applying a new `.env`.
+- Changing global `SERVER_HOST` now refreshes inherited tunnel endpoints while preserving tunnels with explicit host overrides.
+- Backup restore path validation is hardened against archive traversal paths.
 
 ## v0.4.0 - 2026-05-20
 
