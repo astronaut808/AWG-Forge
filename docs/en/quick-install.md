@@ -27,6 +27,7 @@ If the repository is already cloned, you can run the local file:
 ## What It Does
 
 - checks Linux, Docker, Docker Compose, and `/dev/net/tun`;
+- offers to remove old AWG-like runtime interfaces, such as `awg0`, `awg0-1`, `awg15`, or `awg20`;
 - detects the external interface with `ip route get 1.1.1.1`;
 - suggests `SERVER_HOST` from the detected source IP, while allowing a custom domain;
 - asks for the tunnel UDP port, Web UI host/port, subnet, DNS, MTU, and protocol profile;
@@ -75,4 +76,26 @@ Useful commands:
 docker compose ps
 docker compose logs -f
 docker exec awg-forge awg-forge doctor
+```
+
+## Uninstall
+
+If you need to remove awg-forge, run uninstall while `data/state.json` still exists. This lets the script remove exact managed firewall rules for each tunnel.
+
+```bash
+cd /opt/awg-forge
+sudo ./uninstall.sh
+```
+
+Remove the container, runtime interfaces, firewall rules, and local install files:
+
+```bash
+cd /opt/awg-forge
+sudo ./uninstall.sh --purge
+```
+
+For a no-clone install:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/uninstall.sh | sudo bash
 ```

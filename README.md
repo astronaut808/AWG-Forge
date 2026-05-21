@@ -73,6 +73,13 @@ http://127.0.0.1:51821
 
 Host networking — рекомендуемый production-режим, потому что туннели, созданные в UI, могут использовать любые свободные UDP-порты без изменения Docker port mappings.
 
+Удаление:
+
+```bash
+cd /opt/awg-forge
+sudo ./uninstall.sh
+```
+
 ## Документация
 
 - [README EN](README.en.md)

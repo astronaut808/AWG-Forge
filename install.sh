@@ -13,15 +13,25 @@ ok() { printf '\033[32mOK\033[0m   %s\n' "$*"; }
 warn() { printf '\033[33mWARN\033[0m %s\n' "$*"; }
 fail() { printf '\033[31mERR\033[0m  %s\n' "$*" >&2; }
 
+require_tty() {
+  if [[ ! -r /dev/tty ]]; then
+    fail "interactive install requires a TTY"
+    printf 'Run this command from an interactive shell, not from a non-interactive job.\n' >&2
+    exit 1
+  fi
+}
+
 prompt() {
   local label="$1"
   local default="${2:-}"
   local value
   if [[ -n "$default" ]]; then
-    read -r -p "$label [$default]: " value
+    printf '%s [%s]: ' "$label" "$default" > /dev/tty
+    read -r value < /dev/tty
     printf '%s' "${value:-$default}"
   else
-    read -r -p "$label: " value
+    printf '%s: ' "$label" > /dev/tty
+    read -r value < /dev/tty
     printf '%s' "$value"
   fi
 }
@@ -35,13 +45,56 @@ confirm() {
   else
     suffix="y/N"
   fi
-  read -r -p "$label [$suffix]: " value
+  printf '%s [%s]: ' "$label" "$suffix" > /dev/tty
+  read -r value < /dev/tty
   value="${value:-$default}"
   [[ "$value" =~ ^[Yy]$ ]]
 }
 
 have() {
   command -v "$1" >/dev/null 2>&1
+}
+
+link_exists() {
+  have ip && ip link show "$1" >/dev/null 2>&1
+}
+
+awg_like_interfaces() {
+  have ip || return 0
+  ip -o link show 2>/dev/null | awk -F': ' '
+    $2 ~ /^awg[[:alnum:]_.-]*(@.*)?$/ {
+      name=$2
+      sub(/@.*/, "", name)
+      print name
+    }
+  '
+}
+
+cleanup_stale_interfaces() {
+  local stale=()
+  local iface
+  while IFS= read -r iface; do
+    [[ -n "$iface" ]] || continue
+    if link_exists "$iface"; then
+      stale+=("$iface")
+    fi
+  done < <(awg_like_interfaces)
+  if (( ${#stale[@]} == 0 )); then
+    return
+  fi
+  warn "existing AWG interfaces found: ${stale[*]}"
+  muted "If they are leftovers from a previous awg-forge install, remove them before starting."
+  if ! confirm "Delete these interfaces now?" "y"; then
+    warn "keeping existing interfaces; new install may reuse stale runtime state"
+    return
+  fi
+  for iface in "${stale[@]}"; do
+    if ip link delete "$iface" 2>/dev/null; then
+      ok "deleted interface $iface"
+    else
+      warn "could not delete interface $iface"
+    fi
+  done
 }
 
 compose_cmd() {
@@ -267,6 +320,7 @@ main() {
   fi
   ok "Linux detected"
 
+  require_tty
   prepare_workdir
 
   if ! have docker; then
@@ -296,6 +350,7 @@ main() {
   else
     warn "/dev/net/tun does not exist; container startup may fail until TUN is available"
   fi
+  cleanup_stale_interfaces
 
   local route default_interface default_host
   route="$(detect_route)"
@@ -378,13 +433,17 @@ main() {
   if confirm "Pull latest image before start?" "y"; then
     $compose pull
   fi
-  $compose up -d
+  $compose up -d --force-recreate
 
   printf '\n'
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     if docker exec "$APP_NAME" awg-forge doctor >/tmp/awg-forge-install-doctor.log 2>&1; then
       cat /tmp/awg-forge-install-doctor.log
-      ok "doctor completed"
+      if grep -q '^FAIL ' /tmp/awg-forge-install-doctor.log; then
+        warn "doctor completed with failures; inspect output above"
+      else
+        ok "doctor completed"
+      fi
       print_next_steps "$server_host" "$webui_host" "$webui_port" "$password" "$profile" "$compose"
       return
     fi
@@ -394,7 +453,7 @@ main() {
     cat /tmp/awg-forge-install-doctor.log
   fi
   if docker exec "$APP_NAME" awg-forge doctor; then
-    ok "doctor completed"
+    warn "doctor completed; inspect output above"
   else
     warn "doctor reported issues; inspect output above and run: docker exec $APP_NAME awg-forge doctor"
   fi
