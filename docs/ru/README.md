@@ -11,6 +11,8 @@
 - [Обновления AmneziaWG](updates.md)
 - [Разработка](development.md)
 - [Безопасность](security.md)
+- [Contributing](../../CONTRIBUTING.md)
+- [Security policy](../../SECURITY.md)
 
 Технические документы:
 

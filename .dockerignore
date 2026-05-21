@@ -1,6 +1,13 @@
 .git
 data
 dist
+.env
+.env.local
+.env.backup-*
+*.afbackup
+*.backup
+*.conf
+*.zip
 *.test
 coverage.out
 .DS_Store

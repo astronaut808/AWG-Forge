@@ -76,6 +76,8 @@ Host networking — рекомендуемый production-режим, потом
 ## Документация
 
 - [README EN](README.en.md)
+- [Contributing](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
 - [Документация на русском](docs/ru/README.md)
 - [Быстрая установка](docs/ru/quick-install.md)
 - [Установка и запуск](docs/ru/setup.md)
@@ -126,3 +128,7 @@ go run ./cmd/awg-forge serve
 ```
 
 Подробнее: [Разработка](docs/ru/development.md).
+
+## Лицензия
+
+[MIT](LICENSE)
