@@ -282,6 +282,7 @@ func (w *web) updateTunnelSettingsAPI(rw http.ResponseWriter, r *http.Request, i
 	w.withIdempotency(rw, r, "update-tunnel-settings:"+id, func() (int, any) {
 		var req struct {
 			Name       string `json:"name"`
+			ServerHost string `json:"server_host"`
 			Port       int    `json:"port"`
 			Subnet     string `json:"subnet"`
 			DNS        string `json:"dns"`
@@ -293,7 +294,7 @@ func (w *web) updateTunnelSettingsAPI(rw http.ResponseWriter, r *http.Request, i
 		if err := readJSON(r, &req); err != nil {
 			return http.StatusBadRequest, errorPayload("invalid json")
 		}
-		tunnel, err := w.service.UpdateTunnelSettings(id, req.Name, req.Subnet, req.DNS, req.AllowedIPs, req.Keepalive, req.MTU, req.Port, req.Enabled)
+		tunnel, err := w.service.UpdateTunnelSettings(id, req.Name, req.ServerHost, req.Subnet, req.DNS, req.AllowedIPs, req.Keepalive, req.MTU, req.Port, req.Enabled)
 		if err != nil {
 			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
 		}
@@ -486,6 +487,7 @@ func publicTunnel(tunnel config.Tunnel, status app.TunnelStatus) map[string]any 
 		"interface":   tunnel.InterfaceName,
 		"enabled":     tunnel.Enabled,
 		"listen_port": tunnel.ListenPort,
+		"server_host": tunnel.ServerHost,
 		"address":     tunnel.ServerAddress,
 		"subnet":      tunnel.IPv4Subnet,
 		"dns":         tunnel.DNS,

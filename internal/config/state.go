@@ -20,6 +20,7 @@ type Tunnel struct {
 	InterfaceName     string         `json:"interface_name"`
 	Enabled           bool           `json:"enabled"`
 	ListenPort        int            `json:"listen_port"`
+	ServerHost        string         `json:"server_host,omitempty"`
 	ServerAddress     string         `json:"server_address"`
 	IPv4Subnet        string         `json:"ipv4_subnet"`
 	DNS               string         `json:"dns"`

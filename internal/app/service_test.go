@@ -232,7 +232,7 @@ func TestTunnelSettingsApplyFailureRollsBackState(t *testing.T) {
 		t.Fatal(err)
 	}
 	original := state.Tunnels[0]
-	if _, err := svc.UpdateTunnelSettings(original.ID, original.Name, original.IPv4Subnet, original.DNS, original.AllowedIPs, original.Keepalive, 1280, original.ListenPort, original.Enabled); err == nil {
+	if _, err := svc.UpdateTunnelSettings(original.ID, original.Name, original.ServerHost, original.IPv4Subnet, original.DNS, original.AllowedIPs, original.Keepalive, 1280, original.ListenPort, original.Enabled); err == nil {
 		t.Fatal("expected apply error")
 	}
 	state, err = svc.State()
@@ -427,7 +427,7 @@ func TestTunnelSettingsChangeMarksClientConfigStaleUntilDownloaded(t *testing.T)
 	if client.ConfigRevision != tunnel.ConfigRevision {
 		t.Fatalf("client revision = %d, tunnel revision = %d", client.ConfigRevision, tunnel.ConfigRevision)
 	}
-	if _, err := svc.UpdateTunnelSettings(tunnel.ID, tunnel.Name, tunnel.IPv4Subnet, tunnel.DNS, tunnel.AllowedIPs, tunnel.Keepalive, 1280, tunnel.ListenPort, tunnel.Enabled); err != nil {
+	if _, err := svc.UpdateTunnelSettings(tunnel.ID, tunnel.Name, tunnel.ServerHost, tunnel.IPv4Subnet, tunnel.DNS, tunnel.AllowedIPs, tunnel.Keepalive, 1280, tunnel.ListenPort, tunnel.Enabled); err != nil {
 		t.Fatal(err)
 	}
 	state, err = svc.State()
@@ -449,6 +449,134 @@ func TestTunnelSettingsChangeMarksClientConfigStaleUntilDownloaded(t *testing.T)
 	}
 	if state.Tunnels[0].Clients[0].ConfigRevision != state.Tunnels[0].ConfigRevision {
 		t.Fatal("expected config download to mark client fresh")
+	}
+}
+
+func TestServerHostEnvChangeUpdatesStateAndMarksClientsStale(t *testing.T) {
+	cfg := testConfig(t)
+	svc := app.New(cfg)
+	client, err := svc.AddClient("phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldRevision := state.Tunnels[0].ConfigRevision
+	cfg.ServerHost = "new.example.com"
+	svc = app.New(cfg)
+	state, err = svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.ServerHost != "new.example.com" {
+		t.Fatalf("server host = %q, want new.example.com", state.ServerHost)
+	}
+	if state.Tunnels[0].ConfigRevision <= oldRevision {
+		t.Fatal("expected tunnel config revision to increase")
+	}
+	if state.Tunnels[0].Clients[0].ConfigRevision >= state.Tunnels[0].ConfigRevision {
+		t.Fatal("expected existing client config to be stale")
+	}
+	conf, _, err := svc.ClientConfigForDownload(client.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(conf, "Endpoint = new.example.com:51820") {
+		t.Fatalf("client config did not use updated endpoint:\n%s", conf)
+	}
+}
+
+func TestTunnelServerHostOverrideRendersClientEndpoint(t *testing.T) {
+	cfg := testConfig(t)
+	svc := app.New(cfg)
+	client, err := svc.AddClient("phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tunnel := state.Tunnels[0]
+	if _, err := svc.UpdateTunnelSettings(tunnel.ID, tunnel.Name, "edge.example.com", tunnel.IPv4Subnet, tunnel.DNS, tunnel.AllowedIPs, tunnel.Keepalive, tunnel.MTU, tunnel.ListenPort, tunnel.Enabled); err != nil {
+		t.Fatal(err)
+	}
+	conf, _, err := svc.ClientConfigForDownload(client.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(conf, "Endpoint = edge.example.com:51820") {
+		t.Fatalf("client config did not use tunnel endpoint override:\n%s", conf)
+	}
+}
+
+func TestTunnelServerHostOverrideRejectsUnsafeValues(t *testing.T) {
+	cfg := testConfig(t)
+	svc := app.New(cfg)
+	state, err := svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tunnel := state.Tunnels[0]
+	badHosts := []string{
+		"https://edge.example.com",
+		"edge.example.com:51820",
+		"edge example.com",
+		"2001:db8::1",
+		"../edge.example.com",
+	}
+	for _, host := range badHosts {
+		t.Run(host, func(t *testing.T) {
+			if _, err := svc.UpdateTunnelSettings(tunnel.ID, tunnel.Name, host, tunnel.IPv4Subnet, tunnel.DNS, tunnel.AllowedIPs, tunnel.Keepalive, tunnel.MTU, tunnel.ListenPort, tunnel.Enabled); err == nil {
+				t.Fatal("expected validation error")
+			}
+		})
+	}
+}
+
+func TestServerHostEnvChangeDoesNotMarkOverriddenTunnelStale(t *testing.T) {
+	cfg := testConfig(t)
+	svc := app.New(cfg)
+	client, err := svc.AddClient("phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tunnel := state.Tunnels[0]
+	if _, err := svc.UpdateTunnelSettings(tunnel.ID, tunnel.Name, "edge.example.com", tunnel.IPv4Subnet, tunnel.DNS, tunnel.AllowedIPs, tunnel.Keepalive, tunnel.MTU, tunnel.ListenPort, tunnel.Enabled); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := svc.ClientConfigForDownload(client.ID); err != nil {
+		t.Fatal(err)
+	}
+	state, err = svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision := state.Tunnels[0].ConfigRevision
+	cfg.ServerHost = "new.example.com"
+	svc = app.New(cfg)
+	state, err = svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Tunnels[0].ConfigRevision != revision {
+		t.Fatalf("overridden tunnel revision changed from %d to %d", revision, state.Tunnels[0].ConfigRevision)
+	}
+	if state.Tunnels[0].Clients[0].ConfigRevision != revision {
+		t.Fatal("expected overridden tunnel client config to stay fresh")
+	}
+	conf, _, err := svc.ClientConfigForDownload(client.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(conf, "Endpoint = edge.example.com:51820") {
+		t.Fatalf("client config did not keep tunnel endpoint override:\n%s", conf)
 	}
 }
 

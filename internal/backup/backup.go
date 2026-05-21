@@ -16,6 +16,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -423,16 +424,37 @@ func verifyChecksums(files []restoreFile, metas []FileMeta) error {
 	return nil
 }
 
-func cleanArchivePath(path string) (string, error) {
-	path = filepath.ToSlash(strings.TrimSpace(path))
-	if path == "" || strings.HasPrefix(path, "/") {
+func cleanArchivePath(archivePath string) (string, error) {
+	archivePath = strings.ReplaceAll(strings.TrimSpace(archivePath), "\\", "/")
+	if archivePath == "" || strings.HasPrefix(archivePath, "/") || strings.Contains(archivePath, "\x00") {
 		return "", errors.New("invalid archive path")
 	}
-	clean := filepath.ToSlash(filepath.Clean(path))
+	for _, part := range strings.Split(archivePath, "/") {
+		if part == ".." {
+			return "", errors.New("invalid archive path")
+		}
+	}
+	clean := path.Clean(archivePath)
 	if clean == "." || strings.HasPrefix(clean, "../") || clean == ".." {
 		return "", errors.New("invalid archive path")
 	}
 	return clean, nil
+}
+
+func safeRestorePath(root, archivePath string) (string, error) {
+	clean, err := cleanArchivePath(archivePath)
+	if err != nil {
+		return "", err
+	}
+	dst := filepath.Join(root, filepath.FromSlash(clean))
+	rel, err := filepath.Rel(root, dst)
+	if err != nil {
+		return "", err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", errors.New("invalid archive path")
+	}
+	return dst, nil
 }
 
 func preRestoreBackupFile(ctx context.Context, cfg config.Config, password string) (restoreFile, bool, error) {
@@ -460,11 +482,10 @@ func restoreFiles(root string, files []restoreFile) error {
 		return err
 	}
 	for _, file := range files {
-		clean, err := cleanArchivePath(file.Path)
+		dst, err := safeRestorePath(tmp, file.Path)
 		if err != nil {
 			return err
 		}
-		dst := filepath.Join(tmp, filepath.FromSlash(clean))
 		if err := os.MkdirAll(filepath.Dir(dst), 0700); err != nil {
 			return err
 		}

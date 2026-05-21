@@ -240,7 +240,7 @@ function renderTunnelCard(tunnel) {
         <span class="badge ${up ? "ok" : "bad"}">${up ? "up" : "down"}</span>
       </div>
       <div class="facts">
-        <div class="fact"><span>Endpoint</span><strong class="mono">${escapeHTML(state.server_host)}:${escapeHTML(tunnel.listen_port)}</strong></div>
+        <div class="fact"><span>Endpoint</span><strong class="mono">${escapeHTML(tunnelEndpointHost(tunnel))}:${escapeHTML(tunnel.listen_port)}</strong></div>
         <div class="fact"><span>Subnet</span><strong class="mono">${escapeHTML(tunnel.subnet)}</strong></div>
         <div class="fact"><span>DNS</span><strong class="mono">${escapeHTML(tunnel.dns)}</strong></div>
         <div class="fact"><span>MTU</span><strong class="mono">${formatMTU(tunnel.mtu)}</strong></div>
@@ -286,6 +286,10 @@ function portInRanges(port, spec) {
 
     return numericPort === Number(trimmed);
   });
+}
+
+function tunnelEndpointHost(tunnel) {
+  return tunnel.server_host || state.server_host || "";
 }
 
 function renderClientRow(tunnel, client) {
@@ -481,6 +485,7 @@ function openSettings(tunnel) {
       </div>
       <div class="form-grid">
         <div><label>Name / interface</label><input name="name" value="${escapeAttr(tunnel.name)}" autofocus></div>
+        <div><label>Server host</label><input name="server_host" value="${escapeAttr(tunnel.server_host || "")}" placeholder="${escapeAttr(state.server_host || "")}"></div>
         <div><label>Listen port</label><input name="port" inputmode="numeric" value="${escapeAttr(tunnel.listen_port)}"></div>
         <div><label>IPv4 subnet</label><input name="subnet" value="${escapeAttr(tunnel.subnet)}"></div>
         <div><label>DNS</label><input name="dns" value="${escapeAttr(tunnel.dns)}"></div>
@@ -516,6 +521,7 @@ function openSettings(tunnel) {
       idempotencyKey: formIdempotencyKey(event.currentTarget),
       body: {
         name: form.get("name"),
+        server_host: String(form.get("server_host") || "").trim(),
         port: Number(form.get("port")),
         subnet: form.get("subnet"),
         dns: form.get("dns"),

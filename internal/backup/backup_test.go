@@ -159,6 +159,58 @@ func TestRestoreRejectsMissingMetadata(t *testing.T) {
 	}
 }
 
+func TestRestoreRejectsZipSlipPaths(t *testing.T) {
+	for _, name := range []string{"../escape", "tunnels/../../escape", `tunnels\..\escape`} {
+		t.Run(name, func(t *testing.T) {
+			var plain bytes.Buffer
+			zw := zip.NewWriter(&plain)
+			for path, content := range map[string]string{
+				"metadata.json": `{"format":"awg-forge-backup-v1","schema_version":2,"created_at":"2026-01-01T00:00:00Z","files":[]}`,
+				"state.json":    `{"schema_version":2}`,
+				name:            "bad",
+			} {
+				w, err := zw.Create(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := w.Write([]byte(content)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := zw.Close(); err != nil {
+				t.Fatal(err)
+			}
+			encrypted, err := encrypt(plain.Bytes(), testPassword, time.Now().UTC())
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg := testConfig(t)
+			err = Restore(context.Background(), cfg, testPassword, writeTempArchive(t, encrypted))
+			if err == nil || !strings.Contains(err.Error(), "invalid archive path") {
+				t.Fatalf("restore error = %v, want invalid archive path", err)
+			}
+		})
+	}
+}
+
+func TestSafeRestorePathStaysUnderRoot(t *testing.T) {
+	root := t.TempDir()
+	got, err := safeRestorePath(root, "tunnels/awg0/server.conf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel, err := filepath.Rel(root, got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		t.Fatalf("restore path escaped root: %s", got)
+	}
+	if _, err := safeRestorePath(root, "../escape"); err == nil {
+		t.Fatal("expected traversal path to be rejected")
+	}
+}
+
 func TestWriteFileUsesPrivatePermissions(t *testing.T) {
 	cfg := testConfig(t)
 	svc := app.New(cfg)
