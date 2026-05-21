@@ -99,6 +99,15 @@ func TestSessionExpiresInThirtyMinutes(t *testing.T) {
 	if len(cookies) != 1 {
 		t.Fatalf("cookies = %d, want 1", len(cookies))
 	}
+	if !cookies[0].Secure {
+		t.Fatal("session cookie must use Secure")
+	}
+	if !cookies[0].HttpOnly {
+		t.Fatal("session cookie must use HttpOnly")
+	}
+	if cookies[0].SameSite != http.SameSiteStrictMode {
+		t.Fatalf("session cookie SameSite = %v, want Strict", cookies[0].SameSite)
+	}
 	parts := strings.Split(cookies[0].Value, ".")
 	if len(parts) != 2 {
 		t.Fatalf("invalid session cookie %q", cookies[0].Value)

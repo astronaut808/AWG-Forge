@@ -124,7 +124,7 @@ func (w *web) logoutAPI(rw http.ResponseWriter, r *http.Request) {
 		writeError(rw, http.StatusForbidden, "forbidden")
 		return
 	}
-	http.SetCookie(rw, &http.Cookie{Name: "awg_forge_session", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode})
+	http.SetCookie(rw, &http.Cookie{Name: "awg_forge_session", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode})
 	writeJSON(rw, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -675,7 +675,7 @@ func (w *web) setSession(rw http.ResponseWriter) {
 	exp := time.Now().Add(sessionTTL).Unix()
 	payload := fmt.Sprintf("%d", exp)
 	sig := w.sign(payload)
-	http.SetCookie(rw, &http.Cookie{Name: "awg_forge_session", Value: payload + "." + sig, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode})
+	http.SetCookie(rw, &http.Cookie{Name: "awg_forge_session", Value: payload + "." + sig, Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode})
 }
 
 func (w *web) hasSession(r *http.Request) bool {
