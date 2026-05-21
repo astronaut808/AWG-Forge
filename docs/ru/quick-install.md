@@ -27,6 +27,7 @@ curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/insta
 ## Что делает скрипт
 
 - проверяет Linux, Docker, Docker Compose и `/dev/net/tun`;
+- предлагает удалить найденные старые AWG-like runtime-интерфейсы, например `awg0`, `awg0-1`, `awg15` или `awg20`;
 - определяет внешний интерфейс через `ip route get 1.1.1.1`;
 - предлагает `SERVER_HOST` из найденного source IP, но позволяет указать домен;
 - спрашивает UDP-порт туннеля, Web UI host/port, subnet, DNS, MTU и protocol profile;
@@ -75,4 +76,26 @@ curl -4 https://ifconfig.co
 docker compose ps
 docker compose logs -f
 docker exec awg-forge awg-forge doctor
+```
+
+## Удаление
+
+Если нужно удалить awg-forge, сначала запускай uninstall, пока `data/state.json` еще на месте. Так скрипт сможет удалить точные managed firewall rules для каждого туннеля.
+
+```bash
+cd /opt/awg-forge
+sudo ./uninstall.sh
+```
+
+Удалить контейнер, runtime-интерфейсы, firewall rules и локальные файлы установки:
+
+```bash
+cd /opt/awg-forge
+sudo ./uninstall.sh --purge
+```
+
+Для установки через `curl` без клонирования репозитория:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/uninstall.sh | sudo bash
 ```

@@ -17,6 +17,7 @@
 - Added Web UI Maintenance hub for Doctor, firewall repair, encrypted backups, support bundles, update checks, and CLI-only restore guidance.
 - Added self-contained interactive `install.sh` quick installer for Linux/VPS Docker host-network setup.
 - Added MIT license, contributing guide, security policy, and Dependabot config for public repository readiness.
+- Added `uninstall.sh` to remove runtime interfaces, managed firewall rules, containers, and optionally local install files.
 
 ### Changed
 
@@ -25,8 +26,8 @@
 - Topbar maintenance actions are grouped under `Maintenance`, and primary buttons use a calmer hover/border treatment.
 - Documentation now describes Maintenance hub actions instead of the old separate topbar maintenance buttons.
 - `.env.example` now includes `SESSION_SECRET` so generated installs can keep stable UI sessions explicitly.
-- GitHub Container Registry publishing now uses the standard `GITHUB_TOKEN`.
 - `.gitignore` and `.dockerignore` now exclude local env files, backups, configs, and support archives.
+- The quick installer now detects stale AWG-like interfaces before startup and recreates the container when applying a new `.env`.
 
 ## v0.4.0 - 2026-05-20
 

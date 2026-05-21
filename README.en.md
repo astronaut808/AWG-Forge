@@ -73,6 +73,13 @@ http://127.0.0.1:51821
 
 Host networking is the recommended production mode because tunnels created in the UI can use any free UDP ports without changing Docker port mappings.
 
+Uninstall:
+
+```bash
+cd /opt/awg-forge
+sudo ./uninstall.sh
+```
+
 ## Documentation
 
 - [Russian README](README.md)
