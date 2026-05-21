@@ -15,6 +15,7 @@
 - Added Web UI firewall repair action inside the Doctor modal.
 - Added shared firewall rule modeling and tests for expected rules, missing rules, duplicates, and disabled tunnel handling.
 - Added Web UI Maintenance hub for Doctor, firewall repair, encrypted backups, support bundles, update checks, and CLI-only restore guidance.
+- Added self-contained interactive `install.sh` quick installer for Linux/VPS Docker host-network setup.
 
 ### Changed
 
@@ -22,6 +23,7 @@
 - Doctor firewall diagnostics now point missing and duplicate managed rules to `awg-forge firewall repair`.
 - Topbar maintenance actions are grouped under `Maintenance`, and primary buttons use a calmer hover/border treatment.
 - Documentation now describes Maintenance hub actions instead of the old separate topbar maintenance buttons.
+- `.env.example` now includes `SESSION_SECRET` so generated installs can keep stable UI sessions explicitly.
 
 ## v0.4.0 - 2026-05-20
 
