@@ -76,6 +76,8 @@ Host networking is the recommended production mode because tunnels created in th
 ## Documentation
 
 - [Russian README](README.md)
+- [Contributing](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
 - [English documentation](docs/en/README.md)
 - [Quick install](docs/en/quick-install.md)
 - [Setup](docs/en/setup.md)
@@ -126,3 +128,7 @@ go run ./cmd/awg-forge serve
 ```
 
 More details: [Development](docs/en/development.md).
+
+## License
+
+[MIT](LICENSE)

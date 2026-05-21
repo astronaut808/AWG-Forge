@@ -10,6 +10,8 @@ English documentation:
 - [AmneziaWG updates](updates.md)
 - [Development](development.md)
 - [Security](security.md)
+- [Contributing](../../CONTRIBUTING.md)
+- [Security policy](../../SECURITY.md)
 
 Russian documentation:
 
