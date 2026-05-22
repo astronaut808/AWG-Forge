@@ -395,6 +395,8 @@ func (w *web) clientAPI(rw http.ResponseWriter, r *http.Request) {
 	}
 	id, action := parts[0], parts[1]
 	switch action {
+	case "settings":
+		w.updateClientSettingsAPI(rw, r, id)
 	case "enable":
 		w.setClientEnabledAPI(rw, r, id, true)
 	case "disable":
@@ -404,6 +406,27 @@ func (w *web) clientAPI(rw http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(rw, http.StatusNotFound, "not found")
 	}
+}
+
+func (w *web) updateClientSettingsAPI(rw http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPatch || !w.validOrigin(r) {
+		writeError(rw, http.StatusForbidden, "forbidden")
+		return
+	}
+	w.withIdempotency(rw, r, "update-client-settings:"+id, func() (int, any) {
+		var req struct {
+			Name  string `json:"name"`
+			Notes string `json:"notes"`
+		}
+		if err := readJSON(r, &req); err != nil {
+			return http.StatusBadRequest, errorPayload("invalid json")
+		}
+		client, err := w.service.UpdateClientSettings(id, req.Name, req.Notes)
+		if err != nil {
+			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
+		}
+		return http.StatusOK, map[string]any{"client": publicClient(client)}
+	})
 }
 
 func (w *web) setClientEnabledAPI(rw http.ResponseWriter, r *http.Request, id string, enabled bool) {
@@ -593,6 +616,7 @@ func publicClientForTunnel(tunnel config.Tunnel, client config.Client) map[strin
 		"id":               client.ID,
 		"tunnel_id":        client.TunnelID,
 		"name":             client.Name,
+		"notes":            client.Notes,
 		"enabled":          client.Enabled,
 		"address":          client.IPv4Address,
 		"revision":         client.ConfigRevision,

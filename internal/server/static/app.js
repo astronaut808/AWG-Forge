@@ -324,15 +324,18 @@ function tunnelEndpointHost(tunnel) {
 }
 
 function renderClientRow(tunnel, client) {
+  const notes = String(client.notes || "").trim();
   return `
     <div class="client-row">
       <div>
         <strong><span class="status-dot ${client.enabled ? "ok" : "off"}"></span>${escapeHTML(client.name)}</strong>
         <span class="muted"><span class="mono">${escapeHTML(client.address)}</span> · ${client.enabled ? "enabled" : "disabled"}${client.needs_new_config ? " · needs new config" : ""}</span>
+        ${notes ? `<span class="client-notes">${escapeHTML(notes)}</span>` : ""}
       </div>
       <div class="actions row-actions">
         ${client.needs_new_config ? `<span class="badge warn">stale</span>` : ""}
         <a class="button" href="/clients/config/${encodeURIComponent(client.id)}">Config</a>
+        <button data-action="edit-client" data-tunnel="${escapeAttr(tunnel.id)}" data-client="${escapeAttr(client.id)}">Edit</button>
         <button data-action="${client.enabled ? "disable-client" : "enable-client"}" data-client="${escapeAttr(client.id)}">${client.enabled ? "Disable" : "Enable"}</button>
         <button class="danger" data-action="delete-client" data-client="${escapeAttr(client.id)}">Delete</button>
       </div>
@@ -368,10 +371,57 @@ function bindAppEvents(active) {
       if (action === "health" && tunnel) await openHealth(tunnel);
       if (action === "restart" && tunnel) await restartTunnel(tunnel);
       if (action === "delete-tunnel" && tunnel) await deleteTunnel(tunnel);
+      if (action === "edit-client" && tunnel) openClientSettings(tunnel, node.dataset.client);
       if (action === "enable-client") await setClient(node.dataset.client, true);
       if (action === "disable-client") await setClient(node.dataset.client, false);
       if (action === "delete-client") await deleteClient(node.dataset.client);
     });
+  });
+}
+
+function openClientSettings(tunnel, clientID) {
+  const client = (tunnel.clients || []).find((item) => item.id === clientID);
+  if (!client) {
+    showToast("client not found");
+    return;
+  }
+
+  const body = `
+    <form id="modal-form">
+      <div class="modal-head">
+        <div><h2>Client settings</h2><p class="muted">${escapeHTML(tunnel.name)} · <span class="mono">${escapeHTML(client.address)}</span></p></div>
+        <button class="icon-button" type="button" data-close aria-label="Close">&times;</button>
+      </div>
+      <div class="form-grid single">
+        <div><label>Client name</label><input name="name" value="${escapeAttr(client.name)}" autofocus></div>
+        <div><label>Notes</label><textarea name="notes" maxlength="1000" placeholder="Admin-only note">${escapeHTML(client.notes || "")}</textarea></div>
+      </div>
+      <div class="form-actions"><button class="primary" type="submit">Save client</button></div>
+    </form>
+  `;
+
+  showModal(body);
+
+  document.querySelector("#modal-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!beginSubmit(event.currentTarget)) return;
+
+    const form = new FormData(event.currentTarget);
+    const res = await api(`/api/clients/${encodeURIComponent(client.id)}/settings`, {
+      method: "PATCH",
+      idempotencyKey: formIdempotencyKey(event.currentTarget),
+      body: {
+        name: form.get("name"),
+        notes: form.get("notes"),
+      },
+    });
+
+    if (res.ok) {
+      await closeModalAndReload(tunnel.profile);
+      return;
+    }
+
+    resetSubmit(event.currentTarget);
   });
 }
 

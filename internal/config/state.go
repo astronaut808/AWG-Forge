@@ -44,6 +44,7 @@ type Client struct {
 	ID             string    `json:"id"`
 	TunnelID       string    `json:"tunnel_id"`
 	Name           string    `json:"name"`
+	Notes          string    `json:"notes,omitempty"`
 	Enabled        bool      `json:"enabled"`
 	IPv4Address    string    `json:"ipv4_address"`
 	PrivateKey     string    `json:"private_key"`

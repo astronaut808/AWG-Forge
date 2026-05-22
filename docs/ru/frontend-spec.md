@@ -116,8 +116,11 @@ Legacy modal не должен показывать `I1-I5`.
 Client actions:
 
 - Download config;
+- Edit name и admin notes;
 - Disable/Enable;
 - Delete.
+
+Client rename и notes — metadata-only изменения. Они не должны регенерировать keys, менять peer settings, рестартить tunnels или помечать configs stale.
 
 Create client:
 
@@ -146,6 +149,7 @@ Frontend использует:
 - `GET /api/tunnels/<id>/health`;
 - `DELETE /api/tunnels/<id>/delete`;
 - `POST /api/clients`;
+- `PATCH /api/clients/<id>/settings`;
 - `POST /api/clients/<id>/enable`;
 - `POST /api/clients/<id>/disable`;
 - `DELETE /api/clients/<id>/delete`;

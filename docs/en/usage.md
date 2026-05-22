@@ -19,6 +19,7 @@ Tunnel actions:
 - `Create tunnel`: create a new tunnel inside the selected profile.
 - `Create client`: create a client inside a specific tunnel.
 - `Config`: download an existing client's `.conf`.
+- `Edit`: rename a client or store admin-only notes without changing VPN config.
 - `Settings`: tunnel settings, including optional per-tunnel `Server host` endpoint override.
 - `Protocol`: protocol params and regenerate.
 - `Health`: handshake and runtime traffic counters for clients.
@@ -39,6 +40,8 @@ Maintenance actions are available through the `Maintenance` button:
 Changing tunnel settings or protocol params can make old client configs stale.
 
 After such changes, affected clients show a `stale` badge until a fresh `.conf` is downloaded.
+
+Client rename and notes are metadata-only changes and do not make configs stale.
 
 ## CLI In Docker
 

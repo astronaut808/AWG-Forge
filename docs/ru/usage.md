@@ -19,6 +19,7 @@ Tunnel actions:
 - `Create tunnel`: создать новый туннель внутри выбранного профиля.
 - `Create client`: создать клиента внутри конкретного туннеля.
 - `Config`: скачать `.conf` существующего клиента.
+- `Edit`: переименовать клиента или сохранить admin-only notes без изменения VPN-конфига.
 - `Settings`: настройки туннеля, включая optional per-tunnel `Server host` endpoint override.
 - `Protocol`: protocol params и regenerate.
 - `Health`: handshake и runtime traffic counters по клиентам.
@@ -39,6 +40,8 @@ Maintenance actions доступны через кнопку `Maintenance`:
 Изменение настроек туннеля или protocol params может сделать старые клиентские конфиги неактуальными.
 
 После таких изменений затронутые клиенты показывают badge `stale`, пока для них не скачан свежий `.conf`.
+
+Client rename и notes — metadata-only изменения, они не делают configs stale.
 
 ## CLI В Docker
 

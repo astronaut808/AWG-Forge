@@ -304,6 +304,13 @@ func TestPublicTunnelReportsStaleClientCount(t *testing.T) {
 	}
 }
 
+func TestPublicClientIncludesNotes(t *testing.T) {
+	payload := publicClient(config.Client{ID: "client-1", Name: "phone", Notes: "router in office"})
+	if got, want := payload["notes"], "router in office"; got != want {
+		t.Fatalf("notes = %v, want %q", got, want)
+	}
+}
+
 func TestFirewallSummaryForTunnelFlagsMissingRules(t *testing.T) {
 	tunnel := config.Tunnel{Name: "awg0", Enabled: true}
 	report := firewall.Report{

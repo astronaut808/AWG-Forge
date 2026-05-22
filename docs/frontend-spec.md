@@ -120,8 +120,11 @@ Clients are shown inside the tunnel they belong to.
 Client actions:
 
 - Download config
+- Edit name and admin notes
 - Disable/Enable
 - Delete
+
+Client rename and notes are metadata-only changes. They must not regenerate keys, change peer settings, restart tunnels, or mark configs stale.
 
 Create client:
 
@@ -152,6 +155,7 @@ The frontend uses JSON APIs:
 - `GET /api/tunnels/<id>/health`
 - `DELETE /api/tunnels/<id>/delete`
 - `POST /api/clients`
+- `PATCH /api/clients/<id>/settings`
 - `POST /api/clients/<id>/enable`
 - `POST /api/clients/<id>/disable`
 - `DELETE /api/clients/<id>/delete`
@@ -168,7 +172,6 @@ Bridge networking is supported only when a fixed UDP range is published ahead of
 ## Next UX Hardening
 
 - Add restore verify/dry-run flow before applying encrypted backups.
-- Improve client rename and metadata editing.
 - Investigate AmneziaVPN `vpn://` import/subscription compatibility as an experimental path.
 
 ## Acceptance Criteria

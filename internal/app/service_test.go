@@ -452,6 +452,58 @@ func TestTunnelSettingsChangeMarksClientConfigStaleUntilDownloaded(t *testing.T)
 	}
 }
 
+func TestUpdateClientSettingsDoesNotMarkConfigStale(t *testing.T) {
+	svc := app.New(testConfig(t))
+	client, err := svc.AddClient("phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision := state.Tunnels[0].ConfigRevision
+
+	updated, err := svc.UpdateClientSettings(client.ID, "MacBook", "admin-only note")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Name != "MacBook" {
+		t.Fatalf("client name = %q, want MacBook", updated.Name)
+	}
+	if updated.Notes != "admin-only note" {
+		t.Fatalf("client notes = %q", updated.Notes)
+	}
+	state, err = svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Tunnels[0].ConfigRevision != revision {
+		t.Fatalf("tunnel revision changed from %d to %d", revision, state.Tunnels[0].ConfigRevision)
+	}
+	if state.Tunnels[0].Clients[0].ConfigRevision != revision {
+		t.Fatal("client config should remain fresh after metadata-only update")
+	}
+	_, renamed, err := svc.ClientConfigForDownload(client.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renamed.Name != "MacBook" {
+		t.Fatalf("download client name = %q, want MacBook", renamed.Name)
+	}
+}
+
+func TestUpdateClientSettingsRejectsInvalidName(t *testing.T) {
+	svc := app.New(testConfig(t))
+	client, err := svc.AddClient("phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.UpdateClientSettings(client.ID, "../bad", ""); err == nil {
+		t.Fatal("expected invalid client name to be rejected")
+	}
+}
+
 func TestServerHostEnvChangeUpdatesStateAndMarksClientsStale(t *testing.T) {
 	cfg := testConfig(t)
 	svc := app.New(cfg)

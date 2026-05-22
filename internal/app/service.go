@@ -25,7 +25,10 @@ import (
 	"github.com/astronaut808/awg-forge/internal/storage"
 )
 
-const healthTrafficWarningThresholdBytes uint64 = 1024
+const (
+	healthTrafficWarningThresholdBytes uint64 = 1024
+	maxClientNotesLength                      = 1000
+)
 
 var clientNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_. -]{0,62}[A-Za-z0-9]$|^[A-Za-z0-9]$`)
 var tunnelNameRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{0,31}$`)
@@ -696,6 +699,38 @@ func (s *Service) SetClientEnabled(id string, enabled bool) error {
 		}
 	}
 	return errors.New("client not found")
+}
+
+func (s *Service) UpdateClientSettings(id, name, notes string) (config.Client, error) {
+	name = strings.TrimSpace(name)
+	if !clientNameRE.MatchString(name) {
+		return config.Client{}, errors.New("client name must be 1-64 chars and contain only letters, numbers, spaces, dots, underscores, or dashes")
+	}
+	notes = strings.TrimSpace(notes)
+	if len(notes) > maxClientNotesLength {
+		return config.Client{}, fmt.Errorf("client notes must be at most %d bytes", maxClientNotesLength)
+	}
+	state, err := s.Init()
+	if err != nil {
+		return config.Client{}, err
+	}
+	for ti := range state.Tunnels {
+		for ci := range state.Tunnels[ti].Clients {
+			if state.Tunnels[ti].Clients[ci].ID == id {
+				now := time.Now().UTC()
+				state.Tunnels[ti].Clients[ci].Name = name
+				state.Tunnels[ti].Clients[ci].Notes = notes
+				state.Tunnels[ti].Clients[ci].UpdatedAt = now
+				state.Tunnels[ti].UpdatedAt = now
+				state.UpdatedAt = now
+				if err := s.store.Save(state); err != nil {
+					return config.Client{}, err
+				}
+				return state.Tunnels[ti].Clients[ci], nil
+			}
+		}
+	}
+	return config.Client{}, errors.New("client not found")
 }
 
 func (s *Service) ClientConfig(id string) (string, error) {
