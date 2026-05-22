@@ -68,6 +68,117 @@ func TestRestoreRejectsWrongPassword(t *testing.T) {
 	}
 }
 
+func TestVerifyReturnsReportWithoutWritingFiles(t *testing.T) {
+	cfg := testConfig(t)
+	svc := app.New(cfg)
+	if _, err := svc.AddClient("phone"); err != nil {
+		t.Fatal(err)
+	}
+	archive, err := Create(context.Background(), cfg, svc, testPassword, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifyCfg := cfg
+	verifyCfg.ConfigDir = t.TempDir()
+	report, err := Verify(context.Background(), verifyCfg, testPassword, writeTempArchive(t, archive.Data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Format != formatVersion {
+		t.Fatalf("format = %q, want %q", report.Format, formatVersion)
+	}
+	if report.SchemaVersion != config.CurrentStateSchemaVersion {
+		t.Fatalf("schema = %d, want %d", report.SchemaVersion, config.CurrentStateSchemaVersion)
+	}
+	if report.ClientCount != 1 {
+		t.Fatalf("clients = %d, want 1", report.ClientCount)
+	}
+	if len(report.Tunnels) != 1 {
+		t.Fatalf("tunnels = %d, want 1", len(report.Tunnels))
+	}
+	if report.Tunnels[0].Name != "awg0" || report.Tunnels[0].Clients != 1 {
+		t.Fatalf("tunnel report = %+v", report.Tunnels[0])
+	}
+	if _, err := os.Stat(filepath.Join(verifyCfg.ConfigDir, "state.json")); !os.IsNotExist(err) {
+		t.Fatalf("verify wrote state.json or stat failed unexpectedly: %v", err)
+	}
+}
+
+func TestVerifyRejectsWrongPassword(t *testing.T) {
+	cfg := testConfig(t)
+	svc := app.New(cfg)
+	if _, err := svc.AddClient("phone"); err != nil {
+		t.Fatal(err)
+	}
+	archive, err := Create(context.Background(), cfg, svc, testPassword, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Verify(context.Background(), cfg, "wrong password", writeTempArchive(t, archive.Data))
+	if err == nil || !strings.Contains(err.Error(), "decrypt failed") {
+		t.Fatalf("verify error = %v, want decrypt failed", err)
+	}
+}
+
+func TestVerifyRejectsDuplicatedTunnelPorts(t *testing.T) {
+	cfg := testConfig(t)
+	svc := app.New(cfg)
+	if _, err := svc.AddClient("phone"); err != nil {
+		t.Fatal(err)
+	}
+	archive, err := Create(context.Background(), cfg, svc, testPassword, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := decrypt(archive.Data, testPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mutatedStateJSON []byte
+	mutated := mutatePlainZip(t, plain, func(name string, b []byte) []byte {
+		switch name {
+		case "state.json":
+			var state config.State
+			if err := json.Unmarshal(b, &state); err != nil {
+				t.Fatal(err)
+			}
+			clone := state.Tunnels[0]
+			clone.ID = "duplicate-port"
+			clone.Name = "awg-copy"
+			clone.InterfaceName = "awg-copy"
+			clone.IPv4Subnet = "10.9.0.0/24"
+			state.Tunnels = append(state.Tunnels, clone)
+			out, err := json.Marshal(state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mutatedStateJSON = out
+			return out
+		case "metadata.json":
+			var metadata Metadata
+			if err := json.Unmarshal(b, &metadata); err != nil {
+				t.Fatal(err)
+			}
+			for i := range metadata.Files {
+				if metadata.Files[i].Path == "state.json" {
+					metadata.Files[i] = testFileMeta("state.json", mutatedStateJSON)
+				}
+			}
+			return mustJSON(t, metadata)
+		default:
+			return b
+		}
+	})
+	encrypted, err := encrypt(mutated, testPassword, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Verify(context.Background(), cfg, testPassword, writeTempArchive(t, encrypted))
+	if err == nil || !strings.Contains(err.Error(), "listen port 51820 is duplicated") {
+		t.Fatalf("verify error = %v, want duplicate listen port", err)
+	}
+}
+
 func TestRestoreKeepsEncryptedPreRestoreBackup(t *testing.T) {
 	cfg := testConfig(t)
 	svc := app.New(cfg)

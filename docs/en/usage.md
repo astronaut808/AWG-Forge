@@ -48,6 +48,7 @@ Client rename and notes are metadata-only changes and do not make configs stale.
 ```bash
 docker exec awg-forge awg-forge doctor
 docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge backup /tmp/awg-forge.afbackup
+docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore verify /tmp/awg-forge.afbackup
 docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore /tmp/awg-forge.afbackup
 docker exec awg-forge awg-forge firewall check
 docker exec awg-forge awg-forge firewall repair
@@ -71,6 +72,7 @@ awg-forge serve
 awg-forge render
 awg-forge doctor
 BACKUP_PASSWORD='long-random-backup-password' awg-forge backup ./awg-forge.afbackup
+BACKUP_PASSWORD='long-random-backup-password' awg-forge restore verify ./awg-forge.afbackup
 BACKUP_PASSWORD='long-random-backup-password' awg-forge restore ./awg-forge.afbackup
 awg-forge firewall check
 awg-forge firewall repair

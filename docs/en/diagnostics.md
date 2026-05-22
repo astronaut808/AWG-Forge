@@ -76,8 +76,11 @@ Restore requires the same password:
 
 ```bash
 docker cp awg-forge.afbackup awg-forge:/tmp/awg-forge.afbackup
+docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore verify /tmp/awg-forge.afbackup
 docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore /tmp/awg-forge.afbackup
 ```
+
+`restore verify` decrypts and validates the backup, renders server and client configs in memory, and prints a redacted summary. It does not write to the config directory, create a pre-restore backup, restart tunnels, or change runtime state.
 
 Before replacing the current config directory, restore keeps an encrypted pre-restore backup in `backups/` inside the restored config directory.
 

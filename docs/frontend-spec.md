@@ -171,7 +171,6 @@ Bridge networking is supported only when a fixed UDP range is published ahead of
 
 ## Next UX Hardening
 
-- Add restore verify/dry-run flow before applying encrypted backups.
 - Investigate AmneziaVPN `vpn://` import/subscription compatibility as an experimental path.
 
 ## Acceptance Criteria

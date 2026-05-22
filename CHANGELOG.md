@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.6.0 - Unreleased
+
+### Added
+
+- Added `awg-forge restore verify <backup.afbackup>` as a safe restore dry-run command.
+- Restore verification decrypts encrypted backups, validates metadata, schema versions, file checksums, archive paths, state sanity, and server/client config rendering without writing to `CONFIG_DIR`.
+- Restore verification prints a redacted backup summary with format, schema, file count, tunnel count, client count, server host, and per-tunnel profile/port/subnet information.
+- Added tests for successful restore verification, wrong backup passwords, no-write dry-run behavior, and duplicated tunnel listen port detection.
+
+### Changed
+
+- Restore now shares the same decrypt/read/validate path as restore verification before replacing the config directory.
+- Documentation now recommends running `restore verify` before `restore` in both Docker and local CLI workflows.
+
+### Security
+
+- Restore verification never prints private keys, preshared keys, session secrets, or rendered client configs.
+- Backup validation now rejects duplicate tunnel IDs, names, interfaces, listen ports, subnets, client IDs, invalid tunnel subnets, and invalid client IP addresses before restore.
+
 ## v0.5.0 - 2026-05-21
 
 ### Added

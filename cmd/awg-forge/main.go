@@ -234,8 +234,11 @@ func runBackup(cfg config.Config, svc *app.Service, args []string) error {
 }
 
 func runRestore(cfg config.Config, args []string) error {
+	if len(args) == 2 && args[0] == "verify" {
+		return runRestoreVerify(cfg, args[1])
+	}
 	if len(args) != 1 {
-		return errors.New("usage: BACKUP_PASSWORD=... awg-forge restore <backup.afbackup>")
+		return errors.New("usage: BACKUP_PASSWORD=... awg-forge restore <backup.afbackup> | restore verify <backup.afbackup>")
 	}
 	password := os.Getenv("BACKUP_PASSWORD")
 	if password == "" {
@@ -244,6 +247,75 @@ func runRestore(cfg config.Config, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	return backup.Restore(ctx, cfg, password, args[0])
+}
+
+func runRestoreVerify(cfg config.Config, path string) error {
+	password := os.Getenv("BACKUP_PASSWORD")
+	if password == "" {
+		return errors.New("BACKUP_PASSWORD is required")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	report, err := backup.Verify(ctx, cfg, password, path)
+	if err != nil {
+		return err
+	}
+	printRestoreVerifyReport(report)
+	return nil
+}
+
+func printRestoreVerifyReport(report backup.VerifyReport) {
+	fmt.Println("OK   backup: decrypted and verified")
+	fmt.Printf("OK   format: %s\n", report.Format)
+	fmt.Printf("OK   schema: %d\n", report.SchemaVersion)
+	if report.CreatedAt != "" {
+		fmt.Printf("OK   created: %s\n", report.CreatedAt)
+	}
+	if report.Build.Version != "" || report.Build.Commit != "" {
+		fmt.Printf("OK   build: version=%s commit=%s\n", emptyDash(report.Build.Version), emptyDash(report.Build.Commit))
+	}
+	fmt.Printf("OK   files: %d verified, %s total\n", report.FileCount, formatBytes(report.TotalSize))
+	fmt.Printf("OK   tunnels: %d\n", len(report.Tunnels))
+	fmt.Printf("OK   clients: %d\n", report.ClientCount)
+	if report.ServerHost != "" {
+		fmt.Printf("OK   server host: %s\n", report.ServerHost)
+	}
+	if len(report.Tunnels) == 0 {
+		return
+	}
+	fmt.Println()
+	fmt.Println("Tunnels:")
+	for _, tunnel := range report.Tunnels {
+		fmt.Printf("- %-12s %-16s %-15s %-18s %5d/udp %d clients\n",
+			tunnel.Name,
+			tunnel.Profile,
+			tunnel.Interface,
+			tunnel.Subnet,
+			tunnel.ListenPort,
+			tunnel.Clients,
+		)
+	}
+}
+
+func emptyDash(value string) string {
+	if value == "" {
+		return "-"
+	}
+	return value
+}
+
+func formatBytes(n int64) string {
+	const unit = int64(1024)
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := unit, 0
+	for n >= div*unit && exp < 4 {
+		div *= unit
+		exp++
+	}
+	value := float64(n) / float64(div)
+	return fmt.Sprintf("%.1f %ciB", value, "KMGTPE"[exp])
 }
 
 func runSupportBundle(cfg config.Config, svc *app.Service, args []string) error {
