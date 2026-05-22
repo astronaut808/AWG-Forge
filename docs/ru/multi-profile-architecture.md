@@ -25,6 +25,7 @@ State хранит массив `tunnels`.
 - `interface_name`;
 - `enabled`;
 - server private/public keys;
+- optional per-tunnel server host override;
 - listen port;
 - server address;
 - IPv4 subnet;
@@ -113,3 +114,5 @@ Per tunnel checks:
 AWG 2.0 реализован как отдельный profile и отдельный tunnel.
 
 Он не должен превращать существующий Legacy/1.5 tunnel в 2.0 in-place. Для 2.0 создается новый tunnel и новые client configs.
+
+Проверенный production path для клиентов — импорт `.conf`. Отдельная AmneziaVPN `vpn://`/subscription compatibility остается исследовательским направлением, а не текущим поддерживаемым flow.

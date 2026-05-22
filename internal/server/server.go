@@ -21,6 +21,7 @@ import (
 	"github.com/astronaut808/awg-forge/internal/backup"
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/doctor"
+	"github.com/astronaut808/awg-forge/internal/firewall"
 	"github.com/astronaut808/awg-forge/internal/support"
 	"github.com/astronaut808/awg-forge/internal/updates"
 )
@@ -102,7 +103,7 @@ func (w *web) loginAPI(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if w.cfg.Password == "" {
-		w.setSession(rw)
+		w.setSession(rw, r)
 		writeJSON(rw, http.StatusOK, map[string]any{"ok": true})
 		return
 	}
@@ -112,7 +113,7 @@ func (w *web) loginAPI(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if subtleCompare(req.Password, w.cfg.Password) {
-		w.setSession(rw)
+		w.setSession(rw, r)
 		writeJSON(rw, http.StatusOK, map[string]any{"ok": true})
 		return
 	}
@@ -124,7 +125,7 @@ func (w *web) logoutAPI(rw http.ResponseWriter, r *http.Request) {
 		writeError(rw, http.StatusForbidden, "forbidden")
 		return
 	}
-	http.SetCookie(rw, &http.Cookie{Name: "awg_forge_session", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode})
+	http.SetCookie(rw, sessionCookie(r, "", -1))
 	writeJSON(rw, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -449,9 +450,10 @@ func (w *web) clientConfig(rw http.ResponseWriter, r *http.Request) {
 
 func (w *web) publicState(state config.State) map[string]any {
 	var tunnels []map[string]any
+	firewallReport, firewallErr := w.service.FirewallCheck()
 	for _, tunnel := range state.Tunnels {
 		status, _ := w.service.TunnelStatusByID(tunnel.ID)
-		tunnels = append(tunnels, publicTunnel(tunnel, status))
+		tunnels = append(tunnels, publicTunnelWithFirewall(tunnel, status, firewallSummaryForTunnel(tunnel, firewallReport, firewallErr)))
 	}
 	return map[string]any{
 		"authenticated":       true,
@@ -481,6 +483,10 @@ func profileMeta(id, tab, label string, available bool) map[string]any {
 }
 
 func publicTunnel(tunnel config.Tunnel, status app.TunnelStatus) map[string]any {
+	return publicTunnelWithFirewall(tunnel, status, firewallSummary{})
+}
+
+func publicTunnelWithFirewall(tunnel config.Tunnel, status app.TunnelStatus, fw firewallSummary) map[string]any {
 	return map[string]any{
 		"id":          tunnel.ID,
 		"name":        tunnel.Name,
@@ -504,8 +510,70 @@ func publicTunnel(tunnel config.Tunnel, status app.TunnelStatus) map[string]any 
 			"last_render":   status.LastRenderAt,
 			"last_apply":    status.LastApplyAt,
 			"last_error":    status.LastError,
+			"firewall":      fw,
+			"stale_clients": staleClientCount(tunnel),
 		},
 	}
+}
+
+type firewallSummary struct {
+	Level   string `json:"level"`
+	Label   string `json:"label"`
+	Message string `json:"message,omitempty"`
+}
+
+func firewallSummaryForTunnel(tunnel config.Tunnel, report firewall.Report, err error) firewallSummary {
+	if err != nil {
+		return firewallSummary{Level: "warn", Label: "firewall unknown", Message: err.Error()}
+	}
+	if !report.ApplyEnabled {
+		return firewallSummary{Level: "neutral", Label: "firewall manual", Message: "APPLY_CONFIG=false"}
+	}
+	if !tunnel.Enabled {
+		return firewallSummary{Level: "neutral", Label: "firewall disabled"}
+	}
+
+	var matched, missing, duplicate, failed int
+	for _, item := range report.Results {
+		if item.Tunnel != tunnel.Name {
+			continue
+		}
+		matched++
+		switch item.Status {
+		case "missing":
+			missing++
+		case "duplicate":
+			duplicate++
+		case "error":
+			failed++
+		}
+	}
+
+	switch {
+	case failed > 0:
+		return firewallSummary{Level: "bad", Label: "firewall error", Message: "managed firewall rules could not be checked"}
+	case missing > 0:
+		return firewallSummary{Level: "bad", Label: "firewall repair", Message: "managed firewall rules are missing"}
+	case duplicate > 0:
+		return firewallSummary{Level: "warn", Label: "firewall duplicates", Message: "managed firewall rules have duplicates"}
+	case matched == 0:
+		return firewallSummary{Level: "warn", Label: "firewall unknown", Message: "no managed firewall checks found"}
+	default:
+		return firewallSummary{Level: "ok", Label: "firewall ok"}
+	}
+}
+
+func staleClientCount(tunnel config.Tunnel) int {
+	if tunnel.ConfigRevision <= 0 {
+		return 0
+	}
+	count := 0
+	for _, client := range tunnel.Clients {
+		if client.ConfigRevision < tunnel.ConfigRevision {
+			count++
+		}
+	}
+	return count
 }
 
 func publicClients(tunnel config.Tunnel) []map[string]any {
@@ -671,11 +739,30 @@ func (w *web) allowLogin(ip string) bool {
 	return true
 }
 
-func (w *web) setSession(rw http.ResponseWriter) {
+func (w *web) setSession(rw http.ResponseWriter, r *http.Request) {
 	exp := time.Now().Add(sessionTTL).Unix()
 	payload := fmt.Sprintf("%d", exp)
 	sig := w.sign(payload)
-	http.SetCookie(rw, &http.Cookie{Name: "awg_forge_session", Value: payload + "." + sig, Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode})
+	http.SetCookie(rw, sessionCookie(r, payload+"."+sig, 0))
+}
+
+func sessionCookie(r *http.Request, value string, maxAge int) *http.Cookie {
+	return &http.Cookie{
+		Name:     "awg_forge_session",
+		Value:    value,
+		Path:     "/",
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		Secure:   sessionCookieSecure(r),
+		SameSite: http.SameSiteStrictMode,
+	}
+}
+
+func sessionCookieSecure(r *http.Request) bool {
+	if r == nil {
+		return true
+	}
+	return !requestHostIsLoopback(r.Host)
 }
 
 func (w *web) hasSession(r *http.Request) bool {

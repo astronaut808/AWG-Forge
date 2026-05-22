@@ -228,7 +228,6 @@ function profileHelp(profile) {
 
 function renderTunnelCard(tunnel) {
   const clients = tunnel.clients || [];
-  const up = tunnel.status?.up;
 
   return `
     <article class="card">
@@ -237,7 +236,7 @@ function renderTunnelCard(tunnel) {
           <h3>${escapeHTML(tunnel.name)}</h3>
           <p class="muted"><span class="mono">${escapeHTML(tunnel.interface)}</span> · ${escapeHTML(profileTitles[tunnel.profile] || tunnel.profile)}</p>
         </div>
-        <span class="badge ${up ? "ok" : "bad"}">${up ? "up" : "down"}</span>
+        ${renderRuntimeSummary(tunnel)}
       </div>
       <div class="facts">
         <div class="fact"><span>Endpoint</span><div class="endpoint-value"><strong class="mono">${escapeHTML(tunnelEndpointHost(tunnel))}:${escapeHTML(tunnel.listen_port)}</strong><small>${tunnel.server_host ? "custom" : "inherited"}</small></div></div>
@@ -265,6 +264,38 @@ function renderTunnelCard(tunnel) {
       ${tunnel.status?.last_error ? `<p class="badge bad">${escapeHTML(tunnel.status.last_error)}</p>` : ""}
     </article>
   `;
+}
+
+function renderRuntimeSummary(tunnel) {
+  const clients = tunnel.clients || [];
+  const staleClients = Number(tunnel.status?.stale_clients || 0);
+  const firewall = tunnel.status?.firewall || {};
+  const runtime = tunnel.enabled === false
+    ? { label: "runtime disabled", level: "neutral" }
+    : tunnel.status?.up
+      ? { label: "runtime up", level: "ok" }
+      : { label: "runtime down", level: "bad" };
+  const configs = clients.length === 0
+    ? { label: "no clients", level: "neutral" }
+    : staleClients > 0
+      ? { label: `${staleClients} stale config${staleClients === 1 ? "" : "s"}`, level: "warn" }
+      : { label: "configs fresh", level: "ok" };
+  const items = [
+    runtime,
+    { label: firewall.label || "firewall unknown", level: firewall.level || "warn", title: firewall.message || "" },
+    configs,
+  ];
+
+  return `
+    <div class="runtime-summary">
+      ${items.map((item) => `<span class="badge ${statusBadgeClass(item.level)}" aria-label="${escapeAttr(item.title || item.label)}">${escapeHTML(item.label)}</span>`).join("")}
+    </div>
+  `;
+}
+
+function statusBadgeClass(level) {
+  if (level === "ok" || level === "bad" || level === "warn" || level === "neutral") return level;
+  return "warn";
 }
 
 function portWarning(tunnel) {

@@ -565,11 +565,25 @@ textarea:focus-visible {
   background: color-mix(in srgb, var(--warning), transparent 88%);
 }
 
+.badge.neutral {
+  color: var(--muted);
+  border-color: var(--border-soft);
+  background: color-mix(in srgb, var(--surface-solid), transparent 8%);
+}
+
 .facts {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
   margin: 12px 0;
+}
+
+.runtime-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  max-width: min(520px, 58%);
 }
 
 .fact {
@@ -1053,9 +1067,15 @@ textarea {
   }
 
   .topbar,
+  .card-head,
   .section-head {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .runtime-summary {
+    justify-content: flex-start;
+    max-width: none;
   }
 
   .toolbar,

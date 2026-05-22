@@ -64,9 +64,12 @@ Main areas:
 
 - `cmd/awg-forge`: CLI entrypoint;
 - `internal/app`: service layer, state mutations, rollback, rendering/apply orchestration;
+- `internal/backup`: encrypted backup and restore validation;
 - `internal/config`: env/state model;
+- `internal/firewall`: managed iptables check/repair model;
 - `internal/protocol`: protocol profiles and validation;
 - `internal/render`: server/client config rendering;
 - `internal/server`: Web UI/API;
 - `internal/doctor`: diagnostics;
+- `internal/support`: secret-free support bundle generation;
 - `internal/updates`: AmneziaWG upstream update checks.

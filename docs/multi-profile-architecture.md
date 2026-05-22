@@ -1,6 +1,6 @@
 # Multi-Profile And Multi-Server Architecture
 
-awg-forge treats every AmneziaWG protocol generation as a separate tunnel/server instance. A Legacy / 1.0 client connects to a Legacy tunnel, a 1.5 client connects to a 1.5 tunnel, and a future 2.0 client will connect to a 2.0 tunnel with its own keys and config.
+awg-forge treats every AmneziaWG protocol generation as a separate tunnel/server instance. A Legacy / 1.0 client connects to a Legacy tunnel, a 1.5 client connects to a 1.5 tunnel, and a 2.0 client connects to a 2.0 tunnel with its own keys and config.
 
 This is safer than mutating one global profile because incompatible clients never share one server config.
 
@@ -23,16 +23,20 @@ type Tunnel struct {
     InterfaceName string
     Enabled bool
     ListenPort int
+    ServerHost string
     ServerAddress string
     IPv4Subnet string
     DNS string
     AllowedIPs string
     Keepalive int
+    MTU int
     ServerPrivateKey string
     ServerPublicKey string
     ProtocolProfileID string
     ProtocolParams ProtocolParams
     Clients []Client
+    ConfigRevision int
+    LastApplyError string
 }
 
 type Client struct {
@@ -51,7 +55,9 @@ Each tunnel has:
 
 - unique interface name, e.g. `awg0`, `awg15`, `awg20`
 - unique UDP listen port
+- optional per-tunnel endpoint host override
 - non-overlapping IPv4 subnet
+- optional explicit MTU
 - independent server keypair
 - independent protocol params
 - independent rendered server config
@@ -94,10 +100,7 @@ Implemented profiles:
 
 - `awg_legacy_1_0`: Legacy / 1.0 fields `Jc`, `Jmin`, `Jmax`, `S1`, `S2`, `H1-H4`
 - `awg_1_5`: 1.5-style profile with `I1-I5` support. Defaults include the DNS-like `I1` conversion packet plus small generated runtime-random packets for `I2-I5`.
-
-Validation-stage profile:
-
-- `awg_2_0`: new tunnel profile only, never an in-place conversion of Legacy/1.5 tunnels
+- `awg_2_0`: 2.0 profile with `I1-I5`, `S3/S4`, and non-overlapping `H1-H4` ranges. It is a new tunnel profile only, never an in-place conversion of Legacy/1.5 tunnels.
 
 Default tunnel suggestions:
 
@@ -131,7 +134,7 @@ Each tunnel stores its own last render/apply timestamps and last apply error.
 
 ## NAT And Firewall Rules
 
-Per-tunnel `PostUp`/`PostDown` rules use that tunnel's subnet, interface, and listen port:
+Per-tunnel `PostUp`/`PostDown` rules use that tunnel's subnet, interface, and listen port. The service also reconciles managed firewall rules during apply/repair and removes duplicates for its own managed rules.
 
 ```ini
 iptables -t nat -A POSTROUTING -s <tunnel-subnet> -o <external-interface> -j MASQUERADE
@@ -140,7 +143,7 @@ iptables -A FORWARD -i <interface> -j ACCEPT
 iptables -A FORWARD -o <interface> -j ACCEPT
 ```
 
-For multiple tunnels these rules are duplicated with different values. Future hardening should generate an idempotent nftables ruleset instead of relying only on `PostUp`/`PostDown`.
+For multiple tunnels these rules are duplicated with different values. Future hardening can move this toward a dedicated nftables ruleset, but current iptables reconciliation is tunnel-aware.
 
 ## Client Lifecycle
 
@@ -197,7 +200,7 @@ Validated:
 
 Still pending:
 
-- native Amnezia import validation
+- broader native Amnezia import/subscription research beyond `.conf`
 - broader client-version compatibility matrix
 
-The architecture already reserves the multi-server shape for this: adding 2.0 should be additive, not a state rewrite.
+The architecture keeps 2.0 additive: it does not require rewriting existing Legacy or 1.5 tunnels.
