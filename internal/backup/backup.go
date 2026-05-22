@@ -15,7 +15,9 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -76,6 +78,27 @@ type Metadata struct {
 	Warning       string         `json:"warning"`
 }
 
+type VerifyReport struct {
+	Format        string
+	CreatedAt     string
+	Build         buildinfo.Info
+	SchemaVersion int
+	ServerHost    string
+	FileCount     int
+	TotalSize     int64
+	Tunnels       []VerifyTunnel
+	ClientCount   int
+}
+
+type VerifyTunnel struct {
+	Name       string
+	Interface  string
+	Profile    string
+	ListenPort int
+	Subnet     string
+	Clients    int
+}
+
 type FileMeta struct {
 	Path   string `json:"path"`
 	Size   int64  `json:"size"`
@@ -124,38 +147,26 @@ func WriteFile(ctx context.Context, cfg config.Config, service *app.Service, pas
 }
 
 func Restore(ctx context.Context, cfg config.Config, password, path string) error {
-	if err := validatePassword(password); err != nil {
-		return err
-	}
-	if strings.TrimSpace(path) == "" {
-		return errors.New("backup file is required")
-	}
-	data, err := os.ReadFile(path)
+	validated, err := loadAndValidate(password, path)
 	if err != nil {
 		return err
-	}
-	plain, err := decrypt(data, password)
-	if err != nil {
-		return err
-	}
-	files, metadata, state, err := readPlainZip(plain)
-	if err != nil {
-		return err
-	}
-	if metadata.SchemaVersion > config.CurrentStateSchemaVersion || state.SchemaVersion > config.CurrentStateSchemaVersion {
-		return fmt.Errorf("backup schema %d is newer than supported schema %d", max(metadata.SchemaVersion, state.SchemaVersion), config.CurrentStateSchemaVersion)
-	}
-	for _, tunnel := range state.Tunnels {
-		if _, err := render.ServerConfig(state, tunnel); err != nil {
-			return fmt.Errorf("backup validation failed for %s: %w", tunnel.Name, err)
-		}
 	}
 	if preRestore, ok, err := preRestoreBackupFile(ctx, cfg, password); err != nil {
 		return err
 	} else if ok {
-		files = append(files, preRestore)
+		validated.Files = append(validated.Files, preRestore)
 	}
-	return restoreFiles(cfg.ConfigDir, files)
+	return restoreFiles(cfg.ConfigDir, validated.Files)
+}
+
+func Verify(ctx context.Context, cfg config.Config, password, path string) (VerifyReport, error) {
+	_ = ctx
+	_ = cfg
+	validated, err := loadAndValidate(password, path)
+	if err != nil {
+		return VerifyReport{}, err
+	}
+	return verifyReport(validated.Metadata, validated.State), nil
 }
 
 func validatePassword(password string) error {
@@ -342,6 +353,144 @@ type restoreFile struct {
 	Data []byte
 }
 
+type validatedBackup struct {
+	Files    []restoreFile
+	Metadata Metadata
+	State    config.State
+}
+
+func loadAndValidate(password, archivePath string) (validatedBackup, error) {
+	if err := validatePassword(password); err != nil {
+		return validatedBackup{}, err
+	}
+	if strings.TrimSpace(archivePath) == "" {
+		return validatedBackup{}, errors.New("backup file is required")
+	}
+	data, err := os.ReadFile(archivePath)
+	if err != nil {
+		return validatedBackup{}, err
+	}
+	plain, err := decrypt(data, password)
+	if err != nil {
+		return validatedBackup{}, err
+	}
+	files, metadata, state, err := readPlainZip(plain)
+	if err != nil {
+		return validatedBackup{}, err
+	}
+	if metadata.SchemaVersion > config.CurrentStateSchemaVersion || state.SchemaVersion > config.CurrentStateSchemaVersion {
+		return validatedBackup{}, fmt.Errorf("backup schema %d is newer than supported schema %d", max(metadata.SchemaVersion, state.SchemaVersion), config.CurrentStateSchemaVersion)
+	}
+	if err := validateStateSanity(state); err != nil {
+		return validatedBackup{}, err
+	}
+	for _, tunnel := range state.Tunnels {
+		if _, err := render.ServerConfig(state, tunnel); err != nil {
+			return validatedBackup{}, fmt.Errorf("backup validation failed for %s: %w", tunnel.Name, err)
+		}
+		for _, client := range tunnel.Clients {
+			if _, err := render.ClientConfig(state, tunnel, client); err != nil {
+				return validatedBackup{}, fmt.Errorf("backup client validation failed for %s/%s: %w", tunnel.Name, client.Name, err)
+			}
+		}
+	}
+	return validatedBackup{Files: files, Metadata: metadata, State: state}, nil
+}
+
+func validateStateSanity(state config.State) error {
+	tunnelIDs := map[string]bool{}
+	tunnelNames := map[string]bool{}
+	interfaces := map[string]bool{}
+	ports := map[int]bool{}
+	subnets := map[string]bool{}
+	clientIDs := map[string]bool{}
+
+	for _, tunnel := range state.Tunnels {
+		if strings.TrimSpace(tunnel.ID) == "" {
+			return errors.New("backup validation failed: tunnel id is empty")
+		}
+		if tunnelIDs[tunnel.ID] {
+			return fmt.Errorf("backup validation failed: tunnel id %q is duplicated", tunnel.ID)
+		}
+		tunnelIDs[tunnel.ID] = true
+
+		if strings.TrimSpace(tunnel.Name) == "" {
+			return errors.New("backup validation failed: tunnel name is empty")
+		}
+		if tunnelNames[tunnel.Name] {
+			return fmt.Errorf("backup validation failed: tunnel name %q is duplicated", tunnel.Name)
+		}
+		tunnelNames[tunnel.Name] = true
+
+		if strings.TrimSpace(tunnel.InterfaceName) == "" {
+			return fmt.Errorf("backup validation failed: tunnel %s interface is empty", tunnel.Name)
+		}
+		if interfaces[tunnel.InterfaceName] {
+			return fmt.Errorf("backup validation failed: interface %q is duplicated", tunnel.InterfaceName)
+		}
+		interfaces[tunnel.InterfaceName] = true
+
+		if tunnel.ListenPort <= 0 || tunnel.ListenPort > 65535 {
+			return fmt.Errorf("backup validation failed: tunnel %s listen port %d is invalid", tunnel.Name, tunnel.ListenPort)
+		}
+		if ports[tunnel.ListenPort] {
+			return fmt.Errorf("backup validation failed: listen port %d is duplicated", tunnel.ListenPort)
+		}
+		ports[tunnel.ListenPort] = true
+
+		if _, _, err := net.ParseCIDR(tunnel.IPv4Subnet); err != nil {
+			return fmt.Errorf("backup validation failed: tunnel %s subnet is invalid: %w", tunnel.Name, err)
+		}
+		if subnets[tunnel.IPv4Subnet] {
+			return fmt.Errorf("backup validation failed: subnet %q is duplicated", tunnel.IPv4Subnet)
+		}
+		subnets[tunnel.IPv4Subnet] = true
+
+		for _, client := range tunnel.Clients {
+			if strings.TrimSpace(client.ID) == "" {
+				return fmt.Errorf("backup validation failed: tunnel %s has empty client id", tunnel.Name)
+			}
+			if clientIDs[client.ID] {
+				return fmt.Errorf("backup validation failed: client id %q is duplicated", client.ID)
+			}
+			clientIDs[client.ID] = true
+			if strings.TrimSpace(client.Name) == "" {
+				return fmt.Errorf("backup validation failed: tunnel %s has empty client name", tunnel.Name)
+			}
+			if net.ParseIP(strings.TrimSuffix(client.IPv4Address, "/32")) == nil {
+				return fmt.Errorf("backup validation failed: client %s/%s address %q is invalid", tunnel.Name, client.Name, client.IPv4Address)
+			}
+		}
+	}
+	return nil
+}
+
+func verifyReport(metadata Metadata, state config.State) VerifyReport {
+	report := VerifyReport{
+		Format:        metadata.Format,
+		CreatedAt:     metadata.CreatedAt,
+		Build:         metadata.Build,
+		SchemaVersion: max(metadata.SchemaVersion, state.SchemaVersion),
+		ServerHost:    state.ServerHost,
+		FileCount:     len(metadata.Files),
+	}
+	for _, file := range metadata.Files {
+		report.TotalSize += file.Size
+	}
+	for _, tunnel := range state.Tunnels {
+		report.ClientCount += len(tunnel.Clients)
+		report.Tunnels = append(report.Tunnels, VerifyTunnel{
+			Name:       tunnel.Name,
+			Interface:  tunnel.InterfaceName,
+			Profile:    tunnel.ProtocolProfileID,
+			ListenPort: tunnel.ListenPort,
+			Subnet:     tunnel.IPv4Subnet,
+			Clients:    len(tunnel.Clients),
+		})
+	}
+	return report
+}
+
 func readPlainZip(data []byte) ([]restoreFile, Metadata, config.State, error) {
 	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
@@ -359,6 +508,9 @@ func readPlainZip(data []byte) ([]restoreFile, Metadata, config.State, error) {
 		if err != nil {
 			return nil, Metadata{}, config.State{}, err
 		}
+		if file.FileInfo().IsDir() {
+			continue
+		}
 		rc, err := file.Open()
 		if err != nil {
 			return nil, Metadata{}, config.State{}, err
@@ -370,11 +522,17 @@ func readPlainZip(data []byte) ([]restoreFile, Metadata, config.State, error) {
 		}
 		switch name {
 		case "metadata.json":
+			if hasMeta {
+				return nil, Metadata{}, config.State{}, errors.New("backup metadata.json is duplicated")
+			}
 			if err := json.Unmarshal(b, &metadata); err != nil {
 				return nil, Metadata{}, config.State{}, err
 			}
 			hasMeta = true
 		case "state.json":
+			if hasState {
+				return nil, Metadata{}, config.State{}, errors.New("backup state.json is duplicated")
+			}
 			if err := json.Unmarshal(b, &state); err != nil {
 				return nil, Metadata{}, config.State{}, err
 			}
@@ -405,34 +563,81 @@ func readPlainZip(data []byte) ([]restoreFile, Metadata, config.State, error) {
 func verifyChecksums(files []restoreFile, metas []FileMeta) error {
 	data := map[string][]byte{}
 	for _, file := range files {
-		data[file.Path] = file.Data
+		clean, err := cleanArchivePath(file.Path)
+		if err != nil {
+			return err
+		}
+		if _, ok := data[clean]; ok {
+			return fmt.Errorf("backup file %s is duplicated", clean)
+		}
+		data[clean] = file.Data
 	}
+	expected := map[string]FileMeta{}
 	for _, meta := range metas {
-		b, ok := data[meta.Path]
+		clean, err := cleanArchivePath(meta.Path)
+		if err != nil {
+			return err
+		}
+		if clean != meta.Path {
+			return fmt.Errorf("backup metadata path %s is not normalized", meta.Path)
+		}
+		if _, ok := expected[clean]; ok {
+			return fmt.Errorf("backup metadata file %s is duplicated", clean)
+		}
+		expected[clean] = meta
+	}
+	for path := range data {
+		if _, ok := expected[path]; !ok {
+			return fmt.Errorf("backup file %s is not listed in metadata", path)
+		}
+	}
+	for path, meta := range expected {
+		b, ok := data[path]
 		if !ok {
-			return fmt.Errorf("backup file %s is missing", meta.Path)
+			return fmt.Errorf("backup file %s is missing", path)
 		}
 		if int64(len(b)) != meta.Size {
-			return fmt.Errorf("backup file %s size mismatch", meta.Path)
+			return fmt.Errorf("backup file %s size mismatch", path)
 		}
 		sum := sha256.Sum256(b)
 		if hex.EncodeToString(sum[:]) != meta.SHA256 {
-			return fmt.Errorf("backup file %s checksum mismatch", meta.Path)
+			return fmt.Errorf("backup file %s checksum mismatch", path)
 		}
 	}
 	return nil
 }
 
-func cleanArchivePath(path string) (string, error) {
-	path = filepath.ToSlash(strings.TrimSpace(path))
-	if path == "" || strings.HasPrefix(path, "/") {
+func cleanArchivePath(archivePath string) (string, error) {
+	archivePath = strings.ReplaceAll(strings.TrimSpace(archivePath), "\\", "/")
+	if archivePath == "" || strings.HasPrefix(archivePath, "/") || strings.Contains(archivePath, "\x00") {
 		return "", errors.New("invalid archive path")
 	}
-	clean := filepath.ToSlash(filepath.Clean(path))
+	for _, part := range strings.Split(archivePath, "/") {
+		if part == ".." {
+			return "", errors.New("invalid archive path")
+		}
+	}
+	clean := path.Clean(archivePath)
 	if clean == "." || strings.HasPrefix(clean, "../") || clean == ".." {
 		return "", errors.New("invalid archive path")
 	}
 	return clean, nil
+}
+
+func safeRestorePath(root, archivePath string) (string, error) {
+	clean, err := cleanArchivePath(archivePath)
+	if err != nil {
+		return "", err
+	}
+	dst := filepath.Join(root, filepath.FromSlash(clean))
+	rel, err := filepath.Rel(root, dst)
+	if err != nil {
+		return "", err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", errors.New("invalid archive path")
+	}
+	return dst, nil
 }
 
 func preRestoreBackupFile(ctx context.Context, cfg config.Config, password string) (restoreFile, bool, error) {
@@ -460,11 +665,10 @@ func restoreFiles(root string, files []restoreFile) error {
 		return err
 	}
 	for _, file := range files {
-		clean, err := cleanArchivePath(file.Path)
+		dst, err := safeRestorePath(tmp, file.Path)
 		if err != nil {
 			return err
 		}
-		dst := filepath.Join(tmp, filepath.FromSlash(clean))
 		if err := os.MkdirAll(filepath.Dir(dst), 0700); err != nil {
 			return err
 		}

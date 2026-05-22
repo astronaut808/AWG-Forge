@@ -189,7 +189,7 @@ func (Legacy10) RenderClientPeer(ctx RenderContext, client config.Client) ([]Con
 		{"PresharedKey", client.PresharedKey},
 		{"AllowedIPs", ctx.Tunnel.AllowedIPs},
 		{"PersistentKeepalive", strconv.Itoa(ctx.Tunnel.Keepalive)},
-		{"Endpoint", fmt.Sprintf("%s:%d", ctx.State.ServerHost, ctx.Tunnel.ListenPort)},
+		{"Endpoint", fmt.Sprintf("%s:%d", ctx.EndpointHost(), ctx.Tunnel.ListenPort)},
 	}, nil
 }
 

@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.6.0
+
+### Added
+
+- Added `awg-forge restore verify <backup.afbackup>` as a safe restore dry-run command.
+- Restore verification decrypts encrypted backups, validates metadata, schema versions, file checksums, archive paths, state sanity, and server/client config rendering without writing to `CONFIG_DIR`.
+- Restore verification prints a redacted backup summary with format, schema, file count, tunnel count, client count, server host, and per-tunnel profile/port/subnet information.
+- Added tests for successful restore verification, wrong backup passwords, no-write dry-run behavior, and duplicated tunnel listen port detection.
+
+### Changed
+
+- Restore now shares the same decrypt/read/validate path as restore verification before replacing the config directory.
+- Documentation now recommends running `restore verify` before `restore` in both Docker and local CLI workflows.
+
+### Security
+
+- Restore verification never prints private keys, preshared keys, session secrets, or rendered client configs.
+- Backup validation now rejects duplicate tunnel IDs, names, interfaces, listen ports, subnets, client IDs, invalid tunnel subnets, and invalid client IP addresses before restore.
+
 ## v0.5.0 - 2026-05-21
 
 ### Added
@@ -18,6 +37,7 @@
 - Added self-contained interactive `install.sh` quick installer for Linux/VPS Docker host-network setup.
 - Added MIT license, contributing guide, security policy, and Dependabot config for public repository readiness.
 - Added `uninstall.sh` to remove runtime interfaces, managed firewall rules, containers, and optionally local install files.
+- Added per-tunnel `Server host` override in Web UI settings for client config endpoints.
 
 ### Changed
 
@@ -25,9 +45,12 @@
 - Doctor firewall diagnostics now point missing and duplicate managed rules to `awg-forge firewall repair`.
 - Topbar maintenance actions are grouped under `Maintenance`, and primary buttons use a calmer hover/border treatment.
 - Documentation now describes Maintenance hub actions instead of the old separate topbar maintenance buttons.
+- Tunnel endpoint cards now show whether the host is inherited from global `SERVER_HOST` or customized per tunnel.
 - `.env.example` now includes `SESSION_SECRET` so generated installs can keep stable UI sessions explicitly.
 - `.gitignore` and `.dockerignore` now exclude local env files, backups, configs, and support archives.
 - The quick installer now detects stale AWG-like interfaces before startup and recreates the container when applying a new `.env`.
+- Changing global `SERVER_HOST` now refreshes inherited tunnel endpoints while preserving tunnels with explicit host overrides.
+- Backup restore path validation is hardened against archive traversal paths.
 
 ## v0.4.0 - 2026-05-20
 

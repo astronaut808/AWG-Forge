@@ -39,6 +39,7 @@ Tunnel card показывает:
 - DNS;
 - MTU;
 - interface state;
+- compact runtime summary по runtime, firewall rules и stale client configs;
 - enabled/total clients;
 - last apply error, если есть.
 
@@ -65,6 +66,7 @@ Maintenance-действия сгруппированы в отдельном mo
 Editable fields:
 
 - name/interface;
+- endpoint server host override;
 - listen port;
 - IPv4 subnet;
 - DNS;
@@ -82,7 +84,7 @@ MTU choices:
 - `1420`;
 - custom value.
 
-Изменение port, MTU, DNS, allowed IPs или protocol params требует fresh client configs.
+Изменение server host, port, MTU, DNS, allowed IPs, keepalive или protocol params требует fresh client configs. UI показывает stale badge у клиентов, чей скачанный config revision отстал от tunnel revision.
 
 ## Protocol modal
 
@@ -114,8 +116,11 @@ Legacy modal не должен показывать `I1-I5`.
 Client actions:
 
 - Download config;
+- Edit name и admin notes;
 - Disable/Enable;
 - Delete.
+
+Client rename и notes — metadata-only изменения. Они не должны регенерировать keys, менять peer settings, рестартить tunnels или помечать configs stale.
 
 Create client:
 
@@ -132,15 +137,19 @@ Frontend использует:
 - `POST /api/logout`;
 - `GET /api/state` с `apply_enabled` для отображения dry-run режима maintenance-действий;
 - `GET /api/doctor`;
+- `POST /api/backup`;
 - `POST /api/firewall/repair`;
+- `GET /api/support-bundle`;
 - `GET /api/updates`;
 - `POST /api/tunnels`;
 - `PATCH /api/tunnels/<id>/settings`;
 - `PATCH /api/tunnels/<id>/protocol`;
 - `POST /api/tunnels/<id>/regenerate`;
 - `POST /api/tunnels/<id>/restart`;
+- `GET /api/tunnels/<id>/health`;
 - `DELETE /api/tunnels/<id>/delete`;
 - `POST /api/clients`;
+- `PATCH /api/clients/<id>/settings`;
 - `POST /api/clients/<id>/enable`;
 - `POST /api/clients/<id>/disable`;
 - `DELETE /api/clients/<id>/delete`;

@@ -19,7 +19,8 @@ Tunnel actions:
 - `Create tunnel`: create a new tunnel inside the selected profile.
 - `Create client`: create a client inside a specific tunnel.
 - `Config`: download an existing client's `.conf`.
-- `Settings`: tunnel settings.
+- `Edit`: rename a client or store admin-only notes without changing VPN config.
+- `Settings`: tunnel settings, including optional per-tunnel `Server host` endpoint override.
 - `Protocol`: protocol params and regenerate.
 - `Health`: handshake and runtime traffic counters for clients.
 - `Restart`: restart a tunnel.
@@ -38,13 +39,16 @@ Maintenance actions are available through the `Maintenance` button:
 
 Changing tunnel settings or protocol params can make old client configs stale.
 
-After such changes, download fresh `.conf` files for affected clients.
+After such changes, affected clients show a `stale` badge until a fresh `.conf` is downloaded.
+
+Client rename and notes are metadata-only changes and do not make configs stale.
 
 ## CLI In Docker
 
 ```bash
 docker exec awg-forge awg-forge doctor
 docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge backup /tmp/awg-forge.afbackup
+docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore verify /tmp/awg-forge.afbackup
 docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore /tmp/awg-forge.afbackup
 docker exec awg-forge awg-forge firewall check
 docker exec awg-forge awg-forge firewall repair
@@ -68,6 +72,7 @@ awg-forge serve
 awg-forge render
 awg-forge doctor
 BACKUP_PASSWORD='long-random-backup-password' awg-forge backup ./awg-forge.afbackup
+BACKUP_PASSWORD='long-random-backup-password' awg-forge restore verify ./awg-forge.afbackup
 BACKUP_PASSWORD='long-random-backup-password' awg-forge restore ./awg-forge.afbackup
 awg-forge firewall check
 awg-forge firewall repair

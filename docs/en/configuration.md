@@ -47,6 +47,26 @@ EXTERNAL_INTERFACE=ens3
 
 If the interface is wrong, handshakes may work while internet through the VPN does not.
 
+## SERVER_HOST and Tunnel Endpoint
+
+`SERVER_HOST` defines the global host awg-forge uses in `Endpoint = <host>:<port>` for client `.conf` files.
+
+Each tunnel also has a `Server host` field in the Web UI. When it is empty, the tunnel inherits the global `SERVER_HOST`. When it is set, it overrides the endpoint host only for that tunnel.
+
+This is useful when different tunnels are published through different subdomains, for example:
+
+```text
+legacy.example.com:44865
+awg20.example.com:44867
+```
+
+Important:
+
+- `Server host` must not include a scheme, path, or port;
+- the port comes from the tunnel settings;
+- after changing the host, clients should download fresh `.conf` files;
+- already imported clients do not update themselves.
+
 ## MTU
 
 `MTU=0` means awg-forge does not add `MTU = ...` to server/client configs.

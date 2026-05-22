@@ -73,6 +73,8 @@ http://127.0.0.1:51821
 
 Host networking — рекомендуемый production-режим, потому что туннели, созданные в UI, могут использовать любые свободные UDP-порты без изменения Docker port mappings.
 
+`SERVER_HOST` задает endpoint по умолчанию для клиентских конфигов. Для отдельных туннелей его можно переопределить в Web UI через `Tunnel settings` → `Server host`. Подробнее: [Конфигурация](docs/ru/configuration.md).
+
 Удаление:
 
 ```bash

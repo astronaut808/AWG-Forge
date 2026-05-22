@@ -10,6 +10,7 @@ import (
 
 	"github.com/astronaut808/awg-forge/internal/app"
 	"github.com/astronaut808/awg-forge/internal/config"
+	"github.com/astronaut808/awg-forge/internal/firewall"
 )
 
 func TestValidOriginAllowsMissingOriginAndRefererForLoopback(t *testing.T) {
@@ -94,10 +95,20 @@ func TestLoginPostAcceptsSameOrigin(t *testing.T) {
 func TestSessionExpiresInThirtyMinutes(t *testing.T) {
 	w := &web{sessions: []byte("test-secret")}
 	rr := httptest.NewRecorder()
-	w.setSession(rr)
+	r := httptest.NewRequest(http.MethodPost, "https://admin.example.com/api/login", nil)
+	w.setSession(rr, r)
 	cookies := rr.Result().Cookies()
 	if len(cookies) != 1 {
 		t.Fatalf("cookies = %d, want 1", len(cookies))
+	}
+	if !cookies[0].Secure {
+		t.Fatal("session cookie must use Secure")
+	}
+	if !cookies[0].HttpOnly {
+		t.Fatal("session cookie must use HttpOnly")
+	}
+	if cookies[0].SameSite != http.SameSiteStrictMode {
+		t.Fatalf("session cookie SameSite = %v, want Strict", cookies[0].SameSite)
 	}
 	parts := strings.Split(cookies[0].Value, ".")
 	if len(parts) != 2 {
@@ -110,6 +121,26 @@ func TestSessionExpiresInThirtyMinutes(t *testing.T) {
 	ttl := time.Until(time.Unix(exp, 0))
 	if ttl < 29*time.Minute || ttl > 31*time.Minute {
 		t.Fatalf("session ttl = %s, want about 30m", ttl)
+	}
+}
+
+func TestSessionCookieAllowsLoopbackHTTP(t *testing.T) {
+	w := &web{sessions: []byte("test-secret")}
+	rr := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:51821/api/login", nil)
+	w.setSession(rr, r)
+	cookies := rr.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("cookies = %d, want 1", len(cookies))
+	}
+	if cookies[0].Secure {
+		t.Fatal("loopback HTTP session cookie must not use Secure or Safari may ignore it")
+	}
+	if !cookies[0].HttpOnly {
+		t.Fatal("session cookie must use HttpOnly")
+	}
+	if cookies[0].SameSite != http.SameSiteStrictMode {
+		t.Fatalf("session cookie SameSite = %v, want Strict", cookies[0].SameSite)
 	}
 }
 
@@ -247,6 +278,59 @@ func TestApplyFailureReturnsServerErrorForMutation(t *testing.T) {
 	}
 	if got := len(state.Tunnels[0].Clients); got != 0 {
 		t.Fatalf("clients = %d, want 0", got)
+	}
+}
+
+func TestPublicTunnelReportsStaleClientCount(t *testing.T) {
+	tunnel := config.Tunnel{
+		ID:             "tunnel-1",
+		Name:           "awg0",
+		InterfaceName:  "awg0",
+		Enabled:        true,
+		ConfigRevision: 3,
+		Clients: []config.Client{
+			{ID: "fresh", ConfigRevision: 3},
+			{ID: "stale", ConfigRevision: 2},
+		},
+	}
+
+	payload := publicTunnel(tunnel, app.TunnelStatus{})
+	status, ok := payload["status"].(map[string]any)
+	if !ok {
+		t.Fatal("status payload missing")
+	}
+	if got, want := status["stale_clients"], 1; got != want {
+		t.Fatalf("stale_clients = %v, want %d", got, want)
+	}
+}
+
+func TestPublicClientIncludesNotes(t *testing.T) {
+	payload := publicClient(config.Client{ID: "client-1", Name: "phone", Notes: "router in office"})
+	if got, want := payload["notes"], "router in office"; got != want {
+		t.Fatalf("notes = %v, want %q", got, want)
+	}
+}
+
+func TestFirewallSummaryForTunnelFlagsMissingRules(t *testing.T) {
+	tunnel := config.Tunnel{Name: "awg0", Enabled: true}
+	report := firewall.Report{
+		ApplyEnabled: true,
+		Results: []firewall.RuleReport{
+			{Tunnel: "awg0", Rule: "masquerade", Status: "ok"},
+			{Tunnel: "awg0", Rule: "forward-in", Status: "missing"},
+		},
+	}
+
+	got := firewallSummaryForTunnel(tunnel, report, nil)
+	if got.Level != "bad" || got.Label != "firewall repair" {
+		t.Fatalf("summary = %+v, want bad firewall repair", got)
+	}
+}
+
+func TestFirewallSummaryForDisabledApplyModeIsNeutral(t *testing.T) {
+	got := firewallSummaryForTunnel(config.Tunnel{Name: "awg0", Enabled: true}, firewall.Report{ApplyEnabled: false}, nil)
+	if got.Level != "neutral" || got.Label != "firewall manual" {
+		t.Fatalf("summary = %+v, want neutral firewall manual", got)
 	}
 }
 

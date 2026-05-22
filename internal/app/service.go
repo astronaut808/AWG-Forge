@@ -25,10 +25,14 @@ import (
 	"github.com/astronaut808/awg-forge/internal/storage"
 )
 
-const healthTrafficWarningThresholdBytes uint64 = 1024
+const (
+	healthTrafficWarningThresholdBytes uint64 = 1024
+	maxClientNotesLength                      = 1000
+)
 
 var clientNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_. -]{0,62}[A-Za-z0-9]$|^[A-Za-z0-9]$`)
 var tunnelNameRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{0,31}$`)
+var serverHostRE = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$`)
 var transferRE = regexp.MustCompile(`^transfer:\s+(.+?) received,\s+(.+?) sent$`)
 
 type Service struct {
@@ -106,6 +110,20 @@ func (s *Service) Init() (config.State, error) {
 				return config.State{}, err
 			}
 			state.SessionSecret = secret
+			changed = true
+		}
+		if state.ServerHost != s.cfg.ServerHost {
+			state.ServerHost = s.cfg.ServerHost
+			changed = true
+			for ti := range state.Tunnels {
+				if strings.TrimSpace(state.Tunnels[ti].ServerHost) == "" {
+					state.Tunnels[ti].ConfigRevision++
+					state.Tunnels[ti].UpdatedAt = time.Now().UTC()
+				}
+			}
+		}
+		if state.ExternalInterface != s.cfg.ExternalInterface {
+			state.ExternalInterface = s.cfg.ExternalInterface
 			changed = true
 		}
 		if len(state.Tunnels) == 0 {
@@ -334,7 +352,7 @@ func (s *Service) CreateTunnel(profileID, name, subnet string, port int) (config
 	return tunnel, nil
 }
 
-func (s *Service) UpdateTunnelSettings(tunnelID, name, subnet, dns, allowedIPs string, keepalive, mtu, port int, enabled bool) (config.Tunnel, error) {
+func (s *Service) UpdateTunnelSettings(tunnelID, name, serverHost, subnet, dns, allowedIPs string, keepalive, mtu, port int, enabled bool) (config.Tunnel, error) {
 	state, err := s.Init()
 	if err != nil {
 		return config.Tunnel{}, err
@@ -348,6 +366,7 @@ func (s *Service) UpdateTunnelSettings(tunnelID, name, subnet, dns, allowedIPs s
 		return config.Tunnel{}, err
 	}
 	name = strings.TrimSpace(name)
+	serverHost = strings.TrimSpace(serverHost)
 	subnet = strings.TrimSpace(subnet)
 	dns = strings.TrimSpace(dns)
 	allowedIPs = strings.TrimSpace(allowedIPs)
@@ -365,6 +384,9 @@ func (s *Service) UpdateTunnelSettings(tunnelID, name, subnet, dns, allowedIPs s
 	}
 	if !tunnelNameRE.MatchString(name) {
 		return config.Tunnel{}, errors.New("tunnel name must start with a letter and contain only letters, numbers, dots, underscores, or dashes")
+	}
+	if err := validateServerHost(serverHost); err != nil {
+		return config.Tunnel{}, err
 	}
 	if port < 1 || port > 65535 {
 		return config.Tunnel{}, errors.New("listen port must be between 1 and 65535")
@@ -406,6 +428,7 @@ func (s *Service) UpdateTunnelSettings(tunnelID, name, subnet, dns, allowedIPs s
 	now := time.Now().UTC()
 	state.Tunnels[idx].Name = name
 	state.Tunnels[idx].InterfaceName = name
+	state.Tunnels[idx].ServerHost = serverHost
 	state.Tunnels[idx].ListenPort = port
 	state.Tunnels[idx].IPv4Subnet = subnet
 	state.Tunnels[idx].ServerAddress = serverIP
@@ -678,6 +701,38 @@ func (s *Service) SetClientEnabled(id string, enabled bool) error {
 	return errors.New("client not found")
 }
 
+func (s *Service) UpdateClientSettings(id, name, notes string) (config.Client, error) {
+	name = strings.TrimSpace(name)
+	if !clientNameRE.MatchString(name) {
+		return config.Client{}, errors.New("client name must be 1-64 chars and contain only letters, numbers, spaces, dots, underscores, or dashes")
+	}
+	notes = strings.TrimSpace(notes)
+	if len(notes) > maxClientNotesLength {
+		return config.Client{}, fmt.Errorf("client notes must be at most %d bytes", maxClientNotesLength)
+	}
+	state, err := s.Init()
+	if err != nil {
+		return config.Client{}, err
+	}
+	for ti := range state.Tunnels {
+		for ci := range state.Tunnels[ti].Clients {
+			if state.Tunnels[ti].Clients[ci].ID == id {
+				now := time.Now().UTC()
+				state.Tunnels[ti].Clients[ci].Name = name
+				state.Tunnels[ti].Clients[ci].Notes = notes
+				state.Tunnels[ti].Clients[ci].UpdatedAt = now
+				state.Tunnels[ti].UpdatedAt = now
+				state.UpdatedAt = now
+				if err := s.store.Save(state); err != nil {
+					return config.Client{}, err
+				}
+				return state.Tunnels[ti].Clients[ci], nil
+			}
+		}
+	}
+	return config.Client{}, errors.New("client not found")
+}
+
 func (s *Service) ClientConfig(id string) (string, error) {
 	state, err := s.Init()
 	if err != nil {
@@ -737,6 +792,7 @@ func (s *Service) markClientConfigDelivered(id string) error {
 
 func tunnelConfigChanged(old, next config.Tunnel) bool {
 	return old.ListenPort != next.ListenPort ||
+		old.ServerHost != next.ServerHost ||
 		old.ServerAddress != next.ServerAddress ||
 		old.IPv4Subnet != next.IPv4Subnet ||
 		old.DNS != next.DNS ||
@@ -744,6 +800,28 @@ func tunnelConfigChanged(old, next config.Tunnel) bool {
 		old.Keepalive != next.Keepalive ||
 		old.MTU != next.MTU ||
 		old.ProtocolProfileID != next.ProtocolProfileID
+}
+
+func validateServerHost(host string) error {
+	if host == "" {
+		return nil
+	}
+	if strings.ContainsAny(host, " \t\r\n/\\") || strings.Contains(host, ":") {
+		return errors.New("server host must be a hostname or IPv4 address without scheme, path, or port")
+	}
+	if len(host) > 253 {
+		return errors.New("server host is too long")
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.To4() == nil {
+			return errors.New("server host must be a hostname or IPv4 address")
+		}
+		return nil
+	}
+	if !serverHostRE.MatchString(host) {
+		return errors.New("server host must be a valid hostname or IPv4 address")
+	}
+	return nil
 }
 
 func firewallRelevantChanged(old, next config.Tunnel) bool {

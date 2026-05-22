@@ -53,6 +53,7 @@ Tunnel card content:
 - DNS
 - MTU, with `Auto` for omitted MTU
 - interface state
+- compact runtime summary for runtime, firewall rules, and stale client configs
 - enabled/total clients
 - last apply error, if any
 
@@ -61,6 +62,7 @@ Tunnel actions:
 - Create client
 - Settings
 - Protocol
+- Health
 - Restart
 - Delete
 
@@ -71,6 +73,7 @@ Settings live on the tunnel card.
 Editable fields:
 
 - name/interface
+- endpoint server host override
 - listen port
 - IPv4 subnet
 - DNS
@@ -88,7 +91,7 @@ MTU choices:
 - `1420`
 - custom value
 
-Changing port, MTU, DNS, Allowed IPs, or protocol params means clients should download fresh configs. The UI should add stale-config indicators in the next phase.
+Changing server host, port, MTU, DNS, Allowed IPs, keepalive, or protocol params marks affected client configs as stale until users download fresh `.conf` files.
 
 ## Protocol Settings
 
@@ -117,8 +120,11 @@ Clients are shown inside the tunnel they belong to.
 Client actions:
 
 - Download config
+- Edit name and admin notes
 - Disable/Enable
 - Delete
+
+Client rename and notes are metadata-only changes. They must not regenerate keys, change peer settings, restart tunnels, or mark configs stale.
 
 Create client:
 
@@ -126,7 +132,8 @@ Create client:
 - Requires client name.
 - Creates the client in that tunnel only.
 - Refreshes dashboard state after creation.
-- Shows `.conf` download as the supported import path.
+- Starts a protected `.conf` download after successful creation.
+- Shows stale badges for clients whose downloaded config revision is behind the tunnel revision.
 
 ## API Expectations
 
@@ -135,14 +142,20 @@ The frontend uses JSON APIs:
 - `POST /api/login`
 - `POST /api/logout`
 - `GET /api/state` with `apply_enabled` for maintenance dry-run UI state
+- `GET /api/doctor`
+- `POST /api/backup`
 - `POST /api/firewall/repair`
+- `GET /api/support-bundle`
+- `GET /api/updates`
 - `POST /api/tunnels`
 - `PATCH /api/tunnels/<id>/settings`
 - `PATCH /api/tunnels/<id>/protocol`
 - `POST /api/tunnels/<id>/regenerate`
 - `POST /api/tunnels/<id>/restart`
+- `GET /api/tunnels/<id>/health`
 - `DELETE /api/tunnels/<id>/delete`
 - `POST /api/clients`
+- `PATCH /api/clients/<id>/settings`
 - `POST /api/clients/<id>/enable`
 - `POST /api/clients/<id>/disable`
 - `DELETE /api/clients/<id>/delete`
@@ -154,15 +167,11 @@ All state-changing requests must keep Origin/Referer validation and must never l
 
 Host networking is preferred because tunnels can be created in the UI with any free UDP port.
 
-Bridge networking is supported only when a fixed UDP range is published ahead of time. The UI should eventually warn if a new tunnel port is outside the documented published range.
+Bridge networking is supported only when a fixed UDP range is published ahead of time. When `PUBLISHED_UDP_PORTS` is set, the UI and Doctor warn if a tunnel port is outside that range.
 
 ## Next UX Hardening
 
-- Add idempotency tokens for create/delete/restart/regenerate.
-- Add stale-config indicators after tunnel settings or protocol changes.
-- Add doctor UI.
-- Add port-range warnings for bridge Docker mode.
-- Add client rename.
+- Investigate AmneziaVPN `vpn://` import/subscription compatibility as an experimental path.
 
 ## Acceptance Criteria
 

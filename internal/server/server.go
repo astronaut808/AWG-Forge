@@ -21,6 +21,7 @@ import (
 	"github.com/astronaut808/awg-forge/internal/backup"
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/doctor"
+	"github.com/astronaut808/awg-forge/internal/firewall"
 	"github.com/astronaut808/awg-forge/internal/support"
 	"github.com/astronaut808/awg-forge/internal/updates"
 )
@@ -102,7 +103,7 @@ func (w *web) loginAPI(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if w.cfg.Password == "" {
-		w.setSession(rw)
+		w.setSession(rw, r)
 		writeJSON(rw, http.StatusOK, map[string]any{"ok": true})
 		return
 	}
@@ -112,7 +113,7 @@ func (w *web) loginAPI(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if subtleCompare(req.Password, w.cfg.Password) {
-		w.setSession(rw)
+		w.setSession(rw, r)
 		writeJSON(rw, http.StatusOK, map[string]any{"ok": true})
 		return
 	}
@@ -124,7 +125,7 @@ func (w *web) logoutAPI(rw http.ResponseWriter, r *http.Request) {
 		writeError(rw, http.StatusForbidden, "forbidden")
 		return
 	}
-	http.SetCookie(rw, &http.Cookie{Name: "awg_forge_session", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode})
+	http.SetCookie(rw, sessionCookie(r, "", -1))
 	writeJSON(rw, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -282,6 +283,7 @@ func (w *web) updateTunnelSettingsAPI(rw http.ResponseWriter, r *http.Request, i
 	w.withIdempotency(rw, r, "update-tunnel-settings:"+id, func() (int, any) {
 		var req struct {
 			Name       string `json:"name"`
+			ServerHost string `json:"server_host"`
 			Port       int    `json:"port"`
 			Subnet     string `json:"subnet"`
 			DNS        string `json:"dns"`
@@ -293,7 +295,7 @@ func (w *web) updateTunnelSettingsAPI(rw http.ResponseWriter, r *http.Request, i
 		if err := readJSON(r, &req); err != nil {
 			return http.StatusBadRequest, errorPayload("invalid json")
 		}
-		tunnel, err := w.service.UpdateTunnelSettings(id, req.Name, req.Subnet, req.DNS, req.AllowedIPs, req.Keepalive, req.MTU, req.Port, req.Enabled)
+		tunnel, err := w.service.UpdateTunnelSettings(id, req.Name, req.ServerHost, req.Subnet, req.DNS, req.AllowedIPs, req.Keepalive, req.MTU, req.Port, req.Enabled)
 		if err != nil {
 			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
 		}
@@ -393,6 +395,8 @@ func (w *web) clientAPI(rw http.ResponseWriter, r *http.Request) {
 	}
 	id, action := parts[0], parts[1]
 	switch action {
+	case "settings":
+		w.updateClientSettingsAPI(rw, r, id)
 	case "enable":
 		w.setClientEnabledAPI(rw, r, id, true)
 	case "disable":
@@ -402,6 +406,27 @@ func (w *web) clientAPI(rw http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(rw, http.StatusNotFound, "not found")
 	}
+}
+
+func (w *web) updateClientSettingsAPI(rw http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPatch || !w.validOrigin(r) {
+		writeError(rw, http.StatusForbidden, "forbidden")
+		return
+	}
+	w.withIdempotency(rw, r, "update-client-settings:"+id, func() (int, any) {
+		var req struct {
+			Name  string `json:"name"`
+			Notes string `json:"notes"`
+		}
+		if err := readJSON(r, &req); err != nil {
+			return http.StatusBadRequest, errorPayload("invalid json")
+		}
+		client, err := w.service.UpdateClientSettings(id, req.Name, req.Notes)
+		if err != nil {
+			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
+		}
+		return http.StatusOK, map[string]any{"client": publicClient(client)}
+	})
 }
 
 func (w *web) setClientEnabledAPI(rw http.ResponseWriter, r *http.Request, id string, enabled bool) {
@@ -448,9 +473,10 @@ func (w *web) clientConfig(rw http.ResponseWriter, r *http.Request) {
 
 func (w *web) publicState(state config.State) map[string]any {
 	var tunnels []map[string]any
+	firewallReport, firewallErr := w.service.FirewallCheck()
 	for _, tunnel := range state.Tunnels {
 		status, _ := w.service.TunnelStatusByID(tunnel.ID)
-		tunnels = append(tunnels, publicTunnel(tunnel, status))
+		tunnels = append(tunnels, publicTunnelWithFirewall(tunnel, status, firewallSummaryForTunnel(tunnel, firewallReport, firewallErr)))
 	}
 	return map[string]any{
 		"authenticated":       true,
@@ -480,12 +506,17 @@ func profileMeta(id, tab, label string, available bool) map[string]any {
 }
 
 func publicTunnel(tunnel config.Tunnel, status app.TunnelStatus) map[string]any {
+	return publicTunnelWithFirewall(tunnel, status, firewallSummary{})
+}
+
+func publicTunnelWithFirewall(tunnel config.Tunnel, status app.TunnelStatus, fw firewallSummary) map[string]any {
 	return map[string]any{
 		"id":          tunnel.ID,
 		"name":        tunnel.Name,
 		"interface":   tunnel.InterfaceName,
 		"enabled":     tunnel.Enabled,
 		"listen_port": tunnel.ListenPort,
+		"server_host": tunnel.ServerHost,
 		"address":     tunnel.ServerAddress,
 		"subnet":      tunnel.IPv4Subnet,
 		"dns":         tunnel.DNS,
@@ -502,8 +533,70 @@ func publicTunnel(tunnel config.Tunnel, status app.TunnelStatus) map[string]any 
 			"last_render":   status.LastRenderAt,
 			"last_apply":    status.LastApplyAt,
 			"last_error":    status.LastError,
+			"firewall":      fw,
+			"stale_clients": staleClientCount(tunnel),
 		},
 	}
+}
+
+type firewallSummary struct {
+	Level   string `json:"level"`
+	Label   string `json:"label"`
+	Message string `json:"message,omitempty"`
+}
+
+func firewallSummaryForTunnel(tunnel config.Tunnel, report firewall.Report, err error) firewallSummary {
+	if err != nil {
+		return firewallSummary{Level: "warn", Label: "firewall unknown", Message: err.Error()}
+	}
+	if !report.ApplyEnabled {
+		return firewallSummary{Level: "neutral", Label: "firewall manual", Message: "APPLY_CONFIG=false"}
+	}
+	if !tunnel.Enabled {
+		return firewallSummary{Level: "neutral", Label: "firewall disabled"}
+	}
+
+	var matched, missing, duplicate, failed int
+	for _, item := range report.Results {
+		if item.Tunnel != tunnel.Name {
+			continue
+		}
+		matched++
+		switch item.Status {
+		case "missing":
+			missing++
+		case "duplicate":
+			duplicate++
+		case "error":
+			failed++
+		}
+	}
+
+	switch {
+	case failed > 0:
+		return firewallSummary{Level: "bad", Label: "firewall error", Message: "managed firewall rules could not be checked"}
+	case missing > 0:
+		return firewallSummary{Level: "bad", Label: "firewall repair", Message: "managed firewall rules are missing"}
+	case duplicate > 0:
+		return firewallSummary{Level: "warn", Label: "firewall duplicates", Message: "managed firewall rules have duplicates"}
+	case matched == 0:
+		return firewallSummary{Level: "warn", Label: "firewall unknown", Message: "no managed firewall checks found"}
+	default:
+		return firewallSummary{Level: "ok", Label: "firewall ok"}
+	}
+}
+
+func staleClientCount(tunnel config.Tunnel) int {
+	if tunnel.ConfigRevision <= 0 {
+		return 0
+	}
+	count := 0
+	for _, client := range tunnel.Clients {
+		if client.ConfigRevision < tunnel.ConfigRevision {
+			count++
+		}
+	}
+	return count
 }
 
 func publicClients(tunnel config.Tunnel) []map[string]any {
@@ -523,6 +616,7 @@ func publicClientForTunnel(tunnel config.Tunnel, client config.Client) map[strin
 		"id":               client.ID,
 		"tunnel_id":        client.TunnelID,
 		"name":             client.Name,
+		"notes":            client.Notes,
 		"enabled":          client.Enabled,
 		"address":          client.IPv4Address,
 		"revision":         client.ConfigRevision,
@@ -669,11 +763,30 @@ func (w *web) allowLogin(ip string) bool {
 	return true
 }
 
-func (w *web) setSession(rw http.ResponseWriter) {
+func (w *web) setSession(rw http.ResponseWriter, r *http.Request) {
 	exp := time.Now().Add(sessionTTL).Unix()
 	payload := fmt.Sprintf("%d", exp)
 	sig := w.sign(payload)
-	http.SetCookie(rw, &http.Cookie{Name: "awg_forge_session", Value: payload + "." + sig, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode})
+	http.SetCookie(rw, sessionCookie(r, payload+"."+sig, 0))
+}
+
+func sessionCookie(r *http.Request, value string, maxAge int) *http.Cookie {
+	return &http.Cookie{
+		Name:     "awg_forge_session",
+		Value:    value,
+		Path:     "/",
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		Secure:   sessionCookieSecure(r),
+		SameSite: http.SameSiteStrictMode,
+	}
+}
+
+func sessionCookieSecure(r *http.Request) bool {
+	if r == nil {
+		return true
+	}
+	return !requestHostIsLoopback(r.Host)
 }
 
 func (w *web) hasSession(r *http.Request) bool {

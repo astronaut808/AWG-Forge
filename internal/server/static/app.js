@@ -228,7 +228,6 @@ function profileHelp(profile) {
 
 function renderTunnelCard(tunnel) {
   const clients = tunnel.clients || [];
-  const up = tunnel.status?.up;
 
   return `
     <article class="card">
@@ -237,10 +236,10 @@ function renderTunnelCard(tunnel) {
           <h3>${escapeHTML(tunnel.name)}</h3>
           <p class="muted"><span class="mono">${escapeHTML(tunnel.interface)}</span> · ${escapeHTML(profileTitles[tunnel.profile] || tunnel.profile)}</p>
         </div>
-        <span class="badge ${up ? "ok" : "bad"}">${up ? "up" : "down"}</span>
+        ${renderRuntimeSummary(tunnel)}
       </div>
       <div class="facts">
-        <div class="fact"><span>Endpoint</span><strong class="mono">${escapeHTML(state.server_host)}:${escapeHTML(tunnel.listen_port)}</strong></div>
+        <div class="fact"><span>Endpoint</span><div class="endpoint-value"><strong class="mono">${escapeHTML(tunnelEndpointHost(tunnel))}:${escapeHTML(tunnel.listen_port)}</strong><small>${tunnel.server_host ? "custom" : "inherited"}</small></div></div>
         <div class="fact"><span>Subnet</span><strong class="mono">${escapeHTML(tunnel.subnet)}</strong></div>
         <div class="fact"><span>DNS</span><strong class="mono">${escapeHTML(tunnel.dns)}</strong></div>
         <div class="fact"><span>MTU</span><strong class="mono">${formatMTU(tunnel.mtu)}</strong></div>
@@ -267,6 +266,38 @@ function renderTunnelCard(tunnel) {
   `;
 }
 
+function renderRuntimeSummary(tunnel) {
+  const clients = tunnel.clients || [];
+  const staleClients = Number(tunnel.status?.stale_clients || 0);
+  const firewall = tunnel.status?.firewall || {};
+  const runtime = tunnel.enabled === false
+    ? { label: "runtime disabled", level: "neutral" }
+    : tunnel.status?.up
+      ? { label: "runtime up", level: "ok" }
+      : { label: "runtime down", level: "bad" };
+  const configs = clients.length === 0
+    ? { label: "no clients", level: "neutral" }
+    : staleClients > 0
+      ? { label: `${staleClients} stale config${staleClients === 1 ? "" : "s"}`, level: "warn" }
+      : { label: "configs fresh", level: "ok" };
+  const items = [
+    runtime,
+    { label: firewall.label || "firewall unknown", level: firewall.level || "warn", title: firewall.message || "" },
+    configs,
+  ];
+
+  return `
+    <div class="runtime-summary">
+      ${items.map((item) => `<span class="badge ${statusBadgeClass(item.level)}" aria-label="${escapeAttr(item.title || item.label)}">${escapeHTML(item.label)}</span>`).join("")}
+    </div>
+  `;
+}
+
+function statusBadgeClass(level) {
+  if (level === "ok" || level === "bad" || level === "warn" || level === "neutral") return level;
+  return "warn";
+}
+
 function portWarning(tunnel) {
   if (!state.published_udp_ports || portInRanges(tunnel.listen_port, state.published_udp_ports)) return "";
   return `<p class="badge warn">Port ${escapeHTML(tunnel.listen_port)} is outside published UDP range ${escapeHTML(state.published_udp_ports)}</p>`;
@@ -288,16 +319,23 @@ function portInRanges(port, spec) {
   });
 }
 
+function tunnelEndpointHost(tunnel) {
+  return tunnel.server_host || state.server_host || "";
+}
+
 function renderClientRow(tunnel, client) {
+  const notes = String(client.notes || "").trim();
   return `
     <div class="client-row">
       <div>
         <strong><span class="status-dot ${client.enabled ? "ok" : "off"}"></span>${escapeHTML(client.name)}</strong>
         <span class="muted"><span class="mono">${escapeHTML(client.address)}</span> · ${client.enabled ? "enabled" : "disabled"}${client.needs_new_config ? " · needs new config" : ""}</span>
+        ${notes ? `<span class="client-notes">${escapeHTML(notes)}</span>` : ""}
       </div>
       <div class="actions row-actions">
         ${client.needs_new_config ? `<span class="badge warn">stale</span>` : ""}
         <a class="button" href="/clients/config/${encodeURIComponent(client.id)}">Config</a>
+        <button data-action="edit-client" data-tunnel="${escapeAttr(tunnel.id)}" data-client="${escapeAttr(client.id)}">Edit</button>
         <button data-action="${client.enabled ? "disable-client" : "enable-client"}" data-client="${escapeAttr(client.id)}">${client.enabled ? "Disable" : "Enable"}</button>
         <button class="danger" data-action="delete-client" data-client="${escapeAttr(client.id)}">Delete</button>
       </div>
@@ -333,10 +371,57 @@ function bindAppEvents(active) {
       if (action === "health" && tunnel) await openHealth(tunnel);
       if (action === "restart" && tunnel) await restartTunnel(tunnel);
       if (action === "delete-tunnel" && tunnel) await deleteTunnel(tunnel);
+      if (action === "edit-client" && tunnel) openClientSettings(tunnel, node.dataset.client);
       if (action === "enable-client") await setClient(node.dataset.client, true);
       if (action === "disable-client") await setClient(node.dataset.client, false);
       if (action === "delete-client") await deleteClient(node.dataset.client);
     });
+  });
+}
+
+function openClientSettings(tunnel, clientID) {
+  const client = (tunnel.clients || []).find((item) => item.id === clientID);
+  if (!client) {
+    showToast("client not found");
+    return;
+  }
+
+  const body = `
+    <form id="modal-form">
+      <div class="modal-head">
+        <div><h2>Client settings</h2><p class="muted">${escapeHTML(tunnel.name)} · <span class="mono">${escapeHTML(client.address)}</span></p></div>
+        <button class="icon-button" type="button" data-close aria-label="Close">&times;</button>
+      </div>
+      <div class="form-grid single">
+        <div><label>Client name</label><input name="name" value="${escapeAttr(client.name)}" autofocus></div>
+        <div><label>Notes</label><textarea name="notes" maxlength="1000" placeholder="Admin-only note">${escapeHTML(client.notes || "")}</textarea></div>
+      </div>
+      <div class="form-actions"><button class="primary" type="submit">Save client</button></div>
+    </form>
+  `;
+
+  showModal(body);
+
+  document.querySelector("#modal-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!beginSubmit(event.currentTarget)) return;
+
+    const form = new FormData(event.currentTarget);
+    const res = await api(`/api/clients/${encodeURIComponent(client.id)}/settings`, {
+      method: "PATCH",
+      idempotencyKey: formIdempotencyKey(event.currentTarget),
+      body: {
+        name: form.get("name"),
+        notes: form.get("notes"),
+      },
+    });
+
+    if (res.ok) {
+      await closeModalAndReload(tunnel.profile);
+      return;
+    }
+
+    resetSubmit(event.currentTarget);
   });
 }
 
@@ -481,6 +566,7 @@ function openSettings(tunnel) {
       </div>
       <div class="form-grid">
         <div><label>Name / interface</label><input name="name" value="${escapeAttr(tunnel.name)}" autofocus></div>
+        <div><label>Server host</label><input name="server_host" value="${escapeAttr(tunnel.server_host || "")}" placeholder="${escapeAttr(state.server_host || "")}"></div>
         <div><label>Listen port</label><input name="port" inputmode="numeric" value="${escapeAttr(tunnel.listen_port)}"></div>
         <div><label>IPv4 subnet</label><input name="subnet" value="${escapeAttr(tunnel.subnet)}"></div>
         <div><label>DNS</label><input name="dns" value="${escapeAttr(tunnel.dns)}"></div>
@@ -516,6 +602,7 @@ function openSettings(tunnel) {
       idempotencyKey: formIdempotencyKey(event.currentTarget),
       body: {
         name: form.get("name"),
+        server_host: String(form.get("server_host") || "").trim(),
         port: Number(form.get("port")),
         subnet: form.get("subnet"),
         dns: form.get("dns"),
