@@ -36,10 +36,11 @@ QR import не используется. Он был убран, потому ч
 - Безопасные ненулевые параметры обфускации для новых туннелей.
 - IPv4 egress с согласованием NAT/firewall rules.
 - Health view для клиентов: handshake и rx/tx counters.
+- Maintenance Center для Doctor, firewall, backup, restore verify, support bundle, updates и system info.
 - Doctor diagnostics для инструментов, runtime, firewall, ports, peers, handshakes и stale configs.
 - Ручная проверка и repair managed firewall rules.
 - Support bundle без секретов для безопасной передачи диагностики.
-- Encrypted backup/restore с отдельным backup password.
+- Encrypted backup/restore с отдельным backup password и restore dry-run verification.
 - Откат state/configs при ошибке применения runtime-конфига.
 - Проверка обновлений upstream AmneziaWG без автоматического изменения системы.
 - Статический HTML/CSS/JavaScript frontend без Node/npm build pipeline.

@@ -9,9 +9,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -65,6 +67,7 @@ func Serve(cfg config.Config, service *app.Service) error {
 	mux.HandleFunc("/api/firewall/repair", w.security(w.requireAuth(w.firewallRepairAPI)))
 	mux.HandleFunc("/api/support-bundle", w.security(w.requireAuth(w.supportBundleAPI)))
 	mux.HandleFunc("/api/updates", w.security(w.requireAuth(w.updatesAPI)))
+	mux.HandleFunc("/api/restore/verify", w.security(w.requireAuth(w.restoreVerifyAPI)))
 	mux.HandleFunc("/api/tunnels", w.security(w.requireAuth(w.tunnelsAPI)))
 	mux.HandleFunc("/api/tunnels/", w.security(w.requireAuth(w.tunnelAPI)))
 	mux.HandleFunc("/api/clients", w.security(w.requireAuth(w.clientsAPI)))
@@ -182,6 +185,7 @@ func (w *web) backupAPI(rw http.ResponseWriter, r *http.Request) {
 		writeError(rw, http.StatusBadRequest, err.Error())
 		return
 	}
+	noStore(rw)
 	rw.Header().Set("Content-Type", "application/octet-stream")
 	rw.Header().Set("Content-Disposition", `attachment; filename="`+archive.Name+`"`)
 	_, _ = rw.Write(archive.Data)
@@ -199,6 +203,7 @@ func (w *web) supportBundleAPI(rw http.ResponseWriter, r *http.Request) {
 		writeError(rw, http.StatusInternalServerError, err.Error())
 		return
 	}
+	noStore(rw)
 	rw.Header().Set("Content-Type", "application/zip")
 	rw.Header().Set("Content-Disposition", `attachment; filename="`+bundle.Name+`"`)
 	_, _ = rw.Write(bundle.Data)
@@ -212,6 +217,55 @@ func (w *web) updatesAPI(rw http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
 	defer cancel()
 	writeJSON(rw, http.StatusOK, map[string]any{"updates": updates.Check(ctx)})
+}
+
+func (w *web) restoreVerifyAPI(rw http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost || !w.validOrigin(r) {
+		writeError(rw, http.StatusForbidden, "forbidden")
+		return
+	}
+	noStore(rw)
+	r.Body = http.MaxBytesReader(rw, r.Body, 64<<20)
+	if err := r.ParseMultipartForm(64 << 20); err != nil {
+		writeError(rw, http.StatusBadRequest, "invalid backup upload")
+		return
+	}
+	if r.MultipartForm != nil {
+		defer r.MultipartForm.RemoveAll()
+	}
+	password := r.FormValue("password")
+	file, _, err := r.FormFile("backup")
+	if err != nil {
+		writeError(rw, http.StatusBadRequest, "backup file is required")
+		return
+	}
+	defer file.Close()
+
+	tmp, err := os.CreateTemp("", "awg-forge-restore-verify-*.afbackup")
+	if err != nil {
+		writeError(rw, http.StatusInternalServerError, "temporary file unavailable")
+		return
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := io.Copy(tmp, file); err != nil {
+		_ = tmp.Close()
+		writeError(rw, http.StatusBadRequest, "backup upload failed")
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		writeError(rw, http.StatusInternalServerError, "temporary file unavailable")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	report, err := backup.Verify(ctx, w.cfg, password, tmpPath)
+	if err != nil {
+		writeError(rw, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(rw, http.StatusOK, map[string]any{"report": report})
 }
 
 func (w *web) tunnelsAPI(rw http.ResponseWriter, r *http.Request) {

@@ -877,6 +877,71 @@ textarea {
   margin: -6px 0 16px;
 }
 
+.maintenance-modal {
+  width: min(1120px, calc(100% - 28px));
+}
+
+.maintenance-tabs {
+  display: flex;
+  gap: 6px;
+  margin: -4px 0 18px;
+  overflow-x: auto;
+  padding: 3px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface-solid), transparent 18%);
+}
+
+.maintenance-tabs button {
+  min-height: 36px;
+  border-radius: var(--radius-sm);
+  padding: 7px 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  box-shadow: none;
+}
+
+.maintenance-tabs button.active {
+  color: var(--foreground);
+  background: var(--surface-strong);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .18);
+}
+
+.maintenance-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.maintenance-hero,
+.maintenance-section-head,
+.maintenance-result {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface-solid), transparent 8%), color-mix(in srgb, var(--surface-solid), transparent 18%));
+}
+
+.maintenance-hero,
+.maintenance-section-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.maintenance-hero h3,
+.maintenance-section-head h3,
+.maintenance-result h3 {
+  margin: 8px 0 4px;
+  font-size: 20px;
+}
+
+.maintenance-section-head h3,
+.maintenance-result h3 {
+  margin-top: 0;
+}
+
 .maintenance-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -894,6 +959,10 @@ textarea {
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--surface-solid), transparent 8%), color-mix(in srgb, var(--surface-solid), transparent 18%));
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .24);
+}
+
+.maintenance-card.compact {
+  min-height: 150px;
 }
 
 .maintenance-card-head {
@@ -917,6 +986,40 @@ textarea {
 
 .maintenance-card button {
   justify-self: start;
+}
+
+.maintenance-list {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.maintenance-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.command-block {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 13px;
+  background: color-mix(in srgb, var(--surface-solid), transparent 8%);
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.checkbox-row {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  margin: 0;
+  color: var(--muted);
+  font-weight: 650;
 }
 
 .login-shell {
@@ -1090,7 +1193,9 @@ textarea {
 
   .topbar,
   .card-head,
-  .section-head {
+  .section-head,
+  .maintenance-hero,
+  .maintenance-section-head {
     align-items: stretch;
     flex-direction: column;
   }
@@ -1103,7 +1208,8 @@ textarea {
   .toolbar,
   .card-actions,
   .row-actions,
-  .form-actions {
+  .form-actions,
+  .maintenance-section-head {
     justify-content: stretch;
   }
 
@@ -1112,6 +1218,11 @@ textarea {
   .row-actions > *,
   .form-actions > * {
     flex: 1 1 auto;
+  }
+
+  .maintenance-section-head > button,
+  .maintenance-hero > button {
+    width: 100%;
   }
 
   .tabs {

@@ -79,24 +79,24 @@ type Metadata struct {
 }
 
 type VerifyReport struct {
-	Format        string
-	CreatedAt     string
-	Build         buildinfo.Info
-	SchemaVersion int
-	ServerHost    string
-	FileCount     int
-	TotalSize     int64
-	Tunnels       []VerifyTunnel
-	ClientCount   int
+	Format        string         `json:"format"`
+	CreatedAt     string         `json:"created_at"`
+	Build         buildinfo.Info `json:"build"`
+	SchemaVersion int            `json:"schema_version"`
+	ServerHost    string         `json:"server_host"`
+	FileCount     int            `json:"file_count"`
+	TotalSize     int64          `json:"total_size"`
+	Tunnels       []VerifyTunnel `json:"tunnels"`
+	ClientCount   int            `json:"client_count"`
 }
 
 type VerifyTunnel struct {
-	Name       string
-	Interface  string
-	Profile    string
-	ListenPort int
-	Subnet     string
-	Clients    int
+	Name       string `json:"name"`
+	Interface  string `json:"interface"`
+	Profile    string `json:"profile"`
+	ListenPort int    `json:"listen_port"`
+	Subnet     string `json:"subnet"`
+	Clients    int    `json:"clients"`
 }
 
 type FileMeta struct {

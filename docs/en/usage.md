@@ -29,12 +29,14 @@ Tunnel actions:
 
 Maintenance actions are available through the `Maintenance` button:
 
-- `Doctor`: system and runtime diagnostics.
-- `Repair firewall`: manually restore managed firewall rules from the Doctor modal.
+- `Overview`: overall runtime, clients, firewall, and recovery status.
+- `Doctor`: system and runtime diagnostics grouped by OK/WARN/FAIL.
+- `Firewall`: managed firewall rule status per tunnel and repair action.
 - `Backup`: download an encrypted backup with a dedicated password.
-- `Support bundle`: download a support bundle without secrets.
+- `Restore`: verify an `.afbackup` through a dry-run without writing to `CONFIG_DIR`; actual restore remains CLI-only.
 - `Updates`: check whether bundled AmneziaWG upstream refs are behind.
-- `Restore`: CLI-only restore guidance.
+- `Support`: download a support bundle without secrets.
+- `System`: current mode, server host, tunnels, profiles, and useful commands.
 
 ## Stale Configs
 

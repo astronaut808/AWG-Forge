@@ -27,7 +27,7 @@ Primary areas:
 
 - Profile tabs: `1.0`, `1.5`, `2.0`
 - Tunnel cards inside each profile
-- Maintenance hub for Doctor, firewall repair, encrypted backup, support bundle, update checks, and CLI-only restore guidance
+- Maintenance Center for Overview, Doctor, Firewall, Backup, Restore verify, Updates, Support, and System info
 - Tunnel settings modal
 - Protocol parameters modal
 - Client creation modal

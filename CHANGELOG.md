@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.8.0 - 2026-05-24
+
+### Added
+
+- Added Maintenance Center 2.0 with tabbed Overview, Doctor, Firewall, Backup, Restore, Updates, Support, and System sections.
+- Added Web UI restore verification for encrypted `.afbackup` files as a dry-run that validates backups without writing to `CONFIG_DIR`.
+- Added `/api/restore/verify` for authenticated restore dry-runs from the Web UI.
+- Added tests for restore verify API success and wrong backup password handling.
+
+### Changed
+
+- Reworked Maintenance UI from separate cards into a single operations center.
+- Firewall repair, backup download, support bundle download, update checks, and restore guidance are now grouped under Maintenance.
+
+### Security
+
+- Added `Cache-Control: no-store` hardening for backup, support bundle, and restore verify responses.
+- Restore verification upload is size-limited and uses a temporary file that is removed after validation.
+
 ## v0.7.0 - 2026-05-24
 
 ### Added
