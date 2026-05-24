@@ -18,6 +18,10 @@ Supported client import path:
 
 - `.conf` download.
 
+Experimental import path:
+
+- `Import key` in the Web UI generates a `vpn://` text key for AmneziaVPN / DefaultVPN compatibility testing.
+
 QR import is not exposed. It was removed because `.conf` import is the most reliable path across current AmneziaVPN clients.
 
 ## Features
@@ -26,6 +30,7 @@ QR import is not exposed. It was removed because `.conf` import is the most reli
 - Multiple tunnels per profile.
 - Client creation, disable, enable, delete, and config download.
 - Automatic `.conf` download after successful client creation.
+- Experimental `Import key` for AmneziaVPN / DefaultVPN.
 - Tunnel settings: port, subnet, DNS, allowed IPs, keepalive, MTU, and enabled state.
 - Protocol parameter generation and validation for Legacy / 1.0, 1.5, and 2.0.
 - Safe non-zero obfuscation defaults for new tunnels.
@@ -126,6 +131,8 @@ curl -4 https://ifconfig.co
 ```
 
 The response should show the server egress IP.
+
+For AmneziaVPN / DefaultVPN, you can also try the `Import key` button. It shows an experimental `vpn://` key containing the same client config. It is not a subscription link and does not replace `.conf` for production fallback, routers, or the native AmneziaWG app.
 
 ## Development
 
