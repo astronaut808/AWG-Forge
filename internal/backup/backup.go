@@ -38,6 +38,8 @@ const (
 	kdfMemoryKiB  = uint32(64 * 1024)
 	kdfThreads    = uint8(4)
 	keySize       = uint32(32)
+
+	maxEncryptedBackupBytes = int64(64 << 20)
 )
 
 type Archive struct {
@@ -300,7 +302,8 @@ func decrypt(data []byte, password string) ([]byte, error) {
 	if env.Cipher != cipherName {
 		return nil, fmt.Errorf("unsupported backup cipher %q", env.Cipher)
 	}
-	if env.KDF.Name != kdfName || env.KDF.KeySize != keySize {
+	if env.KDF.Name != kdfName || env.KDF.KeySize != keySize ||
+		env.KDF.Time != kdfTime || env.KDF.MemoryKiB != kdfMemoryKiB || env.KDF.Threads != kdfThreads {
 		return nil, errors.New("unsupported backup kdf")
 	}
 	salt, err := base64.StdEncoding.DecodeString(env.Salt)
@@ -365,6 +368,13 @@ func loadAndValidate(password, archivePath string) (validatedBackup, error) {
 	}
 	if strings.TrimSpace(archivePath) == "" {
 		return validatedBackup{}, errors.New("backup file is required")
+	}
+	info, err := os.Stat(archivePath)
+	if err != nil {
+		return validatedBackup{}, err
+	}
+	if info.Size() > maxEncryptedBackupBytes {
+		return validatedBackup{}, errors.New("backup file is too large")
 	}
 	data, err := os.ReadFile(archivePath)
 	if err != nil {

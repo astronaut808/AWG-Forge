@@ -18,6 +18,9 @@
 
 - Added `Cache-Control: no-store` hardening for backup, support bundle, and restore verify responses.
 - Restore verification upload is size-limited and uses a temporary file that is removed after validation.
+- Limited JSON API request bodies to reduce accidental or malicious memory pressure.
+- Backup restore/verify now rejects oversized encrypted backup files and unsupported KDF parameters before decryption work.
+- Updated `golang.org/x/crypto` to remove known vulnerable module findings from dependency scanning.
 
 ## v0.7.0 - 2026-05-24
 

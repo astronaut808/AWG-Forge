@@ -42,6 +42,7 @@ type web struct {
 
 const sessionTTL = 30 * time.Minute
 const idempotencyTTL = 10 * time.Minute
+const maxJSONBodyBytes = 1 << 20
 
 type idempotencyEntry struct {
 	status    int
@@ -101,7 +102,7 @@ func (w *web) loginAPI(rw http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Password string `json:"password"`
 	}
-	if err := readJSON(r, &req); err != nil {
+	if err := readJSON(rw, r, &req); err != nil {
 		writeError(rw, http.StatusBadRequest, "invalid json")
 		return
 	}
@@ -174,7 +175,7 @@ func (w *web) backupAPI(rw http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Password string `json:"password"`
 	}
-	if err := readJSON(r, &req); err != nil {
+	if err := readJSON(rw, r, &req); err != nil {
 		writeError(rw, http.StatusBadRequest, "invalid json")
 		return
 	}
@@ -280,7 +281,7 @@ func (w *web) tunnelsAPI(rw http.ResponseWriter, r *http.Request) {
 			Port    int    `json:"port"`
 			Subnet  string `json:"subnet"`
 		}
-		if err := readJSON(r, &req); err != nil {
+		if err := readJSON(rw, r, &req); err != nil {
 			return http.StatusBadRequest, errorPayload("invalid json")
 		}
 		tunnel, err := w.service.CreateTunnel(req.Profile, req.Name, req.Subnet, req.Port)
@@ -346,7 +347,7 @@ func (w *web) updateTunnelSettingsAPI(rw http.ResponseWriter, r *http.Request, i
 			MTU        int    `json:"mtu"`
 			Enabled    bool   `json:"enabled"`
 		}
-		if err := readJSON(r, &req); err != nil {
+		if err := readJSON(rw, r, &req); err != nil {
 			return http.StatusBadRequest, errorPayload("invalid json")
 		}
 		tunnel, err := w.service.UpdateTunnelSettings(id, req.Name, req.ServerHost, req.Subnet, req.DNS, req.AllowedIPs, req.Keepalive, req.MTU, req.Port, req.Enabled)
@@ -393,7 +394,7 @@ func (w *web) updateProtocolAPI(rw http.ResponseWriter, r *http.Request, id stri
 			Profile string                `json:"profile"`
 			Params  config.ProtocolParams `json:"params"`
 		}
-		if err := readJSON(r, &req); err != nil {
+		if err := readJSON(rw, r, &req); err != nil {
 			return http.StatusBadRequest, errorPayload("invalid json")
 		}
 		if err := w.service.UpdateTunnelProtocol(id, req.Profile, req.Params); err != nil {
@@ -412,7 +413,7 @@ func (w *web) regenerateProtocolAPI(rw http.ResponseWriter, r *http.Request, id 
 		var req struct {
 			Profile string `json:"profile"`
 		}
-		_ = readJSON(r, &req)
+		_ = readJSON(rw, r, &req)
 		if err := w.service.RegenerateTunnelProtocol(id, req.Profile); err != nil {
 			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
 		}
@@ -430,7 +431,7 @@ func (w *web) clientsAPI(rw http.ResponseWriter, r *http.Request) {
 			TunnelID string `json:"tunnel_id"`
 			Name     string `json:"name"`
 		}
-		if err := readJSON(r, &req); err != nil {
+		if err := readJSON(rw, r, &req); err != nil {
 			return http.StatusBadRequest, errorPayload("invalid json")
 		}
 		client, err := w.service.AddClientToTunnel(req.TunnelID, req.Name)
@@ -474,7 +475,7 @@ func (w *web) updateClientSettingsAPI(rw http.ResponseWriter, r *http.Request, i
 			Name  string `json:"name"`
 			Notes string `json:"notes"`
 		}
-		if err := readJSON(r, &req); err != nil {
+		if err := readJSON(rw, r, &req); err != nil {
 			return http.StatusBadRequest, errorPayload("invalid json")
 		}
 		client, err := w.service.UpdateClientSettings(id, req.Name, req.Notes)
@@ -898,8 +899,9 @@ func subtleCompare(a, b string) bool {
 	return hmac.Equal([]byte(a), []byte(b))
 }
 
-func readJSON(r *http.Request, dst any) error {
+func readJSON(rw http.ResponseWriter, r *http.Request, dst any) error {
 	defer r.Body.Close()
+	r.Body = http.MaxBytesReader(rw, r.Body, maxJSONBodyBytes)
 	return json.NewDecoder(r.Body).Decode(dst)
 }
 

@@ -391,6 +391,35 @@ func TestBackupAPIUsesNoStore(t *testing.T) {
 	}
 }
 
+func TestBackupAPIRejectsOversizedJSONBody(t *testing.T) {
+	cfg := config.Config{
+		ConfigDir:           t.TempDir(),
+		TunnelName:          "awg0",
+		ServerHost:          "vpn.example.com",
+		ListenPort:          51820,
+		WebUIHost:           "127.0.0.1",
+		WebUIPort:           51821,
+		ExternalInterface:   "eth0",
+		IPv4Subnet:          "10.8.0.0/24",
+		DNS:                 "1.1.1.1",
+		AllowedIPs:          "0.0.0.0/0",
+		PersistentKeepalive: 0,
+		MTU:                 1420,
+		ProtocolProfile:     "awg_legacy_1_0",
+	}
+	w := &web{cfg: cfg, service: app.New(cfg)}
+	r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:51821/api/backup", strings.NewReader(`{"password":"`+strings.Repeat("a", maxJSONBodyBytes)+`"}`))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Origin", "http://127.0.0.1:51821")
+	rr := httptest.NewRecorder()
+
+	w.backupAPI(rr, r)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
 func multipartRestoreVerifyRequest(t *testing.T, archive []byte, password string) *http.Request {
 	t.Helper()
 	var body bytes.Buffer

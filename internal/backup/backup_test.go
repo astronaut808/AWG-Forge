@@ -272,6 +272,45 @@ func TestRestoreRejectsMissingMetadata(t *testing.T) {
 	}
 }
 
+func TestDecryptRejectsUnexpectedKDFParameters(t *testing.T) {
+	archive := encryptedTestZip(t,
+		testZipEntry{name: "metadata.json", data: mustJSON(t, testMetadata(nil))},
+		testZipEntry{name: "state.json", data: []byte(`{"schema_version":2}`)},
+	)
+	var env encryptedArchive
+	if err := json.Unmarshal(archive, &env); err != nil {
+		t.Fatal(err)
+	}
+	env.KDF.MemoryKiB = 1024 * 1024
+	mutated, err := json.Marshal(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decrypt(mutated, testPassword); err == nil || !strings.Contains(err.Error(), "unsupported backup kdf") {
+		t.Fatalf("decrypt error = %v, want unsupported backup kdf", err)
+	}
+}
+
+func TestVerifyRejectsOversizedBackupFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "too-large.afbackup")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(maxEncryptedBackupBytes + 1); err != nil {
+		_ = f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	cfg := testConfig(t)
+	_, err = Verify(context.Background(), cfg, testPassword, path)
+	if err == nil || !strings.Contains(err.Error(), "backup file is too large") {
+		t.Fatalf("verify error = %v, want backup file is too large", err)
+	}
+}
+
 func TestRestoreRejectsFilesNotListedInMetadata(t *testing.T) {
 	stateJSON := `{"schema_version":2}`
 	metadata := testMetadata([]FileMeta{testFileMeta("state.json", []byte(stateJSON))})
