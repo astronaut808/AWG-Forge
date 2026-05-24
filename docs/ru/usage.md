@@ -19,6 +19,7 @@ Tunnel actions:
 - `Create tunnel`: создать новый туннель внутри выбранного профиля.
 - `Create client`: создать клиента внутри конкретного туннеля.
 - `Config`: скачать `.conf` существующего клиента.
+- `Import key`: сгенерировать experimental `vpn://` key для проверки в AmneziaVPN / DefaultVPN.
 - `Edit`: переименовать клиента или сохранить admin-only notes без изменения VPN-конфига.
 - `Settings`: настройки туннеля, включая optional per-tunnel `Server host` endpoint override.
 - `Protocol`: protocol params и regenerate.
@@ -83,5 +84,7 @@ awg-forge updates
 ## Client Config Import
 
 Поддерживаемый путь — `.conf` файл.
+
+Действие `Import key` экспериментальное. Оно возвращает `vpn://` key, внутри которого лежит тот же сгенерированный клиентский конфиг, закодированный для AmneziaVPN-style text import. Мы проверили его на iOS, но сам формат не iOS-specific. Используй его только для проверки совместимости с AmneziaVPN или DefaultVPN. Для роутеров, native AmneziaWG app и production fallback нужно продолжать использовать `.conf`.
 
 QR import не показывается в UI и не поддерживается как product path.

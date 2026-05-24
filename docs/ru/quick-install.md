@@ -3,8 +3,12 @@
 `install.sh` — интерактивный установщик для нового Linux/VPS сервера. Он создает `.env`, подготавливает `data/`, запускает Docker Compose и показывает дальнейшие шаги.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
+chmod +x install.sh
+sudo ./install.sh
 ```
+
+Для интерактивной установки рекомендуется сначала скачать файл. В некоторых окружениях `curl | sudo bash` prompt может выглядеть зависшим из-за особенностей TTY/sudo: тело скрипта и ответы пользователя идут через разные input streams.
 
 По умолчанию установка идет в:
 
@@ -15,7 +19,9 @@ curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/insta
 Можно указать свой путь:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh | sudo AWG_FORGE_HOME=/srv/awg-forge bash
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
+chmod +x install.sh
+sudo AWG_FORGE_HOME=/srv/awg-forge ./install.sh
 ```
 
 Если репозиторий уже склонирован, можно запустить локальный файл:

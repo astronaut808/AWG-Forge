@@ -3,8 +3,12 @@
 `install.sh` is an interactive installer for a fresh Linux/VPS server. It creates `.env`, prepares `data/`, starts Docker Compose, and prints the next steps.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
+chmod +x install.sh
+sudo ./install.sh
 ```
+
+Downloading the script first is recommended for interactive installs. In some `curl | sudo bash` TTY/sudo environments the prompt can appear stuck because the script body and interactive answers use different input streams.
 
 By default, it installs into:
 
@@ -15,7 +19,9 @@ By default, it installs into:
 You can choose a custom path:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh | sudo AWG_FORGE_HOME=/srv/awg-forge bash
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
+chmod +x install.sh
+sudo AWG_FORGE_HOME=/srv/awg-forge ./install.sh
 ```
 
 If the repository is already cloned, you can run the local file:

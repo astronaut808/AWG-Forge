@@ -1,6 +1,8 @@
 package server
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -190,6 +192,64 @@ func TestClientConfigDownloadUsesClientNameFilename(t *testing.T) {
 	}
 	if got, want := rr.Header().Get("Content-Disposition"), `attachment; filename="My-iPhone-15.conf"`; got != want {
 		t.Fatalf("Content-Disposition = %q, want %q", got, want)
+	}
+	if got, want := rr.Header().Get("Cache-Control"), "no-store"; got != want {
+		t.Fatalf("Cache-Control = %q, want %q", got, want)
+	}
+}
+
+func TestClientImportKeyAPIReturnsVPNKey(t *testing.T) {
+	cfg := config.Config{
+		ConfigDir:           t.TempDir(),
+		TunnelName:          "awg0",
+		ServerHost:          "vpn.example.com",
+		ListenPort:          51820,
+		WebUIHost:           "127.0.0.1",
+		WebUIPort:           51821,
+		ExternalInterface:   "eth0",
+		IPv4Subnet:          "10.8.0.0/24",
+		DNS:                 "1.1.1.1",
+		AllowedIPs:          "0.0.0.0/0",
+		PersistentKeepalive: 0,
+		MTU:                 1420,
+		ProtocolProfile:     "awg_2_0",
+	}
+	svc := app.New(cfg)
+	client, err := svc.AddClient("iPhone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := &web{service: svc}
+	r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:51821/api/clients/"+client.ID+"/import-key", nil)
+	rr := httptest.NewRecorder()
+
+	w.clientImportKeyAPI(rr, r, client.ID)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rr.Code, rr.Body.String())
+	}
+	var payload struct {
+		ImportKey string `json:"import_key"`
+		Format    string `json:"format"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Format != "vpn-conf-base64url" {
+		t.Fatalf("format = %q", payload.Format)
+	}
+	if got, want := rr.Header().Get("Cache-Control"), "no-store"; got != want {
+		t.Fatalf("Cache-Control = %q, want %q", got, want)
+	}
+	if !strings.HasPrefix(payload.ImportKey, "vpn://") {
+		t.Fatalf("import key prefix mismatch: %q", payload.ImportKey)
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(payload.ImportKey, "vpn://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(decoded), "S3 =") || !strings.Contains(string(decoded), "S4 =") {
+		t.Fatalf("decoded AWG 2.0 key does not contain S3/S4:\n%s", decoded)
 	}
 }
 

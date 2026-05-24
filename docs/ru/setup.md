@@ -7,7 +7,9 @@ Host networking — рекомендуемый production-режим для awg-
 Интерактивный quick start:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
+chmod +x install.sh
+sudo ./install.sh
 ```
 
 Подробнее: [Быстрая установка](quick-install.md).

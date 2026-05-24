@@ -857,6 +857,12 @@ textarea {
   resize: vertical;
 }
 
+.import-key-text {
+  min-height: 180px;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
 .form-actions {
   display: flex;
   justify-content: flex-end;

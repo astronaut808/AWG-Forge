@@ -1,6 +1,25 @@
 # Changelog
 
-## v0.6.0
+## v0.7.0 - 2026-05-24
+
+### Added
+
+- Added an authenticated experimental `Import key` action for clients.
+- Added `/api/clients/<id>/import-key`, returning a `vpn://` text key generated from the rendered client `.conf` for AmneziaVPN / DefaultVPN compatibility testing.
+- Added tests for import key generation and AWG 2.0 import key API output.
+- Added English and Russian AmneziaVPN import/subscription research notes.
+
+### Changed
+
+- Documented `.conf` download as the stable production import path and `Import key` as an experimental compatibility path.
+- Updated quick install documentation to recommend downloading `install.sh` before running it with sudo for more reliable interactive prompts.
+
+### Security
+
+- Added `Cache-Control: no-store` hardening for rendered client `.conf` downloads and import key JSON responses.
+- Import keys remain authenticated-only and contain the same client secrets as `.conf` files; they are not public subscription links.
+
+## v0.6.0 - 2026-05-22
 
 ### Added
 

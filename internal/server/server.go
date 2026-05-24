@@ -403,6 +403,8 @@ func (w *web) clientAPI(rw http.ResponseWriter, r *http.Request) {
 		w.setClientEnabledAPI(rw, r, id, false)
 	case "delete":
 		w.deleteClientAPI(rw, r, id)
+	case "import-key":
+		w.clientImportKeyAPI(rw, r, id)
 	default:
 		writeError(rw, http.StatusNotFound, "not found")
 	}
@@ -459,6 +461,25 @@ func (w *web) deleteClientAPI(rw http.ResponseWriter, r *http.Request, id string
 	})
 }
 
+func (w *web) clientImportKeyAPI(rw http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPost || !w.validOrigin(r) {
+		writeError(rw, http.StatusForbidden, "forbidden")
+		return
+	}
+	key, client, err := w.service.ClientImportKey(id)
+	if err != nil {
+		writeError(rw, http.StatusNotFound, "not found")
+		return
+	}
+	noStore(rw)
+	writeJSON(rw, http.StatusOK, map[string]any{
+		"client":     publicClient(client),
+		"import_key": key,
+		"format":     "vpn-conf-base64url",
+		"warning":    "Experimental AmneziaVPN/DefaultVPN import key. Use .conf for production clients.",
+	})
+}
+
 func (w *web) clientConfig(rw http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/clients/config/")
 	conf, client, err := w.service.ClientConfigForDownload(id)
@@ -466,6 +487,7 @@ func (w *web) clientConfig(rw http.ResponseWriter, r *http.Request) {
 		http.NotFound(rw, r)
 		return
 	}
+	noStore(rw)
 	rw.Header().Set("Content-Type", "application/octet-stream")
 	rw.Header().Set("Content-Disposition", `attachment; filename="`+configFilename(client)+`.conf"`)
 	_, _ = rw.Write([]byte(conf))
@@ -685,6 +707,13 @@ func (w *web) setSecurityHeaders(rw http.ResponseWriter) {
 	h.Set("X-Frame-Options", "DENY")
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'")
+}
+
+func noStore(rw http.ResponseWriter) {
+	h := rw.Header()
+	h.Set("Cache-Control", "no-store")
+	h.Set("Pragma", "no-cache")
+	h.Set("Expires", "0")
 }
 
 func (w *web) validOrigin(r *http.Request) bool {
