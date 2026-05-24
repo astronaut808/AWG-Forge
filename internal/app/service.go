@@ -767,6 +767,15 @@ func (s *Service) ClientConfigForDownload(id string) (string, config.Client, err
 	return conf, client, nil
 }
 
+func (s *Service) ClientImportKey(id string) (string, config.Client, error) {
+	conf, client, err := s.ClientConfigForDownload(id)
+	if err != nil {
+		return "", config.Client{}, err
+	}
+	key := "vpn://" + base64.RawURLEncoding.EncodeToString([]byte(conf))
+	return key, client, nil
+}
+
 func (s *Service) markClientConfigDelivered(id string) error {
 	state, err := s.Init()
 	if err != nil {

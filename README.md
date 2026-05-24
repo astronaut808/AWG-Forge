@@ -44,7 +44,9 @@ QR import не используется. Он был убран, потому ч
 Интерактивная установка на Linux/VPS:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
+chmod +x install.sh
+sudo ./install.sh
 ```
 
 Скрипт создаст рабочую директорию `/opt/awg-forge`, сгенерирует `.env`, пароль, `SESSION_SECRET`, определит внешний интерфейс, запустит Docker Compose и покажет SSH tunnel команду.
@@ -106,6 +108,7 @@ curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/unins
 - [Техническая архитектура multi-profile / multi-tunnel](docs/ru/multi-profile-architecture.md)
 - [Матрица протоколов](docs/ru/protocol-matrix.md)
 - [Дизайн AWG 2.0](docs/ru/awg-2.0-design.md)
+- [Исследование импорта и подписок AmneziaVPN](docs/ru/research/amnezia-import-subscriptions.md)
 - [Changelog](CHANGELOG.md)
 
 ## Минимальная Проверка После Запуска

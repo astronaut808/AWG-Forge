@@ -132,6 +132,10 @@ For each tunnel:
 
 Each tunnel stores its own last render/apply timestamps and last apply error.
 
+## Client Import Model
+
+The supported production import path is `.conf` download/import. AmneziaVPN `vpn://` and subscription-style import were researched separately and should remain experimental until platform behavior is proven. See [AmneziaVPN import and subscription research](research/amnezia-import-subscriptions.md).
+
 ## NAT And Firewall Rules
 
 Per-tunnel `PostUp`/`PostDown` rules use that tunnel's subnet, interface, and listen port. The service also reconciles managed firewall rules during apply/repair and removes duplicates for its own managed rules.

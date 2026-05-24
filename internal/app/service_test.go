@@ -1,6 +1,7 @@
 package app_test
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -449,6 +450,34 @@ func TestTunnelSettingsChangeMarksClientConfigStaleUntilDownloaded(t *testing.T)
 	}
 	if state.Tunnels[0].Clients[0].ConfigRevision != state.Tunnels[0].ConfigRevision {
 		t.Fatal("expected config download to mark client fresh")
+	}
+}
+
+func TestClientImportKeyEncodesRenderedConfig(t *testing.T) {
+	svc := app.New(testConfig(t))
+	client, err := svc.AddClient("phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, returnedClient, err := svc.ClientImportKey(client.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if returnedClient.ID != client.ID {
+		t.Fatalf("client id = %q, want %q", returnedClient.ID, client.ID)
+	}
+	if !strings.HasPrefix(key, "vpn://") {
+		t.Fatalf("import key prefix mismatch: %q", key)
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(key, "vpn://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	conf := string(decoded)
+	for _, want := range []string{"[Interface]", "[Peer]", "PrivateKey =", "Endpoint ="} {
+		if !strings.Contains(conf, want) {
+			t.Fatalf("decoded import key missing %q:\n%s", want, conf)
+		}
 	}
 }
 

@@ -335,6 +335,7 @@ function renderClientRow(tunnel, client) {
       <div class="actions row-actions">
         ${client.needs_new_config ? `<span class="badge warn">stale</span>` : ""}
         <a class="button" href="/clients/config/${encodeURIComponent(client.id)}">Config</a>
+        <button data-action="import-key" data-client="${escapeAttr(client.id)}">Import key</button>
         <button data-action="edit-client" data-tunnel="${escapeAttr(tunnel.id)}" data-client="${escapeAttr(client.id)}">Edit</button>
         <button data-action="${client.enabled ? "disable-client" : "enable-client"}" data-client="${escapeAttr(client.id)}">${client.enabled ? "Disable" : "Enable"}</button>
         <button class="danger" data-action="delete-client" data-client="${escapeAttr(client.id)}">Delete</button>
@@ -372,10 +373,50 @@ function bindAppEvents(active) {
       if (action === "restart" && tunnel) await restartTunnel(tunnel);
       if (action === "delete-tunnel" && tunnel) await deleteTunnel(tunnel);
       if (action === "edit-client" && tunnel) openClientSettings(tunnel, node.dataset.client);
+      if (action === "import-key") await openClientImportKey(node.dataset.client);
       if (action === "enable-client") await setClient(node.dataset.client, true);
       if (action === "disable-client") await setClient(node.dataset.client, false);
       if (action === "delete-client") await deleteClient(node.dataset.client);
     });
+  });
+}
+
+async function openClientImportKey(clientID) {
+  const res = await api(`/api/clients/${encodeURIComponent(clientID)}/import-key`, {
+    method: "POST",
+    idempotencyKey: newIdempotencyKey(),
+  });
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    showToast(payload.error || "failed to create import key");
+    return;
+  }
+  const key = String(payload.import_key || "");
+  showModal(`
+    <div class="modal-head">
+      <div><h2>Experimental import key</h2><p class="muted">${escapeHTML(payload.client?.name || "Client")} · AmneziaVPN / DefaultVPN only</p></div>
+      <button class="icon-button" type="button" data-close aria-label="Close">&times;</button>
+    </div>
+    <div class="form-grid">
+      <div>
+        <label>vpn:// key</label>
+        <textarea class="mono import-key-text" readonly>${escapeHTML(key)}</textarea>
+      </div>
+      <p class="muted">Paste this key into AmneziaVPN or DefaultVPN where vpn:// text key import is supported. This is experimental; keep using the downloaded .conf for routers and production fallback.</p>
+    </div>
+    <div class="form-actions">
+      <button type="button" data-copy-import-key>Copy key</button>
+      <a class="button" href="/clients/config/${encodeURIComponent(clientID)}">Download .conf</a>
+    </div>
+  `);
+  modal.querySelector("[data-copy-import-key]")?.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(key);
+      showToast("import key copied");
+    } catch {
+      modal.querySelector(".import-key-text")?.select();
+      showToast("select and copy the key manually");
+    }
   });
 }
 

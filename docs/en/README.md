@@ -24,3 +24,4 @@ Technical documents:
 - [Multi-profile and multi-tunnel architecture](../multi-profile-architecture.md)
 - [Protocol matrix](../protocol-matrix.md)
 - [AWG 2.0 design](../awg-2.0-design.md)
+- [AmneziaVPN import and subscription research](../research/amnezia-import-subscriptions.md)

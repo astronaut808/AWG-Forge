@@ -44,7 +44,9 @@ QR import is not exposed. It was removed because `.conf` import is the most reli
 Interactive install on Linux/VPS:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
+chmod +x install.sh
+sudo ./install.sh
 ```
 
 The script creates `/opt/awg-forge`, generates `.env`, password, `SESSION_SECRET`, detects the external interface, starts Docker Compose, and prints the SSH tunnel command.
@@ -106,6 +108,7 @@ curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/unins
 - [Multi-profile / multi-tunnel architecture](docs/multi-profile-architecture.md)
 - [Protocol matrix](docs/protocol-matrix.md)
 - [AWG 2.0 design](docs/awg-2.0-design.md)
+- [AmneziaVPN import and subscription research](docs/research/amnezia-import-subscriptions.md)
 - [Changelog](CHANGELOG.md)
 
 ## Minimal Check After Startup

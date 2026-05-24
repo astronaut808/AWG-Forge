@@ -171,7 +171,7 @@ Bridge networking is supported only when a fixed UDP range is published ahead of
 
 ## Next UX Hardening
 
-- Investigate AmneziaVPN `vpn://` import/subscription compatibility as an experimental path.
+- Keep `.conf` download as the stable production path. `vpn://` and subscription-style import were researched in [AmneziaVPN import and subscription research](research/amnezia-import-subscriptions.md); they should remain experimental until real-device behavior is proven across AmneziaVPN platforms.
 
 ## Acceptance Criteria
 
