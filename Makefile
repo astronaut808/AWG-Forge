@@ -1,7 +1,7 @@
 COMPOSE ?= docker compose
 CONTAINER ?= awg-forge
 
-.PHONY: test vet build ci updates updates-local updates-docker update-amneziawg-refs docker-build docker-up docker-down
+.PHONY: test vet build lint-js ci updates updates-local updates-docker update-amneziawg-refs docker-build docker-up docker-down
 
 test:
 	go test ./...
@@ -12,7 +12,10 @@ vet:
 build:
 	go build ./...
 
-ci: test vet build
+lint-js:
+	deno lint
+
+ci: test vet build lint-js
 
 updates: updates-local
 

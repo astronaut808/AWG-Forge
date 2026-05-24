@@ -141,6 +141,8 @@ For AmneziaVPN / DefaultVPN, you can also try the `Import key` button. It shows 
 make ci
 ```
 
+`make ci` uses Deno only for linting the static `app.js`. The runtime and Docker image do not require Deno, Node, or npm.
+
 Run locally without applying runtime tunnel changes:
 
 ```bash
