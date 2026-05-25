@@ -119,13 +119,6 @@ curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/unins
 
 ## Минимальная Проверка После Запуска
 
-```bash
-docker exec awg-forge awg-forge doctor
-docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge backup /tmp/awg-forge.afbackup
-docker cp awg-forge:/tmp/awg-forge.afbackup ./awg-forge-backup-YYYYMMDD-HHMMSS.afbackup
-docker exec awg-forge awg-forge support-bundle
-```
-
 Создай клиента в UI, импортируй скачанный `.conf` в AmneziaVPN и проверь IPv4 egress:
 
 ```bash
