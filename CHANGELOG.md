@@ -8,6 +8,7 @@
 - Added Web UI restore verification for encrypted `.afbackup` files as a dry-run that validates backups without writing to `CONFIG_DIR`.
 - Added `/api/restore/verify` for authenticated restore dry-runs from the Web UI.
 - Added tests for restore verify API success and wrong backup password handling.
+- Added `golangci-lint` checks to local `make ci` and GitHub Actions.
 
 ### Changed
 

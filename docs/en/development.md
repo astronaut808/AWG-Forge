@@ -4,6 +4,7 @@
 
 - Go `1.26.3`;
 - Deno `2.x` for static Web UI linting;
+- `golangci-lint` `2.x` for Go linting;
 - Docker for image/runtime testing.
 
 ## Common Commands
@@ -12,6 +13,7 @@
 make test
 make vet
 make build
+make lint-go
 make lint-js
 make ci
 make docker-build
@@ -49,6 +51,7 @@ git diff --check
 - `go test ./...`;
 - `go vet ./...`;
 - `go build ./...`;
+- `golangci-lint run`;
 - `deno lint`.
 
 ## Frontend

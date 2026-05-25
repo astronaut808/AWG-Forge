@@ -1,7 +1,7 @@
 COMPOSE ?= docker compose
 CONTAINER ?= awg-forge
 
-.PHONY: test vet build lint-js ci updates updates-local updates-docker update-amneziawg-refs docker-build docker-up docker-down
+.PHONY: test vet build lint-go lint-js ci updates updates-local updates-docker update-amneziawg-refs docker-build docker-up docker-down
 
 test:
 	go test ./...
@@ -12,10 +12,13 @@ vet:
 build:
 	go build ./...
 
+lint-go:
+	golangci-lint run
+
 lint-js:
 	deno lint
 
-ci: test vet build lint-js
+ci: test vet build lint-go lint-js
 
 updates: updates-local
 

@@ -124,7 +124,7 @@ func (c Checker) getJSON(ctx context.Context, path string, dst any) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("github api %s returned %s", path, resp.Status)
 	}
