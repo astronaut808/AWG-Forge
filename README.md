@@ -36,10 +36,11 @@ QR import не используется. Он был убран, потому ч
 - Безопасные ненулевые параметры обфускации для новых туннелей.
 - IPv4 egress с согласованием NAT/firewall rules.
 - Health view для клиентов: handshake и rx/tx counters.
+- Maintenance Center для Doctor, firewall, backup, restore verify, support bundle, updates и system info.
 - Doctor diagnostics для инструментов, runtime, firewall, ports, peers, handshakes и stale configs.
 - Ручная проверка и repair managed firewall rules.
 - Support bundle без секретов для безопасной передачи диагностики.
-- Encrypted backup/restore с отдельным backup password.
+- Encrypted backup/restore с отдельным backup password и restore dry-run verification.
 - Откат state/configs при ошибке применения runtime-конфига.
 - Проверка обновлений upstream AmneziaWG без автоматического изменения системы.
 - Статический HTML/CSS/JavaScript frontend без Node/npm build pipeline.
@@ -121,6 +122,7 @@ curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/unins
 ```bash
 docker exec awg-forge awg-forge doctor
 docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge backup /tmp/awg-forge.afbackup
+docker cp awg-forge:/tmp/awg-forge.afbackup ./awg-forge-backup-YYYYMMDD-HHMMSS.afbackup
 docker exec awg-forge awg-forge support-bundle
 ```
 
@@ -139,6 +141,8 @@ curl -4 https://ifconfig.co
 ```bash
 make ci
 ```
+
+`make ci` использует Deno только для lint статического `app.js`. Runtime и Docker image не требуют Deno, Node или npm.
 
 Локальный запуск без применения runtime-туннелей:
 

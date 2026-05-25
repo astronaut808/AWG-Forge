@@ -1,16 +1,22 @@
 package server
 
 import (
+	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/astronaut808/awg-forge/internal/app"
+	"github.com/astronaut808/awg-forge/internal/backup"
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/firewall"
 )
@@ -251,6 +257,190 @@ func TestClientImportKeyAPIReturnsVPNKey(t *testing.T) {
 	if !strings.Contains(string(decoded), "S3 =") || !strings.Contains(string(decoded), "S4 =") {
 		t.Fatalf("decoded AWG 2.0 key does not contain S3/S4:\n%s", decoded)
 	}
+}
+
+func TestRestoreVerifyAPIValidatesBackupWithoutWritingState(t *testing.T) {
+	const password = "correct horse battery staple"
+	cfg := config.Config{
+		ConfigDir:           t.TempDir(),
+		TunnelName:          "awg0",
+		ServerHost:          "vpn.example.com",
+		ListenPort:          51820,
+		WebUIHost:           "127.0.0.1",
+		WebUIPort:           51821,
+		ExternalInterface:   "eth0",
+		IPv4Subnet:          "10.8.0.0/24",
+		DNS:                 "1.1.1.1",
+		AllowedIPs:          "0.0.0.0/0",
+		PersistentKeepalive: 0,
+		MTU:                 1420,
+		ProtocolProfile:     "awg_2_0",
+	}
+	svc := app.New(cfg)
+	if _, err := svc.AddClient("phone"); err != nil {
+		t.Fatal(err)
+	}
+	archive, err := backup.Create(context.Background(), cfg, svc, password, backup.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	verifyCfg := cfg
+	verifyCfg.ConfigDir = t.TempDir()
+	w := &web{cfg: verifyCfg, service: app.New(verifyCfg)}
+	r := multipartRestoreVerifyRequest(t, archive.Data, password)
+	rr := httptest.NewRecorder()
+
+	w.restoreVerifyAPI(rr, r)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rr.Code, rr.Body.String())
+	}
+	if got, want := rr.Header().Get("Cache-Control"), "no-store"; got != want {
+		t.Fatalf("Cache-Control = %q, want %q", got, want)
+	}
+	var payload struct {
+		Report backup.VerifyReport `json:"report"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Report.ClientCount != 1 {
+		t.Fatalf("client count = %d, want 1", payload.Report.ClientCount)
+	}
+	if payload.Report.ServerHost != cfg.ServerHost {
+		t.Fatalf("server host = %q, want %q", payload.Report.ServerHost, cfg.ServerHost)
+	}
+	if _, err := os.Stat(filepath.Join(verifyCfg.ConfigDir, "state.json")); !os.IsNotExist(err) {
+		t.Fatalf("restore verify must not write state into the target config dir, stat err = %v", err)
+	}
+}
+
+func TestRestoreVerifyAPIRejectsWrongPassword(t *testing.T) {
+	const password = "correct horse battery staple"
+	cfg := config.Config{
+		ConfigDir:           t.TempDir(),
+		TunnelName:          "awg0",
+		ServerHost:          "vpn.example.com",
+		ListenPort:          51820,
+		WebUIHost:           "127.0.0.1",
+		WebUIPort:           51821,
+		ExternalInterface:   "eth0",
+		IPv4Subnet:          "10.8.0.0/24",
+		DNS:                 "1.1.1.1",
+		AllowedIPs:          "0.0.0.0/0",
+		PersistentKeepalive: 0,
+		MTU:                 1420,
+		ProtocolProfile:     "awg_legacy_1_0",
+	}
+	svc := app.New(cfg)
+	if _, err := svc.AddClient("phone"); err != nil {
+		t.Fatal(err)
+	}
+	archive, err := backup.Create(context.Background(), cfg, svc, password, backup.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := &web{cfg: cfg, service: svc}
+	r := multipartRestoreVerifyRequest(t, archive.Data, "wrong password")
+	rr := httptest.NewRecorder()
+
+	w.restoreVerifyAPI(rr, r)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body = %s", rr.Code, http.StatusBadRequest, rr.Body.String())
+	}
+	if got, want := rr.Header().Get("Cache-Control"), "no-store"; got != want {
+		t.Fatalf("Cache-Control = %q, want %q", got, want)
+	}
+}
+
+func TestBackupAPIUsesNoStore(t *testing.T) {
+	cfg := config.Config{
+		ConfigDir:           t.TempDir(),
+		TunnelName:          "awg0",
+		ServerHost:          "vpn.example.com",
+		ListenPort:          51820,
+		WebUIHost:           "127.0.0.1",
+		WebUIPort:           51821,
+		ExternalInterface:   "eth0",
+		IPv4Subnet:          "10.8.0.0/24",
+		DNS:                 "1.1.1.1",
+		AllowedIPs:          "0.0.0.0/0",
+		PersistentKeepalive: 0,
+		MTU:                 1420,
+		ProtocolProfile:     "awg_legacy_1_0",
+	}
+	svc := app.New(cfg)
+	if _, err := svc.AddClient("phone"); err != nil {
+		t.Fatal(err)
+	}
+	w := &web{cfg: cfg, service: svc}
+	r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:51821/api/backup", strings.NewReader(`{"password":"correct horse battery staple"}`))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Origin", "http://127.0.0.1:51821")
+	rr := httptest.NewRecorder()
+
+	w.backupAPI(rr, r)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rr.Code, rr.Body.String())
+	}
+	if got, want := rr.Header().Get("Cache-Control"), "no-store"; got != want {
+		t.Fatalf("Cache-Control = %q, want %q", got, want)
+	}
+}
+
+func TestBackupAPIRejectsOversizedJSONBody(t *testing.T) {
+	cfg := config.Config{
+		ConfigDir:           t.TempDir(),
+		TunnelName:          "awg0",
+		ServerHost:          "vpn.example.com",
+		ListenPort:          51820,
+		WebUIHost:           "127.0.0.1",
+		WebUIPort:           51821,
+		ExternalInterface:   "eth0",
+		IPv4Subnet:          "10.8.0.0/24",
+		DNS:                 "1.1.1.1",
+		AllowedIPs:          "0.0.0.0/0",
+		PersistentKeepalive: 0,
+		MTU:                 1420,
+		ProtocolProfile:     "awg_legacy_1_0",
+	}
+	w := &web{cfg: cfg, service: app.New(cfg)}
+	r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:51821/api/backup", strings.NewReader(`{"password":"`+strings.Repeat("a", maxJSONBodyBytes)+`"}`))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Origin", "http://127.0.0.1:51821")
+	rr := httptest.NewRecorder()
+
+	w.backupAPI(rr, r)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func multipartRestoreVerifyRequest(t *testing.T, archive []byte, password string) *http.Request {
+	t.Helper()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("password", password); err != nil {
+		t.Fatal(err)
+	}
+	part, err := writer.CreateFormFile("backup", "backup.afbackup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(archive); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:51821/api/restore/verify", &body)
+	r.Header.Set("Content-Type", writer.FormDataContentType())
+	r.Header.Set("Origin", "http://127.0.0.1:51821")
+	return r
 }
 
 func TestIdempotentCreateClientDoesNotCreateDuplicate(t *testing.T) {

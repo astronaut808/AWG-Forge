@@ -30,7 +30,7 @@ Doctor проверяет:
 
 Support bundle нужен, чтобы передать диагностику без приватных ключей и полных конфигов.
 
-В UI открой `Maintenance` -> `Support bundle`, чтобы скачать `.zip`.
+В UI открой `Maintenance` -> `Support`, чтобы скачать `.zip`.
 
 В Docker:
 
@@ -69,18 +69,28 @@ Backup всегда шифруется отдельным паролем:
 
 ```bash
 docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge backup /tmp/awg-forge.afbackup
-docker cp awg-forge:/tmp/awg-forge.afbackup .
+docker cp awg-forge:/tmp/awg-forge.afbackup ./awg-forge-backup-YYYYMMDD-HHMMSS.afbackup
 ```
 
 Restore требует тот же пароль:
 
 ```bash
-docker cp awg-forge.afbackup awg-forge:/tmp/awg-forge.afbackup
-docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore verify /tmp/awg-forge.afbackup
-docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore /tmp/awg-forge.afbackup
+docker cp ./<backup-file>.afbackup awg-forge:/tmp/backup.afbackup
+docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore verify /tmp/backup.afbackup
+docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore /tmp/backup.afbackup
+```
+
+`docker exec` видит только filesystem контейнера. Если backup лежит на хосте, сначала скопируй его внутрь контейнера через `docker cp`, как в примере выше. Альтернативно можно положить файл в mounted volume:
+
+```bash
+cp ./<backup-file>.afbackup ./data/backup.afbackup
+docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore verify /etc/awg-forge/backup.afbackup
+docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore /etc/awg-forge/backup.afbackup
 ```
 
 `restore verify` расшифровывает и валидирует backup, рендерит server и client configs в памяти и выводит summary без секретов. Он не пишет в config directory, не создает pre-restore backup, не перезапускает tunnels и не меняет runtime state.
+
+В UI открой `Maintenance` -> `Restore`, загрузи `.afbackup` и запусти такую же проверку в dry-run режиме. Настоящий restore остается CLI-only.
 
 Перед заменой текущего config directory restore сохраняет encrypted pre-restore backup в `backups/` внутри восстановленного config directory.
 
@@ -93,7 +103,13 @@ Restore проверяет:
 - валидность `state.json`;
 - возможность render server configs.
 
-Restore не применяет runtime автоматически. После restore перезапусти контейнер или явно перезапусти туннели.
+Restore не применяет runtime автоматически. После restore явно перезапусти туннели, восстанови managed firewall rules и проверь состояние:
+
+```bash
+docker exec awg-forge awg-forge tunnel restart
+docker exec awg-forge awg-forge firewall repair
+docker exec awg-forge awg-forge doctor
+```
 
 ## Firewall Check / Repair
 
@@ -120,7 +136,7 @@ Repair удаляет дубли только этих managed rules и доба
 
 Если `APPLY_CONFIG=false`, `firewall check/repair` ничего не меняет и показывает предупреждение.
 
-В UI эта операция доступна через `Doctor` -> `Repair firewall`. Если `APPLY_CONFIG=false`, кнопка визуально недоступна и показывает причину; если `APPLY_CONFIG=true`, действие требует подтверждения.
+В UI эта операция доступна через `Maintenance` -> `Firewall` -> `Repair firewall`. Если `APPLY_CONFIG=false`, кнопка визуально недоступна и показывает причину; если `APPLY_CONFIG=true`, действие требует подтверждения.
 
 ## Health В UI
 

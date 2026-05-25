@@ -50,6 +50,47 @@ func TestBackupRestoreRoundTripEncrypted(t *testing.T) {
 	assertMode(t, filepath.Join(restoreCfg.ConfigDir, "state.json"), 0600)
 }
 
+func TestRestoreReplacesMountedDirectoryContents(t *testing.T) {
+	cfg := testConfig(t)
+	svc := app.New(cfg)
+	if _, err := svc.AddClient("phone"); err != nil {
+		t.Fatal(err)
+	}
+	archive, err := Create(context.Background(), cfg, svc, testPassword, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	restoreCfg := cfg
+	restoreCfg.ConfigDir = t.TempDir()
+	if err := os.WriteFile(filepath.Join(restoreCfg.ConfigDir, "stale.txt"), []byte("old"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(restoreCfg.ConfigDir, "stale-dir"), 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Restore(context.Background(), restoreCfg, testPassword, writeTempArchive(t, archive.Data)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(restoreCfg.ConfigDir, "state.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(restoreCfg.ConfigDir, "stale.txt")); !os.IsNotExist(err) {
+		t.Fatalf("stale file should be removed, stat err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(restoreCfg.ConfigDir, "stale-dir")); !os.IsNotExist(err) {
+		t.Fatalf("stale dir should be removed, stat err = %v", err)
+	}
+	matches, err := filepath.Glob(filepath.Join(restoreCfg.ConfigDir, ".restore-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("restore scratch dirs left behind: %v", matches)
+	}
+}
+
 func TestRestoreRejectsWrongPassword(t *testing.T) {
 	cfg := testConfig(t)
 	svc := app.New(cfg)
@@ -269,6 +310,45 @@ func TestRestoreRejectsMissingMetadata(t *testing.T) {
 	err = Restore(context.Background(), cfg, testPassword, writeTempArchive(t, encrypted))
 	if err == nil || !strings.Contains(err.Error(), "metadata.json is missing") {
 		t.Fatalf("restore error = %v, want missing metadata", err)
+	}
+}
+
+func TestDecryptRejectsUnexpectedKDFParameters(t *testing.T) {
+	archive := encryptedTestZip(t,
+		testZipEntry{name: "metadata.json", data: mustJSON(t, testMetadata(nil))},
+		testZipEntry{name: "state.json", data: []byte(`{"schema_version":2}`)},
+	)
+	var env encryptedArchive
+	if err := json.Unmarshal(archive, &env); err != nil {
+		t.Fatal(err)
+	}
+	env.KDF.MemoryKiB = 1024 * 1024
+	mutated, err := json.Marshal(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decrypt(mutated, testPassword); err == nil || !strings.Contains(err.Error(), "unsupported backup kdf") {
+		t.Fatalf("decrypt error = %v, want unsupported backup kdf", err)
+	}
+}
+
+func TestVerifyRejectsOversizedBackupFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "too-large.afbackup")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(maxEncryptedBackupBytes + 1); err != nil {
+		_ = f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	cfg := testConfig(t)
+	_, err = Verify(context.Background(), cfg, testPassword, path)
+	if err == nil || !strings.Contains(err.Error(), "backup file is too large") {
+		t.Fatalf("verify error = %v, want backup file is too large", err)
 	}
 }
 

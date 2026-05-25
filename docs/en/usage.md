@@ -29,12 +29,14 @@ Tunnel actions:
 
 Maintenance actions are available through the `Maintenance` button:
 
-- `Doctor`: system and runtime diagnostics.
-- `Repair firewall`: manually restore managed firewall rules from the Doctor modal.
+- `Overview`: overall runtime, clients, firewall, and recovery status.
+- `Doctor`: system and runtime diagnostics grouped by OK/WARN/FAIL.
+- `Firewall`: managed firewall rule status per tunnel and repair action.
 - `Backup`: download an encrypted backup with a dedicated password.
-- `Support bundle`: download a support bundle without secrets.
+- `Restore`: verify an `.afbackup` through a dry-run without writing to `CONFIG_DIR`; actual restore remains CLI-only.
 - `Updates`: check whether bundled AmneziaWG upstream refs are behind.
-- `Restore`: CLI-only restore guidance.
+- `Support`: download a support bundle without secrets.
+- `System`: current mode, server host, tunnels, profiles, and useful commands.
 
 ## Stale Configs
 
@@ -49,10 +51,13 @@ Client rename and notes are metadata-only changes and do not make configs stale.
 ```bash
 docker exec awg-forge awg-forge doctor
 docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge backup /tmp/awg-forge.afbackup
-docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore verify /tmp/awg-forge.afbackup
-docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore /tmp/awg-forge.afbackup
-docker exec awg-forge awg-forge firewall check
+docker cp awg-forge:/tmp/awg-forge.afbackup ./awg-forge-backup-YYYYMMDD-HHMMSS.afbackup
+docker cp ./<backup-file>.afbackup awg-forge:/tmp/backup.afbackup
+docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore verify /tmp/backup.afbackup
+docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore /tmp/backup.afbackup
+docker exec awg-forge awg-forge tunnel restart
 docker exec awg-forge awg-forge firewall repair
+docker exec awg-forge awg-forge firewall check
 docker exec awg-forge awg-forge support-bundle
 docker exec awg-forge awg-forge updates
 docker exec awg-forge awg-forge client add phone

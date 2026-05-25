@@ -24,6 +24,11 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
       - name: Check formatting
         run: test -z "$(gofmt -l .)"
 
@@ -38,3 +43,6 @@ jobs:
 
       - name: Build
         run: go build ./...
+
+      - name: Lint static UI
+        run: deno lint

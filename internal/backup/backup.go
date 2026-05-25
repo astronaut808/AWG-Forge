@@ -38,6 +38,8 @@ const (
 	kdfMemoryKiB  = uint32(64 * 1024)
 	kdfThreads    = uint8(4)
 	keySize       = uint32(32)
+
+	maxEncryptedBackupBytes = int64(64 << 20)
 )
 
 type Archive struct {
@@ -79,24 +81,24 @@ type Metadata struct {
 }
 
 type VerifyReport struct {
-	Format        string
-	CreatedAt     string
-	Build         buildinfo.Info
-	SchemaVersion int
-	ServerHost    string
-	FileCount     int
-	TotalSize     int64
-	Tunnels       []VerifyTunnel
-	ClientCount   int
+	Format        string         `json:"format"`
+	CreatedAt     string         `json:"created_at"`
+	Build         buildinfo.Info `json:"build"`
+	SchemaVersion int            `json:"schema_version"`
+	ServerHost    string         `json:"server_host"`
+	FileCount     int            `json:"file_count"`
+	TotalSize     int64          `json:"total_size"`
+	Tunnels       []VerifyTunnel `json:"tunnels"`
+	ClientCount   int            `json:"client_count"`
 }
 
 type VerifyTunnel struct {
-	Name       string
-	Interface  string
-	Profile    string
-	ListenPort int
-	Subnet     string
-	Clients    int
+	Name       string `json:"name"`
+	Interface  string `json:"interface"`
+	Profile    string `json:"profile"`
+	ListenPort int    `json:"listen_port"`
+	Subnet     string `json:"subnet"`
+	Clients    int    `json:"clients"`
 }
 
 type FileMeta struct {
@@ -300,7 +302,8 @@ func decrypt(data []byte, password string) ([]byte, error) {
 	if env.Cipher != cipherName {
 		return nil, fmt.Errorf("unsupported backup cipher %q", env.Cipher)
 	}
-	if env.KDF.Name != kdfName || env.KDF.KeySize != keySize {
+	if env.KDF.Name != kdfName || env.KDF.KeySize != keySize ||
+		env.KDF.Time != kdfTime || env.KDF.MemoryKiB != kdfMemoryKiB || env.KDF.Threads != kdfThreads {
 		return nil, errors.New("unsupported backup kdf")
 	}
 	salt, err := base64.StdEncoding.DecodeString(env.Salt)
@@ -365,6 +368,13 @@ func loadAndValidate(password, archivePath string) (validatedBackup, error) {
 	}
 	if strings.TrimSpace(archivePath) == "" {
 		return validatedBackup{}, errors.New("backup file is required")
+	}
+	info, err := os.Stat(archivePath)
+	if err != nil {
+		return validatedBackup{}, err
+	}
+	if info.Size() > maxEncryptedBackupBytes {
+		return validatedBackup{}, errors.New("backup file is too large")
 	}
 	data, err := os.ReadFile(archivePath)
 	if err != nil {
@@ -657,8 +667,20 @@ func preRestoreBackupFile(ctx context.Context, cfg config.Config, password strin
 }
 
 func restoreFiles(root string, files []restoreFile) error {
-	tmp := root + ".restore-tmp-" + time.Now().UTC().Format("20060102-150405")
+	if err := os.MkdirAll(root, 0700); err != nil {
+		return err
+	}
+	if err := os.Chmod(root, 0700); err != nil {
+		return err
+	}
+
+	suffix := time.Now().UTC().Format("20060102-150405")
+	tmp := filepath.Join(root, ".restore-tmp-"+suffix)
+	old := filepath.Join(root, ".restore-old-"+suffix)
 	if err := os.RemoveAll(tmp); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(old); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(tmp, 0700); err != nil {
@@ -679,18 +701,67 @@ func restoreFiles(root string, files []restoreFile) error {
 	if err := os.Chmod(tmp, 0700); err != nil {
 		return err
 	}
-	old := root + ".restore-old-" + time.Now().UTC().Format("20060102-150405")
-	if _, err := os.Stat(root); err == nil {
-		if err := os.Rename(root, old); err != nil {
-			return err
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
+
+	if err := os.MkdirAll(old, 0700); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, root); err != nil {
-		_ = os.Rename(old, root)
+	if err := moveRootEntries(root, old, filepath.Base(tmp), filepath.Base(old)); err != nil {
+		return err
+	}
+	if err := moveRootEntries(tmp, root); err != nil {
+		if cleanupErr := removeRootEntries(root, filepath.Base(tmp), filepath.Base(old)); cleanupErr != nil {
+			return fmt.Errorf("%w; rollback cleanup failed: %v", err, cleanupErr)
+		}
+		if rollbackErr := moveRootEntries(old, root); rollbackErr != nil {
+			return fmt.Errorf("%w; rollback failed: %v", err, rollbackErr)
+		}
+		return err
+	}
+	if err := os.RemoveAll(tmp); err != nil {
 		return err
 	}
 	_ = os.RemoveAll(old)
+	return nil
+}
+
+func removeRootEntries(root string, skipNames ...string) error {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return err
+	}
+	skip := map[string]bool{}
+	for _, name := range skipNames {
+		skip[name] = true
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if skip[name] {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(root, name)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func moveRootEntries(src, dst string, skipNames ...string) error {
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	skip := map[string]bool{}
+	for _, name := range skipNames {
+		skip[name] = true
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if skip[name] {
+			continue
+		}
+		if err := os.Rename(filepath.Join(src, name), filepath.Join(dst, name)); err != nil {
+			return err
+		}
+	}
 	return nil
 }

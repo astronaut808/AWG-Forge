@@ -52,14 +52,16 @@ Tunnel actions:
 - Restart;
 - Delete.
 
-Maintenance-действия сгруппированы в отдельном modal `Maintenance`:
+Maintenance-действия сгруппированы в Maintenance Center:
 
+- Overview;
 - Doctor;
-- Repair firewall;
+- Firewall;
 - Encrypted backup;
-- Support bundle;
+- Restore verify dry-run;
 - Updates;
-- Restore guidance, только CLI.
+- Support bundle;
+- System info.
 
 ## Settings
 

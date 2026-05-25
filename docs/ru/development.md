@@ -3,6 +3,7 @@
 ## Требования
 
 - Go `1.26.3`;
+- Deno `2.x` для lint статического Web UI;
 - Docker для проверки image/runtime сценариев.
 
 ## Основные команды
@@ -11,6 +12,7 @@
 make test
 make vet
 make build
+make lint-js
 make ci
 make docker-build
 ```
@@ -46,7 +48,8 @@ git diff --check
 
 - `go test ./...`;
 - `go vet ./...`;
-- `go build ./...`.
+- `go build ./...`;
+- `deno lint`.
 
 ## Frontend
 
@@ -57,6 +60,8 @@ Frontend находится в:
 - `internal/server/static/app.js`.
 
 Frontend остается статическим HTML/CSS/JavaScript без Node, npm, React, Vue или build pipeline.
+
+Deno используется только как dev/CI-инструмент для lint `internal/server/static/app.js`. Runtime и Docker image не требуют Deno.
 
 ## Backend
 

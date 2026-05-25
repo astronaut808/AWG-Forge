@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.8.0 - 2026-05-24
+
+### Added
+
+- Added Maintenance Center 2.0 with tabbed Overview, Doctor, Firewall, Backup, Restore, Updates, Support, and System sections.
+- Added Web UI restore verification for encrypted `.afbackup` files as a dry-run that validates backups without writing to `CONFIG_DIR`.
+- Added `/api/restore/verify` for authenticated restore dry-runs from the Web UI.
+- Added tests for restore verify API success and wrong backup password handling.
+
+### Changed
+
+- Reworked Maintenance UI from separate cards into a single operations center.
+- Firewall repair, backup download, support bundle download, update checks, and restore guidance are now grouped under Maintenance.
+- Restore now replaces `CONFIG_DIR` contents instead of renaming the directory itself, so it works with Docker volume mounts.
+- Backup/restore documentation now shows how to copy host backups into the container before running CLI restore.
+
+### Security
+
+- Added `Cache-Control: no-store` hardening for backup, support bundle, and restore verify responses.
+- Restore verification upload is size-limited and uses a temporary file that is removed after validation.
+- Limited JSON API request bodies to reduce accidental or malicious memory pressure.
+- Backup restore/verify now rejects oversized encrypted backup files and unsupported KDF parameters before decryption work.
+- Updated `golang.org/x/crypto` to remove known vulnerable module findings from dependency scanning.
+
 ## v0.7.0 - 2026-05-24
 
 ### Added

@@ -36,10 +36,11 @@ QR import is not exposed. It was removed because `.conf` import is the most reli
 - Safe non-zero obfuscation defaults for new tunnels.
 - IPv4 egress with NAT/firewall reconciliation.
 - Client health view with handshake and rx/tx counters.
+- Maintenance Center for Doctor, firewall, backup, restore verify, support bundle, updates, and system info.
 - Doctor diagnostics for tools, runtime, firewall, ports, peers, handshakes, and stale configs.
 - Manual managed firewall rule check and repair.
 - Secret-free support bundle for safely sharing diagnostics.
-- Encrypted backup/restore with a dedicated backup password.
+- Encrypted backup/restore with a dedicated backup password and restore dry-run verification.
 - State/config rollback when runtime config apply fails.
 - Upstream AmneziaWG update checks without automatic system changes.
 - Static HTML/CSS/JavaScript frontend with no Node/npm build pipeline.
@@ -121,6 +122,7 @@ curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/unins
 ```bash
 docker exec awg-forge awg-forge doctor
 docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge backup /tmp/awg-forge.afbackup
+docker cp awg-forge:/tmp/awg-forge.afbackup ./awg-forge-backup-YYYYMMDD-HHMMSS.afbackup
 docker exec awg-forge awg-forge support-bundle
 ```
 
@@ -139,6 +141,8 @@ For AmneziaVPN / DefaultVPN, you can also try the `Import key` button. It shows 
 ```bash
 make ci
 ```
+
+`make ci` uses Deno only for linting the static `app.js`. The runtime and Docker image do not require Deno, Node, or npm.
 
 Run locally without applying runtime tunnel changes:
 
