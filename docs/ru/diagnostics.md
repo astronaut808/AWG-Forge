@@ -69,15 +69,23 @@ Backup всегда шифруется отдельным паролем:
 
 ```bash
 docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge backup /tmp/awg-forge.afbackup
-docker cp awg-forge:/tmp/awg-forge.afbackup .
+docker cp awg-forge:/tmp/awg-forge.afbackup ./awg-forge-backup-YYYYMMDD-HHMMSS.afbackup
 ```
 
 Restore требует тот же пароль:
 
 ```bash
-docker cp awg-forge.afbackup awg-forge:/tmp/awg-forge.afbackup
-docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore verify /tmp/awg-forge.afbackup
-docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore /tmp/awg-forge.afbackup
+docker cp ./<backup-file>.afbackup awg-forge:/tmp/backup.afbackup
+docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore verify /tmp/backup.afbackup
+docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore /tmp/backup.afbackup
+```
+
+`docker exec` видит только filesystem контейнера. Если backup лежит на хосте, сначала скопируй его внутрь контейнера через `docker cp`, как в примере выше. Альтернативно можно положить файл в mounted volume:
+
+```bash
+cp ./<backup-file>.afbackup ./data/backup.afbackup
+docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore verify /etc/awg-forge/backup.afbackup
+docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore /etc/awg-forge/backup.afbackup
 ```
 
 `restore verify` расшифровывает и валидирует backup, рендерит server и client configs в памяти и выводит summary без секретов. Он не пишет в config directory, не создает pre-restore backup, не перезапускает tunnels и не меняет runtime state.
@@ -95,7 +103,13 @@ Restore проверяет:
 - валидность `state.json`;
 - возможность render server configs.
 
-Restore не применяет runtime автоматически. После restore перезапусти контейнер или явно перезапусти туннели.
+Restore не применяет runtime автоматически. После restore явно перезапусти туннели, восстанови managed firewall rules и проверь состояние:
+
+```bash
+docker exec awg-forge awg-forge tunnel restart
+docker exec awg-forge awg-forge firewall repair
+docker exec awg-forge awg-forge doctor
+```
 
 ## Firewall Check / Repair
 

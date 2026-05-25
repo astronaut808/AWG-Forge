@@ -50,6 +50,47 @@ func TestBackupRestoreRoundTripEncrypted(t *testing.T) {
 	assertMode(t, filepath.Join(restoreCfg.ConfigDir, "state.json"), 0600)
 }
 
+func TestRestoreReplacesMountedDirectoryContents(t *testing.T) {
+	cfg := testConfig(t)
+	svc := app.New(cfg)
+	if _, err := svc.AddClient("phone"); err != nil {
+		t.Fatal(err)
+	}
+	archive, err := Create(context.Background(), cfg, svc, testPassword, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	restoreCfg := cfg
+	restoreCfg.ConfigDir = t.TempDir()
+	if err := os.WriteFile(filepath.Join(restoreCfg.ConfigDir, "stale.txt"), []byte("old"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(restoreCfg.ConfigDir, "stale-dir"), 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Restore(context.Background(), restoreCfg, testPassword, writeTempArchive(t, archive.Data)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(restoreCfg.ConfigDir, "state.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(restoreCfg.ConfigDir, "stale.txt")); !os.IsNotExist(err) {
+		t.Fatalf("stale file should be removed, stat err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(restoreCfg.ConfigDir, "stale-dir")); !os.IsNotExist(err) {
+		t.Fatalf("stale dir should be removed, stat err = %v", err)
+	}
+	matches, err := filepath.Glob(filepath.Join(restoreCfg.ConfigDir, ".restore-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("restore scratch dirs left behind: %v", matches)
+	}
+}
+
 func TestRestoreRejectsWrongPassword(t *testing.T) {
 	cfg := testConfig(t)
 	svc := app.New(cfg)

@@ -122,6 +122,7 @@ curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/unins
 ```bash
 docker exec awg-forge awg-forge doctor
 docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge backup /tmp/awg-forge.afbackup
+docker cp awg-forge:/tmp/awg-forge.afbackup ./awg-forge-backup-YYYYMMDD-HHMMSS.afbackup
 docker exec awg-forge awg-forge support-bundle
 ```
 

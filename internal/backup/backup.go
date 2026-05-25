@@ -667,8 +667,20 @@ func preRestoreBackupFile(ctx context.Context, cfg config.Config, password strin
 }
 
 func restoreFiles(root string, files []restoreFile) error {
-	tmp := root + ".restore-tmp-" + time.Now().UTC().Format("20060102-150405")
+	if err := os.MkdirAll(root, 0700); err != nil {
+		return err
+	}
+	if err := os.Chmod(root, 0700); err != nil {
+		return err
+	}
+
+	suffix := time.Now().UTC().Format("20060102-150405")
+	tmp := filepath.Join(root, ".restore-tmp-"+suffix)
+	old := filepath.Join(root, ".restore-old-"+suffix)
 	if err := os.RemoveAll(tmp); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(old); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(tmp, 0700); err != nil {
@@ -689,18 +701,67 @@ func restoreFiles(root string, files []restoreFile) error {
 	if err := os.Chmod(tmp, 0700); err != nil {
 		return err
 	}
-	old := root + ".restore-old-" + time.Now().UTC().Format("20060102-150405")
-	if _, err := os.Stat(root); err == nil {
-		if err := os.Rename(root, old); err != nil {
-			return err
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
+
+	if err := os.MkdirAll(old, 0700); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, root); err != nil {
-		_ = os.Rename(old, root)
+	if err := moveRootEntries(root, old, filepath.Base(tmp), filepath.Base(old)); err != nil {
+		return err
+	}
+	if err := moveRootEntries(tmp, root); err != nil {
+		if cleanupErr := removeRootEntries(root, filepath.Base(tmp), filepath.Base(old)); cleanupErr != nil {
+			return fmt.Errorf("%w; rollback cleanup failed: %v", err, cleanupErr)
+		}
+		if rollbackErr := moveRootEntries(old, root); rollbackErr != nil {
+			return fmt.Errorf("%w; rollback failed: %v", err, rollbackErr)
+		}
+		return err
+	}
+	if err := os.RemoveAll(tmp); err != nil {
 		return err
 	}
 	_ = os.RemoveAll(old)
+	return nil
+}
+
+func removeRootEntries(root string, skipNames ...string) error {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return err
+	}
+	skip := map[string]bool{}
+	for _, name := range skipNames {
+		skip[name] = true
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if skip[name] {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(root, name)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func moveRootEntries(src, dst string, skipNames ...string) error {
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	skip := map[string]bool{}
+	for _, name := range skipNames {
+		skip[name] = true
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if skip[name] {
+			continue
+		}
+		if err := os.Rename(filepath.Join(src, name), filepath.Join(dst, name)); err != nil {
+			return err
+		}
+	}
 	return nil
 }

@@ -13,6 +13,8 @@
 
 - Reworked Maintenance UI from separate cards into a single operations center.
 - Firewall repair, backup download, support bundle download, update checks, and restore guidance are now grouped under Maintenance.
+- Restore now replaces `CONFIG_DIR` contents instead of renaming the directory itself, so it works with Docker volume mounts.
+- Backup/restore documentation now shows how to copy host backups into the container before running CLI restore.
 
 ### Security
 

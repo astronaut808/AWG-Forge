@@ -969,7 +969,12 @@ function renderMaintenanceRestore() {
       <div class="form-actions"><button class="primary" type="submit">Verify backup</button></div>
     </form>
     ${report ? renderRestoreReport(report) : ""}
-    <div class="command-block mono">docker exec -e BACKUP_PASSWORD awg-forge awg-forge restore /path/to/backup.afbackup</div>
+    <div class="command-block mono">docker cp ./&lt;backup-file&gt;.afbackup awg-forge:/tmp/backup.afbackup
+docker exec -e BACKUP_PASSWORD='...' awg-forge awg-forge restore verify /tmp/backup.afbackup
+docker exec -e BACKUP_PASSWORD='...' awg-forge awg-forge restore /tmp/backup.afbackup
+docker exec awg-forge awg-forge tunnel restart
+docker exec awg-forge awg-forge firewall repair
+docker exec awg-forge awg-forge doctor</div>
   `;
 }
 
