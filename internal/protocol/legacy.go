@@ -225,11 +225,11 @@ func validateJunkAndBasePadding(params config.ProtocolParams) (int, int, error) 
 	}
 	jmin, err := intParam(params, "Jmin")
 	if err != nil || jmin < 64 || jmin > 1024 {
-		return 0, 0, fmt.Errorf("Jmin must be 64..1024")
+		return 0, 0, fmt.Errorf("parameter Jmin must be 64..1024")
 	}
 	jmax, err := intParam(params, "Jmax")
 	if err != nil || jmax < jmin || jmax > 1024 {
-		return 0, 0, fmt.Errorf("Jmax must be greater than or equal to Jmin and <= 1024")
+		return 0, 0, fmt.Errorf("parameter Jmax must be greater than or equal to Jmin and <= 1024")
 	}
 	s1, err := intParam(params, "S1")
 	if err != nil || s1 < 0 || s1 > 64 {

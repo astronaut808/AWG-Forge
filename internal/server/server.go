@@ -232,7 +232,7 @@ func (w *web) restoreVerifyAPI(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.MultipartForm != nil {
-		defer r.MultipartForm.RemoveAll()
+		defer func() { _ = r.MultipartForm.RemoveAll() }()
 	}
 	password := r.FormValue("password")
 	file, _, err := r.FormFile("backup")
@@ -240,7 +240,7 @@ func (w *web) restoreVerifyAPI(rw http.ResponseWriter, r *http.Request) {
 		writeError(rw, http.StatusBadRequest, "backup file is required")
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	tmp, err := os.CreateTemp("", "awg-forge-restore-verify-*.afbackup")
 	if err != nil {
@@ -248,7 +248,7 @@ func (w *web) restoreVerifyAPI(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
+	defer func() { _ = os.Remove(tmpPath) }()
 	if _, err := io.Copy(tmp, file); err != nil {
 		_ = tmp.Close()
 		writeError(rw, http.StatusBadRequest, "backup upload failed")
@@ -900,7 +900,7 @@ func subtleCompare(a, b string) bool {
 }
 
 func readJSON(rw http.ResponseWriter, r *http.Request, dst any) error {
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 	r.Body = http.MaxBytesReader(rw, r.Body, maxJSONBodyBytes)
 	return json.NewDecoder(r.Body).Decode(dst)
 }

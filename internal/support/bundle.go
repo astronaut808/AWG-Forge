@@ -300,12 +300,14 @@ func fileInventory(root string) []fileItem {
 		if err != nil {
 			item.Error = err.Error()
 			out = append(out, item)
+			//nolint:nilerr // Keep walking while preserving per-file inventory errors in the bundle.
 			return nil
 		}
 		info, statErr := d.Info()
 		if statErr != nil {
 			item.Error = statErr.Error()
 			out = append(out, item)
+			//nolint:nilerr // Keep walking while preserving per-file inventory errors in the bundle.
 			return nil
 		}
 		item.Mode = fmt.Sprintf("%04o", info.Mode().Perm())

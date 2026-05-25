@@ -26,8 +26,8 @@ import (
 )
 
 const (
-	healthTrafficWarningThresholdBytes uint64 = 1024
-	maxClientNotesLength                      = 1000
+	healthTrafficWarningThresholdBytes = uint64(1024)
+	maxClientNotesLength               = 1000
 )
 
 var clientNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_. -]{0,62}[A-Za-z0-9]$|^[A-Za-z0-9]$`)
@@ -344,7 +344,7 @@ func (s *Service) CreateTunnel(profileID, name, subnet string, port int) (config
 		var applyErr *ApplyError
 		if errors.As(err, &applyErr) {
 			if rollbackErr := s.rollbackRenderedState(previousState, "", tunnel.InterfaceName); rollbackErr != nil {
-				return config.Tunnel{}, fmt.Errorf("%w; rollback failed: %v", err, rollbackErr)
+				return config.Tunnel{}, errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
 			}
 		}
 		return config.Tunnel{}, err
@@ -462,7 +462,7 @@ func (s *Service) UpdateTunnelSettings(tunnelID, name, serverHost, subnet, dns, 
 				deleteRendered = append(deleteRendered, name)
 			}
 			if rollbackErr := s.rollbackRuntimeState(previousState, old.ID, deleteRendered...); rollbackErr != nil {
-				return config.Tunnel{}, fmt.Errorf("%w; rollback failed: %v", err, rollbackErr)
+				return config.Tunnel{}, errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
 			}
 		}
 		return config.Tunnel{}, err
@@ -498,13 +498,13 @@ func (s *Service) DeleteTunnel(tunnelID string) error {
 	if s.cfg.ApplyConfig {
 		if err := exec.Command("awg-quick", "down", tunnel.InterfaceName).Run(); err != nil {
 			if rollbackErr := s.rollbackRuntimeState(previousState, tunnel.ID); rollbackErr != nil {
-				return fmt.Errorf("%w; rollback failed: %v", &ApplyError{Err: err}, rollbackErr)
+				return errors.Join(&ApplyError{Err: err}, fmt.Errorf("rollback failed: %w", rollbackErr))
 			}
 			return &ApplyError{Err: err}
 		}
 		if err := s.cleanupFirewallRules(tunnel); err != nil {
 			if rollbackErr := s.rollbackRuntimeState(previousState, tunnel.ID); rollbackErr != nil {
-				return fmt.Errorf("%w; rollback failed: %v", &ApplyError{Err: err}, rollbackErr)
+				return errors.Join(&ApplyError{Err: err}, fmt.Errorf("rollback failed: %w", rollbackErr))
 			}
 			return &ApplyError{Err: err}
 		}
@@ -616,7 +616,7 @@ func (s *Service) AddClientToTunnel(tunnelID, name string) (config.Client, error
 		var applyErr *ApplyError
 		if errors.As(err, &applyErr) {
 			if rollbackErr := s.rollbackRenderedState(previousState, state.Tunnels[idx].ID); rollbackErr != nil {
-				return config.Client{}, fmt.Errorf("%w; rollback failed: %v", err, rollbackErr)
+				return config.Client{}, errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
 			}
 		}
 		return config.Client{}, err
@@ -654,7 +654,7 @@ func (s *Service) RemoveClient(id string) error {
 				var applyErr *ApplyError
 				if errors.As(err, &applyErr) {
 					if rollbackErr := s.rollbackRenderedState(previousState, state.Tunnels[ti].ID); rollbackErr != nil {
-						return fmt.Errorf("%w; rollback failed: %v", err, rollbackErr)
+						return errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
 					}
 				}
 				return err
@@ -689,7 +689,7 @@ func (s *Service) SetClientEnabled(id string, enabled bool) error {
 					var applyErr *ApplyError
 					if errors.As(err, &applyErr) {
 						if rollbackErr := s.rollbackRenderedState(previousState, state.Tunnels[ti].ID); rollbackErr != nil {
-							return fmt.Errorf("%w; rollback failed: %v", err, rollbackErr)
+							return errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
 						}
 					}
 					return err
@@ -892,7 +892,7 @@ func (s *Service) renderTunnelFromState(state config.State, tunnelID string, fai
 			state.Tunnels[idx].UpdatedAt = now
 			state.UpdatedAt = now
 			if saveErr := s.store.Save(state); saveErr != nil {
-				return fmt.Errorf("apply failed: %w; additionally failed to save state: %v", err, saveErr)
+				return errors.Join(fmt.Errorf("apply failed: %w", err), fmt.Errorf("save state failed: %w", saveErr))
 			}
 			if failOnApply {
 				return &ApplyError{Err: err}
@@ -1017,7 +1017,7 @@ func (s *Service) UpdateTunnelProtocol(tunnelID, profileID string, params config
 		var applyErr *ApplyError
 		if errors.As(err, &applyErr) {
 			if rollbackErr := s.rollbackRenderedState(previousState, tunnelID); rollbackErr != nil {
-				return fmt.Errorf("%w; rollback failed: %v", err, rollbackErr)
+				return errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
 			}
 		}
 		return err
@@ -1278,7 +1278,7 @@ type iptablesRule struct {
 
 func deleteAllIPTablesRules(rule iptablesRule) error {
 	for i := 0; i < 64; i++ {
-		if iptablesCheck(rule) != nil {
+		if !iptablesRuleExists(rule) {
 			return nil
 		}
 		args := append([]string{}, iptablesTableArgs(rule.table)...)
@@ -1290,6 +1290,13 @@ func deleteAllIPTablesRules(rule iptablesRule) error {
 		}
 	}
 	return fmt.Errorf("iptables duplicate cleanup limit reached for %s", strings.Join(rule.args, " "))
+}
+
+func iptablesRuleExists(rule iptablesRule) bool {
+	if err := iptablesCheck(rule); err != nil {
+		return false
+	}
+	return true
 }
 
 func iptablesCheck(rule iptablesRule) error {

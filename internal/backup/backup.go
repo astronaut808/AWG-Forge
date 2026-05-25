@@ -710,10 +710,10 @@ func restoreFiles(root string, files []restoreFile) error {
 	}
 	if err := moveRootEntries(tmp, root); err != nil {
 		if cleanupErr := removeRootEntries(root, filepath.Base(tmp), filepath.Base(old)); cleanupErr != nil {
-			return fmt.Errorf("%w; rollback cleanup failed: %v", err, cleanupErr)
+			return errors.Join(err, fmt.Errorf("rollback cleanup failed: %w", cleanupErr))
 		}
 		if rollbackErr := moveRootEntries(old, root); rollbackErr != nil {
-			return fmt.Errorf("%w; rollback failed: %v", err, rollbackErr)
+			return errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
 		}
 		return err
 	}

@@ -4,6 +4,7 @@
 
 - Go `1.26.3`;
 - Deno `2.x` для lint статического Web UI;
+- `golangci-lint` `2.x` для Go linting;
 - Docker для проверки image/runtime сценариев.
 
 ## Основные команды
@@ -12,6 +13,7 @@
 make test
 make vet
 make build
+make lint-go
 make lint-js
 make ci
 make docker-build
@@ -49,6 +51,7 @@ git diff --check
 - `go test ./...`;
 - `go vet ./...`;
 - `go build ./...`;
+- `golangci-lint run`;
 - `deno lint`.
 
 ## Frontend
