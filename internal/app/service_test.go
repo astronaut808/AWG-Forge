@@ -233,7 +233,7 @@ func TestTunnelSettingsApplyFailureRollsBackState(t *testing.T) {
 		t.Fatal(err)
 	}
 	original := state.Tunnels[0]
-	if _, err := svc.UpdateTunnelSettings(original.ID, original.Name, original.ServerHost, original.IPv4Subnet, original.DNS, original.AllowedIPs, original.Keepalive, 1280, original.ListenPort, original.Enabled); err == nil {
+	if _, err := svc.UpdateTunnelSettings(original.ID, app.TunnelSettingsUpdate{Name: original.Name, ServerHost: original.ServerHost, Subnet: original.IPv4Subnet, DNS: original.DNS, AllowedIPs: original.AllowedIPs, Keepalive: original.Keepalive, MTU: 1280, Port: original.ListenPort, Enabled: original.Enabled}); err == nil {
 		t.Fatal("expected apply error")
 	}
 	state, err = svc.State()
@@ -428,7 +428,7 @@ func TestTunnelSettingsChangeMarksClientConfigStaleUntilDownloaded(t *testing.T)
 	if client.ConfigRevision != tunnel.ConfigRevision {
 		t.Fatalf("client revision = %d, tunnel revision = %d", client.ConfigRevision, tunnel.ConfigRevision)
 	}
-	if _, err := svc.UpdateTunnelSettings(tunnel.ID, tunnel.Name, tunnel.ServerHost, tunnel.IPv4Subnet, tunnel.DNS, tunnel.AllowedIPs, tunnel.Keepalive, 1280, tunnel.ListenPort, tunnel.Enabled); err != nil {
+	if _, err := svc.UpdateTunnelSettings(tunnel.ID, app.TunnelSettingsUpdate{Name: tunnel.Name, ServerHost: tunnel.ServerHost, Subnet: tunnel.IPv4Subnet, DNS: tunnel.DNS, AllowedIPs: tunnel.AllowedIPs, Keepalive: tunnel.Keepalive, MTU: 1280, Port: tunnel.ListenPort, Enabled: tunnel.Enabled}); err != nil {
 		t.Fatal(err)
 	}
 	state, err = svc.State()
@@ -581,7 +581,7 @@ func TestTunnelServerHostOverrideRendersClientEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	tunnel := state.Tunnels[0]
-	if _, err := svc.UpdateTunnelSettings(tunnel.ID, tunnel.Name, "edge.example.com", tunnel.IPv4Subnet, tunnel.DNS, tunnel.AllowedIPs, tunnel.Keepalive, tunnel.MTU, tunnel.ListenPort, tunnel.Enabled); err != nil {
+	if _, err := svc.UpdateTunnelSettings(tunnel.ID, app.TunnelSettingsUpdate{Name: tunnel.Name, ServerHost: "edge.example.com", Subnet: tunnel.IPv4Subnet, DNS: tunnel.DNS, AllowedIPs: tunnel.AllowedIPs, Keepalive: tunnel.Keepalive, MTU: tunnel.MTU, Port: tunnel.ListenPort, Enabled: tunnel.Enabled}); err != nil {
 		t.Fatal(err)
 	}
 	conf, _, err := svc.ClientConfigForDownload(client.ID)
@@ -610,7 +610,7 @@ func TestTunnelServerHostOverrideRejectsUnsafeValues(t *testing.T) {
 	}
 	for _, host := range badHosts {
 		t.Run(host, func(t *testing.T) {
-			if _, err := svc.UpdateTunnelSettings(tunnel.ID, tunnel.Name, host, tunnel.IPv4Subnet, tunnel.DNS, tunnel.AllowedIPs, tunnel.Keepalive, tunnel.MTU, tunnel.ListenPort, tunnel.Enabled); err == nil {
+			if _, err := svc.UpdateTunnelSettings(tunnel.ID, app.TunnelSettingsUpdate{Name: tunnel.Name, ServerHost: host, Subnet: tunnel.IPv4Subnet, DNS: tunnel.DNS, AllowedIPs: tunnel.AllowedIPs, Keepalive: tunnel.Keepalive, MTU: tunnel.MTU, Port: tunnel.ListenPort, Enabled: tunnel.Enabled}); err == nil {
 				t.Fatal("expected validation error")
 			}
 		})
@@ -629,7 +629,7 @@ func TestServerHostEnvChangeDoesNotMarkOverriddenTunnelStale(t *testing.T) {
 		t.Fatal(err)
 	}
 	tunnel := state.Tunnels[0]
-	if _, err := svc.UpdateTunnelSettings(tunnel.ID, tunnel.Name, "edge.example.com", tunnel.IPv4Subnet, tunnel.DNS, tunnel.AllowedIPs, tunnel.Keepalive, tunnel.MTU, tunnel.ListenPort, tunnel.Enabled); err != nil {
+	if _, err := svc.UpdateTunnelSettings(tunnel.ID, app.TunnelSettingsUpdate{Name: tunnel.Name, ServerHost: "edge.example.com", Subnet: tunnel.IPv4Subnet, DNS: tunnel.DNS, AllowedIPs: tunnel.AllowedIPs, Keepalive: tunnel.Keepalive, MTU: tunnel.MTU, Port: tunnel.ListenPort, Enabled: tunnel.Enabled}); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := svc.ClientConfigForDownload(client.ID); err != nil {

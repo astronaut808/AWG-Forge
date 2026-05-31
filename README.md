@@ -135,7 +135,7 @@ curl -4 https://ifconfig.co
 make ci
 ```
 
-`make ci` использует Deno только для lint статического `app.js`. Runtime и Docker image не требуют Deno, Node или npm.
+`make ci` использует Deno только для lint статических JavaScript-файлов. Runtime и Docker image не требуют Deno, Node или npm.
 
 Локальный запуск без применения runtime-туннелей:
 

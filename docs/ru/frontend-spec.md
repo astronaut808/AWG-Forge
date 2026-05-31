@@ -17,8 +17,16 @@ awg-forge UI — статическое HTML/CSS/JavaScript admin-приложе
 
 - `internal/server/static/index.html`: app shell;
 - `internal/server/static/app.css`: styling;
-- `internal/server/static/app.js`: UI state, modals, API calls;
+- `internal/server/static/html.js`: безопасный рендер динамических HTML-фрагментов;
+- `internal/server/static/app.js`: dashboard state, profile rendering и API glue;
+- `internal/server/static/forms.js`: формы туннелей и клиентов;
+- `internal/server/static/maintenance.js`: views Maintenance Center;
+- `internal/server/static/maintenance-actions.js`: операции Maintenance Center;
+- `internal/server/static/ui.js`: общие dialogs и UI helpers;
+- `internal/server/static/boot.js`: финальная инициализация в браузере;
 - `internal/server/server.go`: static serving and JSON API.
+
+Динамические HTML-фрагменты проходят через небольшой sanitizer в `html.js` перед добавлением в DOM. Явное экранирование значений при сборке HTML остается обязательным.
 
 Client config download идет через protected response:
 

@@ -16,10 +16,16 @@ awg-forge UI is a static HTML/CSS/JavaScript admin app backed by the Go JSON API
 
 - `internal/server/static/index.html`: app shell.
 - `internal/server/static/app.css`: product styling.
-- `internal/server/static/app.js`: UI state, modals, API calls.
+- `internal/server/static/html.js`: safe rendering of dynamic HTML fragments.
+- `internal/server/static/app.js`: dashboard state, profile rendering, API glue.
+- `internal/server/static/forms.js`: tunnel and client forms.
+- `internal/server/static/maintenance.js`: Maintenance Center views.
+- `internal/server/static/maintenance-actions.js`: Maintenance Center operations.
+- `internal/server/static/ui.js`: shared dialogs and UI helpers.
+- `internal/server/static/boot.js`: final browser initialization.
 - `internal/server/server.go`: static file serving plus JSON API.
 
-The static UI talks to endpoints under `/api/*`. Client config download remains a protected file response at `/clients/config/<id>` and is the supported import path.
+The static UI talks to endpoints under `/api/*`. Dynamic fragments pass through the small sanitizer in `html.js` before entering the DOM; explicit escaping at composition sites remains required. Client config download remains a protected file response at `/clients/config/<id>` and is the supported import path.
 
 ## Information Architecture
 

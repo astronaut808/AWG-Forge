@@ -60,11 +60,19 @@ Frontend files:
 
 - `internal/server/static/index.html`;
 - `internal/server/static/app.css`;
-- `internal/server/static/app.js`.
+- `internal/server/static/html.js`;
+- `internal/server/static/app.js`;
+- `internal/server/static/forms.js`;
+- `internal/server/static/maintenance.js`;
+- `internal/server/static/maintenance-actions.js`;
+- `internal/server/static/ui.js`;
+- `internal/server/static/boot.js`.
 
 The frontend remains static HTML/CSS/JavaScript with no Node, npm, React, Vue, or build pipeline.
 
-Deno is used only as a dev/CI tool for linting `internal/server/static/app.js`. The runtime and Docker image do not require Deno.
+`html.js` provides the small safe-fragment renderer used before dynamic HTML enters the DOM. Dashboard state and API calls remain in `app.js`; forms, maintenance views, maintenance actions, common UI helpers, and final bootstrapping are split into focused classic scripts loaded in order by `index.html`.
+
+Deno is used only as a dev/CI tool for linting the static JavaScript files. The runtime and Docker image do not require Deno.
 
 ## Backend
 
