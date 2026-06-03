@@ -3,6 +3,7 @@ package storage
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,6 +26,22 @@ func (s Store) TunnelDir(tunnel string) string {
 }
 func (s Store) ClientsDir(tunnel string) string {
 	return filepath.Join(s.TunnelDir(tunnel), "clients")
+}
+
+func (s Store) safeTunnelDir(tunnel string) (string, error) {
+	tunnel, err := safePathComponent("tunnel", tunnel)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(s.dir, "tunnels", tunnel), nil
+}
+
+func (s Store) safeClientsDir(tunnel string) (string, error) {
+	dir, err := s.safeTunnelDir(tunnel)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "clients"), nil
 }
 
 func (s Store) Load() (config.State, error) {
@@ -94,21 +111,33 @@ func sanitizeBackupReason(reason string) string {
 }
 
 func (s Store) WriteRenderedTunnel(tunnel config.Tunnel, serverConf string, clients map[string]string) error {
-	if err := os.MkdirAll(s.ClientsDir(tunnel.InterfaceName), 0700); err != nil {
+	tunnelDir, err := s.safeTunnelDir(tunnel.InterfaceName)
+	if err != nil {
+		return err
+	}
+	clientsDir, err := s.safeClientsDir(tunnel.InterfaceName)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(clientsDir, 0700); err != nil {
 		return err
 	}
 	if err := os.Chmod(s.dir, 0700); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(s.TunnelDir(tunnel.InterfaceName), "server.conf"), []byte(serverConf), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(tunnelDir, "server.conf"), []byte(serverConf), 0600); err != nil {
 		return err
 	}
 	for id, conf := range clients {
-		if err := os.WriteFile(filepath.Join(s.ClientsDir(tunnel.InterfaceName), id+".conf"), []byte(conf), 0600); err != nil {
+		id, err := safePathComponent("client", id)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(clientsDir, id+".conf"), []byte(conf), 0600); err != nil {
 			return err
 		}
 	}
-	entries, err := os.ReadDir(s.ClientsDir(tunnel.InterfaceName))
+	entries, err := os.ReadDir(clientsDir)
 	if err != nil {
 		return err
 	}
@@ -119,7 +148,10 @@ func (s Store) WriteRenderedTunnel(tunnel config.Tunnel, serverConf string, clie
 		}
 		id := name[:len(name)-len(".conf")]
 		if _, ok := clients[id]; !ok {
-			if err := os.Remove(filepath.Join(s.ClientsDir(tunnel.InterfaceName), name)); err != nil {
+			if _, err := safePathComponent("client", id); err != nil {
+				return err
+			}
+			if err := os.Remove(filepath.Join(clientsDir, name)); err != nil {
 				return err
 			}
 		}
@@ -131,9 +163,32 @@ func (s Store) DeleteRenderedTunnel(interfaceName string) error {
 	if interfaceName == "" {
 		return nil
 	}
-	err := os.RemoveAll(s.TunnelDir(interfaceName))
+	tunnelDir, err := s.safeTunnelDir(interfaceName)
+	if err != nil {
+		return err
+	}
+	err = os.RemoveAll(tunnelDir)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	return err
+}
+
+func safePathComponent(label, value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", fmt.Errorf("%s path component is empty", label)
+	}
+	if value == "." || strings.Contains(value, "..") || strings.ContainsAny(value, `/\`+"\x00") {
+		return "", fmt.Errorf("invalid %s path component", label)
+	}
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '.', r == '_', r == '-':
+		default:
+			return "", fmt.Errorf("invalid %s path component", label)
+		}
+	}
+	return value, nil
 }

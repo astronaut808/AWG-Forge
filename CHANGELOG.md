@@ -12,6 +12,7 @@
 
 - Added a small defense-in-depth HTML sanitizer for dynamic Web UI fragments while keeping explicit value escaping at composition sites.
 - Made attribute escaping explicit for dynamic HTML attributes.
+- Hardened rendered config storage paths by validating tunnel and client path components before filesystem writes or tunnel directory removal.
 
 ## v0.8.0 - 2026-05-24
 

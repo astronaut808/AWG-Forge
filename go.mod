@@ -1,6 +1,6 @@
 module github.com/astronaut808/awg-forge
 
-go 1.26.3
+go 1.26.4
 
 require golang.org/x/crypto v0.52.0
 

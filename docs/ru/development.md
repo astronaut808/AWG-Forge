@@ -2,7 +2,7 @@
 
 ## Требования
 
-- Go `1.26.3`;
+- Go `1.26.4`;
 - Deno `2.x` для lint статического Web UI;
 - `golangci-lint` `2.x` для Go linting;
 - Docker для проверки image/runtime сценариев.
