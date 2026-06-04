@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.8.1 - 2026-06-01
+
+### Changed
+
+- Split the Go application service into focused tunnel, client, runtime, initialization, backup crypto, and restore modules without changing CLI or API behavior.
+- Split the static Web UI into focused dashboard, forms, Maintenance Center, shared UI helper, safe HTML renderer, and bootstrap scripts without adding a frontend build pipeline or runtime dependency.
+- Removed unreachable legacy Maintenance UI code and updated English and Russian development documentation for the modular static frontend.
+
+### Security
+
+- Added a small defense-in-depth HTML sanitizer for dynamic Web UI fragments while keeping explicit value escaping at composition sites.
+- Made attribute escaping explicit for dynamic HTML attributes.
+- Hardened rendered config storage paths by validating tunnel and client path components before filesystem writes or tunnel directory removal.
+
 ## v0.8.0 - 2026-05-24
 
 ### Added

@@ -2,19 +2,12 @@ package server
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
 	"embed"
-	"encoding/base64"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -23,7 +16,6 @@ import (
 	"github.com/astronaut808/awg-forge/internal/backup"
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/doctor"
-	"github.com/astronaut808/awg-forge/internal/firewall"
 	"github.com/astronaut808/awg-forge/internal/support"
 	"github.com/astronaut808/awg-forge/internal/updates"
 )
@@ -40,7 +32,6 @@ type web struct {
 	mu       sync.Mutex
 }
 
-const sessionTTL = 30 * time.Minute
 const idempotencyTTL = 10 * time.Minute
 const maxJSONBodyBytes = 1 << 20
 
@@ -350,7 +341,17 @@ func (w *web) updateTunnelSettingsAPI(rw http.ResponseWriter, r *http.Request, i
 		if err := readJSON(rw, r, &req); err != nil {
 			return http.StatusBadRequest, errorPayload("invalid json")
 		}
-		tunnel, err := w.service.UpdateTunnelSettings(id, req.Name, req.ServerHost, req.Subnet, req.DNS, req.AllowedIPs, req.Keepalive, req.MTU, req.Port, req.Enabled)
+		tunnel, err := w.service.UpdateTunnelSettings(id, app.TunnelSettingsUpdate{
+			Name:       req.Name,
+			ServerHost: req.ServerHost,
+			Subnet:     req.Subnet,
+			DNS:        req.DNS,
+			AllowedIPs: req.AllowedIPs,
+			Keepalive:  req.Keepalive,
+			MTU:        req.MTU,
+			Port:       req.Port,
+			Enabled:    req.Enabled,
+		})
 		if err != nil {
 			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
 		}
@@ -567,436 +568,4 @@ func (w *web) publicState(state config.State) map[string]any {
 		},
 		"tunnels": tunnels,
 	}
-}
-
-func profileMeta(id, tab, label string, available bool) map[string]any {
-	name, port, subnet := app.SuggestedTunnelSpec(id)
-	return map[string]any{
-		"id":               id,
-		"tab":              tab,
-		"label":            label,
-		"available":        available,
-		"suggested_name":   name,
-		"suggested_port":   port,
-		"suggested_subnet": subnet,
-	}
-}
-
-func publicTunnel(tunnel config.Tunnel, status app.TunnelStatus) map[string]any {
-	return publicTunnelWithFirewall(tunnel, status, firewallSummary{})
-}
-
-func publicTunnelWithFirewall(tunnel config.Tunnel, status app.TunnelStatus, fw firewallSummary) map[string]any {
-	return map[string]any{
-		"id":          tunnel.ID,
-		"name":        tunnel.Name,
-		"interface":   tunnel.InterfaceName,
-		"enabled":     tunnel.Enabled,
-		"listen_port": tunnel.ListenPort,
-		"server_host": tunnel.ServerHost,
-		"address":     tunnel.ServerAddress,
-		"subnet":      tunnel.IPv4Subnet,
-		"dns":         tunnel.DNS,
-		"allowed_ips": tunnel.AllowedIPs,
-		"keepalive":   tunnel.Keepalive,
-		"mtu":         tunnel.MTU,
-		"profile":     tunnel.ProtocolProfileID,
-		"revision":    tunnel.ConfigRevision,
-		"params":      orderedParams(tunnel.ProtocolProfileID, tunnel.ProtocolParams),
-		"clients":     publicClients(tunnel),
-		"status": map[string]any{
-			"up":            status.Up,
-			"apply_enabled": status.ApplyEnabled,
-			"last_render":   status.LastRenderAt,
-			"last_apply":    status.LastApplyAt,
-			"last_error":    status.LastError,
-			"firewall":      fw,
-			"stale_clients": staleClientCount(tunnel),
-		},
-	}
-}
-
-type firewallSummary struct {
-	Level   string `json:"level"`
-	Label   string `json:"label"`
-	Message string `json:"message,omitempty"`
-}
-
-func firewallSummaryForTunnel(tunnel config.Tunnel, report firewall.Report, err error) firewallSummary {
-	if err != nil {
-		return firewallSummary{Level: "warn", Label: "firewall unknown", Message: err.Error()}
-	}
-	if !report.ApplyEnabled {
-		return firewallSummary{Level: "neutral", Label: "firewall manual", Message: "APPLY_CONFIG=false"}
-	}
-	if !tunnel.Enabled {
-		return firewallSummary{Level: "neutral", Label: "firewall disabled"}
-	}
-
-	var matched, missing, duplicate, failed int
-	for _, item := range report.Results {
-		if item.Tunnel != tunnel.Name {
-			continue
-		}
-		matched++
-		switch item.Status {
-		case "missing":
-			missing++
-		case "duplicate":
-			duplicate++
-		case "error":
-			failed++
-		}
-	}
-
-	switch {
-	case failed > 0:
-		return firewallSummary{Level: "bad", Label: "firewall error", Message: "managed firewall rules could not be checked"}
-	case missing > 0:
-		return firewallSummary{Level: "bad", Label: "firewall repair", Message: "managed firewall rules are missing"}
-	case duplicate > 0:
-		return firewallSummary{Level: "warn", Label: "firewall duplicates", Message: "managed firewall rules have duplicates"}
-	case matched == 0:
-		return firewallSummary{Level: "warn", Label: "firewall unknown", Message: "no managed firewall checks found"}
-	default:
-		return firewallSummary{Level: "ok", Label: "firewall ok"}
-	}
-}
-
-func staleClientCount(tunnel config.Tunnel) int {
-	if tunnel.ConfigRevision <= 0 {
-		return 0
-	}
-	count := 0
-	for _, client := range tunnel.Clients {
-		if client.ConfigRevision < tunnel.ConfigRevision {
-			count++
-		}
-	}
-	return count
-}
-
-func publicClients(tunnel config.Tunnel) []map[string]any {
-	out := make([]map[string]any, 0, len(tunnel.Clients))
-	for _, client := range tunnel.Clients {
-		out = append(out, publicClientForTunnel(tunnel, client))
-	}
-	return out
-}
-
-func publicClient(client config.Client) map[string]any {
-	return publicClientForTunnel(config.Tunnel{}, client)
-}
-
-func publicClientForTunnel(tunnel config.Tunnel, client config.Client) map[string]any {
-	return map[string]any{
-		"id":               client.ID,
-		"tunnel_id":        client.TunnelID,
-		"name":             client.Name,
-		"notes":            client.Notes,
-		"enabled":          client.Enabled,
-		"address":          client.IPv4Address,
-		"revision":         client.ConfigRevision,
-		"needs_new_config": tunnel.ConfigRevision > 0 && client.ConfigRevision < tunnel.ConfigRevision,
-		"created_at":       client.CreatedAt,
-		"updated_at":       client.UpdatedAt,
-	}
-}
-
-func mutationErrorStatus(err error, fallback int) int {
-	var applyErr *app.ApplyError
-	if errors.As(err, &applyErr) {
-		return http.StatusInternalServerError
-	}
-	return fallback
-}
-
-func orderedParams(profileID string, params config.ProtocolParams) []map[string]string {
-	keys := protocolParamKeys(profileID)
-	out := make([]map[string]string, 0, len(keys))
-	for _, key := range keys {
-		out = append(out, map[string]string{"key": key, "value": params[key]})
-	}
-	return out
-}
-
-func protocolParamKeys(profileID string) []string {
-	keys := []string{"Jc", "Jmin", "Jmax", "S1", "S2", "H1", "H2", "H3", "H4"}
-	switch profileID {
-	case "awg_1_5":
-		keys = append(keys, "I1", "I2", "I3", "I4", "I5")
-	case "awg_2_0":
-		keys = append(keys, "S3", "S4", "I1", "I2", "I3", "I4", "I5")
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-func (w *web) requireAuth(next http.HandlerFunc) http.HandlerFunc {
-	return func(rw http.ResponseWriter, r *http.Request) {
-		if w.cfg.Password == "" || w.hasSession(r) {
-			next(rw, r)
-			return
-		}
-		writeError(rw, http.StatusUnauthorized, "unauthorized")
-	}
-}
-
-func (w *web) security(next http.HandlerFunc) http.HandlerFunc {
-	return func(rw http.ResponseWriter, r *http.Request) {
-		w.setSecurityHeaders(rw)
-		next(rw, r)
-	}
-}
-
-func (w *web) securityHandler(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
-		w.setSecurityHeaders(rw)
-		next.ServeHTTP(rw, r)
-	})
-}
-
-func (w *web) setSecurityHeaders(rw http.ResponseWriter) {
-	h := rw.Header()
-	h.Set("X-Content-Type-Options", "nosniff")
-	h.Set("X-Frame-Options", "DENY")
-	h.Set("Referrer-Policy", "no-referrer")
-	h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'")
-}
-
-func noStore(rw http.ResponseWriter) {
-	h := rw.Header()
-	h.Set("Cache-Control", "no-store")
-	h.Set("Pragma", "no-cache")
-	h.Set("Expires", "0")
-}
-
-func (w *web) validOrigin(r *http.Request) bool {
-	if r.Method == http.MethodGet || r.Method == http.MethodHead {
-		return true
-	}
-	if origin := r.Header.Get("Origin"); origin != "" {
-		return safeRequestSource(origin, r.Host)
-	}
-	if ref := r.Header.Get("Referer"); ref != "" {
-		return safeRequestSource(ref, r.Host)
-	}
-	return requestHostIsLoopback(r.Host)
-}
-
-func safeRequestSource(raw, requestHost string) bool {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return false
-	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return false
-	}
-	if u.Host == "" {
-		return false
-	}
-	return sameRequestHost(u.Host, requestHost)
-}
-
-func sameRequestHost(a, b string) bool {
-	if a == b {
-		return true
-	}
-	ah, ap := splitHostPort(a)
-	bh, bp := splitHostPort(b)
-	return ap == bp && isLoopbackHost(ah) && isLoopbackHost(bh)
-}
-
-func requestHostIsLoopback(hostport string) bool {
-	host, _ := splitHostPort(hostport)
-	return isLoopbackHost(host)
-}
-
-func splitHostPort(hostport string) (string, string) {
-	host, port, err := net.SplitHostPort(hostport)
-	if err == nil {
-		return strings.Trim(host, "[]"), port
-	}
-	return strings.Trim(hostport, "[]"), ""
-}
-
-func isLoopbackHost(host string) bool {
-	host = strings.Trim(strings.ToLower(host), ".")
-	if host == "localhost" {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
-}
-
-func (w *web) allowLogin(ip string) bool {
-	now := time.Now()
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	var recent []time.Time
-	for _, t := range w.limits[ip] {
-		if now.Sub(t) < time.Minute {
-			recent = append(recent, t)
-		}
-	}
-	if len(recent) >= 5 {
-		w.limits[ip] = recent
-		return false
-	}
-	w.limits[ip] = append(recent, now)
-	return true
-}
-
-func (w *web) setSession(rw http.ResponseWriter, r *http.Request) {
-	exp := time.Now().Add(sessionTTL).Unix()
-	payload := fmt.Sprintf("%d", exp)
-	sig := w.sign(payload)
-	http.SetCookie(rw, sessionCookie(r, payload+"."+sig, 0))
-}
-
-func sessionCookie(r *http.Request, value string, maxAge int) *http.Cookie {
-	return &http.Cookie{
-		Name:     "awg_forge_session",
-		Value:    value,
-		Path:     "/",
-		MaxAge:   maxAge,
-		HttpOnly: true,
-		Secure:   sessionCookieSecure(r),
-		SameSite: http.SameSiteStrictMode,
-	}
-}
-
-func sessionCookieSecure(r *http.Request) bool {
-	if r == nil {
-		return true
-	}
-	return !requestHostIsLoopback(r.Host)
-}
-
-func (w *web) hasSession(r *http.Request) bool {
-	c, err := r.Cookie("awg_forge_session")
-	if err != nil {
-		return false
-	}
-	parts := strings.Split(c.Value, ".")
-	if len(parts) != 2 || !subtleCompare(w.sign(parts[0]), parts[1]) {
-		return false
-	}
-	var exp int64
-	if _, err := fmt.Sscanf(parts[0], "%d", &exp); err != nil {
-		return false
-	}
-	return time.Now().Unix() < exp
-}
-
-func (w *web) sign(payload string) string {
-	mac := hmac.New(sha256.New, w.sessions)
-	_, _ = mac.Write([]byte(payload))
-	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-}
-
-func subtleCompare(a, b string) bool {
-	return hmac.Equal([]byte(a), []byte(b))
-}
-
-func readJSON(rw http.ResponseWriter, r *http.Request, dst any) error {
-	defer func() { _ = r.Body.Close() }()
-	r.Body = http.MaxBytesReader(rw, r.Body, maxJSONBodyBytes)
-	return json.NewDecoder(r.Body).Decode(dst)
-}
-
-func (w *web) withIdempotency(rw http.ResponseWriter, r *http.Request, action string, fn func() (int, any)) {
-	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
-	if key == "" {
-		status, payload := fn()
-		writeJSON(rw, status, payload)
-		return
-	}
-	cacheKey := action + ":" + key
-	entry, owner := w.idempotencyEntry(cacheKey)
-	if !owner {
-		<-entry.ready
-		writeCachedJSON(rw, entry.status, entry.body)
-		return
-	}
-	status, payload := fn()
-	body, err := json.Marshal(payload)
-	if err != nil {
-		status = http.StatusInternalServerError
-		body, _ = json.Marshal(errorPayload("failed to encode response"))
-	}
-	w.finishIdempotency(cacheKey, status, body)
-	writeCachedJSON(rw, status, body)
-}
-
-func (w *web) idempotencyEntry(key string) (*idempotencyEntry, bool) {
-	now := time.Now()
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	for k, entry := range w.idem {
-		if now.Sub(entry.createdAt) > idempotencyTTL {
-			delete(w.idem, k)
-		}
-	}
-	if entry, ok := w.idem[key]; ok {
-		return entry, false
-	}
-	entry := &idempotencyEntry{createdAt: now, ready: make(chan struct{})}
-	w.idem[key] = entry
-	return entry, true
-}
-
-func (w *web) finishIdempotency(key string, status int, body []byte) {
-	w.mu.Lock()
-	entry := w.idem[key]
-	entry.status = status
-	entry.body = body
-	close(entry.ready)
-	w.mu.Unlock()
-}
-
-func writeJSON(rw http.ResponseWriter, status int, payload any) {
-	rw.Header().Set("Content-Type", "application/json")
-	rw.WriteHeader(status)
-	_ = json.NewEncoder(rw).Encode(payload)
-}
-
-func writeCachedJSON(rw http.ResponseWriter, status int, body []byte) {
-	rw.Header().Set("Content-Type", "application/json")
-	rw.WriteHeader(status)
-	_, _ = rw.Write(body)
-	_, _ = rw.Write([]byte("\n"))
-}
-
-func writeError(rw http.ResponseWriter, status int, message string) {
-	writeJSON(rw, status, errorPayload(message))
-}
-
-func errorPayload(message string) map[string]any {
-	return map[string]any{"error": message}
-}
-
-func configFilename(client config.Client) string {
-	var b strings.Builder
-	lastDash := false
-	for _, r := range client.Name {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-			b.WriteRune(r)
-			lastDash = false
-		case r == '.', r == '_':
-			b.WriteRune(r)
-			lastDash = false
-		case r == ' ', r == '-':
-			if !lastDash {
-				b.WriteByte('-')
-				lastDash = true
-			}
-		}
-	}
-	name := strings.Trim(b.String(), ".-_")
-	if name == "" {
-		return client.ID
-	}
-	return name
 }

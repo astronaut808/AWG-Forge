@@ -1,6 +1,6 @@
 {
   "lint": {
-    "include": ["internal/server/static/app.js"],
+    "include": ["internal/server/static/*.js"],
     "rules": {
       "exclude": ["no-window", "no-window-prefix"]
     }

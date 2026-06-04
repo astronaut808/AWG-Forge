@@ -4,11 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -17,12 +13,9 @@ import (
 	"io/fs"
 	"net"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 	"time"
-
-	"golang.org/x/crypto/argon2"
 
 	"github.com/astronaut808/awg-forge/internal/app"
 	"github.com/astronaut808/awg-forge/internal/buildinfo"
@@ -49,24 +42,6 @@ type Archive struct {
 
 type Options struct {
 	Now time.Time
-}
-
-type encryptedArchive struct {
-	Format     string    `json:"format"`
-	Cipher     string    `json:"cipher"`
-	KDF        kdfParams `json:"kdf"`
-	Salt       string    `json:"salt"`
-	Nonce      string    `json:"nonce"`
-	Ciphertext string    `json:"ciphertext"`
-	CreatedAt  string    `json:"created_at"`
-}
-
-type kdfParams struct {
-	Name      string `json:"name"`
-	Time      uint32 `json:"time"`
-	MemoryKiB uint32 `json:"memory_kib"`
-	Threads   uint8  `json:"threads"`
-	KeySize   uint32 `json:"key_size"`
 }
 
 type Metadata struct {
@@ -258,97 +233,6 @@ func addBytes(zw *zip.Writer, name string, b []byte) error {
 	}
 	_, err = w.Write(b)
 	return err
-}
-
-func encrypt(plain []byte, password string, now time.Time) ([]byte, error) {
-	salt, err := randomBytes(16)
-	if err != nil {
-		return nil, err
-	}
-	nonce, err := randomBytes(12)
-	if err != nil {
-		return nil, err
-	}
-	aead, err := newAEAD(password, salt)
-	if err != nil {
-		return nil, err
-	}
-	env := encryptedArchive{
-		Format: formatVersion,
-		Cipher: cipherName,
-		KDF: kdfParams{
-			Name:      kdfName,
-			Time:      kdfTime,
-			MemoryKiB: kdfMemoryKiB,
-			Threads:   kdfThreads,
-			KeySize:   keySize,
-		},
-		Salt:       base64.StdEncoding.EncodeToString(salt),
-		Nonce:      base64.StdEncoding.EncodeToString(nonce),
-		Ciphertext: base64.StdEncoding.EncodeToString(aead.Seal(nil, nonce, plain, []byte(formatVersion))),
-		CreatedAt:  now.Format(time.RFC3339),
-	}
-	return json.MarshalIndent(env, "", "  ")
-}
-
-func decrypt(data []byte, password string) ([]byte, error) {
-	var env encryptedArchive
-	if err := json.Unmarshal(data, &env); err != nil {
-		return nil, err
-	}
-	if env.Format != formatVersion {
-		return nil, fmt.Errorf("unsupported backup format %q", env.Format)
-	}
-	if env.Cipher != cipherName {
-		return nil, fmt.Errorf("unsupported backup cipher %q", env.Cipher)
-	}
-	if env.KDF.Name != kdfName || env.KDF.KeySize != keySize ||
-		env.KDF.Time != kdfTime || env.KDF.MemoryKiB != kdfMemoryKiB || env.KDF.Threads != kdfThreads {
-		return nil, errors.New("unsupported backup kdf")
-	}
-	salt, err := base64.StdEncoding.DecodeString(env.Salt)
-	if err != nil {
-		return nil, err
-	}
-	nonce, err := base64.StdEncoding.DecodeString(env.Nonce)
-	if err != nil {
-		return nil, err
-	}
-	ciphertext, err := base64.StdEncoding.DecodeString(env.Ciphertext)
-	if err != nil {
-		return nil, err
-	}
-	key := argon2.IDKey([]byte(password), salt, env.KDF.Time, env.KDF.MemoryKiB, env.KDF.Threads, env.KDF.KeySize)
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	plain, err := aead.Open(nil, nonce, ciphertext, []byte(formatVersion))
-	if err != nil {
-		return nil, errors.New("backup decrypt failed: wrong password or corrupted archive")
-	}
-	return plain, nil
-}
-
-func newAEAD(password string, salt []byte) (cipher.AEAD, error) {
-	key := argon2.IDKey([]byte(password), salt, kdfTime, kdfMemoryKiB, kdfThreads, keySize)
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	return cipher.NewGCM(block)
-}
-
-func randomBytes(n int) ([]byte, error) {
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		return nil, err
-	}
-	return b, nil
 }
 
 type restoreFile struct {
@@ -612,155 +496,6 @@ func verifyChecksums(files []restoreFile, metas []FileMeta) error {
 		sum := sha256.Sum256(b)
 		if hex.EncodeToString(sum[:]) != meta.SHA256 {
 			return fmt.Errorf("backup file %s checksum mismatch", path)
-		}
-	}
-	return nil
-}
-
-func cleanArchivePath(archivePath string) (string, error) {
-	archivePath = strings.ReplaceAll(strings.TrimSpace(archivePath), "\\", "/")
-	if archivePath == "" || strings.HasPrefix(archivePath, "/") || strings.Contains(archivePath, "\x00") {
-		return "", errors.New("invalid archive path")
-	}
-	for _, part := range strings.Split(archivePath, "/") {
-		if part == ".." {
-			return "", errors.New("invalid archive path")
-		}
-	}
-	clean := path.Clean(archivePath)
-	if clean == "." || strings.HasPrefix(clean, "../") || clean == ".." {
-		return "", errors.New("invalid archive path")
-	}
-	return clean, nil
-}
-
-func safeRestorePath(root, archivePath string) (string, error) {
-	clean, err := cleanArchivePath(archivePath)
-	if err != nil {
-		return "", err
-	}
-	dst := filepath.Join(root, filepath.FromSlash(clean))
-	rel, err := filepath.Rel(root, dst)
-	if err != nil {
-		return "", err
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		return "", errors.New("invalid archive path")
-	}
-	return dst, nil
-}
-
-func preRestoreBackupFile(ctx context.Context, cfg config.Config, password string) (restoreFile, bool, error) {
-	if _, err := os.Stat(filepath.Join(cfg.ConfigDir, "state.json")); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return restoreFile{}, false, nil
-		}
-		return restoreFile{}, false, err
-	}
-	service := app.New(cfg)
-	archive, err := Create(ctx, cfg, service, password, Options{})
-	if err != nil {
-		return restoreFile{}, false, err
-	}
-	path := "backups/pre-restore-" + time.Now().UTC().Format("20060102-150405") + ".afbackup"
-	return restoreFile{Path: path, Data: archive.Data}, true, nil
-}
-
-func restoreFiles(root string, files []restoreFile) error {
-	if err := os.MkdirAll(root, 0700); err != nil {
-		return err
-	}
-	if err := os.Chmod(root, 0700); err != nil {
-		return err
-	}
-
-	suffix := time.Now().UTC().Format("20060102-150405")
-	tmp := filepath.Join(root, ".restore-tmp-"+suffix)
-	old := filepath.Join(root, ".restore-old-"+suffix)
-	if err := os.RemoveAll(tmp); err != nil {
-		return err
-	}
-	if err := os.RemoveAll(old); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(tmp, 0700); err != nil {
-		return err
-	}
-	for _, file := range files {
-		dst, err := safeRestorePath(tmp, file.Path)
-		if err != nil {
-			return err
-		}
-		if err := os.MkdirAll(filepath.Dir(dst), 0700); err != nil {
-			return err
-		}
-		if err := os.WriteFile(dst, file.Data, 0600); err != nil {
-			return err
-		}
-	}
-	if err := os.Chmod(tmp, 0700); err != nil {
-		return err
-	}
-
-	if err := os.MkdirAll(old, 0700); err != nil {
-		return err
-	}
-	if err := moveRootEntries(root, old, filepath.Base(tmp), filepath.Base(old)); err != nil {
-		return err
-	}
-	if err := moveRootEntries(tmp, root); err != nil {
-		if cleanupErr := removeRootEntries(root, filepath.Base(tmp), filepath.Base(old)); cleanupErr != nil {
-			return errors.Join(err, fmt.Errorf("rollback cleanup failed: %w", cleanupErr))
-		}
-		if rollbackErr := moveRootEntries(old, root); rollbackErr != nil {
-			return errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
-		}
-		return err
-	}
-	if err := os.RemoveAll(tmp); err != nil {
-		return err
-	}
-	_ = os.RemoveAll(old)
-	return nil
-}
-
-func removeRootEntries(root string, skipNames ...string) error {
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return err
-	}
-	skip := map[string]bool{}
-	for _, name := range skipNames {
-		skip[name] = true
-	}
-	for _, entry := range entries {
-		name := entry.Name()
-		if skip[name] {
-			continue
-		}
-		if err := os.RemoveAll(filepath.Join(root, name)); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func moveRootEntries(src, dst string, skipNames ...string) error {
-	entries, err := os.ReadDir(src)
-	if err != nil {
-		return err
-	}
-	skip := map[string]bool{}
-	for _, name := range skipNames {
-		skip[name] = true
-	}
-	for _, entry := range entries {
-		name := entry.Name()
-		if skip[name] {
-			continue
-		}
-		if err := os.Rename(filepath.Join(src, name), filepath.Join(dst, name)); err != nil {
-			return err
 		}
 	}
 	return nil

@@ -2,7 +2,7 @@
 
 ## Требования
 
-- Go `1.26.3`;
+- Go `1.26.4`;
 - Deno `2.x` для lint статического Web UI;
 - `golangci-lint` `2.x` для Go linting;
 - Docker для проверки image/runtime сценариев.
@@ -60,11 +60,19 @@ Frontend находится в:
 
 - `internal/server/static/index.html`;
 - `internal/server/static/app.css`;
-- `internal/server/static/app.js`.
+- `internal/server/static/html.js`;
+- `internal/server/static/app.js`;
+- `internal/server/static/forms.js`;
+- `internal/server/static/maintenance.js`;
+- `internal/server/static/maintenance-actions.js`;
+- `internal/server/static/ui.js`;
+- `internal/server/static/boot.js`.
 
 Frontend остается статическим HTML/CSS/JavaScript без Node, npm, React, Vue или build pipeline.
 
-Deno используется только как dev/CI-инструмент для lint `internal/server/static/app.js`. Runtime и Docker image не требуют Deno.
+`html.js` содержит небольшой safe-fragment renderer, через который динамический HTML попадает в DOM. Dashboard state и API calls остаются в `app.js`; формы, maintenance views, maintenance actions, общие UI helpers и финальный bootstrap разделены на небольшие classic scripts, которые `index.html` загружает по порядку.
+
+Deno используется только как dev/CI-инструмент для lint статических JavaScript-файлов. Runtime и Docker image не требуют Deno.
 
 ## Backend
 
