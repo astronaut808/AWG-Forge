@@ -33,6 +33,7 @@ If the repository is already cloned, you can run the local file:
 ## What It Does
 
 - checks Linux, Docker, Docker Compose, and `/dev/net/tun`;
+- detects an existing install on repeated runs and offers reconfigure or full reinstall;
 - offers to remove old AWG-like runtime interfaces, such as `awg0`, `awg0-1`, `awg15`, or `awg20`;
 - detects the external interface with `ip route get 1.1.1.1`;
 - suggests `SERVER_HOST` from the detected source IP, while allowing a custom domain;
@@ -51,6 +52,28 @@ If `.env` already exists, the installer creates a backup:
 ```text
 .env.backup-YYYYMMDD-HHMMSS
 ```
+
+## Repeated Runs and Full Reinstall
+
+If the working directory already contains `.env`, `data/`, or `docker-compose.yml`, the installer asks what to do:
+
+```text
+1) Reconfigure existing install, keep data and backup .env
+2) Full reinstall, backup and remove old data/config first
+3) Abort
+```
+
+`Reconfigure` keeps `data/`, backs up the old `.env`, and recreates the container with the new environment.
+
+`Full reinstall` first saves the current files into a directory like:
+
+```text
+reinstall-backup-YYYYMMDD-HHMMSS/
+```
+
+It then stops the container, removes managed firewall rules, AWG runtime interfaces, `.env`, `data/`, and `docker-compose.yml`, and continues as a fresh install.
+
+Important: after a full reinstall, old client configs no longer match the server because state, keys, and tunnel parameters are recreated. Issue fresh `.conf` files to clients.
 
 ## Security
 

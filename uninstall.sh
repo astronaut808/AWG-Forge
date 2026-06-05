@@ -235,7 +235,7 @@ main() {
   local state
   state="$(state_path)"
   if [[ -f "$state" ]]; then
-    while IFS='|' read -r iface port subnet enabled; do
+    while IFS='|' read -r iface port subnet _enabled; do
       [[ -n "$iface" ]] || continue
       warn "cleaning tunnel $iface"
       cleanup_tunnel_rules "$iface" "$port" "$subnet" "$external_interface"

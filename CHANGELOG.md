@@ -9,11 +9,13 @@
 - Added a Maintenance Center `Logs` tab for viewing recent audit events from the Web UI.
 - Added redacted audit log excerpts to support bundles.
 - Added audit log environment configuration: `AUDIT_LOG_ENABLED`, `AUDIT_LOG_PATH`, `AUDIT_LOG_MAX_SIZE`, and `AUDIT_LOG_MAX_FILES`.
+- Added a full reinstall path to `install.sh` for repeated runs: existing installs can now be backed up, stopped, cleaned from runtime interfaces/firewall rules, and recreated from scratch.
 
 ### Security
 
 - Audit logging redacts secret-looking fields before writing to disk and must not store private keys, preshared keys, passwords, session secrets, full configs, import keys, or raw protocol parameter values.
 - Audit log files are created with `0600` permissions and stored under the protected config directory by default.
+- Full reinstall creates a local backup before removing `.env`, `data/`, and `docker-compose.yml`.
 
 ## v0.8.2 - 2026-06-05
 
