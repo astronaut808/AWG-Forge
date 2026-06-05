@@ -191,6 +191,30 @@ profile_label() {
   esac
 }
 
+profile_default_name() {
+  case "$1" in
+    awg_1_5) printf 'awg15' ;;
+    awg_2_0) printf 'awg20' ;;
+    *) printf 'awg0' ;;
+  esac
+}
+
+profile_default_port() {
+  case "$1" in
+    awg_1_5) printf '51825' ;;
+    awg_2_0) printf '51830' ;;
+    *) printf '51820' ;;
+  esac
+}
+
+profile_default_subnet() {
+  case "$1" in
+    awg_1_5) printf '10.15.0.0/24' ;;
+    awg_2_0) printf '10.20.0.0/24' ;;
+    *) printf '10.8.0.0/24' ;;
+  esac
+}
+
 write_compose_if_missing() {
   if [[ -f "$COMPOSE_FILE" ]]; then
     ok "$COMPOSE_FILE exists"
@@ -244,21 +268,23 @@ backup_existing_env() {
 
 write_env() {
   local server_host="$1"
-  local listen_port="$2"
-  local webui_host="$3"
-  local webui_port="$4"
-  local password="$5"
-  local session_secret="$6"
-  local external_interface="$7"
-  local ipv4_subnet="$8"
-  local dns="$9"
-  local allowed_ips="${10}"
-  local keepalive="${11}"
-  local mtu="${12}"
-  local profile="${13}"
+  local tunnel_name="$2"
+  local listen_port="$3"
+  local webui_host="$4"
+  local webui_port="$5"
+  local password="$6"
+  local session_secret="$7"
+  local external_interface="$8"
+  local ipv4_subnet="$9"
+  local dns="${10}"
+  local allowed_ips="${11}"
+  local keepalive="${12}"
+  local mtu="${13}"
+  local profile="${14}"
 
   cat >"$ENV_FILE" <<EOF
 SERVER_HOST=$server_host
+TUNNEL_NAME=$tunnel_name
 LISTEN_PORT=$listen_port
 WEBUI_HOST=$webui_host
 WEBUI_PORT=$webui_port
@@ -382,17 +408,9 @@ main() {
 
   printf '\n'
   bold "Network"
-  local server_host external_interface listen_port webui_host webui_port ipv4_subnet dns allowed_ips keepalive mtu
+  local server_host external_interface webui_host webui_port
   server_host="$(prompt "Server host or public IP" "$default_host")"
   external_interface="$(prompt "External interface" "$default_interface")"
-  listen_port="$(prompt "AmneziaWG UDP listen port" "51820")"
-  while ! validate_port "$listen_port"; do
-    warn "Port must be 1..65535"
-    listen_port="$(prompt "AmneziaWG UDP listen port" "51820")"
-  done
-  if port_in_use_udp "$listen_port"; then
-    warn "UDP port $listen_port appears to be in use"
-  fi
 
   webui_host="$(prompt "Web UI bind host" "127.0.0.1")"
   if [[ "$webui_host" == "0.0.0.0" || "$webui_host" == "::" ]]; then
@@ -409,14 +427,6 @@ main() {
   fi
 
   printf '\n'
-  bold "Tunnel defaults"
-  ipv4_subnet="$(prompt "IPv4 subnet" "10.8.0.0/24")"
-  dns="$(prompt "DNS" "1.1.1.1")"
-  allowed_ips="$(prompt "Allowed IPs" "0.0.0.0/0")"
-  keepalive="$(prompt "Persistent keepalive" "0")"
-  mtu="$(prompt "MTU, 0 means Auto" "0")"
-
-  printf '\n'
   bold "Protocol profile"
   printf '1) AmneziaWG Legacy / 1.0\n'
   printf '2) AmneziaWG 1.5\n'
@@ -427,6 +437,24 @@ main() {
     warn "Choose 1, 2, or 3"
     profile_choice="$(prompt "Choose profile" "1")"
   done
+
+  printf '\n'
+  bold "Tunnel defaults"
+  local tunnel_name listen_port ipv4_subnet dns allowed_ips keepalive mtu
+  tunnel_name="$(prompt "Tunnel name / interface" "$(profile_default_name "$profile")")"
+  listen_port="$(prompt "AmneziaWG UDP listen port" "$(profile_default_port "$profile")")"
+  while ! validate_port "$listen_port"; do
+    warn "Port must be 1..65535"
+    listen_port="$(prompt "AmneziaWG UDP listen port" "$(profile_default_port "$profile")")"
+  done
+  if port_in_use_udp "$listen_port"; then
+    warn "UDP port $listen_port appears to be in use"
+  fi
+  ipv4_subnet="$(prompt "IPv4 subnet" "$(profile_default_subnet "$profile")")"
+  dns="$(prompt "DNS" "1.1.1.1")"
+  allowed_ips="$(prompt "Allowed IPs" "0.0.0.0/0")"
+  keepalive="$(prompt "Persistent keepalive" "0")"
+  mtu="$(prompt "MTU, 0 means Auto" "0")"
 
   printf '\n'
   bold "Security"
@@ -443,7 +471,7 @@ main() {
     confirm "Continue and replace $ENV_FILE?" "n" || exit 1
   fi
   backup_existing_env
-  write_env "$server_host" "$listen_port" "$webui_host" "$webui_port" "$password" "$session_secret" "$external_interface" "$ipv4_subnet" "$dns" "$allowed_ips" "$keepalive" "$mtu" "$profile"
+  write_env "$server_host" "$tunnel_name" "$listen_port" "$webui_host" "$webui_port" "$password" "$session_secret" "$external_interface" "$ipv4_subnet" "$dns" "$allowed_ips" "$keepalive" "$mtu" "$profile"
   mkdir -p "$DATA_DIR"
   chmod 700 "$DATA_DIR" || true
   ok "created $DATA_DIR/"

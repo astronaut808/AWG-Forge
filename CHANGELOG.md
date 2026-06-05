@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.8.2 - 2026-06-05
+
+### Fixed
+
+- Suggested free tunnel names, ports, and IPv4 subnets across all profiles when creating tunnels, preventing the Web UI from proposing already-used defaults such as `awg0` or `10.8.0.0/24`.
+- Updated the quick installer to choose the protocol profile before tunnel defaults and to write `TUNNEL_NAME`, so first-tunnel defaults stay aligned with Legacy, AWG 1.5, or AWG 2.0.
+
 ## v0.8.1 - 2026-06-01
 
 ### Changed

@@ -8,16 +8,16 @@ import (
 	"github.com/astronaut808/awg-forge/internal/firewall"
 )
 
-func profileMeta(id, tab, label string, available bool) map[string]any {
-	name, port, subnet := app.SuggestedTunnelSpec(id)
+func profileMeta(id, tab, label string, available bool, state config.State) map[string]any {
+	suggestion := app.SuggestedNextTunnelSpec(id, state)
 	return map[string]any{
 		"id":               id,
 		"tab":              tab,
 		"label":            label,
 		"available":        available,
-		"suggested_name":   name,
-		"suggested_port":   port,
-		"suggested_subnet": subnet,
+		"suggested_name":   suggestion.Name,
+		"suggested_port":   suggestion.ListenPort,
+		"suggested_subnet": suggestion.IPv4Subnet,
 	}
 }
 

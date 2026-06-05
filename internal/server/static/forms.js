@@ -129,33 +129,11 @@ function openCreateTunnel(profile) {
 }
 
 function nextTunnelSuggestion(profile) {
-  const existing = (state.tunnels || []).filter((tunnel) => tunnel.profile === profile.id);
-  if (existing.length === 0) {
-    return {
-      name: profile.suggested_name,
-      port: profile.suggested_port,
-      subnet: profile.suggested_subnet,
-    };
-  }
-
-  const n = existing.length + 1;
-  const baseName = String(profile.suggested_name || "awg");
-  const subnet = nextSubnet(profile.suggested_subnet, n);
-
   return {
-    name: `${baseName}-${n}`,
-    port: Number(profile.suggested_port) + existing.length,
-    subnet,
+    name: profile.suggested_name || "awg0",
+    port: profile.suggested_port || 51820,
+    subnet: profile.suggested_subnet || "10.8.0.0/24",
   };
-}
-
-function nextSubnet(suggestedSubnet, n) {
-  const fallback = String(suggestedSubnet || "10.8.0.0/24");
-  const match = fallback.match(/^(\d+)\.(\d+)\.(\d+)\.0\/24$/);
-  if (!match) return fallback;
-
-  const thirdOctet = Math.min(254, Number(match[3]) + n - 1);
-  return `${match[1]}.${match[2]}.${thirdOctet}.0/24`;
 }
 
 function formatMTU(mtu) {

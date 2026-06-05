@@ -5,6 +5,7 @@ The main example is [.env.example](../../.env.example).
 ## Common Variables
 
 - `SERVER_HOST`: public DNS name or IP clients connect to.
+- `TUNNEL_NAME`: first tunnel name and interface, for example `awg0`, `awg15`, or `awg20`.
 - `LISTEN_PORT`: default port for the first tunnel.
 - `WEBUI_HOST`: Web UI bind address. Defaults to `127.0.0.1`.
 - `WEBUI_PORT`: Web UI port. Defaults to `51821`.
@@ -18,6 +19,16 @@ The main example is [.env.example](../../.env.example).
 - `PROTOCOL_PROFILE`: first tunnel profile. Usually `awg_legacy_1_0`.
 - `APPLY_CONFIG`: when `true`, awg-forge applies runtime tunnel changes with AmneziaWG tools.
 - `PUBLISHED_UDP_PORTS`: published Docker UDP ports/ranges, for example `51820-51840,7443`.
+
+The quick installer asks for `PROTOCOL_PROFILE` before tunnel defaults, so profile-specific defaults stay aligned:
+
+| Profile | Tunnel name | Port | Subnet |
+| --- | --- | --- | --- |
+| `awg_legacy_1_0` | `awg0` | `51820` | `10.8.0.0/24` |
+| `awg_1_5` | `awg15` | `51825` | `10.15.0.0/24` |
+| `awg_2_0` | `awg20` | `51830` | `10.20.0.0/24` |
+
+When creating more tunnels in the Web UI, awg-forge suggests free names, ports, and subnets across all profiles. Backend validation still rejects manual conflicts.
 
 ## SESSION_SECRET
 
@@ -36,7 +47,7 @@ ip route get 1.1.1.1
 Example:
 
 ```text
-1.1.1.1 via 77.110.113.1 dev ens3 src 77.110.113.185
+1.1.1.1 via 203.0.113.1 dev ens3 src 203.0.113.10
 ```
 
 Then use:

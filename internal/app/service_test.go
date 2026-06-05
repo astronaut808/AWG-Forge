@@ -389,6 +389,60 @@ func TestCreateTunnelRejectsPortAndSubnetCollisions(t *testing.T) {
 	}
 }
 
+func TestSuggestedNextTunnelSpecSkipsUsedValuesAcrossProfiles(t *testing.T) {
+	state := config.State{Tunnels: []config.Tunnel{
+		{Name: "awg0", InterfaceName: "awg0", ListenPort: 7443, IPv4Subnet: "10.8.0.0/24"},
+		{Name: "other", InterfaceName: "other", ListenPort: 51820, IPv4Subnet: "10.8.1.0/24"},
+	}}
+
+	suggestion := app.SuggestedNextTunnelSpec("awg_legacy_1_0", state)
+	if suggestion.Name != "awg0-2" {
+		t.Fatalf("suggested name = %s, want awg0-2", suggestion.Name)
+	}
+	if suggestion.ListenPort != 51821 {
+		t.Fatalf("suggested port = %d, want 51821", suggestion.ListenPort)
+	}
+	if suggestion.IPv4Subnet != "10.8.2.0/24" {
+		t.Fatalf("suggested subnet = %s, want 10.8.2.0/24", suggestion.IPv4Subnet)
+	}
+}
+
+func TestCreateTunnelUsesFreeDefaults(t *testing.T) {
+	svc := app.New(testConfig(t))
+	if _, err := svc.Init(); err != nil {
+		t.Fatal(err)
+	}
+
+	tunnel, err := svc.CreateTunnel("awg_legacy_1_0", "", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tunnel.Name != "awg0-2" || tunnel.ListenPort != 51821 || tunnel.IPv4Subnet != "10.8.1.0/24" {
+		t.Fatalf("unexpected tunnel defaults: name=%s port=%d subnet=%s", tunnel.Name, tunnel.ListenPort, tunnel.IPv4Subnet)
+	}
+}
+
+func TestInitialModernTunnelUsesConfiguredProfileDefaults(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.ProtocolProfile = "awg_2_0"
+	cfg.TunnelName = "awg20"
+	cfg.ListenPort = 51830
+	cfg.IPv4Subnet = "10.20.0.0/24"
+
+	svc := app.New(cfg)
+	state, err := svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Tunnels) != 1 {
+		t.Fatalf("expected one tunnel, got %d", len(state.Tunnels))
+	}
+	tunnel := state.Tunnels[0]
+	if tunnel.Name != "awg20" || tunnel.ProtocolProfileID != "awg_2_0" || tunnel.ListenPort != 51830 || tunnel.IPv4Subnet != "10.20.0.0/24" {
+		t.Fatalf("unexpected initial tunnel: name=%s profile=%s port=%d subnet=%s", tunnel.Name, tunnel.ProtocolProfileID, tunnel.ListenPort, tunnel.IPv4Subnet)
+	}
+}
+
 func TestDeleteTunnelCreatesStateBackup(t *testing.T) {
 	cfg := testConfig(t)
 	svc := app.New(cfg)
