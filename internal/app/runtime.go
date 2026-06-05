@@ -38,10 +38,15 @@ func (s *Service) RestartTunnelByID(tunnelID string) error {
 		state.Tunnels[idx].LastApplyError = "APPLY_CONFIG=false; tunnel restart skipped"
 		state.Tunnels[idx].UpdatedAt = time.Now().UTC()
 		state.UpdatedAt = state.Tunnels[idx].UpdatedAt
-		return s.store.Save(state)
+		if err := s.store.Save(state); err != nil {
+			return err
+		}
+		s.log("warn", "tunnel.restart.skipped", "runtime tunnel restart skipped because APPLY_CONFIG=false", tunnelAuditFields(state.Tunnels[idx]), nil)
+		return nil
 	}
 	_ = exec.Command("awg-quick", "down", state.Tunnels[idx].InterfaceName).Run()
 	if err := s.RenderTunnel(tunnelID); err != nil {
+		s.log("error", "tunnel.restart.failed", "runtime tunnel restart failed", tunnelAuditFields(state.Tunnels[idx]), err)
 		return err
 	}
 	state, err = s.store.Load()
@@ -53,8 +58,11 @@ func (s *Service) RestartTunnelByID(tunnelID string) error {
 		return errors.New("tunnel not found")
 	}
 	if state.Tunnels[idx].LastApplyError != "" {
-		return errors.New(state.Tunnels[idx].LastApplyError)
+		err := errors.New(state.Tunnels[idx].LastApplyError)
+		s.log("error", "tunnel.restart.failed", "runtime tunnel restart failed", tunnelAuditFields(state.Tunnels[idx]), err)
+		return err
 	}
+	s.log("info", "tunnel.restarted", "runtime tunnel restarted", tunnelAuditFields(state.Tunnels[idx]), nil)
 	return nil
 }
 
@@ -186,7 +194,17 @@ func (s *Service) FirewallRepair() (firewall.Report, error) {
 	if err != nil {
 		return firewall.Report{}, err
 	}
-	return firewall.Repair(s.cfg, state, firewall.IPTablesRunner{})
+	report, err := firewall.Repair(s.cfg, state, firewall.IPTablesRunner{})
+	level := "info"
+	event := "firewall.repaired"
+	message := "managed firewall rules repaired"
+	if err != nil {
+		level = "error"
+		event = "firewall.repair.failed"
+		message = "managed firewall repair failed"
+	}
+	s.log(level, event, message, firewallReportFields(report), err)
+	return report, err
 }
 
 func (s *Service) apply(tunnel config.Tunnel) error {
@@ -214,8 +232,35 @@ func (s *Service) apply(tunnel config.Tunnel) error {
 }
 
 func (s *Service) ensureFirewallRules(tunnel config.Tunnel) error {
-	_, err := firewall.Repair(s.cfg, config.State{Tunnels: []config.Tunnel{tunnel}}, firewall.IPTablesRunner{})
+	report, err := firewall.Repair(s.cfg, config.State{Tunnels: []config.Tunnel{tunnel}}, firewall.IPTablesRunner{})
+	if err != nil {
+		s.log("error", "firewall.repair.failed", "managed firewall repair failed during apply", firewallReportFields(report), err)
+	}
 	return err
+}
+
+func firewallReportFields(report firewall.Report) map[string]any {
+	fields := map[string]any{
+		"apply_enabled": report.ApplyEnabled,
+		"results":       len(report.Results),
+	}
+	missing := 0
+	errorsCount := 0
+	duplicates := 0
+	for _, result := range report.Results {
+		switch result.Status {
+		case "missing":
+			missing++
+		case "error":
+			errorsCount++
+		case "duplicate":
+			duplicates++
+		}
+	}
+	fields["missing"] = missing
+	fields["errors"] = errorsCount
+	fields["duplicates"] = duplicates
+	return fields
 }
 
 func (s *Service) cleanupFirewallRules(tunnel config.Tunnel) error {

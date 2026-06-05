@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.9.0 - 2026-06-06
+
+### Added
+
+- Added a safe JSONL audit log with local rotation for operational events such as login attempts, tunnel/client changes, runtime apply failures, firewall repair, backup/support bundle creation, restore verification, and update checks.
+- Added `awg-forge logs` with `--tail`, `--level`, `--event`, and `--json` filters.
+- Added a Maintenance Center `Logs` tab for viewing recent audit events from the Web UI.
+- Added redacted audit log excerpts to support bundles.
+- Added audit log environment configuration: `AUDIT_LOG_ENABLED`, `AUDIT_LOG_PATH`, `AUDIT_LOG_MAX_SIZE`, and `AUDIT_LOG_MAX_FILES`.
+
+### Security
+
+- Audit logging redacts secret-looking fields before writing to disk and must not store private keys, preshared keys, passwords, session secrets, full configs, import keys, or raw protocol parameter values.
+- Audit log files are created with `0600` permissions and stored under the protected config directory by default.
+
 ## v0.8.2 - 2026-06-05
 
 ### Fixed

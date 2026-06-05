@@ -682,6 +682,17 @@ textarea:focus-visible {
   font-size: 12.5px;
 }
 
+.audit-row .mono {
+  margin-top: 4px;
+  color: var(--muted-2);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.bad-text {
+  color: var(--danger);
+}
+
 .client-row strong,
 .client-row span {
   display: block;

@@ -9,6 +9,7 @@ let activeTheme = initialTheme();
 const maintenanceState = {
   tab: "overview",
   doctor: null,
+  auditLog: null,
   updates: null,
   restoreReport: null,
   lastRun: {},

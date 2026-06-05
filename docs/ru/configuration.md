@@ -19,6 +19,10 @@
 - `PROTOCOL_PROFILE`: профиль первого туннеля. Обычно `awg_legacy_1_0`.
 - `APPLY_CONFIG`: если `true`, awg-forge применяет runtime-изменения через AmneziaWG tools.
 - `PUBLISHED_UDP_PORTS`: опубликованные Docker UDP-порты/диапазоны, например `51820-51840,7443`.
+- `AUDIT_LOG_ENABLED`: включает безопасный audit log. По умолчанию `true`.
+- `AUDIT_LOG_PATH`: путь к audit log. По умолчанию `/etc/awg-forge/audit.log`.
+- `AUDIT_LOG_MAX_SIZE`: размер файла до ротации. По умолчанию `5242880`.
+- `AUDIT_LOG_MAX_FILES`: сколько rotated-файлов хранить. По умолчанию `3`.
 
 Quick installer сначала спрашивает `PROTOCOL_PROFILE`, а уже потом настройки туннеля, чтобы профильные defaults совпадали:
 
@@ -100,4 +104,29 @@ awg20.example.com:44867
 
 ```env
 APPLY_CONFIG=false
+```
+
+## Audit Log
+
+Audit log хранит историю безопасных operational events: login success/fail, create/update/delete clients, create/update/delete/restart tunnels, firewall repair, backup/support/restore verify и update checks.
+
+Он нужен для разбора случаев “вчера работало, потом поменяли настройки, теперь handshake есть, но интернета нет”.
+
+Audit log не должен содержать:
+
+- private keys;
+- preshared keys;
+- passwords;
+- session secrets;
+- full client configs;
+- import keys или `vpn://`;
+- raw protocol parameter values.
+
+Посмотреть последние события:
+
+```bash
+docker exec awg-forge awg-forge logs
+docker exec awg-forge awg-forge logs --tail 200
+docker exec awg-forge awg-forge logs --level error
+docker exec awg-forge awg-forge logs --event tunnel.apply.failed
 ```

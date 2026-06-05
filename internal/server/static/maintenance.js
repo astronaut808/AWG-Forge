@@ -8,6 +8,7 @@ function openMaintenance(tab = maintenanceState.tab || "overview") {
     ["restore", "Restore"],
     ["updates", "Updates"],
     ["support", "Support"],
+    ["logs", "Logs"],
     ["system", "System"],
   ];
 
@@ -37,6 +38,7 @@ function renderMaintenanceTab() {
   if (maintenanceState.tab === "restore") return renderMaintenanceRestore();
   if (maintenanceState.tab === "updates") return renderMaintenanceUpdates();
   if (maintenanceState.tab === "support") return renderMaintenanceSupport();
+  if (maintenanceState.tab === "logs") return renderMaintenanceLogs();
   if (maintenanceState.tab === "system") return renderMaintenanceSystem();
   return renderMaintenanceOverview();
 }
@@ -69,6 +71,10 @@ function renderMaintenanceOverview() {
         "Encrypted backup",
         "Restore dry-run verification",
       ], "backup")}
+      ${maintenanceOverviewCard("Audit", summary.auditBadge, summary.auditClass, [
+        `${summary.auditEvents} event(s) loaded`,
+        maintenanceState.lastRun.logs ? `last refreshed ${maintenanceState.lastRun.logs}` : "manual refresh",
+      ], "logs")}
     </div>
   `;
 }
@@ -290,6 +296,36 @@ function renderMaintenanceSupport() {
   `;
 }
 
+function renderMaintenanceLogs() {
+  const events = maintenanceState.auditLog || [];
+  return `
+    <div class="maintenance-section-head">
+      <div>
+        <h3>Audit log</h3>
+        <p class="muted">Recent safe operational events from the local audit log. Secrets and config-like values are redacted before storage.</p>
+      </div>
+      <button type="button" class="primary" data-maint-action="run-logs">${maintenanceState.loading.logs ? "Loading..." : "Refresh logs"}</button>
+    </div>
+    ${maintenanceState.lastRun.logs ? `<p class="muted">Last refresh: ${escapeHTML(maintenanceState.lastRun.logs)}</p>` : ""}
+    ${events.length ? `
+      <div class="client-list">
+        ${events.map((event) => `
+          <div class="client-row audit-row">
+            <div>
+              <strong>${escapeHTML(event.event || "event")}</strong>
+              <span class="muted mono">${escapeHTML(formatAuditTime(event.time))}</span>
+              ${event.message ? `<span class="muted">${escapeHTML(event.message)}</span>` : ""}
+              ${event.error ? `<span class="muted bad-text">${escapeHTML(event.error)}</span>` : ""}
+              ${event.fields && Object.keys(event.fields).length ? `<span class="muted mono">${escapeHTML(formatAuditFields(event.fields))}</span>` : ""}
+            </div>
+            <span class="badge ${auditBadgeClass(event.level)}">${escapeHTML(event.level || "info")}</span>
+          </div>
+        `).join("")}
+      </div>
+    ` : `<div class="empty-inline">Refresh logs to load the latest audit events.</div>`}
+  `;
+}
+
 function renderMaintenanceSystem() {
   const ports = state?.published_udp_ports || [];
   return `
@@ -328,6 +364,7 @@ function bindMaintenanceEvents() {
       if (action === "repair-firewall") await repairFirewall({ after: "maintenance" });
       if (action === "run-updates") await runMaintenanceUpdates();
       if (action === "support-bundle") await downloadSupportBundle();
+      if (action === "run-logs") await runMaintenanceLogs();
     });
   });
 
@@ -365,5 +402,25 @@ function maintenanceSummary() {
     clientsClass: staleClients ? "warn" : "ok",
     firewallBadge: firewallOk === tunnels.length ? "ok" : "check",
     firewallClass: firewallOk === tunnels.length ? "ok" : "warn",
+    auditEvents: (maintenanceState.auditLog || []).length,
+    auditBadge: maintenanceState.auditLog ? "loaded" : "manual",
+    auditClass: "ok",
   };
+}
+
+function auditBadgeClass(level) {
+  if (level === "error") return "bad";
+  if (level === "warn") return "warn";
+  return "ok";
+}
+
+function formatAuditTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+}
+
+function formatAuditFields(fields) {
+  return Object.keys(fields).sort().map((key) => `${key}=${fields[key]}`).join(" · ");
 }

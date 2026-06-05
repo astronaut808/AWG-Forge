@@ -210,8 +210,10 @@ func (s *Service) CreateTunnel(profileID, name, subnet string, port int) (config
 				return config.Tunnel{}, errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
 			}
 		}
+		s.log("error", "tunnel.create.failed", "tunnel creation failed", tunnelAuditFields(tunnel), err)
 		return config.Tunnel{}, err
 	}
+	s.log("info", "tunnel.created", "tunnel created", tunnelAuditFields(tunnel), nil)
 	return tunnel, nil
 }
 
@@ -258,8 +260,10 @@ func (s *Service) UpdateTunnelSettings(tunnelID string, update TunnelSettingsUpd
 				return config.Tunnel{}, errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
 			}
 		}
+		s.log("error", "tunnel.settings.failed", "tunnel settings update failed", tunnelAuditFields(state.Tunnels[idx]), err)
 		return config.Tunnel{}, err
 	}
+	s.log("info", "tunnel.settings.updated", "tunnel settings updated", tunnelAuditFields(state.Tunnels[idx]), nil)
 	return state.Tunnels[idx], nil
 }
 
@@ -404,16 +408,23 @@ func (s *Service) DeleteTunnel(tunnelID string) error {
 			if rollbackErr := s.rollbackRuntimeState(previousState, tunnel.ID); rollbackErr != nil {
 				return errors.Join(&ApplyError{Err: err}, fmt.Errorf("rollback failed: %w", rollbackErr))
 			}
+			s.log("error", "tunnel.delete.failed", "tunnel delete runtime down failed", tunnelAuditFields(tunnel), err)
 			return &ApplyError{Err: err}
 		}
 		if err := s.cleanupFirewallRules(tunnel); err != nil {
 			if rollbackErr := s.rollbackRuntimeState(previousState, tunnel.ID); rollbackErr != nil {
 				return errors.Join(&ApplyError{Err: err}, fmt.Errorf("rollback failed: %w", rollbackErr))
 			}
+			s.log("error", "tunnel.delete.failed", "tunnel delete firewall cleanup failed", tunnelAuditFields(tunnel), err)
 			return &ApplyError{Err: err}
 		}
 	}
-	return s.store.DeleteRenderedTunnel(tunnel.InterfaceName)
+	if err := s.store.DeleteRenderedTunnel(tunnel.InterfaceName); err != nil {
+		s.log("error", "tunnel.delete.failed", "tunnel rendered files deletion failed", tunnelAuditFields(tunnel), err)
+		return err
+	}
+	s.log("info", "tunnel.deleted", "tunnel deleted", tunnelAuditFields(tunnel), nil)
+	return nil
 }
 
 func (s *Service) newTunnel(spec tunnelSpec) (config.Tunnel, error) {

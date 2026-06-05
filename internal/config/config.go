@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 )
 
@@ -30,11 +31,16 @@ type Config struct {
 	ProtocolProfile     string
 	ApplyConfig         bool
 	PublishedUDPPorts   string
+	AuditLogEnabled     bool
+	AuditLogPath        string
+	AuditLogMaxSize     int64
+	AuditLogMaxFiles    int
 }
 
 func FromEnv() (Config, error) {
+	configDir := getenv("CONFIG_DIR", DefaultConfigDir)
 	cfg := Config{
-		ConfigDir:           getenv("CONFIG_DIR", DefaultConfigDir),
+		ConfigDir:           configDir,
 		TunnelName:          getenv("TUNNEL_NAME", DefaultTunnel),
 		ServerHost:          getenv("SERVER_HOST", "127.0.0.1"),
 		ListenPort:          getenvInt("LISTEN_PORT", 51820),
@@ -51,6 +57,10 @@ func FromEnv() (Config, error) {
 		ProtocolProfile:     getenv("PROTOCOL_PROFILE", "awg_legacy_1_0"),
 		ApplyConfig:         getenvBool("APPLY_CONFIG", false),
 		PublishedUDPPorts:   os.Getenv("PUBLISHED_UDP_PORTS"),
+		AuditLogEnabled:     getenvBool("AUDIT_LOG_ENABLED", true),
+		AuditLogPath:        getenv("AUDIT_LOG_PATH", filepath.Join(configDir, "audit.log")),
+		AuditLogMaxSize:     getenvInt64("AUDIT_LOG_MAX_SIZE", 5*1024*1024),
+		AuditLogMaxFiles:    getenvInt("AUDIT_LOG_MAX_FILES", 3),
 	}
 	if cfg.WebUIHost == "0.0.0.0" || cfg.WebUIHost == "::" {
 		if cfg.Password == "" {
@@ -76,6 +86,18 @@ func getenvInt(key string, fallback int) int {
 		return fallback
 	}
 	n, err := strconv.Atoi(v)
+	if err != nil {
+		return fallback
+	}
+	return n
+}
+
+func getenvInt64(key string, fallback int64) int64 {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
 	if err != nil {
 		return fallback
 	}

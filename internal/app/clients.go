@@ -71,8 +71,10 @@ func (s *Service) AddClientToTunnel(tunnelID, name string) (config.Client, error
 				return config.Client{}, errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
 			}
 		}
+		s.log("error", "client.create.failed", "client creation failed", clientAuditFields(state.Tunnels[idx], client), err)
 		return config.Client{}, err
 	}
+	s.log("info", "client.created", "client created", clientAuditFields(state.Tunnels[idx], client), nil)
 	return client, nil
 }
 
@@ -88,9 +90,11 @@ func (s *Service) RemoveClient(id string) error {
 	for ti := range state.Tunnels {
 		clients := state.Tunnels[ti].Clients[:0]
 		found := false
+		var deleted config.Client
 		for _, c := range state.Tunnels[ti].Clients {
 			if c.ID == id {
 				found = true
+				deleted = c
 				continue
 			}
 			clients = append(clients, c)
@@ -109,8 +113,10 @@ func (s *Service) RemoveClient(id string) error {
 						return errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
 					}
 				}
+				s.log("error", "client.delete.failed", "client deletion failed", map[string]any{"client_id": id, "tunnel_id": state.Tunnels[ti].ID}, err)
 				return err
 			}
+			s.log("info", "client.deleted", "client deleted", clientAuditFields(state.Tunnels[ti], deleted), nil)
 			return nil
 		}
 	}
@@ -144,8 +150,16 @@ func (s *Service) SetClientEnabled(id string, enabled bool) error {
 							return errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
 						}
 					}
+					s.log("error", "client.enabled.failed", "client enabled state update failed", clientAuditFields(state.Tunnels[ti], state.Tunnels[ti].Clients[ci]), err)
 					return err
 				}
+				event := "client.disabled"
+				message := "client disabled"
+				if enabled {
+					event = "client.enabled"
+					message = "client enabled"
+				}
+				s.log("info", event, message, clientAuditFields(state.Tunnels[ti], state.Tunnels[ti].Clients[ci]), nil)
 				return nil
 			}
 		}
@@ -178,6 +192,7 @@ func (s *Service) UpdateClientSettings(id, name, notes string) (config.Client, e
 				if err := s.store.Save(state); err != nil {
 					return config.Client{}, err
 				}
+				s.log("info", "client.settings.updated", "client settings updated", clientAuditFields(state.Tunnels[ti], state.Tunnels[ti].Clients[ci]), nil)
 				return state.Tunnels[ti].Clients[ci], nil
 			}
 		}
@@ -199,6 +214,7 @@ func (s *Service) ClientConfig(id string) (string, error) {
 		return "", err
 	}
 	_ = s.markClientConfigDelivered(id)
+	s.log("info", "client.config.rendered", "client config rendered", clientAuditFields(tunnel, client), nil)
 	return conf, nil
 }
 
@@ -216,6 +232,7 @@ func (s *Service) ClientConfigForDownload(id string) (string, config.Client, err
 		return "", config.Client{}, err
 	}
 	_ = s.markClientConfigDelivered(id)
+	s.log("info", "client.config.downloaded", "client config downloaded", clientAuditFields(tunnel, client), nil)
 	return conf, client, nil
 }
 
@@ -225,6 +242,7 @@ func (s *Service) ClientImportKey(id string) (string, config.Client, error) {
 		return "", config.Client{}, err
 	}
 	key := "vpn://" + base64.RawURLEncoding.EncodeToString([]byte(conf))
+	s.log("info", "client.import_key.generated", "client import key generated", map[string]any{"client_id": client.ID, "client_name": client.Name}, nil)
 	return key, client, nil
 }
 

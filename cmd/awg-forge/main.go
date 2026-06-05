@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/astronaut808/awg-forge/internal/app"
+	"github.com/astronaut808/awg-forge/internal/audit"
 	"github.com/astronaut808/awg-forge/internal/backup"
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/doctor"
@@ -63,6 +65,8 @@ func run(args []string) error {
 		return runSupportBundle(cfg, svc, args[1:])
 	case "firewall":
 		return runFirewall(svc, args[1:])
+	case "logs":
+		return runLogs(cfg, args[1:])
 	case "client":
 		return runClient(svc, args[1:])
 	case "tunnel":
@@ -156,7 +160,7 @@ func runClient(svc *app.Service, args []string) error {
 }
 
 func usage() error {
-	return errors.New("usage: awg-forge init|serve|render|doctor|backup|restore|support-bundle|updates|firewall|client|tunnel")
+	return errors.New("usage: awg-forge init|serve|render|doctor|backup|restore|support-bundle|updates|firewall|logs|client|tunnel")
 }
 
 func runFirewall(svc *app.Service, args []string) error {
@@ -227,8 +231,10 @@ func runBackup(cfg config.Config, svc *app.Service, args []string) error {
 	defer cancel()
 	written, err := backup.WriteFile(ctx, cfg, svc, password, path)
 	if err != nil {
+		audit.New(cfg).Log(context.Background(), audit.Event{Level: "error", Event: "backup.create.failed", Message: "encrypted backup creation failed", Error: audit.Error(err)})
 		return err
 	}
+	audit.New(cfg).Log(context.Background(), audit.Event{Level: "info", Event: "backup.created", Message: "encrypted backup created", Fields: map[string]any{"path": written}})
 	fmt.Println(written)
 	return nil
 }
@@ -246,7 +252,12 @@ func runRestore(cfg config.Config, args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	return backup.Restore(ctx, cfg, password, args[0])
+	if err := backup.Restore(ctx, cfg, password, args[0]); err != nil {
+		audit.New(cfg).Log(context.Background(), audit.Event{Level: "error", Event: "restore.failed", Message: "encrypted backup restore failed", Fields: map[string]any{"path": args[0]}, Error: audit.Error(err)})
+		return err
+	}
+	audit.New(cfg).Log(context.Background(), audit.Event{Level: "info", Event: "restore.completed", Message: "encrypted backup restored", Fields: map[string]any{"path": args[0]}})
+	return nil
 }
 
 func runRestoreVerify(cfg config.Config, path string) error {
@@ -258,8 +269,10 @@ func runRestoreVerify(cfg config.Config, path string) error {
 	defer cancel()
 	report, err := backup.Verify(ctx, cfg, password, path)
 	if err != nil {
+		audit.New(cfg).Log(context.Background(), audit.Event{Level: "error", Event: "restore.verify.failed", Message: "backup verification failed", Fields: map[string]any{"path": path}, Error: audit.Error(err)})
 		return err
 	}
+	audit.New(cfg).Log(context.Background(), audit.Event{Level: "info", Event: "restore.verified", Message: "backup verified", Fields: map[string]any{"path": path, "tunnels": len(report.Tunnels), "clients": report.ClientCount}})
 	printRestoreVerifyReport(report)
 	return nil
 }
@@ -330,9 +343,62 @@ func runSupportBundle(cfg config.Config, svc *app.Service, args []string) error 
 	defer cancel()
 	written, err := support.WriteFile(ctx, cfg, svc, path)
 	if err != nil {
+		audit.New(cfg).Log(context.Background(), audit.Event{Level: "error", Event: "support_bundle.failed", Message: "support bundle creation failed", Error: audit.Error(err)})
 		return err
 	}
+	audit.New(cfg).Log(context.Background(), audit.Event{Level: "info", Event: "support_bundle.created", Message: "support bundle created", Fields: map[string]any{"path": written}})
 	fmt.Println(written)
+	return nil
+}
+
+func runLogs(cfg config.Config, args []string) error {
+	opts := audit.ReadOptions{Tail: audit.DefaultTail}
+	jsonOutput := false
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--tail":
+			if i+1 >= len(args) {
+				return errors.New("usage: awg-forge logs [--tail N] [--level info|warn|error] [--event name] [--json]")
+			}
+			n, err := strconv.Atoi(args[i+1])
+			if err != nil {
+				return err
+			}
+			opts.Tail = n
+			i++
+		case "--level":
+			if i+1 >= len(args) {
+				return errors.New("usage: awg-forge logs [--tail N] [--level info|warn|error] [--event name] [--json]")
+			}
+			opts.Level = args[i+1]
+			i++
+		case "--event":
+			if i+1 >= len(args) {
+				return errors.New("usage: awg-forge logs [--tail N] [--level info|warn|error] [--event name] [--json]")
+			}
+			opts.Event = args[i+1]
+			i++
+		case "--json":
+			jsonOutput = true
+		default:
+			return errors.New("usage: awg-forge logs [--tail N] [--level info|warn|error] [--event name] [--json]")
+		}
+	}
+	events, err := audit.ReadFile(cfg.AuditLogPath, opts)
+	if err != nil {
+		return err
+	}
+	if jsonOutput {
+		for _, event := range events {
+			b, err := json.Marshal(event)
+			if err != nil {
+				return err
+			}
+			fmt.Println(string(b))
+		}
+		return nil
+	}
+	fmt.Print(audit.FormatText(events))
 	return nil
 }
 

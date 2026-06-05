@@ -66,6 +66,33 @@ The bundle should not include:
 - rendered server/client configs;
 - raw protocol parameter values.
 
+The bundle also includes `audit-log.redacted.jsonl`: recent audit events with secret-looking fields already redacted.
+
+## Audit Log
+
+The audit log helps reconstruct the event timeline: a client was created, tunnel settings changed, a fresh config was downloaded, firewall repair ran, backup was created, or an apply error happened.
+
+Commands:
+
+```bash
+docker exec awg-forge awg-forge logs
+docker exec awg-forge awg-forge logs --tail 200
+docker exec awg-forge awg-forge logs --level warn
+docker exec awg-forge awg-forge logs --event tunnel.settings.updated
+docker exec awg-forge awg-forge logs --json
+```
+
+The audit log lives at `CONFIG_DIR/audit.log`, defaults to `/etc/awg-forge/audit.log`, uses `0600`, and rotates locally.
+
+When troubleshooting “connected but no internet”, useful events include:
+
+- `tunnel.settings.updated`;
+- `tunnel.protocol.updated`;
+- `client.config.downloaded`;
+- `tunnel.apply.failed`;
+- `firewall.repaired`;
+- `doctor.completed`.
+
 ## Encrypted Backup / Restore
 
 Backups are different from support bundles: they contain secret material, including `state.json`, private keys, preshared keys, and rendered `.conf` files.

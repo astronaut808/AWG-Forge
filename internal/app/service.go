@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/astronaut808/awg-forge/internal/audit"
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/protocol"
 	"github.com/astronaut808/awg-forge/internal/render"
@@ -32,6 +34,7 @@ var transferRE = regexp.MustCompile(`^transfer:\s+(.+?) received,\s+(.+?) sent$`
 type Service struct {
 	cfg   config.Config
 	store storage.Store
+	audit audit.Logger
 }
 
 type TunnelStatus struct {
@@ -98,7 +101,25 @@ func (e *ApplyError) Unwrap() error {
 }
 
 func New(cfg config.Config) *Service {
-	return &Service{cfg: cfg, store: storage.New(cfg.ConfigDir)}
+	return &Service{cfg: cfg, store: storage.New(cfg.ConfigDir), audit: audit.New(cfg)}
+}
+
+func (s *Service) Audit() audit.Logger {
+	return s.audit
+}
+
+func (s *Service) log(level, event, message string, fields map[string]any, err error) {
+	if s.audit == nil {
+		return
+	}
+	entry := audit.Event{
+		Level:   level,
+		Event:   event,
+		Message: message,
+		Fields:  fields,
+		Error:   audit.Error(err),
+	}
+	s.audit.Log(context.Background(), entry)
 }
 
 func (s *Service) State() (config.State, error) {
@@ -147,6 +168,7 @@ func (s *Service) renderTunnelFromState(state config.State, tunnelID string, fai
 		return errors.New("tunnel not found")
 	}
 	if err := s.writeRenderedTunnelFiles(state, tunnelID); err != nil {
+		s.log("error", "tunnel.render.failed", "rendered config write failed", tunnelAuditFields(state.Tunnels[idx]), err)
 		return err
 	}
 	now := time.Now().UTC()
@@ -161,15 +183,22 @@ func (s *Service) renderTunnelFromState(state config.State, tunnelID string, fai
 				return errors.Join(fmt.Errorf("apply failed: %w", err), fmt.Errorf("save state failed: %w", saveErr))
 			}
 			if failOnApply {
+				s.log("error", "tunnel.apply.failed", "runtime apply failed", tunnelAuditFields(state.Tunnels[idx]), err)
 				return &ApplyError{Err: err}
 			}
+			s.log("warn", "tunnel.apply.failed", "runtime apply failed but state was saved", tunnelAuditFields(state.Tunnels[idx]), err)
 			return nil
 		}
 		state.Tunnels[idx].LastApplyAt = now
+		s.log("info", "tunnel.apply.succeeded", "runtime tunnel applied", tunnelAuditFields(state.Tunnels[idx]), nil)
 	}
 	state.Tunnels[idx].UpdatedAt = now
 	state.UpdatedAt = now
-	return s.store.Save(state)
+	if err := s.store.Save(state); err != nil {
+		s.log("error", "state.save.failed", "state save failed after render", tunnelAuditFields(state.Tunnels[idx]), err)
+		return err
+	}
+	return nil
 }
 
 func (s *Service) writeRenderedTunnelFiles(state config.State, tunnelID string) error {
@@ -286,8 +315,10 @@ func (s *Service) UpdateTunnelProtocol(tunnelID, profileID string, params config
 				return errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
 			}
 		}
+		s.log("error", "tunnel.protocol.failed", "protocol update failed", map[string]any{"tunnel_id": tunnelID, "profile": profileID}, err)
 		return err
 	}
+	s.log("info", "tunnel.protocol.updated", "protocol settings updated", tunnelAuditFields(state.Tunnels[idx]), nil)
 	return nil
 }
 
@@ -312,6 +343,29 @@ func (s *Service) RegenerateTunnelProtocol(tunnelID, profileID string) error {
 		return err
 	}
 	return s.UpdateTunnelProtocol(tunnelID, profileID, params)
+}
+
+func tunnelAuditFields(tunnel config.Tunnel) map[string]any {
+	return map[string]any{
+		"tunnel_id": tunnel.ID,
+		"name":      tunnel.Name,
+		"interface": tunnel.InterfaceName,
+		"profile":   tunnel.ProtocolProfileID,
+		"port":      tunnel.ListenPort,
+		"subnet":    tunnel.IPv4Subnet,
+		"enabled":   tunnel.Enabled,
+		"revision":  tunnel.ConfigRevision,
+	}
+}
+
+func clientAuditFields(tunnel config.Tunnel, client config.Client) map[string]any {
+	fields := tunnelAuditFields(tunnel)
+	fields["client_id"] = client.ID
+	fields["client_name"] = client.Name
+	fields["client_ip"] = client.IPv4Address
+	fields["client_enabled"] = client.Enabled
+	fields["client_revision"] = client.ConfigRevision
+	return fields
 }
 
 func findClient(state config.State, id string) (config.Tunnel, config.Client, bool) {

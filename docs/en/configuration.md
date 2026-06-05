@@ -19,6 +19,10 @@ The main example is [.env.example](../../.env.example).
 - `PROTOCOL_PROFILE`: first tunnel profile. Usually `awg_legacy_1_0`.
 - `APPLY_CONFIG`: when `true`, awg-forge applies runtime tunnel changes with AmneziaWG tools.
 - `PUBLISHED_UDP_PORTS`: published Docker UDP ports/ranges, for example `51820-51840,7443`.
+- `AUDIT_LOG_ENABLED`: enables the safe audit log. Defaults to `true`.
+- `AUDIT_LOG_PATH`: audit log path. Defaults to `/etc/awg-forge/audit.log`.
+- `AUDIT_LOG_MAX_SIZE`: file size before rotation. Defaults to `5242880`.
+- `AUDIT_LOG_MAX_FILES`: number of rotated files to keep. Defaults to `3`.
 
 The quick installer asks for `PROTOCOL_PROFILE` before tunnel defaults, so profile-specific defaults stay aligned:
 
@@ -100,4 +104,29 @@ For local development:
 
 ```env
 APPLY_CONFIG=false
+```
+
+## Audit Log
+
+The audit log stores safe operational events: login success/failure, client create/update/delete, tunnel create/update/delete/restart, firewall repair, backup/support/restore verify, and update checks.
+
+It is meant for cases like “it worked yesterday, then settings changed, now handshakes exist but internet does not work”.
+
+The audit log must not contain:
+
+- private keys;
+- preshared keys;
+- passwords;
+- session secrets;
+- full client configs;
+- import keys or `vpn://`;
+- raw protocol parameter values.
+
+Read recent events:
+
+```bash
+docker exec awg-forge awg-forge logs
+docker exec awg-forge awg-forge logs --tail 200
+docker exec awg-forge awg-forge logs --level error
+docker exec awg-forge awg-forge logs --event tunnel.apply.failed
 ```

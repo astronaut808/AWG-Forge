@@ -36,6 +36,7 @@ Maintenance actions are available through the `Maintenance` button:
 - `Restore`: verify an `.afbackup` through a dry-run without writing to `CONFIG_DIR`; actual restore remains CLI-only.
 - `Updates`: check whether bundled AmneziaWG upstream refs are behind.
 - `Support`: download a support bundle without secrets.
+- `Logs`: inspect recent safe audit events.
 - `System`: current mode, server host, tunnels, profiles, and useful commands.
 
 ## Stale Configs
@@ -60,6 +61,8 @@ docker exec awg-forge awg-forge firewall repair
 docker exec awg-forge awg-forge firewall check
 docker exec awg-forge awg-forge support-bundle
 docker exec awg-forge awg-forge updates
+docker exec awg-forge awg-forge logs
+docker exec awg-forge awg-forge logs --tail 200 --level error
 docker exec awg-forge awg-forge client add phone
 docker exec awg-forge awg-forge client add laptop awg15
 docker exec awg-forge awg-forge client config <client-id>
@@ -84,6 +87,7 @@ awg-forge firewall check
 awg-forge firewall repair
 awg-forge support-bundle
 awg-forge updates
+awg-forge logs
 ```
 
 ## Client Config Import

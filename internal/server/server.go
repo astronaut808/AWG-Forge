@@ -8,11 +8,13 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/astronaut808/awg-forge/internal/app"
+	"github.com/astronaut808/awg-forge/internal/audit"
 	"github.com/astronaut808/awg-forge/internal/backup"
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/doctor"
@@ -56,6 +58,7 @@ func Serve(cfg config.Config, service *app.Service) error {
 	mux.HandleFunc("/api/state", w.security(w.requireAuth(w.stateAPI)))
 	mux.HandleFunc("/api/backup", w.security(w.requireAuth(w.backupAPI)))
 	mux.HandleFunc("/api/doctor", w.security(w.requireAuth(w.doctorAPI)))
+	mux.HandleFunc("/api/audit-log", w.security(w.requireAuth(w.auditLogAPI)))
 	mux.HandleFunc("/api/firewall/repair", w.security(w.requireAuth(w.firewallRepairAPI)))
 	mux.HandleFunc("/api/support-bundle", w.security(w.requireAuth(w.supportBundleAPI)))
 	mux.HandleFunc("/api/updates", w.security(w.requireAuth(w.updatesAPI)))
@@ -99,19 +102,23 @@ func (w *web) loginAPI(rw http.ResponseWriter, r *http.Request) {
 	}
 	if w.cfg.Password == "" {
 		w.setSession(rw, r)
+		w.audit("info", "login.succeeded", "login succeeded without password", nil, nil)
 		writeJSON(rw, http.StatusOK, map[string]any{"ok": true})
 		return
 	}
 	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
 	if !w.allowLogin(ip) {
+		w.audit("warn", "login.rate_limited", "login rate limited", nil, nil)
 		writeError(rw, http.StatusTooManyRequests, "too many login attempts")
 		return
 	}
 	if subtleCompare(req.Password, w.cfg.Password) {
 		w.setSession(rw, r)
+		w.audit("info", "login.succeeded", "login succeeded", nil, nil)
 		writeJSON(rw, http.StatusOK, map[string]any{"ok": true})
 		return
 	}
+	w.audit("warn", "login.failed", "invalid password", nil, nil)
 	writeError(rw, http.StatusUnauthorized, "invalid password")
 }
 
@@ -121,6 +128,7 @@ func (w *web) logoutAPI(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.SetCookie(rw, sessionCookie(r, "", -1))
+	w.audit("info", "logout", "logout", nil, nil)
 	writeJSON(rw, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -142,7 +150,28 @@ func (w *web) doctorAPI(rw http.ResponseWriter, r *http.Request) {
 		writeError(rw, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	writeJSON(rw, http.StatusOK, map[string]any{"results": doctor.Check(w.cfg, w.service)})
+	results := doctor.Check(w.cfg, w.service)
+	w.audit("info", "doctor.completed", "doctor completed", doctorSummaryFields(results), nil)
+	writeJSON(rw, http.StatusOK, map[string]any{"results": results})
+}
+
+func (w *web) auditLogAPI(rw http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(rw, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	tail, _ := strconv.Atoi(r.URL.Query().Get("tail"))
+	events, err := audit.ReadFile(w.cfg.AuditLogPath, audit.ReadOptions{
+		Tail:  tail,
+		Level: r.URL.Query().Get("level"),
+		Event: r.URL.Query().Get("event"),
+	})
+	if err != nil {
+		writeError(rw, http.StatusInternalServerError, "audit log unavailable")
+		return
+	}
+	noStore(rw)
+	writeJSON(rw, http.StatusOK, map[string]any{"events": events})
 }
 
 func (w *web) firewallRepairAPI(rw http.ResponseWriter, r *http.Request) {
@@ -175,8 +204,10 @@ func (w *web) backupAPI(rw http.ResponseWriter, r *http.Request) {
 	archive, err := backup.Create(ctx, w.cfg, w.service, req.Password, backup.Options{})
 	if err != nil {
 		writeError(rw, http.StatusBadRequest, err.Error())
+		w.audit("error", "backup.create.failed", "encrypted backup creation failed", nil, err)
 		return
 	}
+	w.audit("info", "backup.created", "encrypted backup created", map[string]any{"name": archive.Name}, nil)
 	noStore(rw)
 	rw.Header().Set("Content-Type", "application/octet-stream")
 	rw.Header().Set("Content-Disposition", `attachment; filename="`+archive.Name+`"`)
@@ -192,9 +223,11 @@ func (w *web) supportBundleAPI(rw http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	bundle, err := support.Generate(ctx, w.cfg, w.service, support.Options{})
 	if err != nil {
+		w.audit("error", "support_bundle.failed", "support bundle creation failed", nil, err)
 		writeError(rw, http.StatusInternalServerError, err.Error())
 		return
 	}
+	w.audit("info", "support_bundle.created", "support bundle created", map[string]any{"name": bundle.Name}, nil)
 	noStore(rw)
 	rw.Header().Set("Content-Type", "application/zip")
 	rw.Header().Set("Content-Disposition", `attachment; filename="`+bundle.Name+`"`)
@@ -208,7 +241,9 @@ func (w *web) updatesAPI(rw http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
 	defer cancel()
-	writeJSON(rw, http.StatusOK, map[string]any{"updates": updates.Check(ctx)})
+	report := updates.Check(ctx)
+	w.audit("info", "updates.checked", "AmneziaWG update check completed", map[string]any{"components": len(report.Components)}, nil)
+	writeJSON(rw, http.StatusOK, map[string]any{"updates": report})
 }
 
 func (w *web) restoreVerifyAPI(rw http.ResponseWriter, r *http.Request) {
@@ -254,9 +289,11 @@ func (w *web) restoreVerifyAPI(rw http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	report, err := backup.Verify(ctx, w.cfg, password, tmpPath)
 	if err != nil {
+		w.audit("error", "restore.verify.failed", "backup verification failed", nil, err)
 		writeError(rw, http.StatusBadRequest, err.Error())
 		return
 	}
+	w.audit("info", "restore.verified", "backup verified", map[string]any{"tunnels": len(report.Tunnels), "clients": report.ClientCount}, nil)
 	writeJSON(rw, http.StatusOK, map[string]any{"report": report})
 }
 
@@ -273,10 +310,12 @@ func (w *web) tunnelsAPI(rw http.ResponseWriter, r *http.Request) {
 			Subnet  string `json:"subnet"`
 		}
 		if err := readJSON(rw, r, &req); err != nil {
+			w.audit("warn", "tunnel.create.rejected", "tunnel creation request rejected", map[string]any{"reason": "invalid json"}, err)
 			return http.StatusBadRequest, errorPayload("invalid json")
 		}
 		tunnel, err := w.service.CreateTunnel(req.Profile, req.Name, req.Subnet, req.Port)
 		if err != nil {
+			w.audit("warn", "tunnel.create.rejected", "tunnel creation request rejected", map[string]any{"profile": req.Profile, "name": req.Name, "port": req.Port, "subnet": req.Subnet}, err)
 			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
 		}
 		return http.StatusCreated, map[string]any{"tunnel": publicTunnel(tunnel, app.TunnelStatus{})}
@@ -339,6 +378,7 @@ func (w *web) updateTunnelSettingsAPI(rw http.ResponseWriter, r *http.Request, i
 			Enabled    bool   `json:"enabled"`
 		}
 		if err := readJSON(rw, r, &req); err != nil {
+			w.audit("warn", "tunnel.settings.rejected", "tunnel settings request rejected", map[string]any{"tunnel_id": id, "reason": "invalid json"}, err)
 			return http.StatusBadRequest, errorPayload("invalid json")
 		}
 		tunnel, err := w.service.UpdateTunnelSettings(id, app.TunnelSettingsUpdate{
@@ -353,6 +393,7 @@ func (w *web) updateTunnelSettingsAPI(rw http.ResponseWriter, r *http.Request, i
 			Enabled:    req.Enabled,
 		})
 		if err != nil {
+			w.audit("warn", "tunnel.settings.rejected", "tunnel settings request rejected", map[string]any{"tunnel_id": id, "name": req.Name, "port": req.Port, "subnet": req.Subnet, "enabled": req.Enabled}, err)
 			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
 		}
 		return http.StatusOK, map[string]any{"tunnel": publicTunnel(tunnel, app.TunnelStatus{})}
@@ -366,6 +407,7 @@ func (w *web) deleteTunnelAPI(rw http.ResponseWriter, r *http.Request, id string
 	}
 	w.withIdempotency(rw, r, "delete-tunnel:"+id, func() (int, any) {
 		if err := w.service.DeleteTunnel(id); err != nil {
+			w.audit("warn", "tunnel.delete.rejected", "tunnel delete request rejected", map[string]any{"tunnel_id": id}, err)
 			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
 		}
 		return http.StatusOK, map[string]any{"ok": true}
@@ -379,6 +421,7 @@ func (w *web) restartTunnelAPI(rw http.ResponseWriter, r *http.Request, id strin
 	}
 	w.withIdempotency(rw, r, "restart-tunnel:"+id, func() (int, any) {
 		if err := w.service.RestartTunnelByID(id); err != nil {
+			w.audit("warn", "tunnel.restart.rejected", "tunnel restart request rejected", map[string]any{"tunnel_id": id}, err)
 			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
 		}
 		return http.StatusOK, map[string]any{"ok": true}
@@ -396,9 +439,11 @@ func (w *web) updateProtocolAPI(rw http.ResponseWriter, r *http.Request, id stri
 			Params  config.ProtocolParams `json:"params"`
 		}
 		if err := readJSON(rw, r, &req); err != nil {
+			w.audit("warn", "tunnel.protocol.rejected", "tunnel protocol request rejected", map[string]any{"tunnel_id": id, "reason": "invalid json"}, err)
 			return http.StatusBadRequest, errorPayload("invalid json")
 		}
 		if err := w.service.UpdateTunnelProtocol(id, req.Profile, req.Params); err != nil {
+			w.audit("warn", "tunnel.protocol.rejected", "tunnel protocol request rejected", map[string]any{"tunnel_id": id, "profile": req.Profile}, err)
 			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
 		}
 		return http.StatusOK, map[string]any{"ok": true}
@@ -416,6 +461,7 @@ func (w *web) regenerateProtocolAPI(rw http.ResponseWriter, r *http.Request, id 
 		}
 		_ = readJSON(rw, r, &req)
 		if err := w.service.RegenerateTunnelProtocol(id, req.Profile); err != nil {
+			w.audit("warn", "tunnel.protocol_regenerate.rejected", "tunnel protocol regenerate request rejected", map[string]any{"tunnel_id": id, "profile": req.Profile}, err)
 			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
 		}
 		return http.StatusOK, map[string]any{"ok": true}
@@ -433,10 +479,12 @@ func (w *web) clientsAPI(rw http.ResponseWriter, r *http.Request) {
 			Name     string `json:"name"`
 		}
 		if err := readJSON(rw, r, &req); err != nil {
+			w.audit("warn", "client.create.rejected", "client creation request rejected", map[string]any{"reason": "invalid json"}, err)
 			return http.StatusBadRequest, errorPayload("invalid json")
 		}
 		client, err := w.service.AddClientToTunnel(req.TunnelID, req.Name)
 		if err != nil {
+			w.audit("warn", "client.create.rejected", "client creation request rejected", map[string]any{"tunnel_id": req.TunnelID, "client_name": req.Name}, err)
 			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
 		}
 		return http.StatusCreated, map[string]any{"client": publicClient(client)}
@@ -477,10 +525,12 @@ func (w *web) updateClientSettingsAPI(rw http.ResponseWriter, r *http.Request, i
 			Notes string `json:"notes"`
 		}
 		if err := readJSON(rw, r, &req); err != nil {
+			w.audit("warn", "client.settings.rejected", "client settings request rejected", map[string]any{"client_id": id, "reason": "invalid json"}, err)
 			return http.StatusBadRequest, errorPayload("invalid json")
 		}
 		client, err := w.service.UpdateClientSettings(id, req.Name, req.Notes)
 		if err != nil {
+			w.audit("warn", "client.settings.rejected", "client settings request rejected", map[string]any{"client_id": id, "client_name": req.Name}, err)
 			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
 		}
 		return http.StatusOK, map[string]any{"client": publicClient(client)}
@@ -498,6 +548,7 @@ func (w *web) setClientEnabledAPI(rw http.ResponseWriter, r *http.Request, id st
 	}
 	w.withIdempotency(rw, r, action+id, func() (int, any) {
 		if err := w.service.SetClientEnabled(id, enabled); err != nil {
+			w.audit("warn", "client.enabled_state.rejected", "client enabled state request rejected", map[string]any{"client_id": id, "enabled": enabled}, err)
 			return mutationErrorStatus(err, http.StatusNotFound), errorPayload(err.Error())
 		}
 		return http.StatusOK, map[string]any{"ok": true}
@@ -511,6 +562,7 @@ func (w *web) deleteClientAPI(rw http.ResponseWriter, r *http.Request, id string
 	}
 	w.withIdempotency(rw, r, "delete-client:"+id, func() (int, any) {
 		if err := w.service.RemoveClient(id); err != nil {
+			w.audit("warn", "client.delete.rejected", "client delete request rejected", map[string]any{"client_id": id}, err)
 			return mutationErrorStatus(err, http.StatusNotFound), errorPayload(err.Error())
 		}
 		return http.StatusOK, map[string]any{"ok": true}
@@ -568,4 +620,38 @@ func (w *web) publicState(state config.State) map[string]any {
 		},
 		"tunnels": tunnels,
 	}
+}
+
+func (w *web) audit(level, event, message string, fields map[string]any, err error) {
+	if w == nil || w.service == nil {
+		return
+	}
+	w.service.Audit().Log(context.Background(), audit.Event{
+		Level:   level,
+		Event:   event,
+		Message: message,
+		Fields:  fields,
+		Error:   audit.Error(err),
+	})
+}
+
+func doctorSummaryFields(results []doctor.Result) map[string]any {
+	fields := map[string]any{"results": len(results)}
+	okCount := 0
+	warnCount := 0
+	failCount := 0
+	for _, result := range results {
+		switch result.Level {
+		case "ok":
+			okCount++
+		case "warn":
+			warnCount++
+		case "fail":
+			failCount++
+		}
+	}
+	fields["ok"] = okCount
+	fields["warn"] = warnCount
+	fields["fail"] = failCount
+	return fields
 }
