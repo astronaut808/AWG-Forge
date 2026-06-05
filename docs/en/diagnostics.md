@@ -16,9 +16,14 @@ Doctor checks:
 - `iptables`, `ip`, `nf_tables`;
 - IPv4 forwarding;
 - external interface;
+- IPv4 egress route and `EXTERNAL_INTERFACE` match;
+- `rp_filter` for host/default/external/tunnel interfaces;
 - config directory permissions;
 - UDP listen ports;
+- UDP listener inspection through `ss`;
 - rendered server configs;
+- runtime config `/etc/amnezia/amneziawg/<interface>.conf`;
+- `awg-quick strip` for runtime config validation;
 - runtime tunnel links;
 - runtime `awg show` listen ports;
 - NAT/FORWARD firewall rules;
@@ -179,6 +184,39 @@ Then:
 - check host firewall/UFW;
 - in bridge mode, check that the tunnel UDP port is published;
 - download a fresh `.conf` if tunnel settings or protocol params changed.
+
+If `doctor` reports:
+
+```text
+runtime <tunnel>/awg: <interface> link exists, but awg cannot access it: Protocol not supported
+```
+
+the Linux interface exists, but the AmneziaWG runtime cannot read it as an AWG interface. This usually means a stale or broken runtime link after a failed apply, tool version change, or manual runtime experiment. Restart the tunnel from the UI or CLI:
+
+```bash
+docker exec awg-forge awg-forge tunnel restart <tunnel-id-or-name>
+docker exec awg-forge awg-forge doctor
+```
+
+If restart does not help, remove the stale link in the host/container network namespace and apply the tunnel again. With host networking this is usually:
+
+```bash
+docker exec awg-forge ip link delete <interface>
+docker exec awg-forge awg-forge tunnel restart <tunnel-id-or-name>
+```
+
+If `doctor` reports an `external route` mismatch, NAT may be configured for the wrong interface. Check `ip route get 1.1.1.1` and update `EXTERNAL_INTERFACE`.
+
+If `rp_filter` is in strict mode (`1`), reverse path filtering may drop VPN traffic on hosts with non-standard routing or additional firewall/router rules. In a simple host-networking setup it is rarely the first cause, but the WARN is useful on more complex networks.
+
+If `Health` reports `client sends traffic, server sends 0 bytes back`, but counters in:
+
+```bash
+docker exec awg-forge iptables -L FORWARD -v -n
+docker exec awg-forge iptables -t nat -L POSTROUTING -v -n
+```
+
+do not increase for the tunnel subnet/interface, traffic did not reach the forwarding/NAT layer. Check `awg show <interface>`, stale links, fresh client config, and the correct protocol profile.
 
 ## UI Unavailable
 

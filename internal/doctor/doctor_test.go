@@ -1,6 +1,9 @@
 package doctor
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseAWGShow(t *testing.T) {
 	got := parseAWGShow(`interface: awg20
@@ -46,5 +49,33 @@ peer: client-key
 	peer := got.Peers["client-key"]
 	if peer.LatestHandshake != "" {
 		t.Fatalf("handshake = %q, want empty", peer.LatestHandshake)
+	}
+}
+
+func TestParseRouteDev(t *testing.T) {
+	got := parseRouteDev(`1.1.1.1 via 203.0.113.1 dev ens3 src 203.0.113.10 uid 0
+    cache
+`)
+	if got != "ens3" {
+		t.Fatalf("dev = %q, want ens3", got)
+	}
+}
+
+func TestProtocolNotSupportedDetection(t *testing.T) {
+	if !isProtocolNotSupported("awg show awg15 failed: Unable to access interface: Protocol not supported") {
+		t.Fatal("expected Protocol not supported to be detected")
+	}
+	if isProtocolNotSupported("awg show awg15 failed: operation not permitted") {
+		t.Fatal("did not expect unrelated error to match")
+	}
+}
+
+func TestRedactProcessLine(t *testing.T) {
+	got := redactProcessLine(`UNCONN 0 0 0.0.0.0:7443 0.0.0.0:* users:(("amneziawg-go",pid=12345,fd=7))`)
+	if strings.Contains(got, "pid=12345") {
+		t.Fatalf("pid was not redacted: %q", got)
+	}
+	if !strings.Contains(got, "pid=<pid>") {
+		t.Fatalf("redacted pid marker missing: %q", got)
 	}
 }

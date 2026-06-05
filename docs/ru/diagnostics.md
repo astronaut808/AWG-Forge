@@ -16,9 +16,14 @@ Doctor проверяет:
 - `iptables`, `ip`, `nf_tables`;
 - IPv4 forwarding;
 - external interface;
+- IPv4 egress route и совпадение с `EXTERNAL_INTERFACE`;
+- `rp_filter` для host/default/external/tunnel interfaces;
 - права config directory;
 - UDP listen ports;
+- UDP listener через `ss`;
 - рендер server configs;
+- runtime config `/etc/amnezia/amneziawg/<interface>.conf`;
+- `awg-quick strip` для runtime config;
 - runtime tunnel links;
 - runtime `awg show` listen ports;
 - NAT/FORWARD firewall rules;
@@ -179,6 +184,39 @@ EXTERNAL_INTERFACE=ens3
 - проверь host firewall/UFW;
 - в bridge mode проверь, опубликован ли UDP-порт туннеля;
 - скачай свежий `.conf`, если менялись tunnel settings или protocol params.
+
+Если `doctor` показывает:
+
+```text
+runtime <tunnel>/awg: <interface> link exists, but awg cannot access it: Protocol not supported
+```
+
+это значит, что Linux interface существует, но AmneziaWG runtime не может прочитать его как AWG interface. Обычно это stale/broken runtime link после неудачного apply, смены версии tools или ручных экспериментов. Перезапусти туннель из UI или CLI:
+
+```bash
+docker exec awg-forge awg-forge tunnel restart <tunnel-id-or-name>
+docker exec awg-forge awg-forge doctor
+```
+
+Если restart не помог, удали stale link вручную на host/container network namespace и примени туннель заново. Для host networking это обычно:
+
+```bash
+docker exec awg-forge ip link delete <interface>
+docker exec awg-forge awg-forge tunnel restart <tunnel-id-or-name>
+```
+
+Если `doctor` показывает `external route` mismatch, значит NAT может уходить не через тот interface. Проверь `ip route get 1.1.1.1` и обнови `EXTERNAL_INTERFACE`.
+
+Если `rp_filter` в strict mode (`1`), reverse path filtering может отбрасывать VPN-трафик при нестандартных маршрутах или дополнительных firewall/router rules. В простом host-networking setup это редко основная причина, но такой WARN полезен при сложной сети.
+
+Если `Health` показывает `client sends traffic, server sends 0 bytes back`, а counters в:
+
+```bash
+docker exec awg-forge iptables -L FORWARD -v -n
+docker exec awg-forge iptables -t nat -L POSTROUTING -v -n
+```
+
+не растут для нужного tunnel subnet/interface, значит трафик не дошел до forwarding/NAT слоя. Проверь `awg show <interface>`, stale link, свежий client config и правильный protocol profile.
 
 ## UI Недоступен
 

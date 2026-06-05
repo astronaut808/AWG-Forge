@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -68,7 +69,7 @@ func Generate(ctx context.Context, cfg config.Config, service *app.Service, opts
 	if err := addJSON(zw, "files.json", fileInventory(cfg.ConfigDir)); err != nil {
 		return Bundle{}, err
 	}
-	for _, cmd := range runtimeCommands(state) {
+	for _, cmd := range runtimeCommands(cfg, state) {
 		if err := addText(zw, filepath.Join("runtime", cmd.Name+".txt"), runText(ctx, cmd.Args...)); err != nil {
 			return Bundle{}, err
 		}
@@ -331,18 +332,40 @@ type runtimeCommand struct {
 	Args []string
 }
 
-func runtimeCommands(state config.State) []runtimeCommand {
+func runtimeCommands(cfg config.Config, state config.State) []runtimeCommand {
 	cmds := []runtimeCommand{
 		{Name: "ip-route", Args: []string{"ip", "route"}},
+		{Name: "ip-route-all", Args: []string{"ip", "route", "show", "table", "all"}},
+		{Name: "ip-route-get-1-1-1-1", Args: []string{"ip", "route", "get", "1.1.1.1"}},
+		{Name: "ip-rule", Args: []string{"ip", "rule"}},
 		{Name: "ip-addr", Args: []string{"ip", "-brief", "addr"}},
+		{Name: "ss-udp-listeners", Args: []string{"ss", "-lunp"}},
 		{Name: "iptables-filter", Args: []string{"iptables", "-S"}},
+		{Name: "iptables-filter-counters", Args: []string{"iptables", "-L", "FORWARD", "-v", "-n"}},
 		{Name: "iptables-nat", Args: []string{"iptables", "-t", "nat", "-S"}},
+		{Name: "iptables-nat-counters", Args: []string{"iptables", "-t", "nat", "-L", "POSTROUTING", "-v", "-n"}},
+		{Name: "sysctl-ip-forward", Args: []string{"sysctl", "net.ipv4.ip_forward"}},
+		{Name: "sysctl-rp-filter-all", Args: []string{"sysctl", "net.ipv4.conf.all.rp_filter"}},
+		{Name: "sysctl-rp-filter-default", Args: []string{"sysctl", "net.ipv4.conf.default.rp_filter"}},
+		{Name: "sysctl-rp-filter-external", Args: []string{"sysctl", "net.ipv4.conf." + cfg.ExternalInterface + ".rp_filter"}},
 		{Name: "awg-show", Args: []string{"awg", "show"}},
 	}
 	for _, tunnel := range state.Tunnels {
 		cmds = append(cmds, runtimeCommand{
 			Name: "awg-show-" + safeName(tunnel.InterfaceName),
 			Args: []string{"awg", "show", tunnel.InterfaceName},
+		})
+		cmds = append(cmds, runtimeCommand{
+			Name: "ip-link-" + safeName(tunnel.InterfaceName),
+			Args: []string{"ip", "link", "show", tunnel.InterfaceName},
+		})
+		cmds = append(cmds, runtimeCommand{
+			Name: "ss-udp-" + safeName(tunnel.InterfaceName),
+			Args: []string{"ss", "-lunp", "sport", "=", ":" + strconv.Itoa(tunnel.ListenPort)},
+		})
+		cmds = append(cmds, runtimeCommand{
+			Name: "sysctl-rp-filter-" + safeName(tunnel.InterfaceName),
+			Args: []string{"sysctl", "net.ipv4.conf." + tunnel.InterfaceName + ".rp_filter"},
 		})
 	}
 	return cmds
