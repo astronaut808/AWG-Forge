@@ -21,6 +21,12 @@ type tunnelSpec struct {
 	IPv4Subnet    string
 }
 
+type TunnelSuggestion struct {
+	Name       string
+	ListenPort int
+	IPv4Subnet string
+}
+
 func defaultTunnelSpec(profileID, name string, port int, subnet string) tunnelSpec {
 	if name == "" {
 		name = config.DefaultTunnel
@@ -32,6 +38,99 @@ func defaultTunnelSpec(profileID, name string, port int, subnet string) tunnelSp
 		ListenPort:    port,
 		IPv4Subnet:    subnet,
 	}
+}
+
+func SuggestedNextTunnelSpec(profileID string, state config.State) TunnelSuggestion {
+	baseName, basePort, baseSubnet := SuggestedTunnelSpec(profileID)
+	return TunnelSuggestion{
+		Name:       nextFreeTunnelName(baseName, state.Tunnels),
+		ListenPort: nextFreeTunnelPort(basePort, state.Tunnels),
+		IPv4Subnet: nextFreeTunnelSubnet(baseSubnet, state.Tunnels),
+	}
+}
+
+func nextFreeTunnelName(base string, tunnels []config.Tunnel) string {
+	if base == "" {
+		base = config.DefaultTunnel
+	}
+	used := make(map[string]bool, len(tunnels)*2)
+	for _, tunnel := range tunnels {
+		used[tunnel.Name] = true
+		used[tunnel.InterfaceName] = true
+	}
+	if !used[base] {
+		return base
+	}
+	for n := 2; n < 1000; n++ {
+		candidate := fmt.Sprintf("%s-%d", base, n)
+		if !used[candidate] {
+			return candidate
+		}
+	}
+	return fmt.Sprintf("%s-%d", base, time.Now().UTC().Unix())
+}
+
+func nextFreeTunnelPort(base int, tunnels []config.Tunnel) int {
+	used := make(map[int]bool, len(tunnels))
+	for _, tunnel := range tunnels {
+		used[tunnel.ListenPort] = true
+	}
+	if base < 1 || base > 65535 {
+		base = 51820
+	}
+	for port := base; port <= 65535; port++ {
+		if !used[port] {
+			return port
+		}
+	}
+	for port := 1; port < base; port++ {
+		if !used[port] {
+			return port
+		}
+	}
+	return base
+}
+
+func nextFreeTunnelSubnet(base string, tunnels []config.Tunnel) string {
+	for n := uint32(0); n < 4096; n++ {
+		candidate, ok := offsetSubnet24(base, n)
+		if !ok {
+			break
+		}
+		if !tunnelSubnetOverlaps(candidate, tunnels) {
+			return candidate
+		}
+	}
+	if !tunnelSubnetOverlaps(base, tunnels) {
+		return base
+	}
+	return base
+}
+
+func offsetSubnet24(base string, offset uint32) (string, bool) {
+	_, ipnet, err := normalizeIPv4CIDR(base)
+	if err != nil {
+		return "", false
+	}
+	ones, bits := ipnet.Mask.Size()
+	if bits != 32 || ones != 24 {
+		return "", false
+	}
+	network := ipv4ToUint(ipnet.IP)
+	candidate := network + (offset << 8)
+	if candidate < network {
+		return "", false
+	}
+	return fmt.Sprintf("%s/24", uintToIPv4(candidate).String()), true
+}
+
+func tunnelSubnetOverlaps(subnet string, tunnels []config.Tunnel) bool {
+	for _, tunnel := range tunnels {
+		if subnetsOverlap(tunnel.IPv4Subnet, subnet) {
+			return true
+		}
+	}
+	return false
 }
 
 func SuggestedTunnelSpec(profileID string) (name string, port int, subnet string) {
@@ -49,15 +148,19 @@ func (s *Service) CreateTunnel(profileID, name, subnet string, port int) (config
 	if profileID == "" {
 		profileID = s.cfg.ProtocolProfile
 	}
-	suggestedName, suggestedPort, suggestedSubnet := SuggestedTunnelSpec(profileID)
+	state, err := s.Init()
+	if err != nil {
+		return config.Tunnel{}, err
+	}
+	suggestion := SuggestedNextTunnelSpec(profileID, state)
 	if name == "" {
-		name = suggestedName
+		name = suggestion.Name
 	}
 	if port == 0 {
-		port = suggestedPort
+		port = suggestion.ListenPort
 	}
 	if subnet == "" {
-		subnet = suggestedSubnet
+		subnet = suggestion.IPv4Subnet
 	}
 	normalizedSubnet, _, err := normalizeIPv4CIDR(subnet)
 	if err != nil {
@@ -69,10 +172,6 @@ func (s *Service) CreateTunnel(profileID, name, subnet string, port int) (config
 	}
 	if port < 1 || port > 65535 {
 		return config.Tunnel{}, errors.New("listen port must be between 1 and 65535")
-	}
-	state, err := s.Init()
-	if err != nil {
-		return config.Tunnel{}, err
 	}
 	previousState, err := cloneState(state)
 	if err != nil {

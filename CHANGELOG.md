@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.8.2 - 2026-06-05
+
+### Fixed
+
+- Suggested free tunnel names, ports, and IPv4 subnets across all profiles when creating tunnels, preventing the Web UI from proposing already-used defaults such as `awg0` or `10.8.0.0/24`.
+- Updated the quick installer to choose the protocol profile before tunnel defaults and to write `TUNNEL_NAME`, so first-tunnel defaults stay aligned with Legacy, AWG 1.5, or AWG 2.0.
+- Extended `doctor` diagnostics for connected-but-no-internet cases with external route matching, `rp_filter`, UDP listener, runtime config validation, and clearer stale AWG link reporting for `Protocol not supported`.
+- Expanded support bundles with route tables, policy rules, UDP listeners, iptables counters, and per-interface `rp_filter` output while keeping secrets redacted.
+
 ## v0.8.1 - 2026-06-01
 
 ### Changed

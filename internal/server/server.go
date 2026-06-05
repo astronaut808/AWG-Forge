@@ -562,9 +562,9 @@ func (w *web) publicState(state config.State) map[string]any {
 		"server_host":         state.ServerHost,
 		"published_udp_ports": w.cfg.PublishedUDPPorts,
 		"profiles": []map[string]any{
-			profileMeta("awg_legacy_1_0", "1.0", "Legacy", true),
-			profileMeta("awg_1_5", "1.5", "Modern", true),
-			profileMeta("awg_2_0", "2.0", "Modern", true),
+			profileMeta("awg_legacy_1_0", "1.0", "Legacy", true, state),
+			profileMeta("awg_1_5", "1.5", "Modern", true, state),
+			profileMeta("awg_2_0", "2.0", "Modern", true, state),
 		},
 		"tunnels": tunnels,
 	}
