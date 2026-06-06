@@ -33,6 +33,7 @@ sudo AWG_FORGE_HOME=/srv/awg-forge ./install.sh
 ## Что делает скрипт
 
 - проверяет Linux, Docker, Docker Compose и `/dev/net/tun`;
+- при повторном запуске обнаруживает существующую установку и предлагает reconfigure или full reinstall;
 - предлагает удалить найденные старые AWG-like runtime-интерфейсы, например `awg0`, `awg0-1`, `awg15` или `awg20`;
 - определяет внешний интерфейс через `ip route get 1.1.1.1`;
 - предлагает `SERVER_HOST` из найденного source IP, но позволяет указать домен;
@@ -51,6 +52,28 @@ sudo AWG_FORGE_HOME=/srv/awg-forge ./install.sh
 ```text
 .env.backup-YYYYMMDD-HHMMSS
 ```
+
+## Повторный запуск и full reinstall
+
+Если в рабочей директории уже есть `.env`, `data/` или `docker-compose.yml`, установщик спросит, что делать:
+
+```text
+1) Reconfigure existing install, keep data and backup .env
+2) Full reinstall, backup and remove old data/config first
+3) Abort
+```
+
+`Reconfigure` оставляет `data/` на месте, делает backup старого `.env` и пересоздает контейнер с новыми переменными.
+
+`Full reinstall` сначала сохраняет текущие файлы в директорию вида:
+
+```text
+reinstall-backup-YYYYMMDD-HHMMSS/
+```
+
+Потом останавливает контейнер, удаляет managed firewall rules, AWG runtime-интерфейсы, `.env`, `data/` и `docker-compose.yml`, после чего запускает установку как с чистого состояния.
+
+Важно: после full reinstall старые клиентские конфиги больше не подходят, потому что состояние, ключи и параметры туннеля создаются заново. Клиентам нужно выдать свежие `.conf`.
 
 ## Безопасность
 

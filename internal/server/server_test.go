@@ -152,6 +152,34 @@ func TestSessionCookieAllowsLoopbackHTTP(t *testing.T) {
 	}
 }
 
+func TestSessionCookieSecureCanBeDisabledForHTTPDomain(t *testing.T) {
+	w := &web{sessions: []byte("test-secret"), cfg: config.Config{SessionCookieSecure: "false"}}
+	rr := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "http://admin.example.com/api/login", nil)
+	w.setSession(rr, r)
+	cookies := rr.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("cookies = %d, want 1", len(cookies))
+	}
+	if cookies[0].Secure {
+		t.Fatal("SESSION_COOKIE_SECURE=false must allow HTTP domain cookies")
+	}
+}
+
+func TestSessionCookieSecureCanBeForcedForLoopback(t *testing.T) {
+	w := &web{sessions: []byte("test-secret"), cfg: config.Config{SessionCookieSecure: "true"}}
+	rr := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:51821/api/login", nil)
+	w.setSession(rr, r)
+	cookies := rr.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("cookies = %d, want 1", len(cookies))
+	}
+	if !cookies[0].Secure {
+		t.Fatal("SESSION_COOKIE_SECURE=true must force Secure cookies")
+	}
+}
+
 func TestConfigFilenameUsesSanitizedClientName(t *testing.T) {
 	got := configFilename(config.Client{ID: "abc123", Name: "My iPhone 15"})
 	if got != "My-iPhone-15" {
@@ -558,6 +586,45 @@ func TestPublicClientIncludesNotes(t *testing.T) {
 	payload := publicClient(config.Client{ID: "client-1", Name: "phone", Notes: "router in office"})
 	if got, want := payload["notes"], "router in office"; got != want {
 		t.Fatalf("notes = %v, want %q", got, want)
+	}
+}
+
+func TestPublicClientIncludesPersistentConnectionStatus(t *testing.T) {
+	lastSeen := time.Date(2026, 6, 6, 10, 30, 0, 0, time.UTC)
+	payload := publicClient(config.Client{ID: "client-1", Name: "phone", EverConnected: true, LastSeenAt: lastSeen})
+	if got, want := payload["ever_connected"], true; got != want {
+		t.Fatalf("ever_connected = %v, want %v", got, want)
+	}
+	if got, want := payload["last_seen_at"], "2026-06-06T10:30:00Z"; got != want {
+		t.Fatalf("last_seen_at = %v, want %v", got, want)
+	}
+}
+
+func TestPublicClientOmitsZeroLastSeen(t *testing.T) {
+	payload := publicClient(config.Client{ID: "client-1", Name: "phone"})
+	if got, want := payload["last_seen_at"], ""; got != want {
+		t.Fatalf("last_seen_at = %v, want empty string", got)
+	}
+	runtime, ok := payload["runtime"].(map[string]any)
+	if !ok {
+		t.Fatalf("runtime has unexpected type %T", payload["runtime"])
+	}
+	if got, want := runtime["last_seen_at"], ""; got != want {
+		t.Fatalf("runtime.last_seen_at = %v, want empty string", got)
+	}
+}
+
+func TestPublicClientIncludesExpirationStatus(t *testing.T) {
+	expiresAt := time.Now().UTC().Add(-time.Hour)
+	payload := publicClient(config.Client{ID: "client-1", Name: "phone", Enabled: true, ExpiresAt: expiresAt})
+	if got, want := payload["active"], false; got != want {
+		t.Fatalf("active = %v, want %v", got, want)
+	}
+	if got, want := payload["expired"], true; got != want {
+		t.Fatalf("expired = %v, want %v", got, want)
+	}
+	if got := payload["expires_at"]; got == "" {
+		t.Fatal("expires_at is empty, want RFC3339 timestamp")
 	}
 }
 

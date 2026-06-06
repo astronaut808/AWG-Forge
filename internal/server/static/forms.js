@@ -53,6 +53,12 @@ function openClientSettings(tunnel, clientID) {
       </div>
       <div class="form-grid single">
         <div><label>Client name</label><input name="name" value="${escapeAttr(client.name)}" autofocus></div>
+        <div>
+          <label>Expiration</label>
+          <select name="expires">
+            ${clientExpirationOptions(client)}
+          </select>
+        </div>
         <div><label>Notes</label><textarea name="notes" maxlength="1000" placeholder="Admin-only note">${escapeHTML(client.notes || "")}</textarea></div>
       </div>
       <div class="form-actions"><button class="primary" type="submit">Save client</button></div>
@@ -72,6 +78,7 @@ function openClientSettings(tunnel, clientID) {
       body: {
         name: form.get("name"),
         notes: form.get("notes"),
+        expires_at: clientExpirationValue(form, client),
       },
     });
 
@@ -155,6 +162,28 @@ function selectedMTU(form) {
   return Number(form.get("mtu_custom") || 0);
 }
 
+function clientExpirationOptions(client) {
+  const current = client?.expires_at ? formatDateOnly(client.expires_at) : "";
+  const keep = current ? `<option value="keep" selected>Keep current (${escapeHTML(current)})</option>` : "";
+  return `
+    ${keep}
+    <option value="" ${current ? "" : "selected"}>Never expires</option>
+    <option value="1">1 day</option>
+    <option value="7">7 days</option>
+    <option value="30">30 days</option>
+  `;
+}
+
+function clientExpirationValue(form, client) {
+  const value = String(form.get("expires") || "");
+  if (value === "keep") return client?.expires_at || "";
+  if (value === "") return "";
+  const days = Number(value);
+  if (!Number.isFinite(days) || days <= 0) return "";
+  const expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+  return expiresAt.toISOString();
+}
+
 function openCreateClient(tunnel) {
   const body = `
     <form id="modal-form">
@@ -162,7 +191,15 @@ function openCreateClient(tunnel) {
         <div><h2>Create client</h2><p class="muted">${escapeHTML(tunnel.name)} · ${escapeHTML(tunnel.profile)}</p></div>
         <button class="icon-button" type="button" data-close aria-label="Close">&times;</button>
       </div>
-      <div><label>Client name</label><input name="name" autofocus></div>
+      <div class="form-grid single">
+        <div><label>Client name</label><input name="name" autofocus></div>
+        <div>
+          <label>Expiration</label>
+          <select name="expires">
+            ${clientExpirationOptions()}
+          </select>
+        </div>
+      </div>
       <div class="form-actions"><button class="primary" type="submit">Create client</button></div>
     </form>
   `;
@@ -180,6 +217,7 @@ function openCreateClient(tunnel) {
       body: {
         tunnel_id: tunnel.id,
         name: form.get("name"),
+        expires_at: clientExpirationValue(form),
       },
     });
 

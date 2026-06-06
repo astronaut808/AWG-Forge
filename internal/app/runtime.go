@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -26,7 +27,9 @@ func (s *Service) RestartTunnel() error {
 }
 
 func (s *Service) RestartTunnelByID(tunnelID string) error {
-	state, err := s.Init()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state, err := s.initLocked()
 	if err != nil {
 		return err
 	}
@@ -38,10 +41,15 @@ func (s *Service) RestartTunnelByID(tunnelID string) error {
 		state.Tunnels[idx].LastApplyError = "APPLY_CONFIG=false; tunnel restart skipped"
 		state.Tunnels[idx].UpdatedAt = time.Now().UTC()
 		state.UpdatedAt = state.Tunnels[idx].UpdatedAt
-		return s.store.Save(state)
+		if err := s.store.Save(state); err != nil {
+			return err
+		}
+		s.log("warn", "tunnel.restart.skipped", "runtime tunnel restart skipped because APPLY_CONFIG=false", tunnelAuditFields(state.Tunnels[idx]), nil)
+		return nil
 	}
 	_ = exec.Command("awg-quick", "down", state.Tunnels[idx].InterfaceName).Run()
-	if err := s.RenderTunnel(tunnelID); err != nil {
+	if err := s.renderTunnelLocked(tunnelID, true); err != nil {
+		s.log("error", "tunnel.restart.failed", "runtime tunnel restart failed", tunnelAuditFields(state.Tunnels[idx]), err)
 		return err
 	}
 	state, err = s.store.Load()
@@ -53,8 +61,11 @@ func (s *Service) RestartTunnelByID(tunnelID string) error {
 		return errors.New("tunnel not found")
 	}
 	if state.Tunnels[idx].LastApplyError != "" {
-		return errors.New(state.Tunnels[idx].LastApplyError)
+		err := errors.New(state.Tunnels[idx].LastApplyError)
+		s.log("error", "tunnel.restart.failed", "runtime tunnel restart failed", tunnelAuditFields(state.Tunnels[idx]), err)
+		return err
 	}
+	s.log("info", "tunnel.restarted", "runtime tunnel restarted", tunnelAuditFields(state.Tunnels[idx]), nil)
 	return nil
 }
 
@@ -126,6 +137,7 @@ func (s *Service) TunnelHealthByID(tunnelID string, sampleSeconds int) (TunnelHe
 	if !hasFilterRule("FORWARD", "-i", tunnel.InterfaceName, "-j", "ACCEPT") || !hasFilterRule("FORWARD", "-o", tunnel.InterfaceName, "-j", "ACCEPT") {
 		health.Warnings = append(health.Warnings, "possible forwarding issue: missing FORWARD accept rules for "+tunnel.InterfaceName)
 	}
+	now := time.Now().UTC()
 	for _, client := range tunnel.Clients {
 		item := ClientHealth{
 			ID:      client.ID,
@@ -135,6 +147,11 @@ func (s *Service) TunnelHealthByID(tunnelID string, sampleSeconds int) (TunnelHe
 			Status:  "disabled",
 		}
 		if !client.Enabled {
+			health.Clients = append(health.Clients, item)
+			continue
+		}
+		if config.ClientExpired(client, now) {
+			item.Status = "expired"
 			health.Clients = append(health.Clients, item)
 			continue
 		}
@@ -186,7 +203,17 @@ func (s *Service) FirewallRepair() (firewall.Report, error) {
 	if err != nil {
 		return firewall.Report{}, err
 	}
-	return firewall.Repair(s.cfg, state, firewall.IPTablesRunner{})
+	report, err := firewall.Repair(s.cfg, state, firewall.IPTablesRunner{})
+	level := "info"
+	event := "firewall.repaired"
+	message := "managed firewall rules repaired"
+	if err != nil {
+		level = "error"
+		event = "firewall.repair.failed"
+		message = "managed firewall repair failed"
+	}
+	s.log(level, event, message, firewallReportFields(report), err)
+	return report, err
 }
 
 func (s *Service) apply(tunnel config.Tunnel) error {
@@ -214,8 +241,35 @@ func (s *Service) apply(tunnel config.Tunnel) error {
 }
 
 func (s *Service) ensureFirewallRules(tunnel config.Tunnel) error {
-	_, err := firewall.Repair(s.cfg, config.State{Tunnels: []config.Tunnel{tunnel}}, firewall.IPTablesRunner{})
+	report, err := firewall.Repair(s.cfg, config.State{Tunnels: []config.Tunnel{tunnel}}, firewall.IPTablesRunner{})
+	if err != nil {
+		s.log("error", "firewall.repair.failed", "managed firewall repair failed during apply", firewallReportFields(report), err)
+	}
 	return err
+}
+
+func firewallReportFields(report firewall.Report) map[string]any {
+	fields := map[string]any{
+		"apply_enabled": report.ApplyEnabled,
+		"results":       len(report.Results),
+	}
+	missing := 0
+	errorsCount := 0
+	duplicates := 0
+	for _, result := range report.Results {
+		switch result.Status {
+		case "missing":
+			missing++
+		case "error":
+			errorsCount++
+		case "duplicate":
+			duplicates++
+		}
+	}
+	fields["missing"] = missing
+	fields["errors"] = errorsCount
+	fields["duplicates"] = duplicates
+	return fields
 }
 
 func (s *Service) cleanupFirewallRules(tunnel config.Tunnel) error {
@@ -299,6 +353,103 @@ func runtimeAWGShow(interfaceName string) (runtimeInterface, error) {
 		return runtimeInterface{}, fmt.Errorf("awg show %s failed: %s", interfaceName, msg)
 	}
 	return parseRuntimeAWGShow(string(out)), nil
+}
+
+var handshakeAgePartRE = regexp.MustCompile(`(?i)(\d+)\s+(day|hour|minute|second)s?`)
+
+func (s *Service) ClientRuntimeSnapshot(state config.State) (config.State, map[string]map[string]ClientRuntimeStatus) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if latest, err := s.initLocked(); err == nil {
+		state = latest
+	}
+	out := map[string]map[string]ClientRuntimeStatus{}
+	changed := false
+	now := time.Now().UTC()
+	for _, tunnel := range state.Tunnels {
+		clients := map[string]ClientRuntimeStatus{}
+		if !tunnel.Enabled {
+			out[tunnel.ID] = clients
+			continue
+		}
+		show, err := runtimeAWGShow(tunnel.InterfaceName)
+		if err != nil {
+			out[tunnel.ID] = clients
+			continue
+		}
+		ti, ok := tunnelIndexByID(state, tunnel.ID)
+		if !ok {
+			out[tunnel.ID] = clients
+			continue
+		}
+		for ci, client := range state.Tunnels[ti].Clients {
+			peer, ok := show.Peers[client.PublicKey]
+			if !ok {
+				continue
+			}
+			seenAt := handshakeSeenAt(now, peer.LatestHandshake)
+			clients[client.ID] = ClientRuntimeStatus{
+				Present:         true,
+				LatestHandshake: peer.LatestHandshake,
+				LastSeenAt:      seenAt,
+				RxBytes:         peer.RxBytes,
+				TxBytes:         peer.TxBytes,
+			}
+			if !seenAt.IsZero() && shouldUpdateClientLastSeen(client, seenAt) {
+				state.Tunnels[ti].Clients[ci].EverConnected = true
+				state.Tunnels[ti].Clients[ci].LastSeenAt = seenAt
+				changed = true
+			}
+		}
+		out[tunnel.ID] = clients
+	}
+	if changed {
+		state.UpdatedAt = now
+		if err := s.store.Save(state); err != nil {
+			s.log("warn", "client.last_seen.persist_failed", "client last seen update failed", nil, err)
+		}
+	}
+	return state, out
+}
+
+func shouldUpdateClientLastSeen(client config.Client, seenAt time.Time) bool {
+	if !client.EverConnected || client.LastSeenAt.IsZero() {
+		return true
+	}
+	return seenAt.After(client.LastSeenAt.Add(30 * time.Second))
+}
+
+func handshakeSeenAt(now time.Time, latest string) time.Time {
+	age, ok := parseHandshakeAge(latest)
+	if !ok {
+		return time.Time{}
+	}
+	return now.Add(-age).UTC()
+}
+
+func parseHandshakeAge(latest string) (time.Duration, bool) {
+	matches := handshakeAgePartRE.FindAllStringSubmatch(latest, -1)
+	if len(matches) == 0 {
+		return 0, false
+	}
+	var total time.Duration
+	for _, match := range matches {
+		value, err := strconv.Atoi(match[1])
+		if err != nil {
+			return 0, false
+		}
+		switch strings.ToLower(match[2]) {
+		case "day":
+			total += time.Duration(value) * 24 * time.Hour
+		case "hour":
+			total += time.Duration(value) * time.Hour
+		case "minute":
+			total += time.Duration(value) * time.Minute
+		case "second":
+			total += time.Duration(value) * time.Second
+		}
+	}
+	return total, true
 }
 
 func parseRuntimeAWGShow(out string) runtimeInterface {

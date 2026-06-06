@@ -66,6 +66,33 @@ Bundle не должен включать:
 - rendered server/client configs;
 - raw protocol parameter values.
 
+Bundle также включает `audit-log.redacted.jsonl`: последние audit events с уже отредактированными secret-looking fields.
+
+## Audit Log
+
+Audit log помогает понять последовательность событий: кто-то создал клиента, поменял tunnel settings, скачал новый config, сделал firewall repair, запустил backup или получил apply error.
+
+Команды:
+
+```bash
+docker exec awg-forge awg-forge logs
+docker exec awg-forge awg-forge logs --tail 200
+docker exec awg-forge awg-forge logs --level warn
+docker exec awg-forge awg-forge logs --event tunnel.settings.updated
+docker exec awg-forge awg-forge logs --json
+```
+
+Audit log хранится в `CONFIG_DIR/audit.log`, по умолчанию `/etc/awg-forge/audit.log`, с правами `0600` и ротацией.
+
+Если нужно расследовать “подключение есть, но интернета нет”, полезно смотреть:
+
+- `tunnel.settings.updated`;
+- `tunnel.protocol.updated`;
+- `client.config.downloaded`;
+- `tunnel.apply.failed`;
+- `firewall.repaired`;
+- `doctor.completed`.
+
 ## Encrypted Backup / Restore
 
 Backup отличается от support bundle: он содержит секретный материал, включая `state.json`, private keys, preshared keys и rendered `.conf`.

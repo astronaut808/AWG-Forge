@@ -36,7 +36,7 @@ QR import is not exposed. It was removed because `.conf` import is the most reli
 - Safe non-zero obfuscation defaults for new tunnels.
 - IPv4 egress with NAT/firewall reconciliation.
 - Client health view with handshake and rx/tx counters.
-- Maintenance Center for Doctor, firewall, backup, restore verify, support bundle, updates, and system info.
+- Maintenance Center for Doctor, firewall, backup, restore verify, support bundle, audit logs, updates, and system info.
 - Doctor diagnostics for tools, runtime, firewall, ports, peers, handshakes, and stale configs.
 - Manual managed firewall rule check and repair.
 - Secret-free support bundle for safely sharing diagnostics.

@@ -169,6 +169,200 @@ port_in_use_udp() {
   return 1
 }
 
+env_value() {
+  local key="$1"
+  if [[ -f "$ENV_FILE" ]]; then
+    awk -F= -v key="$key" '$1 == key {print substr($0, length(key) + 2); exit}' "$ENV_FILE"
+  fi
+}
+
+state_path() {
+  local config_dir
+  config_dir="$(env_value CONFIG_DIR)"
+  if [[ -n "$config_dir" && "$config_dir" != "/etc/awg-forge" ]]; then
+    printf '%s/state.json' "$config_dir"
+    return
+  fi
+  printf '%s/state.json' "$DATA_DIR"
+}
+
+state_tunnels() {
+  local file="$1"
+  [[ -f "$file" ]] || return 0
+  awk '
+    /"interface_name":/ { iface=$2; gsub(/[",]/, "", iface) }
+    /"listen_port":/ { port=$2; gsub(/,/, "", port) }
+    /"ipv4_subnet":/ { subnet=$2; gsub(/[",]/, "", subnet) }
+    /"enabled":/ { enabled=$2; gsub(/,/, "", enabled) }
+    iface && port && subnet && enabled {
+      print iface "|" port "|" subnet "|" enabled
+      iface=port=subnet=enabled=""
+    }
+  ' "$file"
+}
+
+state_interfaces() {
+  local file="$1"
+  [[ -f "$file" ]] || return 0
+  awk '
+    /"interface_name":/ {
+      iface=$2
+      gsub(/[",]/, "", iface)
+      if (iface != "") print iface
+    }
+  ' "$file"
+}
+
+iptables_delete_all() {
+  local table="$1"
+  shift
+  local args=("$@")
+  have iptables || return 0
+  while true; do
+    if [[ -n "$table" ]]; then
+      iptables -t "$table" -C "${args[@]}" >/dev/null 2>&1 || break
+      iptables -t "$table" -D "${args[@]}" || break
+    else
+      iptables -C "${args[@]}" >/dev/null 2>&1 || break
+      iptables -D "${args[@]}" || break
+    fi
+  done
+}
+
+cleanup_tunnel_rules() {
+  local iface="$1"
+  local port="$2"
+  local subnet="$3"
+  local external_interface="$4"
+  [[ -n "$subnet" && -n "$external_interface" ]] && iptables_delete_all nat POSTROUTING -s "$subnet" -o "$external_interface" -j MASQUERADE
+  [[ -n "$port" ]] && iptables_delete_all "" INPUT -p udp -m udp --dport "$port" -j ACCEPT
+  [[ -n "$iface" ]] && iptables_delete_all "" FORWARD -i "$iface" -j ACCEPT
+  [[ -n "$iface" ]] && iptables_delete_all "" FORWARD -o "$iface" -j ACCEPT
+}
+
+cleanup_interface() {
+  local iface="$1"
+  [[ -n "$iface" ]] || return
+  if have awg-quick && [[ -f "/etc/amnezia/amneziawg/$iface.conf" ]]; then
+    awg-quick down "$iface" >/dev/null 2>&1 || true
+  fi
+  if have ip && ip link show "$iface" >/dev/null 2>&1; then
+    ip link delete "$iface" >/dev/null 2>&1 || true
+  fi
+}
+
+cleanup_orphan_interfaces() {
+  local state_file="${1:-}"
+  local known=" "
+  local iface
+  if [[ -n "$state_file" && -f "$state_file" ]]; then
+    while IFS= read -r iface; do
+      [[ -n "$iface" ]] || continue
+      known+="$iface "
+    done < <(state_interfaces "$state_file")
+  fi
+  while IFS= read -r iface; do
+    [[ -n "$iface" ]] || continue
+    if [[ "$known" == *" $iface "* ]]; then
+      continue
+    fi
+    warn "found runtime interface without state cleanup context: $iface"
+    cleanup_interface "$iface"
+    iptables_delete_all "" FORWARD -i "$iface" -j ACCEPT
+    iptables_delete_all "" FORWARD -o "$iface" -j ACCEPT
+  done < <(awg_like_interfaces)
+}
+
+cleanup_existing_runtime() {
+  local state external_interface
+  external_interface="$(env_value EXTERNAL_INTERFACE)"
+  external_interface="${external_interface:-eth0}"
+  state="$(state_path)"
+  if [[ -f "$state" ]]; then
+    while IFS='|' read -r iface port subnet _enabled; do
+      [[ -n "$iface" ]] || continue
+      warn "cleaning previous tunnel $iface"
+      cleanup_tunnel_rules "$iface" "$port" "$subnet" "$external_interface"
+      cleanup_interface "$iface"
+    done < <(state_tunnels "$state")
+    cleanup_orphan_interfaces "$state"
+  else
+    warn "state file not found; cleaning AWG-like runtime interfaces only"
+    cleanup_orphan_interfaces
+  fi
+}
+
+existing_install_found() {
+  [[ -f "$ENV_FILE" || -f "$COMPOSE_FILE" || -d "$DATA_DIR" ]]
+}
+
+backup_existing_install() {
+  local backup_dir
+  backup_dir="reinstall-backup-$(date -u +%Y%m%d-%H%M%S)"
+  mkdir -p "$backup_dir"
+  local copied=false
+  if [[ -f "$ENV_FILE" ]]; then
+    cp -a "$ENV_FILE" "$backup_dir/"
+    copied=true
+  fi
+  if [[ -f "$COMPOSE_FILE" ]]; then
+    cp -a "$COMPOSE_FILE" "$backup_dir/"
+    copied=true
+  fi
+  if [[ -d "$DATA_DIR" ]]; then
+    cp -a "$DATA_DIR" "$backup_dir/"
+    copied=true
+  fi
+  if $copied; then
+    chmod 700 "$backup_dir" || true
+    ok "backup saved to $backup_dir"
+  else
+    rmdir "$backup_dir" 2>/dev/null || true
+  fi
+}
+
+full_reinstall() {
+  local compose="$1"
+  warn "full reinstall removes local state and generated configs from this install directory"
+  muted "Existing clients will need fresh configs after reinstall."
+  confirm "Create backup and reinstall from scratch?" "n" || exit 1
+  backup_existing_install
+
+  if [[ -n "$compose" && -f "$COMPOSE_FILE" ]]; then
+    $compose down --remove-orphans || true
+    ok "docker compose stopped"
+  elif docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$APP_NAME"; then
+    docker rm -f "$APP_NAME" >/dev/null 2>&1 || true
+    ok "container removed"
+  fi
+
+  cleanup_existing_runtime
+  rm -rf "$DATA_DIR" "$ENV_FILE" "$COMPOSE_FILE"
+  ok "old install files removed"
+}
+
+handle_existing_install() {
+  local compose="$1"
+  existing_install_found || return
+  printf '\n'
+  bold "Existing install"
+  [[ -f "$ENV_FILE" ]] && printf '%s\n' "- $ENV_FILE"
+  [[ -f "$COMPOSE_FILE" ]] && printf '%s\n' "- $COMPOSE_FILE"
+  [[ -d "$DATA_DIR" ]] && printf '%s\n' "- $DATA_DIR/"
+  printf '\n'
+  printf '1) Reconfigure existing install, keep data and backup .env\n'
+  printf '2) Full reinstall, backup and remove old data/config first\n'
+  printf '3) Abort\n'
+  local choice
+  choice="$(prompt "Choose action" "1")"
+  case "$choice" in
+    1) ok "continuing with existing data" ;;
+    2) full_reinstall "$compose" ;;
+    3) exit 0 ;;
+    *) warn "unknown choice"; handle_existing_install "$compose" ;;
+  esac
+}
+
 validate_port() {
   local value="$1"
   [[ "$value" =~ ^[0-9]+$ ]] && (( value >= 1 && value <= 65535 ))
@@ -260,7 +454,8 @@ backup_existing_env() {
   if [[ ! -f "$ENV_FILE" ]]; then
     return
   fi
-  local backup="${ENV_FILE}.backup-$(date -u +%Y%m%d-%H%M%S)"
+  local backup
+  backup="${ENV_FILE}.backup-$(date -u +%Y%m%d-%H%M%S)"
   cp "$ENV_FILE" "$backup"
   chmod 600 "$backup" || true
   warn "$ENV_FILE already exists; backup saved to $backup"
@@ -290,6 +485,7 @@ WEBUI_HOST=$webui_host
 WEBUI_PORT=$webui_port
 PASSWORD=$password
 SESSION_SECRET=$session_secret
+SESSION_COOKIE_SECURE=auto
 EXTERNAL_INTERFACE=$external_interface
 IPV4_SUBNET=$ipv4_subnet
 DNS=$dns
@@ -397,6 +593,8 @@ main() {
   else
     warn "/dev/net/tun does not exist; container startup may fail until TUN is available"
   fi
+
+  handle_existing_install "$compose"
   cleanup_stale_interfaces
 
   local route default_interface default_host

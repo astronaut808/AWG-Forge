@@ -56,6 +56,18 @@ func TestDisabledClientNotRenderedAsServerPeer(t *testing.T) {
 	}
 }
 
+func TestExpiredClientNotRenderedAsServerPeer(t *testing.T) {
+	state := testState(true)
+	state.Tunnels[0].Clients[0].ExpiresAt = time.Now().UTC().Add(-time.Hour)
+	got, err := render.ServerConfig(state, state.Tunnels[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "client-public-key") {
+		t.Fatal("expired client was rendered into server config")
+	}
+}
+
 func TestAWG15RendersSignaturePacketsInClientOnly(t *testing.T) {
 	state := testState(true)
 	state.Tunnels[0].ProtocolProfileID = "awg_1_5"

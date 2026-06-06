@@ -10,6 +10,7 @@ The main example is [.env.example](../../.env.example).
 - `WEBUI_HOST`: Web UI bind address. Defaults to `127.0.0.1`.
 - `WEBUI_PORT`: Web UI port. Defaults to `51821`.
 - `PASSWORD`: Web UI password. Required for public binds and recommended always.
+- `SESSION_COOKIE_SECURE`: Secure cookie policy for UI sessions. Values: `auto`, `true`, `false`. Defaults to `auto`.
 - `EXTERNAL_INTERFACE`: server egress interface, often `eth0` or `ens3`. In bridge networking this is usually `eth0` inside the container.
 - `IPV4_SUBNET`: subnet for the first tunnel, for example `10.8.0.0/24`.
 - `DNS`: DNS value rendered into client configs.
@@ -19,6 +20,10 @@ The main example is [.env.example](../../.env.example).
 - `PROTOCOL_PROFILE`: first tunnel profile. Usually `awg_legacy_1_0`.
 - `APPLY_CONFIG`: when `true`, awg-forge applies runtime tunnel changes with AmneziaWG tools.
 - `PUBLISHED_UDP_PORTS`: published Docker UDP ports/ranges, for example `51820-51840,7443`.
+- `AUDIT_LOG_ENABLED`: enables the safe audit log. Defaults to `true`.
+- `AUDIT_LOG_PATH`: audit log path. Defaults to `/etc/awg-forge/audit.log`.
+- `AUDIT_LOG_MAX_SIZE`: file size before rotation. Defaults to `5242880`.
+- `AUDIT_LOG_MAX_FILES`: number of rotated files to keep. Defaults to `3`.
 
 The quick installer asks for `PROTOCOL_PROFILE` before tunnel defaults, so profile-specific defaults stay aligned:
 
@@ -35,6 +40,16 @@ When creating more tunnels in the Web UI, awg-forge suggests free names, ports, 
 `SESSION_SECRET` is optional. If omitted, awg-forge creates and persists one in `state.json`.
 
 It is used to sign UI session cookies. In the normal setup, users do not need to manage it manually.
+
+## SESSION_COOKIE_SECURE
+
+`SESSION_COOKIE_SECURE` controls the `Secure` flag on UI session cookies:
+
+- `auto`: default. For `127.0.0.1`, `localhost`, and `::1`, cookies work over HTTP without `Secure`; for external hosts, cookies use `Secure`.
+- `true`: always set `Secure`. Use with HTTPS/reverse proxies.
+- `false`: never set `Secure`. This allows login through `http://domain:port`, but is unsafe on the public internet.
+
+If you need plain HTTP Web UI access, use it only on a trusted network or behind separate protection. For production, prefer `WEBUI_HOST=127.0.0.1` with SSH tunneling or HTTPS.
 
 ## EXTERNAL_INTERFACE
 
@@ -100,4 +115,29 @@ For local development:
 
 ```env
 APPLY_CONFIG=false
+```
+
+## Audit Log
+
+The audit log stores safe operational events: login success/failure, client create/update/delete, tunnel create/update/delete/restart, firewall repair, backup/support/restore verify, and update checks.
+
+It is meant for cases like “it worked yesterday, then settings changed, now handshakes exist but internet does not work”.
+
+The audit log must not contain:
+
+- private keys;
+- preshared keys;
+- passwords;
+- session secrets;
+- full client configs;
+- import keys or `vpn://`;
+- raw protocol parameter values.
+
+Read recent events:
+
+```bash
+docker exec awg-forge awg-forge logs
+docker exec awg-forge awg-forge logs --tail 200
+docker exec awg-forge awg-forge logs --level error
+docker exec awg-forge awg-forge logs --event tunnel.apply.failed
 ```

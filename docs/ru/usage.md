@@ -36,6 +36,7 @@ Maintenance actions доступны через кнопку `Maintenance`:
 - `Restore`: проверить `.afbackup` через dry-run без записи в `CONFIG_DIR`; настоящий restore остается CLI-only.
 - `Updates`: проверка, есть ли новые upstream refs у используемых AmneziaWG tools.
 - `Support`: скачать support bundle без секретов.
+- `Logs`: посмотреть последние безопасные audit events.
 - `System`: текущий режим, server host, tunnels, profiles и полезные команды.
 
 ## Stale Configs
@@ -45,6 +46,32 @@ Maintenance actions доступны через кнопку `Maintenance`:
 После таких изменений затронутые клиенты показывают badge `stale`, пока для них не скачан свежий `.conf`.
 
 Client rename и notes — metadata-only изменения, они не делают configs stale.
+
+## Client Runtime Status
+
+В списке клиентов UI показывает два разных типа состояния:
+
+- `enabled` / `disabled`: клиент разрешен или отключен в конфиге awg-forge.
+- `active now`, `seen recently`, `last seen`, `never connected`, `status unknown`: примерный runtime-статус из `awg show` и сохраненного `last_seen_at`.
+
+AmneziaWG/WireGuard не держит постоянное TCP-like соединение, поэтому `active now` — это приблизительный online-индикатор, а не строгий online/offline статус. В dashboard active означает handshake младше примерно 3 минут. UI также показывает `received` / `sent` counters, если runtime их отдает.
+
+Когда runtime сообщает handshake, awg-forge сохраняет в `state.json`, что клиент уже подключался, и время последнего handshake. После рестарта интерфейса клиент может показываться как `last seen`, пока не появится новый runtime handshake.
+
+Doctor может предупреждать о клиентах, у которых еще не было handshake. Это полезно для поиска неиспользуемых или неправильно импортированных конфигов, но не означает, что весь tunnel сломан, если другие клиенты в этом же tunnel работают.
+
+## Client Expiration
+
+При создании или редактировании клиента можно выбрать срок действия:
+
+- `Never expires`;
+- `1 day`;
+- `7 days`;
+- `30 days`.
+
+Если срок истек, клиент остается в UI и `state.json`, но считается `expired` и больше не рендерится в server config как peer. Это безопаснее удаления: сохраняются имя, notes, last seen и история в support bundle. В UI это отображается как `expired` / `not rendered since <date>`.
+
+В режиме `serve` awg-forge периодически применяет истекшие сроки и перерендеривает затронутые tunnels. Обычно это занимает до одной минуты после фактического истечения.
 
 ## CLI В Docker
 
@@ -60,6 +87,8 @@ docker exec awg-forge awg-forge firewall repair
 docker exec awg-forge awg-forge firewall check
 docker exec awg-forge awg-forge support-bundle
 docker exec awg-forge awg-forge updates
+docker exec awg-forge awg-forge logs
+docker exec awg-forge awg-forge logs --tail 200 --level error
 docker exec awg-forge awg-forge client add phone
 docker exec awg-forge awg-forge client add laptop awg15
 docker exec awg-forge awg-forge client config <client-id>
@@ -84,6 +113,7 @@ awg-forge firewall check
 awg-forge firewall repair
 awg-forge support-bundle
 awg-forge updates
+awg-forge logs
 ```
 
 ## Client Config Import

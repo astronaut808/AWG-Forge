@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/astronaut808/awg-forge/internal/app"
+	"github.com/astronaut808/awg-forge/internal/audit"
 	"github.com/astronaut808/awg-forge/internal/buildinfo"
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/doctor"
@@ -69,6 +70,9 @@ func Generate(ctx context.Context, cfg config.Config, service *app.Service, opts
 	if err := addJSON(zw, "files.json", fileInventory(cfg.ConfigDir)); err != nil {
 		return Bundle{}, err
 	}
+	if err := addAuditLog(zw, cfg); err != nil {
+		return Bundle{}, err
+	}
 	for _, cmd := range runtimeCommands(cfg, state) {
 		if err := addText(zw, filepath.Join("runtime", cmd.Name+".txt"), runText(ctx, cmd.Args...)); err != nil {
 			return Bundle{}, err
@@ -103,10 +107,28 @@ func manifest(now time.Time) map[string]any {
 			"preshared keys removed",
 			"session/password values removed",
 			"protocol parameter values removed",
+			"audit log secret-looking fields redacted",
 			"runtime public keys replaced with fingerprints",
 			"rendered config contents excluded",
 		},
 	}
+}
+
+func addAuditLog(zw *zip.Writer, cfg config.Config) error {
+	events, err := audit.ReadFile(cfg.AuditLogPath, audit.ReadOptions{Tail: 500})
+	if err != nil {
+		return addJSON(zw, "audit-log.error.json", map[string]string{"error": err.Error()})
+	}
+	var b strings.Builder
+	for _, event := range events {
+		line, err := json.Marshal(event)
+		if err != nil {
+			continue
+		}
+		b.Write(line)
+		b.WriteByte('\n')
+	}
+	return addText(zw, "audit-log.redacted.jsonl", b.String())
 }
 
 func addJSON(zw *zip.Writer, name string, v any) error {
@@ -142,6 +164,9 @@ type configSummary struct {
 	ProtocolProfile     string `json:"protocol_profile"`
 	ApplyConfig         bool   `json:"apply_config"`
 	PublishedUDPPorts   string `json:"published_udp_ports"`
+	AuditLogEnabled     bool   `json:"audit_log_enabled"`
+	AuditLogMaxSize     int64  `json:"audit_log_max_size"`
+	AuditLogMaxFiles    int    `json:"audit_log_max_files"`
 	PasswordSet         bool   `json:"password_set"`
 	SessionSecretSet    bool   `json:"session_secret_set"`
 }
@@ -163,6 +188,9 @@ func redactedConfig(cfg config.Config) configSummary {
 		ProtocolProfile:     cfg.ProtocolProfile,
 		ApplyConfig:         cfg.ApplyConfig,
 		PublishedUDPPorts:   cfg.PublishedUDPPorts,
+		AuditLogEnabled:     cfg.AuditLogEnabled,
+		AuditLogMaxSize:     cfg.AuditLogMaxSize,
+		AuditLogMaxFiles:    cfg.AuditLogMaxFiles,
 		PasswordSet:         cfg.Password != "",
 		SessionSecretSet:    cfg.SessionSecret != "",
 	}
@@ -206,9 +234,14 @@ type clientSummary struct {
 	TunnelID      string    `json:"tunnel_id"`
 	Name          string    `json:"name"`
 	Enabled       bool      `json:"enabled"`
+	Active        bool      `json:"active"`
+	Expired       bool      `json:"expired"`
 	IPv4Address   string    `json:"ipv4_address"`
 	PublicKeyHash string    `json:"public_key_hash,omitempty"`
 	Revision      int       `json:"revision"`
+	EverConnected bool      `json:"ever_connected,omitempty"`
+	LastSeenAt    time.Time `json:"last_seen_at,omitempty"`
+	ExpiresAt     time.Time `json:"expires_at,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }
@@ -244,15 +277,21 @@ func redactedState(state config.State) stateSummary {
 			CreatedAt:           tunnel.CreatedAt,
 			UpdatedAt:           tunnel.UpdatedAt,
 		}
+		now := time.Now().UTC()
 		for _, client := range tunnel.Clients {
 			item.Clients = append(item.Clients, clientSummary{
 				ID:            client.ID,
 				TunnelID:      client.TunnelID,
 				Name:          client.Name,
 				Enabled:       client.Enabled,
+				Active:        config.ClientActive(client, now),
+				Expired:       config.ClientExpired(client, now),
 				IPv4Address:   client.IPv4Address,
 				PublicKeyHash: hashValue(client.PublicKey),
 				Revision:      client.ConfigRevision,
+				EverConnected: client.EverConnected,
+				LastSeenAt:    client.LastSeenAt,
+				ExpiresAt:     client.ExpiresAt,
 				CreatedAt:     client.CreatedAt,
 				UpdatedAt:     client.UpdatedAt,
 			})

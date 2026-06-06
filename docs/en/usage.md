@@ -36,6 +36,7 @@ Maintenance actions are available through the `Maintenance` button:
 - `Restore`: verify an `.afbackup` through a dry-run without writing to `CONFIG_DIR`; actual restore remains CLI-only.
 - `Updates`: check whether bundled AmneziaWG upstream refs are behind.
 - `Support`: download a support bundle without secrets.
+- `Logs`: inspect recent safe audit events.
 - `System`: current mode, server host, tunnels, profiles, and useful commands.
 
 ## Stale Configs
@@ -45,6 +46,32 @@ Changing tunnel settings or protocol params can make old client configs stale.
 After such changes, affected clients show a `stale` badge until a fresh `.conf` is downloaded.
 
 Client rename and notes are metadata-only changes and do not make configs stale.
+
+## Client Runtime Status
+
+The client list shows two different kinds of status:
+
+- `enabled` / `disabled`: whether the client is allowed in awg-forge config.
+- `active now`, `seen recently`, `last seen`, `never connected`, `status unknown`: approximate runtime status from `awg show` and persisted `last_seen_at`.
+
+AmneziaWG/WireGuard does not keep a permanent TCP-like connection, so `active now` is only an approximate online indicator, not a strict online/offline status. In the dashboard, active means the latest handshake is younger than about 3 minutes. The UI also shows `received` / `sent` counters when runtime exposes them.
+
+When runtime reports a handshake, awg-forge persists that the client has connected before and stores the latest handshake time in `state.json`. After an interface restart, the client may show `last seen` until a fresh runtime handshake appears.
+
+Doctor may warn about clients with no handshake yet. This is useful for spotting unused or wrongly imported configs, but it does not mean the whole tunnel is broken when other clients on the same tunnel work.
+
+## Client Expiration
+
+When creating or editing a client, you can choose an expiration:
+
+- `Never expires`;
+- `1 day`;
+- `7 days`;
+- `30 days`.
+
+When the expiration passes, the client remains visible in the UI and `state.json`, but becomes `expired` and is no longer rendered into the server config as a peer. This is safer than deletion because name, notes, last seen, and support bundle history are preserved. The UI shows this as `expired` / `not rendered since <date>`.
+
+In `serve` mode, awg-forge periodically enforces expired clients and re-renders affected tunnels. Enforcement normally happens within one minute after the actual expiration time.
 
 ## CLI In Docker
 
@@ -60,6 +87,8 @@ docker exec awg-forge awg-forge firewall repair
 docker exec awg-forge awg-forge firewall check
 docker exec awg-forge awg-forge support-bundle
 docker exec awg-forge awg-forge updates
+docker exec awg-forge awg-forge logs
+docker exec awg-forge awg-forge logs --tail 200 --level error
 docker exec awg-forge awg-forge client add phone
 docker exec awg-forge awg-forge client add laptop awg15
 docker exec awg-forge awg-forge client config <client-id>
@@ -84,6 +113,7 @@ awg-forge firewall check
 awg-forge firewall repair
 awg-forge support-bundle
 awg-forge updates
+awg-forge logs
 ```
 
 ## Client Config Import

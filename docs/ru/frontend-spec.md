@@ -151,6 +151,7 @@ Frontend использует:
 - `POST /api/firewall/repair`;
 - `GET /api/support-bundle`;
 - `GET /api/updates`;
+- `GET /api/audit-log?tail=100`;
 - `POST /api/tunnels`;
 - `PATCH /api/tunnels/<id>/settings`;
 - `PATCH /api/tunnels/<id>/protocol`;

@@ -36,7 +36,7 @@ QR import не используется. Он был убран, потому ч
 - Безопасные ненулевые параметры обфускации для новых туннелей.
 - IPv4 egress с согласованием NAT/firewall rules.
 - Health view для клиентов: handshake и rx/tx counters.
-- Maintenance Center для Doctor, firewall, backup, restore verify, support bundle, updates и system info.
+- Maintenance Center для Doctor, firewall, backup, restore verify, support bundle, audit logs, updates и system info.
 - Doctor diagnostics для инструментов, runtime, firewall, ports, peers, handshakes и stale configs.
 - Ручная проверка и repair managed firewall rules.
 - Support bundle без секретов для безопасной передачи диагностики.

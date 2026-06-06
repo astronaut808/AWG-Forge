@@ -10,6 +10,12 @@ import (
 )
 
 func (s *Service) Init() (config.State, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.initLocked()
+}
+
+func (s *Service) initLocked() (config.State, error) {
 	if state, err := s.store.Load(); err == nil {
 		return s.repairLoadedState(state)
 	}
@@ -35,7 +41,7 @@ func (s *Service) Init() (config.State, error) {
 	if err := s.store.Save(state); err != nil {
 		return config.State{}, err
 	}
-	return state, s.RenderAll()
+	return state, s.renderTunnelFromState(state, tunnel.ID, false)
 }
 
 func (s *Service) repairLoadedState(state config.State) (config.State, error) {

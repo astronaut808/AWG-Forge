@@ -682,16 +682,46 @@ textarea:focus-visible {
   font-size: 12.5px;
 }
 
+.audit-row .mono {
+  margin-top: 4px;
+  color: var(--muted-2);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.bad-text {
+  color: var(--danger);
+}
+
 .client-row strong,
 .client-row span {
   display: block;
   overflow-wrap: anywhere;
 }
 
-.client-row strong {
+.client-title-row {
   display: flex;
-  gap: 8px;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.client-row strong {
+  display: inline-block;
+  min-width: 0;
+}
+
+.client-meta {
+  display: flex !important;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.client-meta .badge {
+  display: inline-flex;
+  overflow-wrap: normal;
 }
 
 .client-notes {

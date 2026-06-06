@@ -145,10 +145,12 @@ func SuggestedTunnelSpec(profileID string) (name string, port int, subnet string
 }
 
 func (s *Service) CreateTunnel(profileID, name, subnet string, port int) (config.Tunnel, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if profileID == "" {
 		profileID = s.cfg.ProtocolProfile
 	}
-	state, err := s.Init()
+	state, err := s.initLocked()
 	if err != nil {
 		return config.Tunnel{}, err
 	}
@@ -203,20 +205,21 @@ func (s *Service) CreateTunnel(profileID, name, subnet string, port int) (config
 	if err := s.store.Save(state); err != nil {
 		return config.Tunnel{}, err
 	}
-	if err := s.RenderTunnel(tunnel.ID); err != nil {
-		var applyErr *ApplyError
-		if errors.As(err, &applyErr) {
-			if rollbackErr := s.rollbackRenderedState(previousState, "", tunnel.InterfaceName); rollbackErr != nil {
-				return config.Tunnel{}, errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
-			}
+	if err := s.renderTunnelLocked(tunnel.ID, true); err != nil {
+		if rollbackErr := s.rollbackRenderedState(previousState, "", tunnel.InterfaceName); rollbackErr != nil {
+			return config.Tunnel{}, errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
 		}
+		s.log("error", "tunnel.create.failed", "tunnel creation failed", tunnelAuditFields(tunnel), err)
 		return config.Tunnel{}, err
 	}
+	s.log("info", "tunnel.created", "tunnel created", tunnelAuditFields(tunnel), nil)
 	return tunnel, nil
 }
 
 func (s *Service) UpdateTunnelSettings(tunnelID string, update TunnelSettingsUpdate) (config.Tunnel, error) {
-	state, err := s.Init()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state, err := s.initLocked()
 	if err != nil {
 		return config.Tunnel{}, err
 	}
@@ -247,19 +250,18 @@ func (s *Service) UpdateTunnelSettings(tunnelID string, update TunnelSettingsUpd
 	if old.InterfaceName != settings.Name {
 		_ = s.store.DeleteRenderedTunnel(old.InterfaceName)
 	}
-	if err := s.RenderTunnel(state.Tunnels[idx].ID); err != nil {
-		var applyErr *ApplyError
-		if errors.As(err, &applyErr) {
-			deleteRendered := []string{}
-			if old.InterfaceName != settings.Name {
-				deleteRendered = append(deleteRendered, settings.Name)
-			}
-			if rollbackErr := s.rollbackRuntimeState(previousState, old.ID, deleteRendered...); rollbackErr != nil {
-				return config.Tunnel{}, errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
-			}
+	if err := s.renderTunnelLocked(state.Tunnels[idx].ID, true); err != nil {
+		deleteRendered := []string{}
+		if old.InterfaceName != settings.Name {
+			deleteRendered = append(deleteRendered, settings.Name)
 		}
+		if rollbackErr := s.rollbackRuntimeState(previousState, old.ID, deleteRendered...); rollbackErr != nil {
+			return config.Tunnel{}, errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
+		}
+		s.log("error", "tunnel.settings.failed", "tunnel settings update failed", tunnelAuditFields(state.Tunnels[idx]), err)
 		return config.Tunnel{}, err
 	}
+	s.log("info", "tunnel.settings.updated", "tunnel settings updated", tunnelAuditFields(state.Tunnels[idx]), nil)
 	return state.Tunnels[idx], nil
 }
 
@@ -375,7 +377,9 @@ func valueOr(value, fallback string) string {
 }
 
 func (s *Service) DeleteTunnel(tunnelID string) error {
-	state, err := s.Init()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state, err := s.initLocked()
 	if err != nil {
 		return err
 	}
@@ -404,16 +408,26 @@ func (s *Service) DeleteTunnel(tunnelID string) error {
 			if rollbackErr := s.rollbackRuntimeState(previousState, tunnel.ID); rollbackErr != nil {
 				return errors.Join(&ApplyError{Err: err}, fmt.Errorf("rollback failed: %w", rollbackErr))
 			}
+			s.log("error", "tunnel.delete.failed", "tunnel delete runtime down failed", tunnelAuditFields(tunnel), err)
 			return &ApplyError{Err: err}
 		}
 		if err := s.cleanupFirewallRules(tunnel); err != nil {
 			if rollbackErr := s.rollbackRuntimeState(previousState, tunnel.ID); rollbackErr != nil {
 				return errors.Join(&ApplyError{Err: err}, fmt.Errorf("rollback failed: %w", rollbackErr))
 			}
+			s.log("error", "tunnel.delete.failed", "tunnel delete firewall cleanup failed", tunnelAuditFields(tunnel), err)
 			return &ApplyError{Err: err}
 		}
 	}
-	return s.store.DeleteRenderedTunnel(tunnel.InterfaceName)
+	if err := s.store.DeleteRenderedTunnel(tunnel.InterfaceName); err != nil {
+		if rollbackErr := s.rollbackRuntimeState(previousState, tunnel.ID); rollbackErr != nil {
+			return errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
+		}
+		s.log("error", "tunnel.delete.failed", "tunnel rendered files deletion failed", tunnelAuditFields(tunnel), err)
+		return err
+	}
+	s.log("info", "tunnel.deleted", "tunnel deleted", tunnelAuditFields(tunnel), nil)
+	return nil
 }
 
 func (s *Service) newTunnel(spec tunnelSpec) (config.Tunnel, error) {

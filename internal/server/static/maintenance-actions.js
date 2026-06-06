@@ -29,6 +29,21 @@ async function runMaintenanceUpdates() {
   openMaintenance("updates");
 }
 
+async function runMaintenanceLogs() {
+  maintenanceState.loading.logs = true;
+  openMaintenance("logs");
+  const res = await api("/api/audit-log?tail=100");
+  maintenanceState.loading.logs = false;
+  if (!res.ok) {
+    openMaintenance("logs");
+    return;
+  }
+  const payload = await res.json();
+  maintenanceState.auditLog = payload.events || [];
+  maintenanceState.lastRun.logs = new Date().toLocaleString();
+  openMaintenance("logs");
+}
+
 async function submitMaintenanceBackup(event) {
   event.preventDefault();
   if (!beginSubmit(event.currentTarget)) return;

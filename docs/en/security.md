@@ -23,6 +23,8 @@ UI sessions expire after 30 minutes.
 
 `SESSION_SECRET` can be omitted. If absent, awg-forge creates and stores it in `state.json`.
 
+By default `SESSION_COOKIE_SECURE=auto`: non-`Secure` cookies are allowed only for loopback HTTP (`127.0.0.1`, `localhost`, `::1`), while external hosts use `Secure`. For plain HTTP on an external host, explicitly set `SESSION_COOKIE_SECURE=false`; doctor will warn about this. Use that mode only on a trusted network or behind separate protection.
+
 ## Origin / Referer Checks
 
 State-changing requests validate Origin/Referer.
