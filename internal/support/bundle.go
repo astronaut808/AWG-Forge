@@ -234,9 +234,14 @@ type clientSummary struct {
 	TunnelID      string    `json:"tunnel_id"`
 	Name          string    `json:"name"`
 	Enabled       bool      `json:"enabled"`
+	Active        bool      `json:"active"`
+	Expired       bool      `json:"expired"`
 	IPv4Address   string    `json:"ipv4_address"`
 	PublicKeyHash string    `json:"public_key_hash,omitempty"`
 	Revision      int       `json:"revision"`
+	EverConnected bool      `json:"ever_connected,omitempty"`
+	LastSeenAt    time.Time `json:"last_seen_at,omitempty"`
+	ExpiresAt     time.Time `json:"expires_at,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }
@@ -272,15 +277,21 @@ func redactedState(state config.State) stateSummary {
 			CreatedAt:           tunnel.CreatedAt,
 			UpdatedAt:           tunnel.UpdatedAt,
 		}
+		now := time.Now().UTC()
 		for _, client := range tunnel.Clients {
 			item.Clients = append(item.Clients, clientSummary{
 				ID:            client.ID,
 				TunnelID:      client.TunnelID,
 				Name:          client.Name,
 				Enabled:       client.Enabled,
+				Active:        config.ClientActive(client, now),
+				Expired:       config.ClientExpired(client, now),
 				IPv4Address:   client.IPv4Address,
 				PublicKeyHash: hashValue(client.PublicKey),
 				Revision:      client.ConfigRevision,
+				EverConnected: client.EverConnected,
+				LastSeenAt:    client.LastSeenAt,
+				ExpiresAt:     client.ExpiresAt,
 				CreatedAt:     client.CreatedAt,
 				UpdatedAt:     client.UpdatedAt,
 			})

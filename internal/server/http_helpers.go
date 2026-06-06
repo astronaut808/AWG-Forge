@@ -19,6 +19,18 @@ func mutationErrorStatus(err error, fallback int) int {
 	return fallback
 }
 
+func parseOptionalAPITime(value string) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, nil
+	}
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return parsed.UTC(), nil
+}
+
 func readJSON(rw http.ResponseWriter, r *http.Request, dst any) error {
 	defer func() { _ = r.Body.Close() }()
 	r.Body = http.MaxBytesReader(rw, r.Body, maxJSONBodyBytes)

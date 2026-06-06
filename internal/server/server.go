@@ -49,6 +49,7 @@ func Serve(cfg config.Config, service *app.Service) error {
 	if err != nil {
 		return err
 	}
+	go enforceExpiredClients(service)
 	w := &web{cfg: cfg, service: service, sessions: []byte(secret), limits: map[string][]time.Time{}, idem: map[string]*idempotencyEntry{}}
 	mux := http.NewServeMux()
 	mux.Handle("/static/", w.securityHandler(http.FileServer(http.FS(staticFiles))))
@@ -72,6 +73,14 @@ func Serve(cfg config.Config, service *app.Service) error {
 	addr := fmt.Sprintf("%s:%d", cfg.WebUIHost, cfg.WebUIPort)
 	fmt.Printf("awg-forge web UI listening on http://%s\n", addr)
 	return http.ListenAndServe(addr, mux)
+}
+
+func enforceExpiredClients(service *app.Service) {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		_ = service.EnforceExpiredClients()
+	}
 }
 
 func (w *web) index(rw http.ResponseWriter, r *http.Request) {
@@ -475,14 +484,20 @@ func (w *web) clientsAPI(rw http.ResponseWriter, r *http.Request) {
 	}
 	w.withIdempotency(rw, r, "create-client", func() (int, any) {
 		var req struct {
-			TunnelID string `json:"tunnel_id"`
-			Name     string `json:"name"`
+			TunnelID  string `json:"tunnel_id"`
+			Name      string `json:"name"`
+			ExpiresAt string `json:"expires_at"`
 		}
 		if err := readJSON(rw, r, &req); err != nil {
 			w.audit("warn", "client.create.rejected", "client creation request rejected", map[string]any{"reason": "invalid json"}, err)
 			return http.StatusBadRequest, errorPayload("invalid json")
 		}
-		client, err := w.service.AddClientToTunnel(req.TunnelID, req.Name)
+		expiresAt, err := parseOptionalAPITime(req.ExpiresAt)
+		if err != nil {
+			w.audit("warn", "client.create.rejected", "client creation request rejected", map[string]any{"tunnel_id": req.TunnelID, "client_name": req.Name, "reason": "invalid expires_at"}, err)
+			return http.StatusBadRequest, errorPayload("invalid expires_at")
+		}
+		client, err := w.service.AddClientToTunnelWithOptions(req.TunnelID, req.Name, app.ClientCreateOptions{ExpiresAt: expiresAt})
 		if err != nil {
 			w.audit("warn", "client.create.rejected", "client creation request rejected", map[string]any{"tunnel_id": req.TunnelID, "client_name": req.Name}, err)
 			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
@@ -521,14 +536,20 @@ func (w *web) updateClientSettingsAPI(rw http.ResponseWriter, r *http.Request, i
 	}
 	w.withIdempotency(rw, r, "update-client-settings:"+id, func() (int, any) {
 		var req struct {
-			Name  string `json:"name"`
-			Notes string `json:"notes"`
+			Name      string `json:"name"`
+			Notes     string `json:"notes"`
+			ExpiresAt string `json:"expires_at"`
 		}
 		if err := readJSON(rw, r, &req); err != nil {
 			w.audit("warn", "client.settings.rejected", "client settings request rejected", map[string]any{"client_id": id, "reason": "invalid json"}, err)
 			return http.StatusBadRequest, errorPayload("invalid json")
 		}
-		client, err := w.service.UpdateClientSettings(id, req.Name, req.Notes)
+		expiresAt, err := parseOptionalAPITime(req.ExpiresAt)
+		if err != nil {
+			w.audit("warn", "client.settings.rejected", "client settings request rejected", map[string]any{"client_id": id, "client_name": req.Name, "reason": "invalid expires_at"}, err)
+			return http.StatusBadRequest, errorPayload("invalid expires_at")
+		}
+		client, err := w.service.UpdateClientSettingsWithOptions(id, app.ClientSettingsUpdate{Name: req.Name, Notes: req.Notes, ExpiresAt: expiresAt})
 		if err != nil {
 			w.audit("warn", "client.settings.rejected", "client settings request rejected", map[string]any{"client_id": id, "client_name": req.Name}, err)
 			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
@@ -604,7 +625,7 @@ func (w *web) clientConfig(rw http.ResponseWriter, r *http.Request) {
 func (w *web) publicState(state config.State) map[string]any {
 	var tunnels []map[string]any
 	firewallReport, firewallErr := w.service.FirewallCheck()
-	runtime := w.service.ClientRuntimeSnapshot(state)
+	state, runtime := w.service.ClientRuntimeSnapshot(state)
 	for _, tunnel := range state.Tunnels {
 		status, _ := w.service.TunnelStatusByID(tunnel.ID)
 		tunnels = append(tunnels, publicTunnelWithFirewall(tunnel, status, firewallSummaryForTunnel(tunnel, firewallReport, firewallErr), runtime[tunnel.ID]))

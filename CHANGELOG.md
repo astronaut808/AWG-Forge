@@ -11,7 +11,9 @@
 - Added audit log environment configuration: `AUDIT_LOG_ENABLED`, `AUDIT_LOG_PATH`, `AUDIT_LOG_MAX_SIZE`, and `AUDIT_LOG_MAX_FILES`.
 - Added a full reinstall path to `install.sh` for repeated runs: existing installs can now be backed up, stopped, cleaned from runtime interfaces/firewall rules, and recreated from scratch.
 - Added `SESSION_COOKIE_SECURE=auto|true|false` for explicit Web UI session cookie policy.
-- Added approximate client runtime status and rx/tx counters to the dashboard client list.
+- Added approximate client runtime status and readable `received` / `sent` counters to the dashboard client list.
+- Added persistent per-client `ever_connected` and `last_seen_at` fields, updated from runtime handshakes.
+- Added client expiration with `Never`, `1 day`, `7 days`, and `30 days` presets; expired clients stay visible but are not rendered as server peers.
 
 ### Security
 
@@ -19,6 +21,13 @@
 - Audit log files are created with `0600` permissions and stored under the protected config directory by default.
 - Full reinstall creates a local backup before removing `.env`, `data/`, and `docker-compose.yml`.
 - `SESSION_COOKIE_SECURE=false` is opt-in and reported by doctor as a warning because it allows session cookies over plain HTTP on non-loopback hosts.
+- State writes now use an atomic temp-file + rename flow with `0600` permissions to reduce the chance of partial `state.json` writes.
+
+### Fixed
+
+- Serialized service-level state mutations so concurrent UI/API actions cannot overwrite each other or allocate duplicate client IPs.
+- Made mutating operations roll back saved state, rendered configs, and runtime state consistently when render, file write, or apply fails.
+- Clarified client runtime and expiration badges in the Web UI so approximate online status, saved last-seen history, stale configs, and expired/not-rendered clients are easier to understand.
 
 ## v0.8.2 - 2026-06-05
 

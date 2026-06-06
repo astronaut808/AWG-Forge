@@ -12,6 +12,7 @@ import (
 	"net"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/astronaut808/awg-forge/internal/audit"
@@ -32,6 +33,7 @@ var serverHostRE = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0
 var transferRE = regexp.MustCompile(`^transfer:\s+(.+?) received,\s+(.+?) sent$`)
 
 type Service struct {
+	mu    sync.Mutex
 	cfg   config.Config
 	store storage.Store
 	audit audit.Logger
@@ -49,6 +51,7 @@ type TunnelStatus struct {
 type ClientRuntimeStatus struct {
 	Present         bool
 	LatestHandshake string
+	LastSeenAt      time.Time
 	RxBytes         uint64
 	TxBytes         uint64
 }
@@ -145,12 +148,18 @@ func (s *Service) SessionSecret() (string, error) {
 }
 
 func (s *Service) RenderAll() error {
-	state, err := s.Init()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.renderAllLocked()
+}
+
+func (s *Service) renderAllLocked() error {
+	state, err := s.initLocked()
 	if err != nil {
 		return err
 	}
 	for _, tunnel := range state.Tunnels {
-		if err := s.renderTunnel(tunnel.ID, false); err != nil {
+		if err := s.renderTunnelLocked(tunnel.ID, false); err != nil {
 			return err
 		}
 	}
@@ -158,11 +167,13 @@ func (s *Service) RenderAll() error {
 }
 
 func (s *Service) RenderTunnel(tunnelID string) error {
-	return s.renderTunnel(tunnelID, true)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.renderTunnelLocked(tunnelID, true)
 }
 
-func (s *Service) renderTunnel(tunnelID string, failOnApply bool) error {
-	state, err := s.Init()
+func (s *Service) renderTunnelLocked(tunnelID string, failOnApply bool) error {
+	state, err := s.initLocked()
 	if err != nil {
 		return err
 	}
@@ -275,6 +286,8 @@ func (s *Service) UpdateProtocol(profileID string, params config.ProtocolParams)
 }
 
 func (s *Service) UpdateTunnelProtocol(tunnelID, profileID string, params config.ProtocolParams) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	p, ok := protocol.ByID(profileID)
 	if !ok {
 		return fmt.Errorf("unsupported protocol profile %q", profileID)
@@ -294,7 +307,7 @@ func (s *Service) UpdateTunnelProtocol(tunnelID, profileID string, params config
 	if err := p.Validate(params); err != nil {
 		return err
 	}
-	state, err := s.Init()
+	state, err := s.initLocked()
 	if err != nil {
 		return err
 	}
@@ -315,12 +328,9 @@ func (s *Service) UpdateTunnelProtocol(tunnelID, profileID string, params config
 	if err := s.store.Save(state); err != nil {
 		return err
 	}
-	if err := s.RenderTunnel(tunnelID); err != nil {
-		var applyErr *ApplyError
-		if errors.As(err, &applyErr) {
-			if rollbackErr := s.rollbackRenderedState(previousState, tunnelID); rollbackErr != nil {
-				return errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
-			}
+	if err := s.renderTunnelLocked(tunnelID, true); err != nil {
+		if rollbackErr := s.rollbackRenderedState(previousState, tunnelID); rollbackErr != nil {
+			return errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
 		}
 		s.log("error", "tunnel.protocol.failed", "protocol update failed", map[string]any{"tunnel_id": tunnelID, "profile": profileID}, err)
 		return err

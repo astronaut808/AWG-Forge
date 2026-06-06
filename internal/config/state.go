@@ -51,6 +51,17 @@ type Client struct {
 	PublicKey      string    `json:"public_key"`
 	PresharedKey   string    `json:"preshared_key"`
 	ConfigRevision int       `json:"config_revision"`
+	EverConnected  bool      `json:"ever_connected,omitempty"`
+	LastSeenAt     time.Time `json:"last_seen_at,omitempty"`
+	ExpiresAt      time.Time `json:"expires_at,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+func ClientExpired(client Client, now time.Time) bool {
+	return !client.ExpiresAt.IsZero() && !client.ExpiresAt.After(now)
+}
+
+func ClientActive(client Client, now time.Time) bool {
+	return client.Enabled && !ClientExpired(client, now)
 }

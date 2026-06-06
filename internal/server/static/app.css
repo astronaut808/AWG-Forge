@@ -699,15 +699,24 @@ textarea:focus-visible {
   overflow-wrap: anywhere;
 }
 
+.client-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
 .client-row strong {
-  display: block;
+  display: inline-block;
+  min-width: 0;
 }
 
 .client-meta {
   display: flex !important;
   flex-wrap: wrap;
   gap: 6px;
-  margin-top: 6px;
+  align-items: center;
 }
 
 .client-meta .badge {

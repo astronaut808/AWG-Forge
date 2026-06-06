@@ -1,6 +1,9 @@
 package app
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestParseRuntimeAWGShowTransferCounters(t *testing.T) {
 	got := parseRuntimeAWGShow(`interface: awg20
@@ -29,6 +32,31 @@ peer: client-key
 	}
 	if peer.TxBytes != 4089446 {
 		t.Fatalf("tx bytes = %d, want 4089446", peer.TxBytes)
+	}
+}
+
+func TestParseHandshakeAge(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want time.Duration
+		ok   bool
+	}{
+		{name: "seconds", in: "37 seconds ago", want: 37 * time.Second, ok: true},
+		{name: "mixed", in: "1 hour, 28 minutes, 26 seconds ago", want: time.Hour + 28*time.Minute + 26*time.Second, ok: true},
+		{name: "days", in: "2 days, 1 hour ago", want: 49 * time.Hour, ok: true},
+		{name: "empty", in: "", ok: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := parseHandshakeAge(tt.in)
+			if ok != tt.ok {
+				t.Fatalf("ok = %v, want %v", ok, tt.ok)
+			}
+			if got != tt.want {
+				t.Fatalf("age = %s, want %s", got, tt.want)
+			}
+		})
 	}
 }
 

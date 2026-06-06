@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -26,7 +27,9 @@ func (s *Service) RestartTunnel() error {
 }
 
 func (s *Service) RestartTunnelByID(tunnelID string) error {
-	state, err := s.Init()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state, err := s.initLocked()
 	if err != nil {
 		return err
 	}
@@ -45,7 +48,7 @@ func (s *Service) RestartTunnelByID(tunnelID string) error {
 		return nil
 	}
 	_ = exec.Command("awg-quick", "down", state.Tunnels[idx].InterfaceName).Run()
-	if err := s.RenderTunnel(tunnelID); err != nil {
+	if err := s.renderTunnelLocked(tunnelID, true); err != nil {
 		s.log("error", "tunnel.restart.failed", "runtime tunnel restart failed", tunnelAuditFields(state.Tunnels[idx]), err)
 		return err
 	}
@@ -134,6 +137,7 @@ func (s *Service) TunnelHealthByID(tunnelID string, sampleSeconds int) (TunnelHe
 	if !hasFilterRule("FORWARD", "-i", tunnel.InterfaceName, "-j", "ACCEPT") || !hasFilterRule("FORWARD", "-o", tunnel.InterfaceName, "-j", "ACCEPT") {
 		health.Warnings = append(health.Warnings, "possible forwarding issue: missing FORWARD accept rules for "+tunnel.InterfaceName)
 	}
+	now := time.Now().UTC()
 	for _, client := range tunnel.Clients {
 		item := ClientHealth{
 			ID:      client.ID,
@@ -143,6 +147,11 @@ func (s *Service) TunnelHealthByID(tunnelID string, sampleSeconds int) (TunnelHe
 			Status:  "disabled",
 		}
 		if !client.Enabled {
+			health.Clients = append(health.Clients, item)
+			continue
+		}
+		if config.ClientExpired(client, now) {
+			item.Status = "expired"
 			health.Clients = append(health.Clients, item)
 			continue
 		}
@@ -346,8 +355,17 @@ func runtimeAWGShow(interfaceName string) (runtimeInterface, error) {
 	return parseRuntimeAWGShow(string(out)), nil
 }
 
-func (s *Service) ClientRuntimeSnapshot(state config.State) map[string]map[string]ClientRuntimeStatus {
+var handshakeAgePartRE = regexp.MustCompile(`(?i)(\d+)\s+(day|hour|minute|second)s?`)
+
+func (s *Service) ClientRuntimeSnapshot(state config.State) (config.State, map[string]map[string]ClientRuntimeStatus) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if latest, err := s.initLocked(); err == nil {
+		state = latest
+	}
 	out := map[string]map[string]ClientRuntimeStatus{}
+	changed := false
+	now := time.Now().UTC()
 	for _, tunnel := range state.Tunnels {
 		clients := map[string]ClientRuntimeStatus{}
 		if !tunnel.Enabled {
@@ -359,21 +377,79 @@ func (s *Service) ClientRuntimeSnapshot(state config.State) map[string]map[strin
 			out[tunnel.ID] = clients
 			continue
 		}
-		for _, client := range tunnel.Clients {
+		ti, ok := tunnelIndexByID(state, tunnel.ID)
+		if !ok {
+			out[tunnel.ID] = clients
+			continue
+		}
+		for ci, client := range state.Tunnels[ti].Clients {
 			peer, ok := show.Peers[client.PublicKey]
 			if !ok {
 				continue
 			}
+			seenAt := handshakeSeenAt(now, peer.LatestHandshake)
 			clients[client.ID] = ClientRuntimeStatus{
 				Present:         true,
 				LatestHandshake: peer.LatestHandshake,
+				LastSeenAt:      seenAt,
 				RxBytes:         peer.RxBytes,
 				TxBytes:         peer.TxBytes,
+			}
+			if !seenAt.IsZero() && shouldUpdateClientLastSeen(client, seenAt) {
+				state.Tunnels[ti].Clients[ci].EverConnected = true
+				state.Tunnels[ti].Clients[ci].LastSeenAt = seenAt
+				changed = true
 			}
 		}
 		out[tunnel.ID] = clients
 	}
-	return out
+	if changed {
+		state.UpdatedAt = now
+		if err := s.store.Save(state); err != nil {
+			s.log("warn", "client.last_seen.persist_failed", "client last seen update failed", nil, err)
+		}
+	}
+	return state, out
+}
+
+func shouldUpdateClientLastSeen(client config.Client, seenAt time.Time) bool {
+	if !client.EverConnected || client.LastSeenAt.IsZero() {
+		return true
+	}
+	return seenAt.After(client.LastSeenAt.Add(30 * time.Second))
+}
+
+func handshakeSeenAt(now time.Time, latest string) time.Time {
+	age, ok := parseHandshakeAge(latest)
+	if !ok {
+		return time.Time{}
+	}
+	return now.Add(-age).UTC()
+}
+
+func parseHandshakeAge(latest string) (time.Duration, bool) {
+	matches := handshakeAgePartRE.FindAllStringSubmatch(latest, -1)
+	if len(matches) == 0 {
+		return 0, false
+	}
+	var total time.Duration
+	for _, match := range matches {
+		value, err := strconv.Atoi(match[1])
+		if err != nil {
+			return 0, false
+		}
+		switch strings.ToLower(match[2]) {
+		case "day":
+			total += time.Duration(value) * 24 * time.Hour
+		case "hour":
+			total += time.Duration(value) * time.Hour
+		case "minute":
+			total += time.Duration(value) * time.Minute
+		case "second":
+			total += time.Duration(value) * time.Second
+		}
+	}
+	return total, true
 }
 
 func parseRuntimeAWGShow(out string) runtimeInterface {

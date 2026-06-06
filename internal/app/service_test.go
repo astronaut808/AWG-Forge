@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/astronaut808/awg-forge/internal/app"
@@ -36,6 +37,39 @@ func TestClientIPAllocationAndReuse(t *testing.T) {
 	}
 	if c.IPv4Address != "10.8.0.2" {
 		t.Fatalf("expected freed IP 10.8.0.2, got %s", c.IPv4Address)
+	}
+}
+
+func TestConcurrentClientCreationDoesNotLoseState(t *testing.T) {
+	svc := app.New(testConfig(t))
+	state, err := svc.Init()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const clients = 20
+	var wg sync.WaitGroup
+	errs := make(chan error, clients)
+	for i := 0; i < clients; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, err := svc.AddClientToTunnel(state.Tunnels[0].ID, "client-"+strconv.Itoa(i))
+			errs <- err
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	state, err = svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(state.Tunnels[0].Clients); got != clients {
+		t.Fatalf("clients = %d, want %d", got, clients)
 	}
 }
 

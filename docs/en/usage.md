@@ -52,9 +52,26 @@ Client rename and notes are metadata-only changes and do not make configs stale.
 The client list shows two different kinds of status:
 
 - `enabled` / `disabled`: whether the client is allowed in awg-forge config.
-- `recent handshake`, `handshake`, `no handshake`, `runtime unknown`: approximate runtime status from `awg show`.
+- `active now`, `seen recently`, `last seen`, `never connected`, `status unknown`: approximate runtime status from `awg show` and persisted `last_seen_at`.
 
-AmneziaWG/WireGuard does not keep a permanent TCP-like connection, so `recent handshake` is only an approximate online indicator. The UI also shows rx/tx counters when runtime exposes them.
+AmneziaWG/WireGuard does not keep a permanent TCP-like connection, so `active now` is only an approximate online indicator, not a strict online/offline status. In the dashboard, active means the latest handshake is younger than about 3 minutes. The UI also shows `received` / `sent` counters when runtime exposes them.
+
+When runtime reports a handshake, awg-forge persists that the client has connected before and stores the latest handshake time in `state.json`. After an interface restart, the client may show `last seen` until a fresh runtime handshake appears.
+
+Doctor may warn about clients with no handshake yet. This is useful for spotting unused or wrongly imported configs, but it does not mean the whole tunnel is broken when other clients on the same tunnel work.
+
+## Client Expiration
+
+When creating or editing a client, you can choose an expiration:
+
+- `Never expires`;
+- `1 day`;
+- `7 days`;
+- `30 days`.
+
+When the expiration passes, the client remains visible in the UI and `state.json`, but becomes `expired` and is no longer rendered into the server config as a peer. This is safer than deletion because name, notes, last seen, and support bundle history are preserved. The UI shows this as `expired` / `not rendered since <date>`.
+
+In `serve` mode, awg-forge periodically enforces expired clients and re-renders affected tunnels. Enforcement normally happens within one minute after the actual expiration time.
 
 ## CLI In Docker
 

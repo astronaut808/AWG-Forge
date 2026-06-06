@@ -45,3 +45,32 @@ func TestWriteRenderedTunnelRejectsUnsafeClientID(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestSaveWritesLoadableStateWithPrivatePermissions(t *testing.T) {
+	store := New(t.TempDir())
+	state := config.State{SchemaVersion: 2, ServerHost: "vpn.example.com"}
+	if err := store.Save(state); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(store.StatePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0600 {
+		t.Fatalf("state permissions = %v, want 0600", got)
+	}
+	loaded, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ServerHost != state.ServerHost {
+		t.Fatalf("loaded server host = %q, want %q", loaded.ServerHost, state.ServerHost)
+	}
+	tmpMatches, err := filepath.Glob(filepath.Join(filepath.Dir(store.StatePath()), ".state-*.tmp"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tmpMatches) != 0 {
+		t.Fatalf("temporary state files left behind: %v", tmpMatches)
+	}
+}

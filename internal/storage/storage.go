@@ -70,7 +70,41 @@ func (s Store) Save(state config.State) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.StatePath(), b, 0600)
+	tmp, err := os.CreateTemp(s.dir, ".state-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	removeTmp := true
+	defer func() {
+		if removeTmp {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := tmp.Chmod(0600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(b); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, s.StatePath()); err != nil {
+		return err
+	}
+	removeTmp = false
+	if dir, err := os.Open(s.dir); err == nil {
+		_ = dir.Sync()
+		_ = dir.Close()
+	}
+	return nil
 }
 
 func (s Store) BackupState(state config.State, reason string) (string, error) {

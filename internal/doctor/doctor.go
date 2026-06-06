@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/astronaut808/awg-forge/internal/app"
 	"github.com/astronaut808/awg-forge/internal/config"
@@ -348,6 +349,10 @@ func (c *checker) checkClientRuntime(tunnel config.Tunnel, client config.Client,
 	area := "peer " + tunnel.Name + "/" + client.Name
 	if !client.Enabled {
 		c.warn(area, "client disabled")
+		return
+	}
+	if config.ClientExpired(client, time.Now().UTC()) {
+		c.warn(area, "client expired")
 		return
 	}
 	if tunnel.ConfigRevision > 0 && client.ConfigRevision < tunnel.ConfigRevision {

@@ -12,6 +12,16 @@ import (
 	"github.com/astronaut808/awg-forge/internal/render"
 )
 
+type ClientCreateOptions struct {
+	ExpiresAt time.Time
+}
+
+type ClientSettingsUpdate struct {
+	Name      string
+	Notes     string
+	ExpiresAt time.Time
+}
+
 func (s *Service) AddClient(name string) (config.Client, error) {
 	state, err := s.Init()
 	if err != nil {
@@ -24,10 +34,16 @@ func (s *Service) AddClient(name string) (config.Client, error) {
 }
 
 func (s *Service) AddClientToTunnel(tunnelID, name string) (config.Client, error) {
+	return s.AddClientToTunnelWithOptions(tunnelID, name, ClientCreateOptions{})
+}
+
+func (s *Service) AddClientToTunnelWithOptions(tunnelID, name string, opts ClientCreateOptions) (config.Client, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if !clientNameRE.MatchString(name) {
 		return config.Client{}, errors.New("client name must be 1-64 chars and contain only letters, numbers, spaces, dots, underscores, or dashes")
 	}
-	state, err := s.Init()
+	state, err := s.initLocked()
 	if err != nil {
 		return config.Client{}, err
 	}
@@ -56,6 +72,7 @@ func (s *Service) AddClientToTunnel(tunnelID, name string) (config.Client, error
 		ID: randomID(), TunnelID: state.Tunnels[idx].ID, Name: name, Enabled: true, IPv4Address: ip,
 		PrivateKey: priv, PublicKey: pub, PresharedKey: psk,
 		ConfigRevision: state.Tunnels[idx].ConfigRevision,
+		ExpiresAt:      opts.ExpiresAt.UTC(),
 		CreatedAt:      now, UpdatedAt: now,
 	}
 	state.Tunnels[idx].Clients = append(state.Tunnels[idx].Clients, client)
@@ -64,12 +81,9 @@ func (s *Service) AddClientToTunnel(tunnelID, name string) (config.Client, error
 	if err := s.store.Save(state); err != nil {
 		return config.Client{}, err
 	}
-	if err := s.RenderTunnel(state.Tunnels[idx].ID); err != nil {
-		var applyErr *ApplyError
-		if errors.As(err, &applyErr) {
-			if rollbackErr := s.rollbackRenderedState(previousState, state.Tunnels[idx].ID); rollbackErr != nil {
-				return config.Client{}, errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
-			}
+	if err := s.renderTunnelLocked(state.Tunnels[idx].ID, true); err != nil {
+		if rollbackErr := s.rollbackRenderedState(previousState, state.Tunnels[idx].ID); rollbackErr != nil {
+			return config.Client{}, errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
 		}
 		s.log("error", "client.create.failed", "client creation failed", clientAuditFields(state.Tunnels[idx], client), err)
 		return config.Client{}, err
@@ -79,7 +93,9 @@ func (s *Service) AddClientToTunnel(tunnelID, name string) (config.Client, error
 }
 
 func (s *Service) RemoveClient(id string) error {
-	state, err := s.Init()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state, err := s.initLocked()
 	if err != nil {
 		return err
 	}
@@ -106,12 +122,9 @@ func (s *Service) RemoveClient(id string) error {
 			if err := s.store.Save(state); err != nil {
 				return err
 			}
-			if err := s.RenderTunnel(state.Tunnels[ti].ID); err != nil {
-				var applyErr *ApplyError
-				if errors.As(err, &applyErr) {
-					if rollbackErr := s.rollbackRenderedState(previousState, state.Tunnels[ti].ID); rollbackErr != nil {
-						return errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
-					}
+			if err := s.renderTunnelLocked(state.Tunnels[ti].ID, true); err != nil {
+				if rollbackErr := s.rollbackRenderedState(previousState, state.Tunnels[ti].ID); rollbackErr != nil {
+					return errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
 				}
 				s.log("error", "client.delete.failed", "client deletion failed", map[string]any{"client_id": id, "tunnel_id": state.Tunnels[ti].ID}, err)
 				return err
@@ -124,7 +137,9 @@ func (s *Service) RemoveClient(id string) error {
 }
 
 func (s *Service) SetClientEnabled(id string, enabled bool) error {
-	state, err := s.Init()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state, err := s.initLocked()
 	if err != nil {
 		return err
 	}
@@ -143,12 +158,9 @@ func (s *Service) SetClientEnabled(id string, enabled bool) error {
 				if err := s.store.Save(state); err != nil {
 					return err
 				}
-				if err := s.RenderTunnel(state.Tunnels[ti].ID); err != nil {
-					var applyErr *ApplyError
-					if errors.As(err, &applyErr) {
-						if rollbackErr := s.rollbackRenderedState(previousState, state.Tunnels[ti].ID); rollbackErr != nil {
-							return errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
-						}
+				if err := s.renderTunnelLocked(state.Tunnels[ti].ID, true); err != nil {
+					if rollbackErr := s.rollbackRenderedState(previousState, state.Tunnels[ti].ID); rollbackErr != nil {
+						return errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
 					}
 					s.log("error", "client.enabled.failed", "client enabled state update failed", clientAuditFields(state.Tunnels[ti], state.Tunnels[ti].Clients[ci]), err)
 					return err
@@ -168,15 +180,27 @@ func (s *Service) SetClientEnabled(id string, enabled bool) error {
 }
 
 func (s *Service) UpdateClientSettings(id, name, notes string) (config.Client, error) {
+	return s.UpdateClientSettingsWithOptions(id, ClientSettingsUpdate{Name: name, Notes: notes})
+}
+
+func (s *Service) UpdateClientSettingsWithOptions(id string, update ClientSettingsUpdate) (config.Client, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	name := update.Name
 	name = strings.TrimSpace(name)
 	if !clientNameRE.MatchString(name) {
 		return config.Client{}, errors.New("client name must be 1-64 chars and contain only letters, numbers, spaces, dots, underscores, or dashes")
 	}
+	notes := update.Notes
 	notes = strings.TrimSpace(notes)
 	if len(notes) > maxClientNotesLength {
 		return config.Client{}, fmt.Errorf("client notes must be at most %d bytes", maxClientNotesLength)
 	}
-	state, err := s.Init()
+	state, err := s.initLocked()
+	if err != nil {
+		return config.Client{}, err
+	}
+	previousState, err := cloneState(state)
 	if err != nil {
 		return config.Client{}, err
 	}
@@ -184,13 +208,24 @@ func (s *Service) UpdateClientSettings(id, name, notes string) (config.Client, e
 		for ci := range state.Tunnels[ti].Clients {
 			if state.Tunnels[ti].Clients[ci].ID == id {
 				now := time.Now().UTC()
+				expirationChanged := !state.Tunnels[ti].Clients[ci].ExpiresAt.Equal(update.ExpiresAt)
 				state.Tunnels[ti].Clients[ci].Name = name
 				state.Tunnels[ti].Clients[ci].Notes = notes
+				state.Tunnels[ti].Clients[ci].ExpiresAt = update.ExpiresAt.UTC()
 				state.Tunnels[ti].Clients[ci].UpdatedAt = now
 				state.Tunnels[ti].UpdatedAt = now
 				state.UpdatedAt = now
 				if err := s.store.Save(state); err != nil {
 					return config.Client{}, err
+				}
+				if expirationChanged {
+					if err := s.renderTunnelLocked(state.Tunnels[ti].ID, true); err != nil {
+						if rollbackErr := s.rollbackRenderedState(previousState, state.Tunnels[ti].ID); rollbackErr != nil {
+							return config.Client{}, errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
+						}
+						s.log("error", "client.settings.failed", "client settings update failed", clientAuditFields(state.Tunnels[ti], state.Tunnels[ti].Clients[ci]), err)
+						return config.Client{}, err
+					}
 				}
 				s.log("info", "client.settings.updated", "client settings updated", clientAuditFields(state.Tunnels[ti], state.Tunnels[ti].Clients[ci]), nil)
 				return state.Tunnels[ti].Clients[ci], nil
@@ -246,8 +281,39 @@ func (s *Service) ClientImportKey(id string) (string, config.Client, error) {
 	return key, client, nil
 }
 
+func (s *Service) EnforceExpiredClients() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state, err := s.initLocked()
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	for _, tunnel := range state.Tunnels {
+		hasExpiredActiveClient := false
+		for _, client := range tunnel.Clients {
+			needsRender := tunnel.LastRenderAt.IsZero() || client.ExpiresAt.After(tunnel.LastRenderAt)
+			if client.Enabled && config.ClientExpired(client, now) && needsRender {
+				hasExpiredActiveClient = true
+				break
+			}
+		}
+		if !hasExpiredActiveClient {
+			continue
+		}
+		if err := s.renderTunnelLocked(tunnel.ID, true); err != nil {
+			s.log("error", "client.expiration.enforce_failed", "expired client enforcement failed", tunnelAuditFields(tunnel), err)
+			return err
+		}
+		s.log("info", "client.expiration.enforced", "expired clients removed from rendered tunnel config", tunnelAuditFields(tunnel), nil)
+	}
+	return nil
+}
+
 func (s *Service) markClientConfigDelivered(id string) error {
-	state, err := s.Init()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state, err := s.initLocked()
 	if err != nil {
 		return err
 	}

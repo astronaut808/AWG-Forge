@@ -3,6 +3,7 @@ package render
 import (
 	"bytes"
 	"fmt"
+	"time"
 
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/protocol"
@@ -20,8 +21,9 @@ func ServerConfig(state config.State, tunnel config.Tunnel) (string, error) {
 	}
 	var b bytes.Buffer
 	writeSection(&b, "Interface", iface)
+	now := time.Now().UTC()
 	for _, c := range tunnel.Clients {
-		if !c.Enabled {
+		if !config.ClientActive(c, now) {
 			continue
 		}
 		peer, err := p.RenderServerPeer(ctx, c)

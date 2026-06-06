@@ -249,7 +249,7 @@ function renderTunnelCard(tunnel) {
         <div class="fact"><span>Subnet</span><strong class="mono">${escapeHTML(tunnel.subnet)}</strong></div>
         <div class="fact"><span>DNS</span><strong class="mono">${escapeHTML(tunnel.dns)}</strong></div>
         <div class="fact"><span>MTU</span><strong class="mono">${formatMTU(tunnel.mtu)}</strong></div>
-        <div class="fact"><span>Clients</span><strong>${clients.filter((client) => client.enabled).length}/${clients.length}</strong></div>
+        <div class="fact"><span>Clients</span><strong>${clients.filter((client) => client.active).length}/${clients.length}</strong></div>
       </div>
       <div class="actions card-actions">
         <button class="primary" data-action="create-client" data-tunnel="${escapeAttr(tunnel.id)}">Create client</button>
@@ -336,16 +336,23 @@ function tunnelEndpointHost(tunnel) {
 function renderClientRow(tunnel, client) {
   const notes = String(client.notes || "").trim();
   const runtime = clientRuntimeSummary(client);
+  const expiration = clientExpirationSummary(client);
+  const enabledTitle = client.enabled ? "Client is rendered unless expired." : "Client is disabled and not rendered.";
+  const details = [expiration.details, runtime.details].filter(Boolean).map(escapeHTML).join(" · ");
   return `
     <div class="client-row">
       <div>
-        <strong>${escapeHTML(client.name)}</strong>
-        <span class="client-meta">
-          <span class="badge ${client.enabled ? "ok" : "neutral"}">${client.enabled ? "enabled" : "disabled"}</span>
-          <span class="badge ${runtime.level}">${escapeHTML(runtime.label)}</span>
-          ${client.needs_new_config ? `<span class="badge warn">stale config</span>` : ""}
-        </span>
-        <span class="muted"><span class="mono">${escapeHTML(client.address)}</span>${runtime.details ? ` · ${escapeHTML(runtime.details)}` : ""}</span>
+        <div class="client-title-row">
+          <strong>${escapeHTML(client.name)}</strong>
+          <span class="client-meta">
+            ${clientBadge(client.enabled ? "enabled" : "disabled", client.enabled ? "ok" : "neutral", enabledTitle)}
+            ${expiration.badge ? clientBadge(expiration.badge, expiration.level, expiration.title) : ""}
+            ${clientBadge(runtime.label, runtime.level, runtime.title)}
+            ${client.needs_new_config ? clientBadge("stale config", "warn", "Download a fresh .conf after tunnel or protocol changes.") : ""}
+          </span>
+        </div>
+        <span class="muted"><span class="mono">${escapeHTML(client.address)}</span></span>
+        ${details ? `<span class="muted">${details}</span>` : ""}
         ${notes ? `<span class="client-notes">${escapeHTML(notes)}</span>` : ""}
       </div>
       <div class="actions row-actions">
@@ -359,37 +366,124 @@ function renderClientRow(tunnel, client) {
   `;
 }
 
+function clientBadge(label, level, title = "") {
+  const text = String(label || "").trim();
+  const hint = String(title || text).trim();
+  return `<span class="badge ${statusBadgeClass(level)}" title="${escapeAttr(hint)}" aria-label="${escapeAttr(hint)}">${escapeHTML(text)}</span>`;
+}
+
+function clientExpirationSummary(client) {
+  if (!client.expires_at) return { badge: "", level: "neutral", details: "" };
+  const date = formatDateOnly(client.expires_at);
+  if (client.expired) {
+    return {
+      badge: "expired",
+      level: "warn",
+      title: "Expired clients stay visible, but are not rendered as server peers.",
+      details: date ? `not rendered since ${date}` : "not rendered",
+    };
+  }
+  return { badge: "", level: "neutral", title: "", details: date ? `expires ${date}` : "" };
+}
+
 function clientRuntimeSummary(client) {
-  if (!client.enabled) return { level: "neutral", label: "disabled", details: "" };
+  if (!client.enabled) {
+    return { level: "neutral", label: "not active", title: "Disabled clients are not rendered as server peers.", details: "" };
+  }
   const runtime = client.runtime || {};
   const latest = String(runtime.latest_handshake || "").trim();
   const transfer = runtimeTransfer(runtime);
+  const rememberedLastSeen = runtime.last_seen_at || client.last_seen_at || "";
+  if (client.expired) {
+    const seen = latest ? lastSeenDetail(formatHandshakeAge(latest)) : lastSeenDetail(formatDateOnly(rememberedLastSeen));
+    return {
+      level: "neutral",
+      label: "not active",
+      title: "Expired clients are kept for history but are not rendered as server peers.",
+      details: [seen, transfer].filter(Boolean).join(" · "),
+    };
+  }
   if (!runtime.present) {
-    return { level: "neutral", label: "runtime unknown", details: transfer };
+    if (client.ever_connected && rememberedLastSeen) {
+      return {
+        level: "neutral",
+        label: "last seen",
+        title: "Runtime peer is not visible now; this is the saved last successful handshake date.",
+        details: lastSeenDetail(formatDateOnly(rememberedLastSeen)),
+      };
+    }
+    return {
+      level: "neutral",
+      label: "status unknown",
+      title: "Runtime information is unavailable for this client.",
+      details: transfer,
+    };
   }
   if (!latest) {
-    return { level: "warn", label: "no handshake", details: transfer };
+    if (client.ever_connected && rememberedLastSeen) {
+      return {
+        level: "neutral",
+        label: "last seen",
+        title: "Runtime peer is present, but it has no fresh handshake yet.",
+        details: [lastSeenDetail(formatDateOnly(rememberedLastSeen)), transfer].filter(Boolean).join(" · "),
+      };
+    }
+    return {
+      level: "warn",
+      label: "never connected",
+      title: "The peer exists in runtime, but no successful handshake has been observed.",
+      details: transfer,
+    };
   }
   const recent = handshakeLooksRecent(latest);
   return {
     level: recent ? "ok" : "neutral",
-    label: recent ? "recent handshake" : "handshake",
-    details: [latest, transfer].filter(Boolean).join(" · "),
+    label: recent ? "active now" : "seen recently",
+    title: recent
+      ? "Latest handshake is recent. This is an approximate online indicator."
+      : "Latest handshake exists, but it is older than the active window.",
+    details: [lastSeenDetail(formatHandshakeAge(latest)), transfer].filter(Boolean).join(" · "),
   };
 }
 
 function handshakeLooksRecent(value) {
-  const text = String(value).toLowerCase();
-  if (text.includes("second")) return true;
-  const minutes = text.match(/(\d+)\s+minute/);
-  return Boolean(minutes && Number(minutes[1]) <= 3);
+  const seconds = handshakeAgeSeconds(value);
+  return seconds !== null && seconds < 180;
+}
+
+function handshakeAgeSeconds(value) {
+  const text = String(value || "").toLowerCase();
+  let total = 0;
+  let matched = false;
+  const units = [
+    [/(\d+)\s+day/, 86400],
+    [/(\d+)\s+hour/, 3600],
+    [/(\d+)\s+minute/, 60],
+    [/(\d+)\s+second/, 1],
+  ];
+  units.forEach(([pattern, multiplier]) => {
+    const match = text.match(pattern);
+    if (!match) return;
+    matched = true;
+    total += Number(match[1]) * multiplier;
+  });
+  return matched ? total : null;
+}
+
+function formatHandshakeAge(value) {
+  const seconds = handshakeAgeSeconds(value);
+  if (seconds === null) return String(value || "").trim();
+  if (seconds < 180) return String(value || "").trim();
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} minutes ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)} hours ago`;
+  return `${Math.floor(seconds / 86400)} days ago`;
 }
 
 function runtimeTransfer(runtime) {
   const rx = Number(runtime.rx_bytes || 0);
   const tx = Number(runtime.tx_bytes || 0);
   if (!rx && !tx) return "";
-  return `rx ${formatBytes(rx)} / tx ${formatBytes(tx)}`;
+  return `received ${formatBytes(rx)} · sent ${formatBytes(tx)}`;
 }
 
 function formatBytes(bytes) {
@@ -403,6 +497,16 @@ function formatBytes(bytes) {
   }
   const digits = unit === 0 || current >= 10 ? 0 : 1;
   return `${current.toFixed(digits)} ${units[unit]}`;
+}
+
+function formatDateOnly(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString();
+}
+
+function lastSeenDetail(value) {
+  return value ? `last seen ${value}` : "";
 }
 
 function bindAppEvents(active) {
