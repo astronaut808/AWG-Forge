@@ -56,6 +56,7 @@ func Check(cfg config.Config, service *app.Service) []Result {
 	c.checkRPFilter("default", "default")
 	c.checkRPFilter("external interface", cfg.ExternalInterface)
 	c.checkDir(cfg.ConfigDir)
+	c.checkSessionCookie(cfg)
 	if !cfg.ApplyConfig {
 		c.warn("apply", "APPLY_CONFIG=false; configs render but tunnels are not applied automatically")
 	}
@@ -93,6 +94,17 @@ func (c *checker) checkRoot() {
 		c.ok("runtime", "running as root")
 	} else {
 		c.warn("runtime", "not running as root; container must have NET_ADMIN and /dev/net/tun")
+	}
+}
+
+func (c *checker) checkSessionCookie(cfg config.Config) {
+	switch cfg.SessionCookieSecure {
+	case "false":
+		c.warn("session cookie", "SESSION_COOKIE_SECURE=false; use only for trusted HTTP admin access")
+	case "true":
+		c.ok("session cookie", "Secure always enabled")
+	default:
+		c.ok("session cookie", "auto Secure policy")
 	}
 }
 

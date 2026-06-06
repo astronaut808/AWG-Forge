@@ -140,26 +140,33 @@ func (w *web) setSession(rw http.ResponseWriter, r *http.Request) {
 	exp := time.Now().Add(sessionTTL).Unix()
 	payload := fmt.Sprintf("%d", exp)
 	sig := w.sign(payload)
-	http.SetCookie(rw, sessionCookie(r, payload+"."+sig, 0))
+	http.SetCookie(rw, sessionCookie(r, payload+"."+sig, 0, w.sessionCookieSecure(r)))
 }
 
-func sessionCookie(r *http.Request, value string, maxAge int) *http.Cookie {
+func sessionCookie(r *http.Request, value string, maxAge int, secure bool) *http.Cookie {
 	return &http.Cookie{
 		Name:     "awg_forge_session",
 		Value:    value,
 		Path:     "/",
 		MaxAge:   maxAge,
 		HttpOnly: true,
-		Secure:   sessionCookieSecure(r),
+		Secure:   secure,
 		SameSite: http.SameSiteStrictMode,
 	}
 }
 
-func sessionCookieSecure(r *http.Request) bool {
-	if r == nil {
+func (w *web) sessionCookieSecure(r *http.Request) bool {
+	switch w.cfg.SessionCookieSecure {
+	case "true":
 		return true
+	case "false":
+		return false
+	default:
+		if r == nil {
+			return true
+		}
+		return !requestHostIsLoopback(r.Host)
 	}
-	return !requestHostIsLoopback(r.Host)
 }
 
 func (w *web) hasSession(r *http.Request) bool {

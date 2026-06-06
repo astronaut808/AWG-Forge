@@ -10,12 +10,15 @@
 - Added redacted audit log excerpts to support bundles.
 - Added audit log environment configuration: `AUDIT_LOG_ENABLED`, `AUDIT_LOG_PATH`, `AUDIT_LOG_MAX_SIZE`, and `AUDIT_LOG_MAX_FILES`.
 - Added a full reinstall path to `install.sh` for repeated runs: existing installs can now be backed up, stopped, cleaned from runtime interfaces/firewall rules, and recreated from scratch.
+- Added `SESSION_COOKIE_SECURE=auto|true|false` for explicit Web UI session cookie policy.
+- Added approximate client runtime status and rx/tx counters to the dashboard client list.
 
 ### Security
 
 - Audit logging redacts secret-looking fields before writing to disk and must not store private keys, preshared keys, passwords, session secrets, full configs, import keys, or raw protocol parameter values.
 - Audit log files are created with `0600` permissions and stored under the protected config directory by default.
 - Full reinstall creates a local backup before removing `.env`, `data/`, and `docker-compose.yml`.
+- `SESSION_COOKIE_SECURE=false` is opt-in and reported by doctor as a warning because it allows session cookies over plain HTTP on non-loopback hosts.
 
 ## v0.8.2 - 2026-06-05
 

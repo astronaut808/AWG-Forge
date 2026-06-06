@@ -22,10 +22,10 @@ func profileMeta(id, tab, label string, available bool, state config.State) map[
 }
 
 func publicTunnel(tunnel config.Tunnel, status app.TunnelStatus) map[string]any {
-	return publicTunnelWithFirewall(tunnel, status, firewallSummary{})
+	return publicTunnelWithFirewall(tunnel, status, firewallSummary{}, nil)
 }
 
-func publicTunnelWithFirewall(tunnel config.Tunnel, status app.TunnelStatus, fw firewallSummary) map[string]any {
+func publicTunnelWithFirewall(tunnel config.Tunnel, status app.TunnelStatus, fw firewallSummary, runtime map[string]app.ClientRuntimeStatus) map[string]any {
 	return map[string]any{
 		"id":          tunnel.ID,
 		"name":        tunnel.Name,
@@ -42,7 +42,7 @@ func publicTunnelWithFirewall(tunnel config.Tunnel, status app.TunnelStatus, fw 
 		"profile":     tunnel.ProtocolProfileID,
 		"revision":    tunnel.ConfigRevision,
 		"params":      orderedParams(tunnel.ProtocolProfileID, tunnel.ProtocolParams),
-		"clients":     publicClients(tunnel),
+		"clients":     publicClients(tunnel, runtime),
 		"status": map[string]any{
 			"up":            status.Up,
 			"apply_enabled": status.ApplyEnabled,
@@ -115,19 +115,19 @@ func staleClientCount(tunnel config.Tunnel) int {
 	return count
 }
 
-func publicClients(tunnel config.Tunnel) []map[string]any {
+func publicClients(tunnel config.Tunnel, runtime map[string]app.ClientRuntimeStatus) []map[string]any {
 	out := make([]map[string]any, 0, len(tunnel.Clients))
 	for _, client := range tunnel.Clients {
-		out = append(out, publicClientForTunnel(tunnel, client))
+		out = append(out, publicClientForTunnel(tunnel, client, runtime[client.ID]))
 	}
 	return out
 }
 
 func publicClient(client config.Client) map[string]any {
-	return publicClientForTunnel(config.Tunnel{}, client)
+	return publicClientForTunnel(config.Tunnel{}, client, app.ClientRuntimeStatus{})
 }
 
-func publicClientForTunnel(tunnel config.Tunnel, client config.Client) map[string]any {
+func publicClientForTunnel(tunnel config.Tunnel, client config.Client, runtime app.ClientRuntimeStatus) map[string]any {
 	return map[string]any{
 		"id":               client.ID,
 		"tunnel_id":        client.TunnelID,
@@ -137,8 +137,14 @@ func publicClientForTunnel(tunnel config.Tunnel, client config.Client) map[strin
 		"address":          client.IPv4Address,
 		"revision":         client.ConfigRevision,
 		"needs_new_config": tunnel.ConfigRevision > 0 && client.ConfigRevision < tunnel.ConfigRevision,
-		"created_at":       client.CreatedAt,
-		"updated_at":       client.UpdatedAt,
+		"runtime": map[string]any{
+			"present":          runtime.Present,
+			"latest_handshake": runtime.LatestHandshake,
+			"rx_bytes":         runtime.RxBytes,
+			"tx_bytes":         runtime.TxBytes,
+		},
+		"created_at": client.CreatedAt,
+		"updated_at": client.UpdatedAt,
 	}
 }
 

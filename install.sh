@@ -485,6 +485,7 @@ WEBUI_HOST=$webui_host
 WEBUI_PORT=$webui_port
 PASSWORD=$password
 SESSION_SECRET=$session_secret
+SESSION_COOKIE_SECURE=auto
 EXTERNAL_INTERFACE=$external_interface
 IPV4_SUBNET=$ipv4_subnet
 DNS=$dns

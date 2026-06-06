@@ -46,6 +46,13 @@ type TunnelStatus struct {
 	LastError    string
 }
 
+type ClientRuntimeStatus struct {
+	Present         bool
+	LatestHandshake string
+	RxBytes         uint64
+	TxBytes         uint64
+}
+
 type ClientHealth struct {
 	ID              string `json:"id"`
 	Name            string `json:"name"`

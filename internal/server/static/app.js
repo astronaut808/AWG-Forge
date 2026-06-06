@@ -335,15 +335,20 @@ function tunnelEndpointHost(tunnel) {
 
 function renderClientRow(tunnel, client) {
   const notes = String(client.notes || "").trim();
+  const runtime = clientRuntimeSummary(client);
   return `
     <div class="client-row">
       <div>
-        <strong><span class="status-dot ${client.enabled ? "ok" : "off"}"></span>${escapeHTML(client.name)}</strong>
-        <span class="muted"><span class="mono">${escapeHTML(client.address)}</span> · ${client.enabled ? "enabled" : "disabled"}${client.needs_new_config ? " · needs new config" : ""}</span>
+        <strong>${escapeHTML(client.name)}</strong>
+        <span class="client-meta">
+          <span class="badge ${client.enabled ? "ok" : "neutral"}">${client.enabled ? "enabled" : "disabled"}</span>
+          <span class="badge ${runtime.level}">${escapeHTML(runtime.label)}</span>
+          ${client.needs_new_config ? `<span class="badge warn">stale config</span>` : ""}
+        </span>
+        <span class="muted"><span class="mono">${escapeHTML(client.address)}</span>${runtime.details ? ` · ${escapeHTML(runtime.details)}` : ""}</span>
         ${notes ? `<span class="client-notes">${escapeHTML(notes)}</span>` : ""}
       </div>
       <div class="actions row-actions">
-        ${client.needs_new_config ? `<span class="badge warn">stale</span>` : ""}
         <a class="button" href="/clients/config/${encodeURIComponent(client.id)}">Config</a>
         <button data-action="import-key" data-client="${escapeAttr(client.id)}">Import key</button>
         <button data-action="edit-client" data-tunnel="${escapeAttr(tunnel.id)}" data-client="${escapeAttr(client.id)}">Edit</button>
@@ -352,6 +357,52 @@ function renderClientRow(tunnel, client) {
       </div>
     </div>
   `;
+}
+
+function clientRuntimeSummary(client) {
+  if (!client.enabled) return { level: "neutral", label: "disabled", details: "" };
+  const runtime = client.runtime || {};
+  const latest = String(runtime.latest_handshake || "").trim();
+  const transfer = runtimeTransfer(runtime);
+  if (!runtime.present) {
+    return { level: "neutral", label: "runtime unknown", details: transfer };
+  }
+  if (!latest) {
+    return { level: "warn", label: "no handshake", details: transfer };
+  }
+  const recent = handshakeLooksRecent(latest);
+  return {
+    level: recent ? "ok" : "neutral",
+    label: recent ? "recent handshake" : "handshake",
+    details: [latest, transfer].filter(Boolean).join(" · "),
+  };
+}
+
+function handshakeLooksRecent(value) {
+  const text = String(value).toLowerCase();
+  if (text.includes("second")) return true;
+  const minutes = text.match(/(\d+)\s+minute/);
+  return Boolean(minutes && Number(minutes[1]) <= 3);
+}
+
+function runtimeTransfer(runtime) {
+  const rx = Number(runtime.rx_bytes || 0);
+  const tx = Number(runtime.tx_bytes || 0);
+  if (!rx && !tx) return "";
+  return `rx ${formatBytes(rx)} / tx ${formatBytes(tx)}`;
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes || 0);
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  let current = value;
+  let unit = 0;
+  while (current >= 1024 && unit < units.length - 1) {
+    current /= 1024;
+    unit += 1;
+  }
+  const digits = unit === 0 || current >= 10 ? 0 : 1;
+  return `${current.toFixed(digits)} ${units[unit]}`;
 }
 
 function bindAppEvents(active) {

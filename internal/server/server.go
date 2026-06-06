@@ -127,7 +127,7 @@ func (w *web) logoutAPI(rw http.ResponseWriter, r *http.Request) {
 		writeError(rw, http.StatusForbidden, "forbidden")
 		return
 	}
-	http.SetCookie(rw, sessionCookie(r, "", -1))
+	http.SetCookie(rw, sessionCookie(r, "", -1, w.sessionCookieSecure(r)))
 	w.audit("info", "logout", "logout", nil, nil)
 	writeJSON(rw, http.StatusOK, map[string]any{"ok": true})
 }
@@ -604,9 +604,10 @@ func (w *web) clientConfig(rw http.ResponseWriter, r *http.Request) {
 func (w *web) publicState(state config.State) map[string]any {
 	var tunnels []map[string]any
 	firewallReport, firewallErr := w.service.FirewallCheck()
+	runtime := w.service.ClientRuntimeSnapshot(state)
 	for _, tunnel := range state.Tunnels {
 		status, _ := w.service.TunnelStatusByID(tunnel.ID)
-		tunnels = append(tunnels, publicTunnelWithFirewall(tunnel, status, firewallSummaryForTunnel(tunnel, firewallReport, firewallErr)))
+		tunnels = append(tunnels, publicTunnelWithFirewall(tunnel, status, firewallSummaryForTunnel(tunnel, firewallReport, firewallErr), runtime[tunnel.ID]))
 	}
 	return map[string]any{
 		"authenticated":       true,

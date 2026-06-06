@@ -152,6 +152,34 @@ func TestSessionCookieAllowsLoopbackHTTP(t *testing.T) {
 	}
 }
 
+func TestSessionCookieSecureCanBeDisabledForHTTPDomain(t *testing.T) {
+	w := &web{sessions: []byte("test-secret"), cfg: config.Config{SessionCookieSecure: "false"}}
+	rr := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "http://admin.example.com/api/login", nil)
+	w.setSession(rr, r)
+	cookies := rr.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("cookies = %d, want 1", len(cookies))
+	}
+	if cookies[0].Secure {
+		t.Fatal("SESSION_COOKIE_SECURE=false must allow HTTP domain cookies")
+	}
+}
+
+func TestSessionCookieSecureCanBeForcedForLoopback(t *testing.T) {
+	w := &web{sessions: []byte("test-secret"), cfg: config.Config{SessionCookieSecure: "true"}}
+	rr := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:51821/api/login", nil)
+	w.setSession(rr, r)
+	cookies := rr.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("cookies = %d, want 1", len(cookies))
+	}
+	if !cookies[0].Secure {
+		t.Fatal("SESSION_COOKIE_SECURE=true must force Secure cookies")
+	}
+}
+
 func TestConfigFilenameUsesSanitizedClientName(t *testing.T) {
 	got := configFilename(config.Client{ID: "abc123", Name: "My iPhone 15"})
 	if got != "My-iPhone-15" {

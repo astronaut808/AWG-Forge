@@ -346,6 +346,36 @@ func runtimeAWGShow(interfaceName string) (runtimeInterface, error) {
 	return parseRuntimeAWGShow(string(out)), nil
 }
 
+func (s *Service) ClientRuntimeSnapshot(state config.State) map[string]map[string]ClientRuntimeStatus {
+	out := map[string]map[string]ClientRuntimeStatus{}
+	for _, tunnel := range state.Tunnels {
+		clients := map[string]ClientRuntimeStatus{}
+		if !tunnel.Enabled {
+			out[tunnel.ID] = clients
+			continue
+		}
+		show, err := runtimeAWGShow(tunnel.InterfaceName)
+		if err != nil {
+			out[tunnel.ID] = clients
+			continue
+		}
+		for _, client := range tunnel.Clients {
+			peer, ok := show.Peers[client.PublicKey]
+			if !ok {
+				continue
+			}
+			clients[client.ID] = ClientRuntimeStatus{
+				Present:         true,
+				LatestHandshake: peer.LatestHandshake,
+				RxBytes:         peer.RxBytes,
+				TxBytes:         peer.TxBytes,
+			}
+		}
+		out[tunnel.ID] = clients
+	}
+	return out
+}
+
 func parseRuntimeAWGShow(out string) runtimeInterface {
 	result := runtimeInterface{Peers: map[string]runtimePeer{}}
 	var currentKey string

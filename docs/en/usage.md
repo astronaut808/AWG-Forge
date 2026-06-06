@@ -47,6 +47,15 @@ After such changes, affected clients show a `stale` badge until a fresh `.conf` 
 
 Client rename and notes are metadata-only changes and do not make configs stale.
 
+## Client Runtime Status
+
+The client list shows two different kinds of status:
+
+- `enabled` / `disabled`: whether the client is allowed in awg-forge config.
+- `recent handshake`, `handshake`, `no handshake`, `runtime unknown`: approximate runtime status from `awg show`.
+
+AmneziaWG/WireGuard does not keep a permanent TCP-like connection, so `recent handshake` is only an approximate online indicator. The UI also shows rx/tx counters when runtime exposes them.
+
 ## CLI In Docker
 
 ```bash

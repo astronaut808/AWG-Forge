@@ -700,9 +700,19 @@ textarea:focus-visible {
 }
 
 .client-row strong {
-  display: flex;
-  gap: 8px;
-  align-items: center;
+  display: block;
+}
+
+.client-meta {
+  display: flex !important;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.client-meta .badge {
+  display: inline-flex;
+  overflow-wrap: normal;
 }
 
 .client-notes {

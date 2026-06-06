@@ -47,6 +47,15 @@ Maintenance actions доступны через кнопку `Maintenance`:
 
 Client rename и notes — metadata-only изменения, они не делают configs stale.
 
+## Client Runtime Status
+
+В списке клиентов UI показывает два разных типа состояния:
+
+- `enabled` / `disabled`: клиент разрешен или отключен в конфиге awg-forge.
+- `recent handshake`, `handshake`, `no handshake`, `runtime unknown`: примерный runtime-статус из `awg show`.
+
+AmneziaWG/WireGuard не держит постоянное TCP-like соединение, поэтому `recent handshake` — это приблизительный online-индикатор. UI также показывает rx/tx counters, если runtime их отдает.
+
 ## CLI В Docker
 
 ```bash

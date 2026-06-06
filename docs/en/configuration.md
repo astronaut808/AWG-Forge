@@ -10,6 +10,7 @@ The main example is [.env.example](../../.env.example).
 - `WEBUI_HOST`: Web UI bind address. Defaults to `127.0.0.1`.
 - `WEBUI_PORT`: Web UI port. Defaults to `51821`.
 - `PASSWORD`: Web UI password. Required for public binds and recommended always.
+- `SESSION_COOKIE_SECURE`: Secure cookie policy for UI sessions. Values: `auto`, `true`, `false`. Defaults to `auto`.
 - `EXTERNAL_INTERFACE`: server egress interface, often `eth0` or `ens3`. In bridge networking this is usually `eth0` inside the container.
 - `IPV4_SUBNET`: subnet for the first tunnel, for example `10.8.0.0/24`.
 - `DNS`: DNS value rendered into client configs.
@@ -39,6 +40,16 @@ When creating more tunnels in the Web UI, awg-forge suggests free names, ports, 
 `SESSION_SECRET` is optional. If omitted, awg-forge creates and persists one in `state.json`.
 
 It is used to sign UI session cookies. In the normal setup, users do not need to manage it manually.
+
+## SESSION_COOKIE_SECURE
+
+`SESSION_COOKIE_SECURE` controls the `Secure` flag on UI session cookies:
+
+- `auto`: default. For `127.0.0.1`, `localhost`, and `::1`, cookies work over HTTP without `Secure`; for external hosts, cookies use `Secure`.
+- `true`: always set `Secure`. Use with HTTPS/reverse proxies.
+- `false`: never set `Secure`. This allows login through `http://domain:port`, but is unsafe on the public internet.
+
+If you need plain HTTP Web UI access, use it only on a trusted network or behind separate protection. For production, prefer `WEBUI_HOST=127.0.0.1` with SSH tunneling or HTTPS.
 
 ## EXTERNAL_INTERFACE
 

@@ -22,3 +22,10 @@ func TestPublicBindWithoutPasswordRejected(t *testing.T) {
 		t.Fatal("expected PASSWORD requirement")
 	}
 }
+
+func TestSessionCookieSecureModeValidation(t *testing.T) {
+	t.Setenv("SESSION_COOKIE_SECURE", "sometimes")
+	if _, err := config.FromEnv(); err == nil {
+		t.Fatal("expected SESSION_COOKIE_SECURE validation error")
+	}
+}
