@@ -38,6 +38,9 @@ jobs:
       - name: Test
         run: go test ./...
 
+      - name: Test shell scripts
+        run: make test-shell
+
       - name: Vet
         run: go vet ./...
 

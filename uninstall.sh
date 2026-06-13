@@ -10,6 +10,7 @@ DATA_DIR="data"
 YES=false
 PURGE=false
 DRY_RUN=false
+REMOVE_ORPHANS=false
 
 bold() { printf '\033[1m%s\033[0m\n' "$*"; }
 muted() { printf '\033[2m%s\033[0m\n' "$*"; }
@@ -19,7 +20,7 @@ fail() { printf '\033[31mERR\033[0m  %s\n' "$*" >&2; }
 
 usage() {
   cat <<'EOF'
-Usage: uninstall.sh [--yes] [--purge] [--dry-run]
+Usage: uninstall.sh [--yes] [--purge] [--dry-run] [--remove-orphans]
 
 Stops awg-forge, removes AWG runtime interfaces, and deletes managed firewall
 rules. Data is kept by default.
@@ -28,20 +29,25 @@ Options:
   --yes       Do not prompt for confirmation.
   --purge     Remove .env, data/, and docker-compose.yml after shutdown.
   --dry-run   Print actions without changing the system.
+  --remove-orphans
+              Also remove AWG-like runtime interfaces missing from state.json.
   --help      Show this help.
 EOF
 }
 
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --yes|-y) YES=true ;;
-    --purge) PURGE=true ;;
-    --dry-run) DRY_RUN=true ;;
-    --help|-h) usage; exit 0 ;;
-    *) fail "unknown option: $1"; usage; exit 1 ;;
-  esac
-  shift
-done
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --yes|-y) YES=true ;;
+      --purge) PURGE=true ;;
+      --dry-run) DRY_RUN=true ;;
+      --remove-orphans) REMOVE_ORPHANS=true ;;
+      --help|-h) usage; exit 0 ;;
+      *) fail "unknown option: $1"; usage; exit 1 ;;
+    esac
+    shift
+  done
+}
 
 confirm() {
   local label="$1"
@@ -87,6 +93,14 @@ compose_cmd() {
   return 1
 }
 
+run_compose() {
+  local compose="$1"
+  shift
+  local -a command
+  read -r -a command <<<"$compose"
+  run "${command[@]}" "$@"
+}
+
 prepare_workdir() {
   local script_dir target
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P || true)"
@@ -115,12 +129,22 @@ env_value() {
 
 state_path() {
   local config_dir
+  if [[ -f "$DATA_DIR/state.json" ]]; then
+    printf '%s/state.json' "$DATA_DIR"
+    return
+  fi
   config_dir="$(env_value CONFIG_DIR)"
-  if [[ -n "$config_dir" && "$config_dir" != "/etc/awg-forge" ]]; then
+  if [[ -n "$config_dir" && "$config_dir" != "/etc/awg-forge" && -f "$config_dir/state.json" ]]; then
     printf '%s/state.json' "$config_dir"
     return
   fi
   printf '%s/state.json' "$DATA_DIR"
+}
+
+state_external_interface() {
+  local file="$1"
+  [[ -f "$file" ]] || return 0
+  awk -F'"' '/"external_interface":/ { print $4; exit }' "$file"
 }
 
 state_tunnels() {
@@ -166,6 +190,16 @@ iptables_delete_all() {
   shift
   local args=("$@")
   have iptables || return 0
+  if $DRY_RUN; then
+    if [[ -n "$table" ]]; then
+      iptables -t "$table" -C "${args[@]}" >/dev/null 2>&1 || return 0
+      run iptables -t "$table" -D "${args[@]}"
+    else
+      iptables -C "${args[@]}" >/dev/null 2>&1 || return 0
+      run iptables -D "${args[@]}"
+    fi
+    return 0
+  fi
   while true; do
     if [[ -n "$table" ]]; then
       iptables -t "$table" -C "${args[@]}" >/dev/null 2>&1 || break
@@ -192,10 +226,18 @@ cleanup_interface() {
   local iface="$1"
   [[ -n "$iface" ]] || return
   if have awg-quick && [[ -f "/etc/amnezia/amneziawg/$iface.conf" ]]; then
-    run awg-quick down "$iface" >/dev/null 2>&1 || true
+    if $DRY_RUN; then
+      run awg-quick down "$iface"
+    else
+      awg-quick down "$iface" >/dev/null 2>&1 || true
+    fi
   fi
   if have ip && ip link show "$iface" >/dev/null 2>&1; then
-    run ip link delete "$iface" >/dev/null 2>&1 || true
+    if $DRY_RUN; then
+      run ip link delete "$iface"
+    else
+      ip link delete "$iface" >/dev/null 2>&1 || true
+    fi
   fi
 }
 
@@ -228,12 +270,26 @@ main() {
 
   local compose=""
   compose="$(compose_cmd || true)"
-  local external_interface
-  external_interface="$(env_value EXTERNAL_INTERFACE)"
-  external_interface="${external_interface:-eth0}"
-
   local state
   state="$(state_path)"
+
+  if [[ -n "$compose" && -f "$COMPOSE_FILE" ]]; then
+    run_compose "$compose" down --remove-orphans || true
+    ok "docker compose stopped"
+  elif have docker; then
+    if $DRY_RUN; then
+      run docker rm -f "$APP_NAME"
+    else
+      docker rm -f "$APP_NAME" >/dev/null 2>&1 || true
+    fi
+    ok "container removed if it existed"
+  fi
+
+  local external_interface
+  external_interface="$(state_external_interface "$state")"
+  external_interface="${external_interface:-$(env_value EXTERNAL_INTERFACE)}"
+  external_interface="${external_interface:-eth0}"
+
   if [[ -f "$state" ]]; then
     while IFS='|' read -r iface port subnet _enabled; do
       [[ -n "$iface" ]] || continue
@@ -241,18 +297,16 @@ main() {
       cleanup_tunnel_rules "$iface" "$port" "$subnet" "$external_interface"
       cleanup_interface "$iface"
     done < <(state_tunnels "$state")
-    cleanup_orphan_interfaces "$state"
+    if $REMOVE_ORPHANS; then
+      cleanup_orphan_interfaces "$state"
+    fi
   else
-    warn "state file not found; cleaning AWG-like runtime interfaces only"
-    cleanup_orphan_interfaces
-  fi
-
-  if [[ -n "$compose" && -f "$COMPOSE_FILE" ]]; then
-    $compose down --remove-orphans || true
-    ok "docker compose stopped"
-  elif have docker; then
-    docker rm -f "$APP_NAME" >/dev/null 2>&1 || true
-    ok "container removed if it existed"
+    warn "state file not found; exact managed interfaces and firewall rules cannot be determined"
+    if $REMOVE_ORPHANS; then
+      cleanup_orphan_interfaces
+    else
+      warn "leaving AWG-like interfaces untouched; use --remove-orphans only after reviewing them"
+    fi
   fi
 
   if $PURGE || confirm "Remove .env, data/, and docker-compose.yml?" "n"; then
@@ -264,4 +318,7 @@ main() {
   ok "uninstall completed"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  parse_args "$@"
+  main
+fi

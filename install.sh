@@ -343,7 +343,9 @@ full_reinstall() {
 
 handle_existing_install() {
   local compose="$1"
-  existing_install_found || return
+  if ! existing_install_found; then
+    return 0
+  fi
   printf '\n'
   bold "Existing install"
   [[ -f "$ENV_FILE" ]] && printf '%s\n' "- $ENV_FILE"
@@ -563,12 +565,9 @@ main() {
   fi
   ok "Linux detected"
 
-  require_tty
-  prepare_workdir
-
   if ! have docker; then
     fail "docker is not installed"
-    printf 'Install Docker first: https://docs.docker.com/engine/install/\n' >&2
+    printf 'Install Docker Engine first: https://docs.docker.com/engine/install/\n' >&2
     exit 1
   fi
   ok "docker found"
@@ -587,6 +586,9 @@ main() {
     exit 1
   fi
   ok "$compose found"
+
+  require_tty
+  prepare_workdir
 
   if [[ -e /dev/net/tun ]]; then
     ok "/dev/net/tun exists"
@@ -709,4 +711,6 @@ main() {
   print_next_steps "$server_host" "$webui_host" "$webui_port" "$password" "$profile" "$compose"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

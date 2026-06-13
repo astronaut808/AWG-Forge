@@ -2,6 +2,8 @@
 
 `install.sh` — интерактивный установщик для нового Linux/VPS сервера. Он создает `.env`, подготавливает `data/`, запускает Docker Compose и показывает дальнейшие шаги.
 
+Перед запуском установи [Docker Engine с официальной документации](https://docs.docker.com/engine/install/). Если Docker или Docker Compose отсутствуют, скрипт завершится до создания `/opt/awg-forge` и любых файлов проекта.
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
 chmod +x install.sh
@@ -121,6 +123,20 @@ sudo ./uninstall.sh
 ```bash
 cd /opt/awg-forge
 sudo ./uninstall.sh --purge
+```
+
+Проверить действия без остановки контейнера и изменения системы:
+
+```bash
+sudo ./uninstall.sh --dry-run --yes
+```
+
+По умолчанию скрипт удаляет только интерфейсы и firewall rules, которые может точно связать с туннелями из `data/state.json`. Если state уже потерян, неизвестные интерфейсы `awg*` остаются на хосте, чтобы случайно не удалить чужой AmneziaWG-туннель.
+
+После ручной проверки такие интерфейсы можно удалить явно:
+
+```bash
+sudo ./uninstall.sh --remove-orphans
 ```
 
 Для установки через `curl` без клонирования репозитория:

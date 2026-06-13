@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.9.1 - 2026-06-13
+
+### Fixed
+
+- Fixed the quick installer exiting before interactive prompts on a clean server because the expected "no existing install" result was treated as fatal by `set -e`.
+- Made the installer verify Docker and Docker Compose before creating the installation directory, and print the official Docker Engine installation documentation when Docker is missing.
+- Added shell regression tests for clean installation and existing-install detection.
+- Fixed `uninstall.sh --dry-run` potentially looping forever on existing iptables rules and executing `docker compose down` despite dry-run mode.
+- Made uninstall stop the container before cleaning runtime interfaces and firewall rules.
+- Made uninstall use the external interface saved in `state.json` when removing managed NAT rules.
+- Prevented uninstall from deleting unknown host AWG interfaces by default; orphan interface removal now requires explicit `--remove-orphans`.
+
 ## v0.9.0 - 2026-06-06
 
 ### Added
