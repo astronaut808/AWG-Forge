@@ -96,6 +96,19 @@ Uninstall without cloning the repository:
 curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/uninstall.sh | sudo bash
 ```
 
+Preview the uninstall plan without changing the host:
+
+```bash
+cd /opt/awg-forge
+sudo ./uninstall.sh --dry-run --yes
+```
+
+Unknown AWG interfaces missing from `state.json` are intentionally preserved. Remove them only after review:
+
+```bash
+sudo ./uninstall.sh --remove-orphans
+```
+
 ## Documentation
 
 - [Russian README](README.md)

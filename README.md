@@ -96,6 +96,19 @@ sudo ./uninstall.sh
 curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/uninstall.sh | sudo bash
 ```
 
+Перед удалением можно безопасно посмотреть план действий:
+
+```bash
+cd /opt/awg-forge
+sudo ./uninstall.sh --dry-run --yes
+```
+
+Неизвестные AWG-интерфейсы, которых нет в `state.json`, намеренно сохраняются. Удаляй их только после проверки:
+
+```bash
+sudo ./uninstall.sh --remove-orphans
+```
+
 ## Документация
 
 - [README EN](README.en.md)
