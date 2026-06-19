@@ -246,8 +246,9 @@ function openSettings(tunnel) {
           <label>Egress</label>
           <select name="egress_mode">
             <option value="wan" ${tunnel.egress_mode === "warp" ? "" : "selected"}>Server WAN</option>
-            <option value="warp" ${tunnel.egress_mode === "warp" ? "selected" : ""} ${state.warp?.configured ? "" : "disabled"}>Cloudflare WARP</option>
+            <option value="warp" ${tunnel.egress_mode === "warp" ? "selected" : ""}>Cloudflare WARP</option>
           </select>
+          ${state.warp?.configured ? "" : `<p class="muted">WARP will be registered automatically when you save.</p>`}
         </div>
         <div><label>Listen port</label><input name="port" inputmode="numeric" value="${escapeAttr(tunnel.listen_port)}"></div>
         <div><label>IPv4 subnet</label><input name="subnet" value="${escapeAttr(tunnel.subnet)}"></div>

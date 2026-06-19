@@ -114,13 +114,17 @@ awg20.example.com:44867
 
 WARP не является protocol profile AmneziaWG. Это режим outbound routing для уже существующих туннелей. Поэтому Legacy / 1.0, AWG 1.5 и AWG 2.0 могут независимо использовать WAN или WARP egress.
 
-На первом этапе WARP настраивается через ручной импорт:
+Рекомендуемый путь:
 
-1. Открой `Maintenance` -> `WARP`.
-2. Вставь Cloudflare WARP WireGuard config.
-3. Импортируй его.
-4. Открой `Tunnel settings` у нужного туннеля.
-5. Переключи `Egress` с `Server WAN` на `Cloudflare WARP`.
+1. Открой `Tunnel settings` у нужного туннеля.
+2. Переключи `Egress` с `Server WAN` на `Cloudflare WARP`.
+3. Нажми `Save`.
+
+Если WARP еще не настроен, awg-forge автоматически зарегистрирует Cloudflare WARP, создаст общий outbound-интерфейс `warp0`, применит runtime routing/NAT и затем переключит туннель на WARP egress.
+
+`Maintenance` -> `WARP` нужен для обслуживания: посмотреть статус, вручную зарегистрировать или перерегистрировать WARP, перезапустить `warp0`, удалить WARP config, либо импортировать config вручную.
+
+Ручной импорт нужен только как fallback, если у тебя уже есть готовый Cloudflare WARP WireGuard/AmneziaWG config из внешнего генератора или WARP client tool. В этом случае открой `Manual WARP config import`, вставь весь config целиком и нажми `Import WARP config`.
 
 Клиентские конфиги не нужно менять, если меняется только egress mode: клиент продолжает подключаться к тому же AmneziaWG endpoint. Меняются только server-side routing/NAT rules.
 

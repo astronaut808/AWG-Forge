@@ -91,7 +91,7 @@ function renderMaintenanceWarp() {
     <div class="maintenance-section-head">
       <div>
         <h3>WARP egress</h3>
-        <p class="muted">Register Cloudflare WARP automatically, or import a WireGuard config manually as fallback.</p>
+        <p class="muted">Use automatic registration first. Manual import is only a fallback for configs generated outside awg-forge.</p>
       </div>
       <div class="actions">
         <button type="button" class="primary" data-maint-action="register-warp">${warp.configured ? "Re-register WARP" : "Register WARP"}</button>
@@ -118,7 +118,8 @@ function renderMaintenanceWarp() {
     <details class="maintenance-details">
       <summary>Manual WARP config import</summary>
       <form id="maintenance-warp-import-form" class="form-grid single">
-        <div><label>WARP WireGuard config</label><textarea name="config" rows="7" placeholder="[Interface]&#10;PrivateKey = ...&#10;Address = ...&#10;&#10;[Peer]&#10;PublicKey = ...&#10;Endpoint = ..."></textarea></div>
+        <p class="muted">You normally do not need this. Use it only when you already have a Cloudflare WARP WireGuard/AmneziaWG config from another generator or WARP client tool.</p>
+        <div><label>WARP WireGuard or AmneziaWG config</label><textarea name="config" rows="7" placeholder="[Interface]&#10;PrivateKey = ...&#10;Address = ...&#10;&#10;[Peer]&#10;PublicKey = ...&#10;Endpoint = ..."></textarea></div>
         <div class="form-actions"><button class="primary" type="submit">Import WARP config</button></div>
       </form>
     </details>

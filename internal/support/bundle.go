@@ -217,6 +217,7 @@ type warpSummary struct {
 	AccessTokenSet      bool      `json:"access_token_set"`
 	Endpoint            string    `json:"endpoint,omitempty"`
 	AddressV4           string    `json:"address_v4,omitempty"`
+	ProtocolParamKeys   []string  `json:"protocol_param_keys,omitempty"`
 	MTU                 int       `json:"mtu,omitempty"`
 	PersistentKeepalive int       `json:"persistent_keepalive,omitempty"`
 	LastApplyAt         time.Time `json:"last_apply_at,omitempty"`
@@ -280,6 +281,7 @@ func redactedState(state config.State) stateSummary {
 			AccessTokenSet:      state.Warp.AccessToken != "",
 			Endpoint:            state.Warp.Endpoint,
 			AddressV4:           state.Warp.AddressV4,
+			ProtocolParamKeys:   protocolParamKeys(state.Warp.ProtocolParams),
 			MTU:                 state.Warp.MTU,
 			PersistentKeepalive: state.Warp.PersistentKeepalive,
 			LastApplyAt:         state.Warp.LastApplyAt,

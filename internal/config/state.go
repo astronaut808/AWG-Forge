@@ -21,23 +21,24 @@ const (
 )
 
 type Warp struct {
-	InterfaceName       string    `json:"interface_name,omitempty"`
-	DeviceID            string    `json:"device_id,omitempty"`
-	AccessToken         string    `json:"access_token,omitempty"`
-	LicenseKey          string    `json:"license_key,omitempty"`
-	ClientID            string    `json:"client_id,omitempty"`
-	PrivateKey          string    `json:"private_key,omitempty"`
-	PeerPublicKey       string    `json:"peer_public_key,omitempty"`
-	PresharedKey        string    `json:"preshared_key,omitempty"`
-	Endpoint            string    `json:"endpoint,omitempty"`
-	AddressV4           string    `json:"address_v4,omitempty"`
-	AddressV6           string    `json:"address_v6,omitempty"`
-	MTU                 int       `json:"mtu,omitempty"`
-	PersistentKeepalive int       `json:"persistent_keepalive,omitempty"`
-	RegisteredAt        time.Time `json:"registered_at,omitempty"`
-	LastApplyAt         time.Time `json:"last_apply_at,omitempty"`
-	LastApplyError      string    `json:"last_apply_error,omitempty"`
-	UpdatedAt           time.Time `json:"updated_at,omitempty"`
+	InterfaceName       string         `json:"interface_name,omitempty"`
+	DeviceID            string         `json:"device_id,omitempty"`
+	AccessToken         string         `json:"access_token,omitempty"`
+	LicenseKey          string         `json:"license_key,omitempty"`
+	ClientID            string         `json:"client_id,omitempty"`
+	PrivateKey          string         `json:"private_key,omitempty"`
+	PeerPublicKey       string         `json:"peer_public_key,omitempty"`
+	PresharedKey        string         `json:"preshared_key,omitempty"`
+	Endpoint            string         `json:"endpoint,omitempty"`
+	AddressV4           string         `json:"address_v4,omitempty"`
+	AddressV6           string         `json:"address_v6,omitempty"`
+	ProtocolParams      ProtocolParams `json:"protocol_params,omitempty"`
+	MTU                 int            `json:"mtu,omitempty"`
+	PersistentKeepalive int            `json:"persistent_keepalive,omitempty"`
+	RegisteredAt        time.Time      `json:"registered_at,omitempty"`
+	LastApplyAt         time.Time      `json:"last_apply_at,omitempty"`
+	LastApplyError      string         `json:"last_apply_error,omitempty"`
+	UpdatedAt           time.Time      `json:"updated_at,omitempty"`
 }
 
 func (w Warp) RuntimeInterface() string {

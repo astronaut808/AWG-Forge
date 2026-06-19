@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -217,6 +218,48 @@ func (s *Service) CreateTunnel(profileID, name, subnet string, port int) (config
 }
 
 func (s *Service) UpdateTunnelSettings(tunnelID string, update TunnelSettingsUpdate) (config.Tunnel, error) {
+	return s.UpdateTunnelSettingsContext(context.Background(), tunnelID, update)
+}
+
+func (s *Service) UpdateTunnelSettingsContext(ctx context.Context, tunnelID string, update TunnelSettingsUpdate) (config.Tunnel, error) {
+	if err := s.ensureWarpForTunnelSettings(ctx, tunnelID, update); err != nil {
+		return config.Tunnel{}, err
+	}
+	return s.updateTunnelSettings(tunnelID, update)
+}
+
+func (s *Service) ensureWarpForTunnelSettings(ctx context.Context, tunnelID string, update TunnelSettingsUpdate) error {
+	s.mu.Lock()
+	state, err := s.initLocked()
+	if err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	idx, ok := tunnelIndexByID(state, tunnelID)
+	if !ok {
+		s.mu.Unlock()
+		return errors.New("tunnel not found")
+	}
+	settings, err := resolveTunnelSettings(state, idx, update)
+	if err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	needsRegistration := settings.EgressMode == config.EgressWarp && !state.Warp.Configured()
+	s.mu.Unlock()
+	if !needsRegistration {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, err := s.RegisterWarp(ctx); err != nil {
+		return fmt.Errorf("automatic WARP registration failed: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) updateTunnelSettings(tunnelID string, update TunnelSettingsUpdate) (config.Tunnel, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	state, err := s.initLocked()
@@ -310,9 +353,6 @@ func resolveTunnelSettings(state config.State, idx int, update TunnelSettingsUpd
 	}
 	if err := validateTunnelUniqueness(state, idx, settings); err != nil {
 		return resolvedTunnelSettings{}, err
-	}
-	if settings.EgressMode == config.EgressWarp && !state.Warp.Configured() {
-		return resolvedTunnelSettings{}, errors.New("WARP egress requires an imported WARP config")
 	}
 	return settings, nil
 }

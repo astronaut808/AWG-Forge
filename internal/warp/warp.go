@@ -16,6 +16,8 @@ const (
 	RoutingTable         = "200"
 )
 
+var protocolParamKeys = []string{"Jc", "Jmin", "Jmax", "S1", "S2", "S3", "S4", "H1", "H2", "H3", "H4", "I1", "I2", "I3", "I4", "I5"}
+
 type TunnelRoute struct {
 	InterfaceName string
 	Subnet        string
@@ -25,11 +27,13 @@ func ParseWireGuardConfig(text string) (config.Warp, error) {
 	var section string
 	out := config.Warp{
 		InterfaceName:       DefaultInterfaceName,
+		ProtocolParams:      config.ProtocolParams{},
 		MTU:                 1280,
 		PersistentKeepalive: 25,
 	}
 
 	scanner := bufio.NewScanner(strings.NewReader(text))
+	scanner.Buffer(make([]byte, 4096), 1024*1024)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
@@ -50,6 +54,7 @@ func ParseWireGuardConfig(text string) (config.Warp, error) {
 			out.PrivateKey = value
 		case "interface.address":
 			out.AddressV4 = firstIPv4Address(value)
+			out.AddressV6 = firstIPv6Address(value)
 		case "interface.mtu":
 			if n, err := strconv.Atoi(value); err == nil {
 				out.MTU = n
@@ -64,6 +69,10 @@ func ParseWireGuardConfig(text string) (config.Warp, error) {
 			if n, err := strconv.Atoi(value); err == nil {
 				out.PersistentKeepalive = n
 			}
+		default:
+			if section == "interface" && isProtocolParamKey(key) {
+				out.ProtocolParams[canonicalProtocolParamKey(key)] = value
+			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -71,6 +80,9 @@ func ParseWireGuardConfig(text string) (config.Warp, error) {
 	}
 	if err := Validate(out); err != nil {
 		return config.Warp{}, err
+	}
+	if len(out.ProtocolParams) == 0 {
+		out.ProtocolParams = nil
 	}
 	return out, nil
 }
@@ -135,6 +147,11 @@ func RenderConfig(w config.Warp, routes []TunnelRoute) (string, error) {
 	b.WriteString("[Interface]\n")
 	writeLine(&b, "PrivateKey", w.PrivateKey)
 	writeLine(&b, "Address", address)
+	for _, key := range protocolParamKeys {
+		if value := w.ProtocolParams[key]; strings.TrimSpace(value) != "" {
+			writeLine(&b, key, value)
+		}
+	}
 	if w.MTU > 0 {
 		writeLine(&b, "MTU", strconv.Itoa(w.MTU))
 	}
@@ -189,9 +206,46 @@ func firstIPv4Address(value string) string {
 	return ""
 }
 
+func firstIPv6Address(value string) string {
+	for _, part := range strings.Split(value, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		host := strings.TrimSuffix(part, "/128")
+		if ip := net.ParseIP(host); ip != nil && ip.To4() == nil {
+			return host
+		}
+	}
+	return ""
+}
+
 func writeLine(b *strings.Builder, key, value string) {
 	b.WriteString(key)
 	b.WriteString(" = ")
 	b.WriteString(value)
 	b.WriteByte('\n')
+}
+
+func isProtocolParamKey(key string) bool {
+	canonical := canonicalProtocolParamKey(key)
+	for _, candidate := range protocolParamKeys {
+		if canonical == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func canonicalProtocolParamKey(key string) string {
+	key = strings.TrimSpace(key)
+	if len(key) < 2 {
+		return key
+	}
+	switch strings.ToLower(key[:1]) {
+	case "j", "s", "h", "i":
+		return strings.ToUpper(key[:1]) + key[1:]
+	default:
+		return key
+	}
 }

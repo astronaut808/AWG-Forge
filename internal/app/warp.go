@@ -12,6 +12,8 @@ import (
 	"github.com/astronaut808/awg-forge/internal/warp"
 )
 
+var registerWarp = warp.Register
+
 type WarpSummary struct {
 	Configured          bool      `json:"configured"`
 	Registered          bool      `json:"registered"`
@@ -36,7 +38,7 @@ func (s *Service) RegisterWarp(ctx context.Context) (config.Warp, error) {
 	if err != nil {
 		return config.Warp{}, err
 	}
-	registered, err := warp.Register(ctx, privateKey, publicKey)
+	registered, err := registerWarp(ctx, privateKey, publicKey)
 	if err != nil {
 		return config.Warp{}, err
 	}
@@ -50,6 +52,7 @@ func (s *Service) RegisterWarp(ctx context.Context) (config.Warp, error) {
 	if err != nil {
 		return config.Warp{}, err
 	}
+	previousWarp := previous.Warp
 	now := time.Now().UTC()
 	registered.UpdatedAt = now
 	if registered.RegisteredAt.IsZero() {
@@ -76,6 +79,13 @@ func (s *Service) RegisterWarp(ctx context.Context) (config.Warp, error) {
 		state.UpdatedAt = now
 		if err := s.store.Save(state); err != nil {
 			return config.Warp{}, err
+		}
+	}
+	if previousWarp.Registered() && previousWarp.DeviceID != state.Warp.DeviceID {
+		unregisterCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := warp.Unregister(unregisterCtx, previousWarp); err != nil {
+			s.log("warn", "warp.unregister.failed", "Previous WARP unregister failed after re-registration", warpAuditFields(previousWarp, previous), err)
 		}
 	}
 	s.log("info", "warp.registered", "WARP registered", warpAuditFields(state.Warp, state), nil)
@@ -120,6 +130,13 @@ func (s *Service) ImportWarpConfig(text string) (config.Warp, error) {
 		state.UpdatedAt = now
 		if err := s.store.Save(state); err != nil {
 			return config.Warp{}, err
+		}
+	}
+	if previous.Warp.Registered() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := warp.Unregister(ctx, previous.Warp); err != nil {
+			s.log("warn", "warp.unregister.failed", "Previous WARP unregister failed after manual import", warpAuditFields(previous.Warp, previous), err)
 		}
 	}
 	s.log("info", "warp.imported", "WARP config imported", warpAuditFields(parsed, state), nil)

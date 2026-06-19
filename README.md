@@ -2,52 +2,26 @@
 
 [English README](README.en.md)
 
-awg-forge — self-hosted менеджер AmneziaWG для Docker. Проект дает небольшой Go backend, статический Web UI и CLI для запуска AmneziaWG-туннелей и управления клиентскими `.conf` файлами.
+Самостоятельно размещаемая панель управления AmneziaWG для Docker: Go backend, статический Web UI и CLI для туннелей, клиентов, `.conf`, диагностики, backup/restore и безопасного обслуживания.
 
-awg-forge не реализует собственный VPN-протокол. Он генерирует конфиги AmneziaWG и управляет существующими upstream-инструментами `awg`, `awg-quick` и `amneziawg-go`, которые входят в Docker-образ.
+awg-forge не реализует собственный VPN-протокол. Он генерирует конфиги AmneziaWG и управляет upstream-инструментами `awg`, `awg-quick` и `amneziawg-go`, которые входят в Docker-образ.
 
-## Статус
+![Главный экран awg-forge](docs/assets/awg-forge-dashboard.jpg)
 
-Поддерживаемые профили:
+## Что Поддерживается
 
-- AmneziaWG Legacy / 1.0;
-- AmneziaWG 1.5;
-- AmneziaWG 2.0.
+- AmneziaWG Legacy / 1.0, 1.5-oriented profile и 2.0.
+- Несколько независимых туннелей с разными профилями, портами и подсетями.
+- IPv4 egress через `Server WAN` или Cloudflare WARP на уровне отдельного туннеля.
+- Клиенты: создание, скачивание `.conf`, `vpn://` import key, enable/disable, expiration, delete.
+- Runtime diagnostics: Doctor, firewall repair, health, last seen, received/sent counters.
+- Maintenance Center: WARP, backup, restore verify, support bundle, audit logs, updates, system info.
 
-Поддерживаемый способ импорта клиента:
-
-- скачивание `.conf`.
-
-Экспериментальный способ импорта:
-
-- `Import key` в Web UI генерирует `vpn://` text key для проверки совместимости с AmneziaVPN / DefaultVPN.
-
-QR import не используется. Он был убран, потому что `.conf` импорт остается самым надежным способом для текущих клиентов AmneziaVPN.
-
-## Возможности
-
-- Web UI с вкладками профилей `1.0`, `1.5`, `2.0`.
-- Несколько туннелей внутри каждого профиля.
-- Создание, отключение, включение, удаление клиентов.
-- Автоматическое скачивание `.conf` после успешного создания клиента.
-- Экспериментальный `Import key` для AmneziaVPN / DefaultVPN.
-- Настройки туннеля: порт, подсеть, DNS, allowed IPs, keepalive, MTU и enabled state.
-- Генерация и валидация protocol params для Legacy / 1.0, 1.5 и 2.0.
-- Безопасные ненулевые параметры обфускации для новых туннелей.
-- IPv4 egress с согласованием NAT/firewall rules.
-- Health view для клиентов: handshake и rx/tx counters.
-- Maintenance Center для Doctor, firewall, backup, restore verify, support bundle, audit logs, updates и system info.
-- Doctor diagnostics для инструментов, runtime, firewall, ports, peers, handshakes и stale configs.
-- Ручная проверка и repair managed firewall rules.
-- Support bundle без секретов для безопасной передачи диагностики.
-- Encrypted backup/restore с отдельным backup password и restore dry-run verification.
-- Откат state/configs при ошибке применения runtime-конфига.
-- Проверка обновлений upstream AmneziaWG без автоматического изменения системы.
-- Статический HTML/CSS/JavaScript frontend без Node/npm build pipeline.
+Надежный production-импорт клиента — скачанный `.conf`. `vpn://` import key экспериментальный и зависит от клиента AmneziaVPN / DefaultVPN. QR import намеренно не используется.
 
 ## Быстрый Старт
 
-Интерактивная установка на Linux/VPS:
+Интерактивная установка на Linux/VPS (необходим Docker):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
@@ -55,9 +29,21 @@ chmod +x install.sh
 sudo ./install.sh
 ```
 
-Скрипт создаст рабочую директорию `/opt/awg-forge`, сгенерирует `.env`, пароль, `SESSION_SECRET`, определит внешний интерфейс, запустит Docker Compose и покажет SSH tunnel команду.
+Скрипт создаст `/opt/awg-forge`, сгенерирует `.env`, пароль и `SESSION_SECRET`, определит внешний интерфейс, запустит Docker Compose и покажет SSH tunnel команду.
 
-Ручной запуск:
+По умолчанию Web UI слушает `127.0.0.1:51821`. Открывай через SSH tunnel:
+
+```bash
+ssh -L 51821:127.0.0.1:51821 user@server
+```
+
+Затем:
+
+```text
+http://127.0.0.1:51821
+```
+
+## Ручной Запуск
 
 ```bash
 git clone https://github.com/astronaut808/awg-forge.git
@@ -67,47 +53,59 @@ mkdir -p data
 docker compose up -d
 ```
 
-По умолчанию Web UI слушает `127.0.0.1:51821`. Открой его через SSH tunnel:
+Рекомендуемый production-режим — Docker host networking. Так туннели, созданные в UI, могут использовать разные UDP-порты без изменения Docker port mappings.
+
+## Важные Настройки
+
+- `SERVER_HOST` — endpoint по умолчанию для клиентских конфигов.
+- `EXTERNAL_INTERFACE` — внешний интерфейс сервера для WAN egress.
+- `WEBUI_HOST=127.0.0.1` — безопасный дефолт для доступа через SSH tunnel.
+- `APPLY_CONFIG=true` — применять runtime-туннели и firewall rules.
+- `SESSION_COOKIE_SECURE=auto|true|false` — политика Secure cookie для Web UI.
+
+`SERVER_HOST` можно переопределить для конкретного туннеля в `Tunnel settings` -> `Server host`.
+
+WARP включается прямо в `Tunnel settings` -> `Egress` -> `Cloudflare WARP`. Если WARP еще не настроен, awg-forge зарегистрирует его автоматически. Подробнее: [Конфигурация](docs/ru/configuration.md).
+
+## Проверка После Запуска
+
+1. Создай клиента в UI.
+2. Импортируй скачанный `.conf` в AmneziaVPN.
+3. Проверь IPv4 egress:
 
 ```bash
-ssh -L 51821:127.0.0.1:51821 user@server
+curl -4 https://ifconfig.co
 ```
 
-Затем открой:
+Doctor:
 
-```text
-http://127.0.0.1:51821
+```bash
+docker exec awg-forge awg-forge doctor
 ```
 
-Host networking — рекомендуемый production-режим, потому что туннели, созданные в UI, могут использовать любые свободные UDP-порты без изменения Docker port mappings.
+## Обслуживание
 
-`SERVER_HOST` задает endpoint по умолчанию для клиентских конфигов. Для отдельных туннелей его можно переопределить в Web UI через `Tunnel settings` → `Server host`. Подробнее: [Конфигурация](docs/ru/configuration.md).
-
-Удаление:
+Удаление установленного экземпляра:
 
 ```bash
 cd /opt/awg-forge
 sudo ./uninstall.sh
 ```
 
-Удаление без клонирования репозитория:
+Без клонирования репозитория:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/uninstall.sh | sudo bash
 ```
 
-Перед удалением можно безопасно посмотреть план действий:
+Dry-run перед удалением:
 
 ```bash
 cd /opt/awg-forge
 sudo ./uninstall.sh --dry-run --yes
 ```
 
-Неизвестные AWG-интерфейсы, которых нет в `state.json`, намеренно сохраняются. Удаляй их только после проверки:
-
-```bash
-sudo ./uninstall.sh --remove-orphans
-```
+Backup/restore, firewall repair, support bundle, logs и update checks доступны в `Maintenance Center` и CLI.
 
 ## Документация
 
@@ -123,32 +121,13 @@ sudo ./uninstall.sh --remove-orphans
 - [Обновления AmneziaWG](docs/ru/updates.md)
 - [Разработка](docs/ru/development.md)
 - [Безопасность](docs/ru/security.md)
-- [План frontend](docs/ru/frontend-spec.md)
-- [Техническая архитектура multi-profile / multi-tunnel](docs/ru/multi-profile-architecture.md)
-- [Матрица протоколов](docs/ru/protocol-matrix.md)
-- [Дизайн AWG 2.0](docs/ru/awg-2.0-design.md)
-- [Исследование импорта и подписок AmneziaVPN](docs/ru/research/amnezia-import-subscriptions.md)
 - [Changelog](CHANGELOG.md)
-
-## Минимальная Проверка После Запуска
-
-Создай клиента в UI, импортируй скачанный `.conf` в AmneziaVPN и проверь IPv4 egress:
-
-```bash
-curl -4 https://ifconfig.co
-```
-
-Ответ должен показать внешний IP сервера.
-
-Для AmneziaVPN / DefaultVPN можно также попробовать кнопку `Import key`. Она показывает experimental `vpn://` key с тем же клиентским конфигом внутри. Это не subscription link и не замена `.conf` для production fallback, роутеров и native AmneziaWG app.
 
 ## Разработка
 
 ```bash
 make ci
 ```
-
-`make ci` использует Deno только для lint статических JavaScript-файлов. Runtime и Docker image не требуют Deno, Node или npm.
 
 Локальный запуск без применения runtime-туннелей:
 
@@ -162,7 +141,7 @@ SERVER_HOST=127.0.0.1 \
 go run ./cmd/awg-forge serve
 ```
 
-Подробнее: [Разработка](docs/ru/development.md).
+Runtime и Docker image не требуют Node/npm. Deno используется только для lint статических JavaScript-файлов в dev/CI.
 
 ## Лицензия
 

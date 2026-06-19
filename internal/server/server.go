@@ -452,7 +452,7 @@ func (w *web) updateTunnelSettingsAPI(rw http.ResponseWriter, r *http.Request, i
 			w.audit("warn", "tunnel.settings.rejected", "tunnel settings request rejected", map[string]any{"tunnel_id": id, "reason": "invalid json"}, err)
 			return http.StatusBadRequest, errorPayload("invalid json")
 		}
-		tunnel, err := w.service.UpdateTunnelSettings(id, app.TunnelSettingsUpdate{
+		tunnel, err := w.service.UpdateTunnelSettingsContext(r.Context(), id, app.TunnelSettingsUpdate{
 			Name:       req.Name,
 			ServerHost: req.ServerHost,
 			EgressMode: req.EgressMode,
