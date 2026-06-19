@@ -1,18 +1,23 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"os/exec"
 	"strings"
 	"time"
 
 	"github.com/astronaut808/awg-forge/internal/config"
+	"github.com/astronaut808/awg-forge/internal/keys"
 	"github.com/astronaut808/awg-forge/internal/warp"
 )
 
 type WarpSummary struct {
 	Configured          bool      `json:"configured"`
+	Registered          bool      `json:"registered"`
 	InterfaceName       string    `json:"interface_name"`
+	ClientID            string    `json:"client_id,omitempty"`
+	LicenseSet          bool      `json:"license_set"`
 	Endpoint            string    `json:"endpoint,omitempty"`
 	AddressV4           string    `json:"address_v4,omitempty"`
 	MTU                 int       `json:"mtu,omitempty"`
@@ -24,6 +29,57 @@ type WarpSummary struct {
 
 type WarpRuntimeStatus struct {
 	Up bool `json:"up"`
+}
+
+func (s *Service) RegisterWarp(ctx context.Context) (config.Warp, error) {
+	privateKey, publicKey, err := keys.PrivateKey()
+	if err != nil {
+		return config.Warp{}, err
+	}
+	registered, err := warp.Register(ctx, privateKey, publicKey)
+	if err != nil {
+		return config.Warp{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state, err := s.initLocked()
+	if err != nil {
+		return config.Warp{}, err
+	}
+	previous, err := cloneState(state)
+	if err != nil {
+		return config.Warp{}, err
+	}
+	now := time.Now().UTC()
+	registered.UpdatedAt = now
+	if registered.RegisteredAt.IsZero() {
+		registered.RegisteredAt = now
+	}
+	state.Warp = registered
+	state.UpdatedAt = now
+	if err := s.store.Save(state); err != nil {
+		return config.Warp{}, err
+	}
+	if s.cfg.ApplyConfig {
+		if err := s.reconcileWarpRuntime(state); err != nil {
+			if rollbackErr := s.store.Save(previous); rollbackErr != nil {
+				return config.Warp{}, errors.Join(err, rollbackErr)
+			}
+			if rollbackErr := s.reconcileWarpRuntime(previous); rollbackErr != nil {
+				return config.Warp{}, errors.Join(err, rollbackErr)
+			}
+			s.log("error", "warp.register.failed", "WARP registration apply failed", warpAuditFields(registered, state), err)
+			return config.Warp{}, &ApplyError{Err: err}
+		}
+		state.Warp.LastApplyAt = now
+		state.Warp.LastApplyError = ""
+		state.UpdatedAt = now
+		if err := s.store.Save(state); err != nil {
+			return config.Warp{}, err
+		}
+	}
+	s.log("info", "warp.registered", "WARP registered", warpAuditFields(state.Warp, state), nil)
+	return state.Warp, nil
 }
 
 func (s *Service) ImportWarpConfig(text string) (config.Warp, error) {
@@ -125,7 +181,10 @@ func (s *Service) RestartWarp() error {
 func (s *Service) WarpSummary(state config.State) WarpSummary {
 	return WarpSummary{
 		Configured:          state.Warp.Configured(),
+		Registered:          state.Warp.Registered(),
 		InterfaceName:       state.Warp.RuntimeInterface(),
+		ClientID:            state.Warp.ClientID,
+		LicenseSet:          strings.TrimSpace(state.Warp.LicenseKey) != "",
 		Endpoint:            state.Warp.Endpoint,
 		AddressV4:           state.Warp.AddressV4,
 		MTU:                 state.Warp.MTU,
@@ -150,5 +209,8 @@ func warpAuditFields(w config.Warp, state config.State) map[string]any {
 		"enabled_tunnel_count": warp.EnabledTunnelCount(state),
 		"private_key_set":      strings.TrimSpace(w.PrivateKey) != "",
 		"preshared_key_set":    strings.TrimSpace(w.PresharedKey) != "",
+		"registered":           w.Registered(),
+		"license_set":          strings.TrimSpace(w.LicenseKey) != "",
+		"access_token_set":     strings.TrimSpace(w.AccessToken) != "",
 	}
 }

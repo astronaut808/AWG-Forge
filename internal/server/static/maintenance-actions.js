@@ -109,6 +109,21 @@ async function submitMaintenanceWarpImport(event) {
   openMaintenance("warp");
 }
 
+async function registerWarp() {
+  if (state?.warp?.configured && !confirm("Replace current WARP registration/config?")) {
+    return;
+  }
+  const res = await api("/api/warp/register", {
+    method: "POST",
+    idempotencyKey: newIdempotencyKey(),
+    body: {},
+  });
+  if (!res.ok) return;
+  showToast("WARP registered");
+  await loadState();
+  openMaintenance("warp");
+}
+
 async function restartWarp() {
   if (!state?.warp?.configured) {
     showToast("Import WARP config first");

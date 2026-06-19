@@ -71,7 +71,7 @@ function renderMaintenanceOverview() {
       ], "firewall")}
       ${maintenanceOverviewCard("WARP", summary.warpBadge, summary.warpClass, [
         state?.warp?.configured ? `${state.warp.enabled_tunnel_count || 0} tunnel(s) via WARP` : "Not configured",
-        state?.warp?.endpoint || "Manual import",
+        state?.warp?.registered ? "Registered automatically" : (state?.warp?.endpoint || "Manual import"),
       ], "warp")}
       ${maintenanceOverviewCard("Recovery", "backup", "ok", [
         "Encrypted backup",
@@ -91,9 +91,10 @@ function renderMaintenanceWarp() {
     <div class="maintenance-section-head">
       <div>
         <h3>WARP egress</h3>
-        <p class="muted">Import a Cloudflare WARP WireGuard config and route selected tunnels through it.</p>
+        <p class="muted">Register Cloudflare WARP automatically, or import a WireGuard config manually as fallback.</p>
       </div>
       <div class="actions">
+        <button type="button" class="primary" data-maint-action="register-warp">${warp.configured ? "Re-register WARP" : "Register WARP"}</button>
         <button type="button" data-maint-action="restart-warp" ${warp.configured ? "" : "disabled"}>Restart WARP</button>
         <button type="button" class="danger" data-maint-action="delete-warp" ${warp.configured && Number(warp.enabled_tunnel_count || 0) === 0 ? "" : "disabled"}>Delete WARP</button>
       </div>
@@ -105,6 +106,9 @@ function renderMaintenanceWarp() {
           <span class="badge ${warp.configured ? "ok" : "neutral"}">${warp.configured ? "configured" : "not configured"}</span>
         </div>
         <ul class="maintenance-list">
+          <li>Registration <span class="mono">${warp.registered ? "automatic" : "manual"}</span></li>
+          ${warp.client_id ? `<li>Client ID <span class="mono">${escapeHTML(warp.client_id)}</span></li>` : ""}
+          <li>License <span class="mono">${warp.license_set ? "set" : "not stored"}</span></li>
           <li>Interface <span class="mono">${escapeHTML(warp.interface_name || "warp0")}</span></li>
           <li>Endpoint <span class="mono">${escapeHTML(warp.endpoint || "-")}</span></li>
           <li>Address <span class="mono">${escapeHTML(warp.address_v4 || "-")}</span></li>
@@ -123,7 +127,7 @@ function renderMaintenanceWarp() {
         </form>
       </section>
     </div>
-    <div class="notice">After import, open tunnel settings and switch Egress from Server WAN to Cloudflare WARP. Existing client configs do not need to change.</div>
+    <div class="notice">After registration or import, open tunnel settings and switch Egress from Server WAN to Cloudflare WARP. Existing client configs do not need to change.</div>
   `;
 }
 
@@ -413,6 +417,7 @@ function bindMaintenanceEvents() {
       if (action === "run-updates") await runMaintenanceUpdates();
       if (action === "support-bundle") await downloadSupportBundle();
       if (action === "run-logs") await runMaintenanceLogs();
+      if (action === "register-warp") await registerWarp();
       if (action === "restart-warp") await restartWarp();
       if (action === "delete-warp") await deleteWarp();
     });
@@ -453,7 +458,7 @@ function maintenanceSummary() {
     clientsClass: staleClients ? "warn" : "ok",
     firewallBadge: firewallOk === tunnels.length ? "ok" : "check",
     firewallClass: firewallOk === tunnels.length ? "ok" : "warn",
-    warpBadge: state?.warp?.configured ? "configured" : "manual",
+    warpBadge: state?.warp?.configured ? (state?.warp?.registered ? "registered" : "configured") : "manual",
     warpClass: state?.warp?.configured ? "ok" : "neutral",
     auditEvents: (maintenanceState.auditLog || []).length,
     auditBadge: maintenanceState.auditLog ? "loaded" : "manual",

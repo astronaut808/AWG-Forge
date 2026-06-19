@@ -227,6 +227,15 @@ func (w *web) warpAPI(rw http.ResponseWriter, r *http.Request) {
 			state, _ := w.service.State()
 			return http.StatusOK, map[string]any{"warp": w.service.WarpSummary(state)}
 		})
+	case path == "/register" && r.Method == http.MethodPost && w.validOrigin(r):
+		w.withIdempotency(rw, r, "warp-register", func() (int, any) {
+			if _, err := w.service.RegisterWarp(r.Context()); err != nil {
+				w.audit("warn", "warp.register.rejected", "WARP registration request rejected", nil, err)
+				return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
+			}
+			state, _ := w.service.State()
+			return http.StatusOK, map[string]any{"warp": w.service.WarpSummary(state)}
+		})
 	case path == "/restart" && r.Method == http.MethodPost && w.validOrigin(r):
 		w.withIdempotency(rw, r, "warp-restart", func() (int, any) {
 			if err := w.service.RestartWarp(); err != nil {

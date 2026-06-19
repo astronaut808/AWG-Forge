@@ -298,6 +298,11 @@ func validateStateSanity(state config.State) error {
 			return fmt.Errorf("backup validation failed: WARP config is invalid: %w", err)
 		}
 	}
+	if state.Warp.DeviceID != "" || state.Warp.AccessToken != "" {
+		if !state.Warp.Registered() {
+			return errors.New("backup validation failed: WARP registration is incomplete")
+		}
+	}
 	tunnelIDs := map[string]bool{}
 	tunnelNames := map[string]bool{}
 	interfaces := map[string]bool{}

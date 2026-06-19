@@ -209,7 +209,12 @@ type stateSummary struct {
 
 type warpSummary struct {
 	Configured          bool      `json:"configured"`
+	Registered          bool      `json:"registered"`
 	InterfaceName       string    `json:"interface_name"`
+	ClientID            string    `json:"client_id,omitempty"`
+	DeviceIDHash        string    `json:"device_id_hash,omitempty"`
+	LicenseSet          bool      `json:"license_set"`
+	AccessTokenSet      bool      `json:"access_token_set"`
 	Endpoint            string    `json:"endpoint,omitempty"`
 	AddressV4           string    `json:"address_v4,omitempty"`
 	MTU                 int       `json:"mtu,omitempty"`
@@ -267,7 +272,12 @@ func redactedState(state config.State) stateSummary {
 		ExternalInterface: state.ExternalInterface,
 		Warp: warpSummary{
 			Configured:          state.Warp.Configured(),
+			Registered:          state.Warp.Registered(),
 			InterfaceName:       state.Warp.RuntimeInterface(),
+			ClientID:            state.Warp.ClientID,
+			DeviceIDHash:        hashValue(state.Warp.DeviceID),
+			LicenseSet:          state.Warp.LicenseKey != "",
+			AccessTokenSet:      state.Warp.AccessToken != "",
 			Endpoint:            state.Warp.Endpoint,
 			AddressV4:           state.Warp.AddressV4,
 			MTU:                 state.Warp.MTU,
