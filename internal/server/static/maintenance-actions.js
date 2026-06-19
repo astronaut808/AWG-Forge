@@ -90,6 +90,62 @@ async function submitMaintenanceRestoreVerify(event) {
   openMaintenance("restore");
 }
 
+async function submitMaintenanceWarpImport(event) {
+  event.preventDefault();
+  if (!beginSubmit(event.currentTarget)) return;
+
+  const form = new FormData(event.currentTarget);
+  const res = await api("/api/warp/import", {
+    method: "POST",
+    idempotencyKey: formIdempotencyKey(event.currentTarget),
+    body: { config: String(form.get("config") || "") },
+  });
+  if (!res.ok) {
+    resetSubmit(event.currentTarget);
+    return;
+  }
+  showToast("WARP config imported");
+  await loadState();
+  openMaintenance("warp");
+}
+
+async function restartWarp() {
+  if (!state?.warp?.configured) {
+    showToast("Import WARP config first");
+    return;
+  }
+  const res = await api("/api/warp/restart", {
+    method: "POST",
+    idempotencyKey: newIdempotencyKey(),
+    body: {},
+  });
+  if (!res.ok) return;
+  showToast("WARP restarted");
+  await loadState();
+  openMaintenance("warp");
+}
+
+async function deleteWarp() {
+  if (!state?.warp?.configured) {
+    showToast("WARP is not configured");
+    return;
+  }
+  if (Number(state.warp.enabled_tunnel_count || 0) > 0) {
+    showToast("Switch WARP tunnels back to WAN before deleting WARP");
+    return;
+  }
+  if (!confirm("Delete imported WARP config?")) return;
+  const res = await api("/api/warp", {
+    method: "DELETE",
+    idempotencyKey: newIdempotencyKey(),
+    body: {},
+  });
+  if (!res.ok) return;
+  showToast("WARP config deleted");
+  await loadState();
+  openMaintenance("warp");
+}
+
 async function repairFirewall(options = {}) {
   if (!state?.apply_enabled) {
     showToast("Firewall repair is unavailable: APPLY_CONFIG=false");

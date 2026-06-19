@@ -34,6 +34,7 @@ func (s *Service) initLocked() (config.State, error) {
 		SessionSecret:     secret,
 		ServerHost:        s.cfg.ServerHost,
 		ExternalInterface: s.cfg.ExternalInterface,
+		Warp:              config.Warp{InterfaceName: "warp0", MTU: 1280, PersistentKeepalive: 25},
 		Tunnels:           []config.Tunnel{tunnel},
 		CreatedAt:         now,
 		UpdatedAt:         now,
@@ -48,8 +49,14 @@ func (s *Service) repairLoadedState(state config.State) (config.State, error) {
 	originalState := state
 	changed := false
 	protocolRepaired := false
-	if state.SchemaVersion == 0 {
+	if state.SchemaVersion < config.CurrentStateSchemaVersion {
 		state.SchemaVersion = config.CurrentStateSchemaVersion
+		changed = true
+	}
+	if state.Warp.InterfaceName == "" {
+		state.Warp.InterfaceName = "warp0"
+		state.Warp.MTU = 1280
+		state.Warp.PersistentKeepalive = 25
 		changed = true
 	}
 	if state.SessionSecret == "" {
@@ -83,6 +90,10 @@ func (s *Service) repairLoadedState(state config.State) (config.State, error) {
 		changed = true
 	}
 	for ti := range state.Tunnels {
+		if state.Tunnels[ti].EgressMode == "" {
+			state.Tunnels[ti].EgressMode = config.EgressWAN
+			changed = true
+		}
 		networkRepaired, err := repairTunnelNetwork(&state.Tunnels[ti])
 		if err != nil {
 			return config.State{}, err

@@ -105,6 +105,27 @@ Practically:
 - `1280` often helps on problematic networks, mobile networks, routers, and complex routes;
 - after changing MTU, clients should download fresh `.conf` files.
 
+## Tunnel Egress and WARP
+
+Each tunnel can use one of two egress modes:
+
+- `Server WAN`: client traffic leaves through the server external interface from `EXTERNAL_INTERFACE`;
+- `Cloudflare WARP`: client traffic leaves through a shared `warp0` outbound interface.
+
+WARP is not an AmneziaWG protocol profile. It is an outbound routing mode for existing tunnels. This means Legacy / 1.0, AWG 1.5, and AWG 2.0 tunnels can independently choose WAN or WARP egress.
+
+Initial WARP support uses manual import:
+
+1. Open `Maintenance` -> `WARP`.
+2. Paste a Cloudflare WARP WireGuard config.
+3. Import it.
+4. Open `Tunnel settings` for the tunnel that should use WARP.
+5. Change `Egress` from `Server WAN` to `Cloudflare WARP`.
+
+Existing client configs do not need to change when only egress mode changes, because the client still connects to the same AmneziaWG tunnel endpoint. Runtime routing/NAT changes on the server side.
+
+Doctor checks WARP runtime, policy rules, and WARP-aware firewall expectations for WARP-enabled tunnels.
+
 ## APPLY_CONFIG
 
 When `APPLY_CONFIG=true`, mutating operations update state/config files and apply changes to runtime.

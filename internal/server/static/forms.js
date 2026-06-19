@@ -242,6 +242,13 @@ function openSettings(tunnel) {
       <div class="form-grid">
         <div><label>Name / interface</label><input name="name" value="${escapeAttr(tunnel.name)}" autofocus></div>
         <div><label>Server host</label><input name="server_host" value="${escapeAttr(tunnel.server_host || "")}" placeholder="${escapeAttr(state.server_host || "")}"></div>
+        <div>
+          <label>Egress</label>
+          <select name="egress_mode">
+            <option value="wan" ${tunnel.egress_mode === "warp" ? "" : "selected"}>Server WAN</option>
+            <option value="warp" ${tunnel.egress_mode === "warp" ? "selected" : ""} ${state.warp?.configured ? "" : "disabled"}>Cloudflare WARP</option>
+          </select>
+        </div>
         <div><label>Listen port</label><input name="port" inputmode="numeric" value="${escapeAttr(tunnel.listen_port)}"></div>
         <div><label>IPv4 subnet</label><input name="subnet" value="${escapeAttr(tunnel.subnet)}"></div>
         <div><label>DNS</label><input name="dns" value="${escapeAttr(tunnel.dns)}"></div>
@@ -278,6 +285,7 @@ function openSettings(tunnel) {
       body: {
         name: form.get("name"),
         server_host: String(form.get("server_host") || "").trim(),
+        egress_mode: String(form.get("egress_mode") || "wan"),
         port: Number(form.get("port")),
         subnet: form.get("subnet"),
         dns: form.get("dns"),

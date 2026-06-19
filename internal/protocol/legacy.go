@@ -141,10 +141,14 @@ func baseInterfaceLines(ctx RenderContext) ([]ConfigLine, error) {
 	if bits != 32 {
 		return nil, fmt.Errorf("IPv4 subnet required")
 	}
+	egressInterface := ctx.State.ExternalInterface
+	if ctx.Tunnel.EgressMode == config.EgressWarp {
+		egressInterface = ctx.State.Warp.RuntimeInterface()
+	}
 	postUp := fmt.Sprintf("iptables -t nat -C POSTROUTING -s %s -o %s -j MASQUERADE || iptables -t nat -I POSTROUTING 1 -s %s -o %s -j MASQUERADE; iptables -C INPUT -p udp -m udp --dport %d -j ACCEPT || iptables -I INPUT 1 -p udp -m udp --dport %d -j ACCEPT; iptables -C FORWARD -i %s -j ACCEPT || iptables -I FORWARD 1 -i %s -j ACCEPT; iptables -C FORWARD -o %s -j ACCEPT || iptables -I FORWARD 1 -o %s -j ACCEPT;",
-		ctx.Tunnel.IPv4Subnet, ctx.State.ExternalInterface, ctx.Tunnel.IPv4Subnet, ctx.State.ExternalInterface, ctx.Tunnel.ListenPort, ctx.Tunnel.ListenPort, ctx.Tunnel.InterfaceName, ctx.Tunnel.InterfaceName, ctx.Tunnel.InterfaceName, ctx.Tunnel.InterfaceName)
+		ctx.Tunnel.IPv4Subnet, egressInterface, ctx.Tunnel.IPv4Subnet, egressInterface, ctx.Tunnel.ListenPort, ctx.Tunnel.ListenPort, ctx.Tunnel.InterfaceName, ctx.Tunnel.InterfaceName, ctx.Tunnel.InterfaceName, ctx.Tunnel.InterfaceName)
 	postDown := fmt.Sprintf("while iptables -t nat -C POSTROUTING -s %s -o %s -j MASQUERADE; do iptables -t nat -D POSTROUTING -s %s -o %s -j MASQUERADE; done; while iptables -C INPUT -p udp -m udp --dport %d -j ACCEPT; do iptables -D INPUT -p udp -m udp --dport %d -j ACCEPT; done; while iptables -C FORWARD -i %s -j ACCEPT; do iptables -D FORWARD -i %s -j ACCEPT; done; while iptables -C FORWARD -o %s -j ACCEPT; do iptables -D FORWARD -o %s -j ACCEPT; done;",
-		ctx.Tunnel.IPv4Subnet, ctx.State.ExternalInterface, ctx.Tunnel.IPv4Subnet, ctx.State.ExternalInterface, ctx.Tunnel.ListenPort, ctx.Tunnel.ListenPort, ctx.Tunnel.InterfaceName, ctx.Tunnel.InterfaceName, ctx.Tunnel.InterfaceName, ctx.Tunnel.InterfaceName)
+		ctx.Tunnel.IPv4Subnet, egressInterface, ctx.Tunnel.IPv4Subnet, egressInterface, ctx.Tunnel.ListenPort, ctx.Tunnel.ListenPort, ctx.Tunnel.InterfaceName, ctx.Tunnel.InterfaceName, ctx.Tunnel.InterfaceName, ctx.Tunnel.InterfaceName)
 	lines := []ConfigLine{
 		{"PrivateKey", ctx.Tunnel.ServerPrivateKey},
 		{"Address", fmt.Sprintf("%s/%d", ctx.Tunnel.ServerAddress, ones)},

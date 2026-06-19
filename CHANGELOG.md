@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Added initial per-tunnel WARP egress support with manual Cloudflare WARP WireGuard config import.
+- Added `egress_mode` for tunnels so each tunnel can use either normal server WAN egress or the shared `warp0` WARP outbound interface.
+- Added a Maintenance Center WARP tab for importing, restarting, and deleting WARP config without exposing private keys to the UI.
+- Added WARP-aware firewall, doctor, backup validation, and support bundle redaction.
+
 ## v0.9.1 - 2026-06-13
 
 ### Fixed

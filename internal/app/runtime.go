@@ -13,6 +13,7 @@ import (
 
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/firewall"
+	"github.com/astronaut808/awg-forge/internal/warp"
 )
 
 func (s *Service) RestartTunnel() error {
@@ -131,8 +132,8 @@ func (s *Service) TunnelHealthByID(tunnelID string, sampleSeconds int) (TunnelHe
 		InterfaceName: tunnel.InterfaceName,
 		SampleSeconds: sampleSeconds,
 	}
-	if !hasNATRule(tunnel.IPv4Subnet, s.cfg.ExternalInterface) {
-		health.Warnings = append(health.Warnings, "possible NAT issue: missing MASQUERADE for "+tunnel.IPv4Subnet+" on "+s.cfg.ExternalInterface)
+	if !hasNATRule(tunnel.IPv4Subnet, s.egressInterfaceForTunnel(tunnel)) {
+		health.Warnings = append(health.Warnings, "possible NAT issue: missing MASQUERADE for "+tunnel.IPv4Subnet+" on "+s.egressInterfaceForTunnel(tunnel))
 	}
 	if !hasFilterRule("FORWARD", "-i", tunnel.InterfaceName, "-j", "ACCEPT") || !hasFilterRule("FORWARD", "-o", tunnel.InterfaceName, "-j", "ACCEPT") {
 		health.Warnings = append(health.Warnings, "possible forwarding issue: missing FORWARD accept rules for "+tunnel.InterfaceName)
@@ -240,12 +241,48 @@ func (s *Service) apply(tunnel config.Tunnel) error {
 	return s.ensureFirewallRules(tunnel)
 }
 
+func (s *Service) reconcileWarpRuntime(state config.State) error {
+	routes := warp.RoutesForState(state)
+	interfaceName := state.Warp.RuntimeInterface()
+	if len(routes) == 0 {
+		_ = exec.Command("awg-quick", "down", interfaceName).Run()
+		return nil
+	}
+	if !state.Warp.Configured() {
+		return errors.New("WARP egress is enabled but WARP config is not imported")
+	}
+	conf, err := warp.RenderConfig(state.Warp, routes)
+	if err != nil {
+		return err
+	}
+	runtimeDir := "/etc/amnezia/amneziawg"
+	if err := os.MkdirAll(runtimeDir, 0700); err != nil {
+		return err
+	}
+	runtimePath := filepath.Join(runtimeDir, interfaceName+".conf")
+	if err := os.WriteFile(runtimePath, []byte(conf), 0600); err != nil {
+		return err
+	}
+	_ = exec.Command("awg-quick", "down", interfaceName).Run()
+	if err := runCommand("awg-quick", "up", interfaceName); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (s *Service) ensureFirewallRules(tunnel config.Tunnel) error {
 	report, err := firewall.Repair(s.cfg, config.State{Tunnels: []config.Tunnel{tunnel}}, firewall.IPTablesRunner{})
 	if err != nil {
 		s.log("error", "firewall.repair.failed", "managed firewall repair failed during apply", firewallReportFields(report), err)
 	}
 	return err
+}
+
+func (s *Service) egressInterfaceForTunnel(tunnel config.Tunnel) string {
+	if tunnel.EgressMode == config.EgressWarp {
+		return "warp0"
+	}
+	return s.cfg.ExternalInterface
 }
 
 func firewallReportFields(report firewall.Report) map[string]any {
@@ -275,6 +312,7 @@ func firewallReportFields(report firewall.Report) map[string]any {
 func (s *Service) cleanupFirewallRules(tunnel config.Tunnel) error {
 	rules := []iptablesRule{
 		{table: "nat", args: []string{"POSTROUTING", "-s", tunnel.IPv4Subnet, "-o", s.cfg.ExternalInterface, "-j", "MASQUERADE"}},
+		{table: "nat", args: []string{"POSTROUTING", "-s", tunnel.IPv4Subnet, "-o", "warp0", "-j", "MASQUERADE"}},
 		{args: []string{"INPUT", "-p", "udp", "-m", "udp", "--dport", strconv.Itoa(tunnel.ListenPort), "-j", "ACCEPT"}},
 		{args: []string{"FORWARD", "-i", tunnel.InterfaceName, "-j", "ACCEPT"}},
 		{args: []string{"FORWARD", "-o", tunnel.InterfaceName, "-j", "ACCEPT"}},

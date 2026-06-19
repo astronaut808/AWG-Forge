@@ -105,6 +105,27 @@ awg20.example.com:44867
 - `1280` часто помогает на проблемных сетях, мобильных сетях, роутерах и сложных маршрутах;
 - после изменения MTU клиентам нужно скачать свежий `.conf`.
 
+## Egress туннеля и WARP
+
+У каждого туннеля есть режим выхода в интернет:
+
+- `Server WAN`: клиентский трафик выходит через внешний интерфейс сервера из `EXTERNAL_INTERFACE`;
+- `Cloudflare WARP`: клиентский трафик выходит через общий outbound-интерфейс `warp0`.
+
+WARP не является protocol profile AmneziaWG. Это режим outbound routing для уже существующих туннелей. Поэтому Legacy / 1.0, AWG 1.5 и AWG 2.0 могут независимо использовать WAN или WARP egress.
+
+На первом этапе WARP настраивается через ручной импорт:
+
+1. Открой `Maintenance` -> `WARP`.
+2. Вставь Cloudflare WARP WireGuard config.
+3. Импортируй его.
+4. Открой `Tunnel settings` у нужного туннеля.
+5. Переключи `Egress` с `Server WAN` на `Cloudflare WARP`.
+
+Клиентские конфиги не нужно менять, если меняется только egress mode: клиент продолжает подключаться к тому же AmneziaWG endpoint. Меняются только server-side routing/NAT rules.
+
+Doctor проверяет WARP runtime, policy rules и WARP-aware firewall expectations для туннелей, которые используют WARP.
+
 ## APPLY_CONFIG
 
 Если `APPLY_CONFIG=true`, mutating operations не только меняют state/config files, но и применяют изменения в runtime.

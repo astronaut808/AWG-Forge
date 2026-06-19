@@ -61,6 +61,7 @@ func Check(cfg config.Config, service *app.Service) []Result {
 	if !cfg.ApplyConfig {
 		c.warn("apply", "APPLY_CONFIG=false; configs render but tunnels are not applied automatically")
 	}
+	c.checkWarp(cfg, state)
 	for _, tunnel := range state.Tunnels {
 		c.checkPort(tunnel)
 		if cfg.ApplyConfig && tunnel.Enabled {
@@ -84,6 +85,56 @@ func Check(cfg config.Config, service *app.Service) []Result {
 		c.checkTunnelRuntime(tunnel)
 	}
 	return c.results
+}
+
+func (c *checker) checkWarp(cfg config.Config, state config.State) {
+	warpTunnels := 0
+	for _, tunnel := range state.Tunnels {
+		if tunnel.Enabled && tunnel.EgressMode == config.EgressWarp {
+			warpTunnels++
+		}
+	}
+	if warpTunnels == 0 {
+		if state.Warp.Configured() {
+			c.ok("warp", "configured but no enabled tunnels use WARP")
+		}
+		return
+	}
+	if !state.Warp.Configured() {
+		c.fail("warp", fmt.Sprintf("%d enabled tunnel(s) require WARP, but WARP config is not imported", warpTunnels))
+		return
+	}
+	interfaceName := state.Warp.RuntimeInterface()
+	if cfg.ApplyConfig {
+		if err := exec.Command("ip", "link", "show", interfaceName).Run(); err != nil {
+			c.fail("warp runtime", interfaceName+" link is missing")
+		} else {
+			c.ok("warp runtime", interfaceName+" link exists")
+		}
+	}
+	c.ok("warp config", fmt.Sprintf("%s configured for %d enabled tunnel(s)", interfaceName, warpTunnels))
+	for _, tunnel := range state.Tunnels {
+		if !tunnel.Enabled || tunnel.EgressMode != config.EgressWarp {
+			continue
+		}
+		if cfg.ApplyConfig {
+			c.checkIPRule(tunnel)
+		}
+	}
+}
+
+func (c *checker) checkIPRule(tunnel config.Tunnel) {
+	out, err := exec.Command("ip", "rule", "show").CombinedOutput()
+	if err != nil {
+		c.fail("warp rule "+tunnel.Name, strings.TrimSpace(string(out)))
+		return
+	}
+	needle := "from " + tunnel.IPv4Subnet + " lookup 200"
+	if strings.Contains(string(out), needle) {
+		c.ok("warp rule "+tunnel.Name, needle)
+		return
+	}
+	c.fail("warp rule "+tunnel.Name, "missing policy rule "+needle)
 }
 
 type checker struct {

@@ -87,6 +87,7 @@ type ApplyError struct {
 type TunnelSettingsUpdate struct {
 	Name       string
 	ServerHost string
+	EgressMode string
 	Subnet     string
 	DNS        string
 	AllowedIPs string
@@ -205,6 +206,20 @@ func (s *Service) renderTunnelFromState(state config.State, tunnelID string, fai
 				return &ApplyError{Err: err}
 			}
 			s.log("warn", "tunnel.apply.failed", "runtime apply failed but state was saved", tunnelAuditFields(state.Tunnels[idx]), err)
+			return nil
+		}
+		if err := s.reconcileWarpRuntime(state); err != nil {
+			state.Tunnels[idx].LastApplyError = err.Error()
+			state.Tunnels[idx].UpdatedAt = now
+			state.UpdatedAt = now
+			if saveErr := s.store.Save(state); saveErr != nil {
+				return errors.Join(fmt.Errorf("WARP apply failed: %w", err), fmt.Errorf("save state failed: %w", saveErr))
+			}
+			if failOnApply {
+				s.log("error", "warp.apply.failed", "WARP runtime apply failed", tunnelAuditFields(state.Tunnels[idx]), err)
+				return &ApplyError{Err: err}
+			}
+			s.log("warn", "warp.apply.failed", "WARP runtime apply failed but state was saved", tunnelAuditFields(state.Tunnels[idx]), err)
 			return nil
 		}
 		state.Tunnels[idx].LastApplyAt = now
@@ -368,6 +383,7 @@ func tunnelAuditFields(tunnel config.Tunnel) map[string]any {
 		"name":      tunnel.Name,
 		"interface": tunnel.InterfaceName,
 		"profile":   tunnel.ProtocolProfileID,
+		"egress":    tunnel.EgressMode,
 		"port":      tunnel.ListenPort,
 		"subnet":    tunnel.IPv4Subnet,
 		"enabled":   tunnel.Enabled,

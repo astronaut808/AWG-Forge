@@ -53,13 +53,17 @@ func ExpectedRules(cfg config.Config, state config.State) []Rule {
 }
 
 func ExpectedRulesForTunnel(externalInterface string, tunnel config.Tunnel) []Rule {
+	egressInterface := externalInterface
+	if tunnel.EgressMode == config.EgressWarp {
+		egressInterface = "warp0"
+	}
 	return []Rule{
 		{
 			Tunnel: tunnel.Name,
 			Name:   "masquerade",
 			Table:  "nat",
 			Chain:  "POSTROUTING",
-			Args:   []string{"-s", tunnel.IPv4Subnet, "-o", externalInterface, "-j", "MASQUERADE"},
+			Args:   []string{"-s", tunnel.IPv4Subnet, "-o", egressInterface, "-j", "MASQUERADE"},
 			Insert: true,
 		},
 		{

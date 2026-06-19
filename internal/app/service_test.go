@@ -759,8 +759,8 @@ func TestSessionSecretIsGeneratedAndPersisted(t *testing.T) {
 	if state.SessionSecret == "" {
 		t.Fatal("expected generated session secret")
 	}
-	if state.SchemaVersion != 2 {
-		t.Fatalf("schema version = %d, want 2", state.SchemaVersion)
+	if state.SchemaVersion != config.CurrentStateSchemaVersion {
+		t.Fatalf("schema version = %d, want %d", state.SchemaVersion, config.CurrentStateSchemaVersion)
 	}
 	if len(state.Tunnels) != 1 {
 		t.Fatalf("tunnels = %d, want 1", len(state.Tunnels))
