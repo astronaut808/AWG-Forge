@@ -126,7 +126,7 @@ func (s *Service) ImportWarpConfig(text string) (config.Warp, error) {
 	return state.Warp, nil
 }
 
-func (s *Service) DeleteWarpConfig() error {
+func (s *Service) DeleteWarpConfig(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	state, err := s.initLocked()
@@ -138,6 +138,13 @@ func (s *Service) DeleteWarpConfig() error {
 			return errors.New("cannot delete WARP config while tunnels use WARP egress")
 		}
 	}
+	unregister := state.Warp.Registered()
+	if unregister {
+		if err := warp.Unregister(ctx, state.Warp); err != nil {
+			s.log("warn", "warp.unregister.failed", "WARP unregister failed", warpAuditFields(state.Warp, state), err)
+			return err
+		}
+	}
 	interfaceName := state.Warp.RuntimeInterface()
 	state.Warp = config.Warp{InterfaceName: "warp0", MTU: 1280, PersistentKeepalive: 25}
 	state.UpdatedAt = time.Now().UTC()
@@ -147,7 +154,7 @@ func (s *Service) DeleteWarpConfig() error {
 	if s.cfg.ApplyConfig {
 		_ = exec.Command("awg-quick", "down", interfaceName).Run()
 	}
-	s.log("info", "warp.deleted", "WARP config deleted", map[string]any{"interface": interfaceName}, nil)
+	s.log("info", "warp.deleted", "WARP config deleted", map[string]any{"interface": interfaceName, "unregistered": unregister}, nil)
 	return nil
 }
 

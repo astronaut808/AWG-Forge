@@ -246,7 +246,7 @@ func (w *web) warpAPI(rw http.ResponseWriter, r *http.Request) {
 		})
 	case path == "" && r.Method == http.MethodDelete && w.validOrigin(r):
 		w.withIdempotency(rw, r, "warp-delete", func() (int, any) {
-			if err := w.service.DeleteWarpConfig(); err != nil {
+			if err := w.service.DeleteWarpConfig(r.Context()); err != nil {
 				w.audit("warn", "warp.delete.rejected", "WARP delete request rejected", nil, err)
 				return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
 			}

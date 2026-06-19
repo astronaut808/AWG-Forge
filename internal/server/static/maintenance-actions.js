@@ -149,7 +149,10 @@ async function deleteWarp() {
     showToast("Switch WARP tunnels back to WAN before deleting WARP");
     return;
   }
-  if (!confirm("Delete imported WARP config?")) return;
+  const message = state.warp.registered
+    ? "Unregister this WARP device from Cloudflare and delete local WARP config?"
+    : "Delete local imported WARP config?";
+  if (!confirm(message)) return;
   const res = await api("/api/warp", {
     method: "DELETE",
     idempotencyKey: newIdempotencyKey(),

@@ -37,6 +37,10 @@ func Register(ctx context.Context, privateKey, publicKey string) (config.Warp, e
 	return DefaultAPIClient().Register(ctx, privateKey, publicKey)
 }
 
+func Unregister(ctx context.Context, w config.Warp) error {
+	return DefaultAPIClient().Unregister(ctx, w)
+}
+
 func (c APIClient) Register(ctx context.Context, privateKey, publicKey string) (config.Warp, error) {
 	privateKey = strings.TrimSpace(privateKey)
 	publicKey = strings.TrimSpace(publicKey)
@@ -117,6 +121,50 @@ func (c APIClient) Register(ctx context.Context, privateKey, publicKey string) (
 		return config.Warp{}, errors.New("WARP registration response is missing device credentials")
 	}
 	return warpConfig, nil
+}
+
+func (c APIClient) Unregister(ctx context.Context, w config.Warp) error {
+	deviceID := strings.TrimSpace(w.DeviceID)
+	accessToken := strings.TrimSpace(w.AccessToken)
+	if deviceID == "" || accessToken == "" {
+		return errors.New("WARP registration credentials are required")
+	}
+	baseURL := strings.TrimRight(c.BaseURL, "/")
+	if baseURL == "" {
+		baseURL = DefaultAPIBaseURL
+	}
+	version := strings.TrimSpace(c.ClientVersion)
+	if version == "" {
+		version = DefaultAPIClientVersion
+	}
+	httpClient := c.HTTPClient
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 15 * time.Second}
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, baseURL+"/reg/"+deviceID, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("CF-Client-Version", version)
+
+	res, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("WARP unregister request failed: %w", err)
+	}
+	defer func() {
+		_ = res.Body.Close()
+	}()
+	responseBody, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	if err != nil {
+		return err
+	}
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return fmt.Errorf("WARP unregister failed: %s", apiErrorMessage(responseBody, res.Status))
+	}
+	return nil
 }
 
 type registerRequest struct {
