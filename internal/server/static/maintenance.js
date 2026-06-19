@@ -99,34 +99,29 @@ function renderMaintenanceWarp() {
         <button type="button" class="danger" data-maint-action="delete-warp" ${warp.configured && Number(warp.enabled_tunnel_count || 0) === 0 ? "" : "disabled"}>Delete WARP</button>
       </div>
     </div>
-    <div class="maintenance-grid">
-      <section class="maintenance-card compact">
-        <div class="maintenance-card-head">
-          <h3>Status</h3>
-          <span class="badge ${warp.configured ? "ok" : "neutral"}">${warp.configured ? "configured" : "not configured"}</span>
-        </div>
-        <ul class="maintenance-list">
-          <li>Registration <span class="mono">${warp.registered ? "automatic" : "manual"}</span></li>
-          ${warp.client_id ? `<li>Client ID <span class="mono">${escapeHTML(warp.client_id)}</span></li>` : ""}
-          <li>License <span class="mono">${warp.license_set ? "set" : "not stored"}</span></li>
-          <li>Interface <span class="mono">${escapeHTML(warp.interface_name || "warp0")}</span></li>
-          <li>Endpoint <span class="mono">${escapeHTML(warp.endpoint || "-")}</span></li>
-          <li>Address <span class="mono">${escapeHTML(warp.address_v4 || "-")}</span></li>
-          <li>${Number(warp.enabled_tunnel_count || 0)} tunnel(s) using WARP</li>
-          ${warp.last_apply_error ? `<li class="bad-text">${escapeHTML(warp.last_apply_error)}</li>` : ""}
-        </ul>
-      </section>
-      <section class="maintenance-card compact">
-        <div class="maintenance-card-head">
-          <h3>Import</h3>
-          <span class="badge neutral">manual</span>
-        </div>
-        <form id="maintenance-warp-import-form" class="form-grid single">
-          <div><label>WARP WireGuard config</label><textarea name="config" rows="10" placeholder="[Interface]&#10;PrivateKey = ...&#10;Address = ...&#10;&#10;[Peer]&#10;PublicKey = ...&#10;Endpoint = ..."></textarea></div>
-          <div class="form-actions"><button class="primary" type="submit">Import WARP config</button></div>
-        </form>
-      </section>
-    </div>
+    <section class="maintenance-card compact maintenance-warp-status">
+      <div class="maintenance-card-head">
+        <h3>Status</h3>
+        <span class="badge ${warp.configured ? "ok" : "neutral"}">${warp.configured ? "configured" : "not configured"}</span>
+      </div>
+      <div class="maintenance-facts">
+        <div><span>Registration</span><strong class="mono">${warp.registered ? "automatic" : "manual"}</strong></div>
+        ${warp.client_id ? `<div><span>Client ID</span><strong class="mono">${escapeHTML(warp.client_id)}</strong></div>` : ""}
+        <div><span>License</span><strong class="mono">${warp.license_set ? "set" : "not stored"}</strong></div>
+        <div><span>Interface</span><strong class="mono">${escapeHTML(warp.interface_name || "warp0")}</strong></div>
+        <div><span>Endpoint</span><strong class="mono">${escapeHTML(warp.endpoint || "-")}</strong></div>
+        <div><span>Address</span><strong class="mono">${escapeHTML(warp.address_v4 || "-")}</strong></div>
+        <div><span>Tunnels</span><strong class="mono">${Number(warp.enabled_tunnel_count || 0)} via WARP</strong></div>
+      </div>
+      ${warp.last_apply_error ? `<p class="bad-text">${escapeHTML(warp.last_apply_error)}</p>` : ""}
+    </section>
+    <details class="maintenance-details">
+      <summary>Manual WARP config import</summary>
+      <form id="maintenance-warp-import-form" class="form-grid single">
+        <div><label>WARP WireGuard config</label><textarea name="config" rows="7" placeholder="[Interface]&#10;PrivateKey = ...&#10;Address = ...&#10;&#10;[Peer]&#10;PublicKey = ...&#10;Endpoint = ..."></textarea></div>
+        <div class="form-actions"><button class="primary" type="submit">Import WARP config</button></div>
+      </form>
+    </details>
     <div class="notice">After registration or import, open tunnel settings and switch Egress from Server WAN to Cloudflare WARP. Existing client configs do not need to change.</div>
   `;
 }

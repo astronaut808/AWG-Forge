@@ -500,7 +500,6 @@ func (s *Service) newTunnel(spec tunnelSpec) (config.Tunnel, error) {
 func tunnelConfigChanged(old, next config.Tunnel) bool {
 	return old.ListenPort != next.ListenPort ||
 		old.ServerHost != next.ServerHost ||
-		old.EgressMode != next.EgressMode ||
 		old.ServerAddress != next.ServerAddress ||
 		old.IPv4Subnet != next.IPv4Subnet ||
 		old.DNS != next.DNS ||
