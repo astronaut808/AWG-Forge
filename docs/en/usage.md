@@ -65,9 +65,11 @@ Doctor may warn about clients with no handshake yet. This is useful for spotting
 When creating or editing a client, you can choose an expiration:
 
 - `Never expires`;
+- `1 hour`;
 - `1 day`;
 - `7 days`;
-- `30 days`.
+- `30 days`;
+- custom date and time.
 
 When the expiration passes, the client remains visible in the UI and `state.json`, but becomes `expired` and is no longer rendered into the server config as a peer. This is safer than deletion because name, notes, last seen, and support bundle history are preserved. The UI shows this as `expired` / `not rendered since <date>`.
 

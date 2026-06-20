@@ -65,7 +65,7 @@ Docker host networking is the recommended production mode. It lets tunnels creat
 
 `SERVER_HOST` can be overridden per tunnel in `Tunnel settings` -> `Server host`.
 
-WARP can be enabled directly from `Tunnel settings` -> `Egress` -> `Cloudflare WARP`. If WARP is not configured yet, awg-forge registers it automatically. See [Configuration](docs/en/configuration.md).
+WARP can be selected while creating a tunnel or enabled later from `Tunnel settings` -> `Egress` -> `Cloudflare WARP`. If WARP is not configured yet, awg-forge registers the shared `warp0` automatically. See [Configuration](docs/en/configuration.md).
 
 ## Startup Check
 
@@ -141,7 +141,7 @@ SERVER_HOST=127.0.0.1 \
 go run ./cmd/awg-forge serve
 ```
 
-Runtime and Docker image do not require Node/npm. Deno is used only for linting static JavaScript files in dev/CI.
+Runtime and Docker image do not require Node/npm. The Web UI is built from `web/` with Vite/Preact/TypeScript and embedded into the Go binary as static files.
 
 ## License
 

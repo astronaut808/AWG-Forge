@@ -3,7 +3,8 @@
 ## Требования
 
 - Go `1.26.4`;
-- Deno `2.x` для lint статического Web UI;
+- Node.js `24.x` и npm для сборки Web UI;
+- Deno `2.x` для lint frontend source;
 - `golangci-lint` `2.x` для Go linting;
 - Docker для проверки image/runtime сценариев.
 
@@ -13,6 +14,8 @@
 make test
 make vet
 make build
+make ui-check
+make ui-build
 make lint-go
 make lint-js
 make ci
@@ -52,27 +55,30 @@ git diff --check
 - `go vet ./...`;
 - `go build ./...`;
 - `golangci-lint run`;
-- `deno lint`.
+- `npm run ui:check`;
+- `npm run ui:build`;
+- `deno lint web/src`.
 
 ## Frontend
 
-Frontend находится в:
+Frontend source находится в `web/` и собирается через Vite + Preact + TypeScript.
 
-- `internal/server/static/index.html`;
-- `internal/server/static/app.css`;
-- `internal/server/static/html.js`;
-- `internal/server/static/app.js`;
-- `internal/server/static/forms.js`;
-- `internal/server/static/maintenance.js`;
-- `internal/server/static/maintenance-actions.js`;
-- `internal/server/static/ui.js`;
-- `internal/server/static/boot.js`.
+Generated output находится в `internal/server/static/` и встраивается в Go-бинарь через `embed.FS`. Эти файлы нужно обновлять командой:
 
-Frontend остается статическим HTML/CSS/JavaScript без Node, npm, React, Vue или build pipeline.
+```bash
+npm install
+npm run ui:build
+```
 
-`html.js` содержит небольшой safe-fragment renderer, через который динамический HTML попадает в DOM. Dashboard state и API calls остаются в `app.js`; формы, maintenance views, maintenance actions, общие UI helpers и финальный bootstrap разделены на небольшие classic scripts, которые `index.html` загружает по порядку.
+Для dev-сервера frontend:
 
-Deno используется только как dev/CI-инструмент для lint статических JavaScript-файлов. Runtime и Docker image не требуют Deno.
+```bash
+npm run ui:dev
+```
+
+`ui:dev` проксирует `/api` и `/clients` на локальный backend `127.0.0.1:51821`.
+
+Runtime и Docker image не требуют Node/npm/Deno. Эти инструменты нужны только для разработки и CI.
 
 ## Backend
 

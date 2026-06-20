@@ -29,11 +29,29 @@ jobs:
         with:
           deno-version: v2.x
 
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
       - name: Check formatting
         run: test -z "$(gofmt -l .)"
 
       - name: Download modules
         run: go mod download
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Typecheck UI
+        run: npm run ui:check
+
+      - name: Build UI
+        run: npm run ui:build
+
+      - name: Check generated UI
+        run: git diff --exit-code -- internal/server/static
 
       - name: Test
         run: go test ./...
@@ -52,5 +70,5 @@ jobs:
         with:
           version: v2.12.2
 
-      - name: Lint static UI
-        run: deno lint
+      - name: Lint UI
+        run: npm run ui:lint

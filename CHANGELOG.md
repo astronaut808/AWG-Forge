@@ -6,15 +6,22 @@
 
 - Added per-tunnel Cloudflare WARP egress. Each tunnel can now use either normal server WAN egress or the shared `warp0` WARP outbound interface.
 - Added a Maintenance Center WARP tab for automatic registration, manual config import, restart, and deletion without exposing private keys or WARP account tokens to the UI.
+- Added `Cloudflare WARP` egress selection during tunnel creation, using the existing shared `warp0` when configured or registering it automatically when needed.
 - Added automatic WARP registration when a tunnel is switched to `Cloudflare WARP` egress from tunnel settings.
 - Added Cloudflare WARP unregister during WARP deletion for automatically registered WARP devices.
 - Added WARP-aware firewall handling, doctor checks, backup validation, and support bundle redaction.
 - Added a README dashboard screenshot with synthetic demo data.
+- Added client expiration presets for `1 hour`, `1 day`, `7 days`, `30 days`, plus a custom calendar/date-time option.
+- Added loading indicators for long-running UI actions such as WARP registration, update checks, doctor/firewall actions, backup, restore verification, and support bundle downloads.
 
 ### Changed
 
 - Updated pinned AmneziaWG upstream refs to `amneziawg-go` `v0.2.19` and `amneziawg-tools` `v1.0.20260618-2`.
 - Refreshed the Russian and English README files to keep the project overview shorter, clearer, and easier to scan.
+- Improved form control alignment for tunnel settings, restore verification, native selects, file inputs, and checkbox rows.
+- Restored MTU selection in tunnel settings with `Auto`, common presets, and a custom value.
+- Changed Maintenance Center audit log rendering to show newest events first while preserving backend API order.
+- Removed internal planning, design, and research drafts from the public documentation tree, keeping user/operator docs and protocol reference material focused.
 
 ### Fixed
 

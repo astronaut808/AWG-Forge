@@ -65,7 +65,7 @@ docker compose up -d
 
 `SERVER_HOST` можно переопределить для конкретного туннеля в `Tunnel settings` -> `Server host`.
 
-WARP включается прямо в `Tunnel settings` -> `Egress` -> `Cloudflare WARP`. Если WARP еще не настроен, awg-forge зарегистрирует его автоматически. Подробнее: [Конфигурация](docs/ru/configuration.md).
+WARP можно выбрать при создании туннеля или включить позже в `Tunnel settings` -> `Egress` -> `Cloudflare WARP`. Если WARP еще не настроен, awg-forge зарегистрирует общий `warp0` автоматически. Подробнее: [Конфигурация](docs/ru/configuration.md).
 
 ## Проверка После Запуска
 
@@ -141,7 +141,7 @@ SERVER_HOST=127.0.0.1 \
 go run ./cmd/awg-forge serve
 ```
 
-Runtime и Docker image не требуют Node/npm. Deno используется только для lint статических JavaScript-файлов в dev/CI.
+Runtime и Docker image не требуют Node/npm. Web UI собирается из `web/` через Vite/Preact/TypeScript и встраивается в Go-бинарь как статические файлы.
 
 ## Лицензия
 

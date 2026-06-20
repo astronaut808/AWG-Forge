@@ -9,4 +9,5 @@ dist/
 *.zip
 *.test
 coverage.out
+node_modules/
 .DS_Store

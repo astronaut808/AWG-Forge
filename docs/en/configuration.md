@@ -103,6 +103,7 @@ Practically:
 
 - `Auto` is a good starting point;
 - `1280` often helps on problematic networks, mobile networks, routers, and complex routes;
+- the Web UI offers `Auto`, common presets, and `Custom` for explicit MTU values;
 - after changing MTU, clients should download fresh `.conf` files.
 
 ## Tunnel Egress and WARP

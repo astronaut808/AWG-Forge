@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -16,6 +17,7 @@ import (
 	"github.com/astronaut808/awg-forge/internal/app"
 	"github.com/astronaut808/awg-forge/internal/audit"
 	"github.com/astronaut808/awg-forge/internal/backup"
+	"github.com/astronaut808/awg-forge/internal/buildinfo"
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/doctor"
 	"github.com/astronaut808/awg-forge/internal/support"
@@ -57,6 +59,7 @@ func Serve(cfg config.Config, service *app.Service) error {
 	mux.HandleFunc("/api/login", w.security(w.loginAPI))
 	mux.HandleFunc("/api/logout", w.security(w.requireAuth(w.logoutAPI)))
 	mux.HandleFunc("/api/state", w.security(w.requireAuth(w.stateAPI)))
+	mux.HandleFunc("/api/events", w.security(w.requireAuth(w.eventsAPI)))
 	mux.HandleFunc("/api/backup", w.security(w.requireAuth(w.backupAPI)))
 	mux.HandleFunc("/api/doctor", w.security(w.requireAuth(w.doctorAPI)))
 	mux.HandleFunc("/api/audit-log", w.security(w.requireAuth(w.auditLogAPI)))
@@ -154,6 +157,58 @@ func (w *web) stateAPI(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(rw, http.StatusOK, w.publicState(state))
+}
+
+func (w *web) eventsAPI(rw http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(rw, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	flusher, ok := rw.(http.Flusher)
+	if !ok {
+		writeError(rw, http.StatusInternalServerError, "streaming unsupported")
+		return
+	}
+
+	noStore(rw)
+	rw.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	rw.Header().Set("Connection", "keep-alive")
+	rw.Header().Set("X-Accel-Buffering", "no")
+
+	writeStateEvent := func() bool {
+		state, err := w.service.State()
+		if err != nil {
+			_, _ = fmt.Fprintf(rw, "event: error\ndata: {\"error\":\"state unavailable\"}\n\n")
+			flusher.Flush()
+			return false
+		}
+		body, err := json.Marshal(w.publicState(state))
+		if err != nil {
+			_, _ = fmt.Fprintf(rw, "event: error\ndata: {\"error\":\"state unavailable\"}\n\n")
+			flusher.Flush()
+			return false
+		}
+		_, _ = fmt.Fprintf(rw, "event: state\ndata: %s\n\n", body)
+		flusher.Flush()
+		return true
+	}
+
+	if !writeStateEvent() {
+		return
+	}
+
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			if !writeStateEvent() {
+				return
+			}
+		}
+	}
 }
 
 func (w *web) doctorAPI(rw http.ResponseWriter, r *http.Request) {
@@ -374,18 +429,25 @@ func (w *web) tunnelsAPI(rw http.ResponseWriter, r *http.Request) {
 	}
 	w.withIdempotency(rw, r, "create-tunnel", func() (int, any) {
 		var req struct {
-			Profile string `json:"profile"`
-			Name    string `json:"name"`
-			Port    int    `json:"port"`
-			Subnet  string `json:"subnet"`
+			Profile    string `json:"profile"`
+			Name       string `json:"name"`
+			EgressMode string `json:"egress_mode"`
+			Port       int    `json:"port"`
+			Subnet     string `json:"subnet"`
 		}
 		if err := readJSON(rw, r, &req); err != nil {
 			w.audit("warn", "tunnel.create.rejected", "tunnel creation request rejected", map[string]any{"reason": "invalid json"}, err)
 			return http.StatusBadRequest, errorPayload("invalid json")
 		}
-		tunnel, err := w.service.CreateTunnel(req.Profile, req.Name, req.Subnet, req.Port)
+		tunnel, err := w.service.CreateTunnelWithOptions(r.Context(), app.TunnelCreateOptions{
+			ProfileID:  req.Profile,
+			Name:       req.Name,
+			EgressMode: req.EgressMode,
+			Subnet:     req.Subnet,
+			Port:       req.Port,
+		})
 		if err != nil {
-			w.audit("warn", "tunnel.create.rejected", "tunnel creation request rejected", map[string]any{"profile": req.Profile, "name": req.Name, "port": req.Port, "subnet": req.Subnet}, err)
+			w.audit("warn", "tunnel.create.rejected", "tunnel creation request rejected", map[string]any{"profile": req.Profile, "name": req.Name, "egress": req.EgressMode, "port": req.Port, "subnet": req.Subnet}, err)
 			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
 		}
 		return http.StatusCreated, map[string]any{"tunnel": publicTunnel(tunnel, app.TunnelStatus{})}
@@ -698,6 +760,7 @@ func (w *web) publicState(state config.State) map[string]any {
 		"apply_enabled":       w.cfg.ApplyConfig,
 		"server_host":         state.ServerHost,
 		"warp":                w.service.WarpSummary(state),
+		"build":               buildinfo.Current(),
 		"published_udp_ports": w.cfg.PublishedUDPPorts,
 		"profiles": []map[string]any{
 			profileMeta("awg_legacy_1_0", "1.0", "Legacy", true, state),

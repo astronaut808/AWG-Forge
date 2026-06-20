@@ -89,6 +89,60 @@ func TestUpdateTunnelSettingsAutoRegistersWarpEgress(t *testing.T) {
 	}
 }
 
+func TestCreateTunnelAutoRegistersWarpEgress(t *testing.T) {
+	oldRegisterWarp := registerWarp
+	defer func() {
+		registerWarp = oldRegisterWarp
+	}()
+	registerCalls := 0
+	registerWarp = func(_ context.Context, privateKey, _ string) (config.Warp, error) {
+		registerCalls++
+		return config.Warp{
+			InterfaceName:       "warp0",
+			DeviceID:            "device-id",
+			AccessToken:         "access-token",
+			LicenseKey:          "license-key",
+			ClientID:            "client-id",
+			PrivateKey:          privateKey,
+			PeerPublicKey:       "warp-peer-public-key",
+			Endpoint:            "engage.cloudflareclient.com:2408",
+			AddressV4:           "172.16.0.2",
+			MTU:                 1280,
+			PersistentKeepalive: 25,
+			RegisteredAt:        time.Now().UTC(),
+			UpdatedAt:           time.Now().UTC(),
+		}, nil
+	}
+
+	svc := New(testServiceConfig(t))
+	tunnel, err := svc.CreateTunnelWithOptions(context.Background(), TunnelCreateOptions{
+		ProfileID:  "awg_2_0",
+		Name:       "awg20",
+		Subnet:     "10.20.0.0/24",
+		Port:       51830,
+		EgressMode: config.EgressWarp,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if registerCalls != 1 {
+		t.Fatalf("register calls = %d, want 1", registerCalls)
+	}
+	if tunnel.EgressMode != config.EgressWarp {
+		t.Fatalf("egress mode = %q, want warp", tunnel.EgressMode)
+	}
+	state, err := svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.Warp.Registered() {
+		t.Fatal("expected WARP to be registered")
+	}
+	if state.Tunnels[1].EgressMode != config.EgressWarp {
+		t.Fatalf("created tunnel egress = %q, want warp", state.Tunnels[1].EgressMode)
+	}
+}
+
 func testServiceConfig(t *testing.T) config.Config {
 	t.Helper()
 	return config.Config{
