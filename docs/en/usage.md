@@ -36,7 +36,7 @@ Maintenance actions are available through the `Maintenance` button:
 - `Restore`: verify an `.afbackup` through a dry-run without writing to `CONFIG_DIR`; actual restore remains CLI-only.
 - `Updates`: check whether bundled AmneziaWG upstream refs are behind.
 - `Support`: download a support bundle without secrets.
-- `Logs`: inspect recent safe audit events.
+- `Logs`: inspect recent safe audit events. The panel auto-refreshes while Maintenance is open and shows newest events first.
 - `System`: current mode, server host, tunnels, profiles, and useful commands.
 
 ## Stale Configs
@@ -52,7 +52,7 @@ Client rename and notes are metadata-only changes and do not make configs stale.
 The client list shows two different kinds of status:
 
 - `enabled` / `disabled`: whether the client is allowed in awg-forge config.
-- `active now`, `seen recently`, `last seen`, `never connected`, `status unknown`: approximate runtime status from `awg show` and persisted `last_seen_at`.
+- `active now`, `seen recently`, `offline`, `never seen`: approximate runtime status from `awg show` and persisted `last_seen_at`.
 
 AmneziaWG/WireGuard does not keep a permanent TCP-like connection, so `active now` is only an approximate online indicator, not a strict online/offline status. In the dashboard, active means the latest handshake is younger than about 3 minutes. The UI also shows `received` / `sent` counters when runtime exposes them.
 
@@ -98,7 +98,6 @@ docker exec awg-forge awg-forge client disable <client-id>
 docker exec awg-forge awg-forge client enable <client-id>
 docker exec awg-forge awg-forge client remove <client-id>
 docker exec awg-forge awg-forge tunnel create awg_1_5 awg15 51825 10.15.0.0/24
-docker exec awg-forge awg-forge tunnel restart
 ```
 
 ## Local CLI
