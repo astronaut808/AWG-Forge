@@ -21,7 +21,7 @@ The reliable production client import path is the downloaded `.conf`. `vpn://` i
 
 ## Quick Start
 
-Interactive install on Linux/VPS:
+Interactive install on Linux/VPS (Docker required):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
