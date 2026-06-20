@@ -64,6 +64,8 @@ func Serve(cfg config.Config, service *app.Service) error {
 	mux.HandleFunc("/api/support-bundle", w.security(w.requireAuth(w.supportBundleAPI)))
 	mux.HandleFunc("/api/updates", w.security(w.requireAuth(w.updatesAPI)))
 	mux.HandleFunc("/api/restore/verify", w.security(w.requireAuth(w.restoreVerifyAPI)))
+	mux.HandleFunc("/api/warp", w.security(w.requireAuth(w.warpAPI)))
+	mux.HandleFunc("/api/warp/", w.security(w.requireAuth(w.warpAPI)))
 	mux.HandleFunc("/api/tunnels", w.security(w.requireAuth(w.tunnelsAPI)))
 	mux.HandleFunc("/api/tunnels/", w.security(w.requireAuth(w.tunnelAPI)))
 	mux.HandleFunc("/api/clients", w.security(w.requireAuth(w.clientsAPI)))
@@ -194,6 +196,65 @@ func (w *web) firewallRepairAPI(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(rw, http.StatusOK, map[string]any{"firewall": report})
+}
+
+func (w *web) warpAPI(rw http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/warp")
+	switch {
+	case path == "" && r.Method == http.MethodGet:
+		state, err := w.service.State()
+		if err != nil {
+			writeError(rw, http.StatusInternalServerError, "state unavailable")
+			return
+		}
+		writeJSON(rw, http.StatusOK, map[string]any{
+			"warp":   w.service.WarpSummary(state),
+			"status": w.service.WarpRuntimeStatus(state),
+		})
+	case path == "/import" && r.Method == http.MethodPost && w.validOrigin(r):
+		w.withIdempotency(rw, r, "warp-import", func() (int, any) {
+			var req struct {
+				Config string `json:"config"`
+			}
+			if err := readJSON(rw, r, &req); err != nil {
+				return http.StatusBadRequest, errorPayload("invalid json")
+			}
+			_, err := w.service.ImportWarpConfig(req.Config)
+			if err != nil {
+				w.audit("warn", "warp.import.rejected", "WARP import request rejected", nil, err)
+				return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
+			}
+			state, _ := w.service.State()
+			return http.StatusOK, map[string]any{"warp": w.service.WarpSummary(state)}
+		})
+	case path == "/register" && r.Method == http.MethodPost && w.validOrigin(r):
+		w.withIdempotency(rw, r, "warp-register", func() (int, any) {
+			if _, err := w.service.RegisterWarp(r.Context()); err != nil {
+				w.audit("warn", "warp.register.rejected", "WARP registration request rejected", nil, err)
+				return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
+			}
+			state, _ := w.service.State()
+			return http.StatusOK, map[string]any{"warp": w.service.WarpSummary(state)}
+		})
+	case path == "/restart" && r.Method == http.MethodPost && w.validOrigin(r):
+		w.withIdempotency(rw, r, "warp-restart", func() (int, any) {
+			if err := w.service.RestartWarp(); err != nil {
+				w.audit("warn", "warp.restart.rejected", "WARP restart request rejected", nil, err)
+				return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
+			}
+			return http.StatusOK, map[string]any{"ok": true}
+		})
+	case path == "" && r.Method == http.MethodDelete && w.validOrigin(r):
+		w.withIdempotency(rw, r, "warp-delete", func() (int, any) {
+			if err := w.service.DeleteWarpConfig(r.Context()); err != nil {
+				w.audit("warn", "warp.delete.rejected", "WARP delete request rejected", nil, err)
+				return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
+			}
+			return http.StatusOK, map[string]any{"ok": true}
+		})
+	default:
+		writeError(rw, http.StatusMethodNotAllowed, "method not allowed")
+	}
 }
 
 func (w *web) backupAPI(rw http.ResponseWriter, r *http.Request) {
@@ -378,6 +439,7 @@ func (w *web) updateTunnelSettingsAPI(rw http.ResponseWriter, r *http.Request, i
 		var req struct {
 			Name       string `json:"name"`
 			ServerHost string `json:"server_host"`
+			EgressMode string `json:"egress_mode"`
 			Port       int    `json:"port"`
 			Subnet     string `json:"subnet"`
 			DNS        string `json:"dns"`
@@ -390,9 +452,10 @@ func (w *web) updateTunnelSettingsAPI(rw http.ResponseWriter, r *http.Request, i
 			w.audit("warn", "tunnel.settings.rejected", "tunnel settings request rejected", map[string]any{"tunnel_id": id, "reason": "invalid json"}, err)
 			return http.StatusBadRequest, errorPayload("invalid json")
 		}
-		tunnel, err := w.service.UpdateTunnelSettings(id, app.TunnelSettingsUpdate{
+		tunnel, err := w.service.UpdateTunnelSettingsContext(r.Context(), id, app.TunnelSettingsUpdate{
 			Name:       req.Name,
 			ServerHost: req.ServerHost,
+			EgressMode: req.EgressMode,
 			Subnet:     req.Subnet,
 			DNS:        req.DNS,
 			AllowedIPs: req.AllowedIPs,
@@ -634,6 +697,7 @@ func (w *web) publicState(state config.State) map[string]any {
 		"authenticated":       true,
 		"apply_enabled":       w.cfg.ApplyConfig,
 		"server_host":         state.ServerHost,
+		"warp":                w.service.WarpSummary(state),
 		"published_udp_ports": w.cfg.PublishedUDPPorts,
 		"profiles": []map[string]any{
 			profileMeta("awg_legacy_1_0", "1.0", "Legacy", true, state),

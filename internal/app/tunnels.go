@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -217,6 +218,48 @@ func (s *Service) CreateTunnel(profileID, name, subnet string, port int) (config
 }
 
 func (s *Service) UpdateTunnelSettings(tunnelID string, update TunnelSettingsUpdate) (config.Tunnel, error) {
+	return s.UpdateTunnelSettingsContext(context.Background(), tunnelID, update)
+}
+
+func (s *Service) UpdateTunnelSettingsContext(ctx context.Context, tunnelID string, update TunnelSettingsUpdate) (config.Tunnel, error) {
+	if err := s.ensureWarpForTunnelSettings(ctx, tunnelID, update); err != nil {
+		return config.Tunnel{}, err
+	}
+	return s.updateTunnelSettings(tunnelID, update)
+}
+
+func (s *Service) ensureWarpForTunnelSettings(ctx context.Context, tunnelID string, update TunnelSettingsUpdate) error {
+	s.mu.Lock()
+	state, err := s.initLocked()
+	if err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	idx, ok := tunnelIndexByID(state, tunnelID)
+	if !ok {
+		s.mu.Unlock()
+		return errors.New("tunnel not found")
+	}
+	settings, err := resolveTunnelSettings(state, idx, update)
+	if err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	needsRegistration := settings.EgressMode == config.EgressWarp && !state.Warp.Configured()
+	s.mu.Unlock()
+	if !needsRegistration {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, err := s.RegisterWarp(ctx); err != nil {
+		return fmt.Errorf("automatic WARP registration failed: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) updateTunnelSettings(tunnelID string, update TunnelSettingsUpdate) (config.Tunnel, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	state, err := s.initLocked()
@@ -268,6 +311,7 @@ func (s *Service) UpdateTunnelSettings(tunnelID string, update TunnelSettingsUpd
 type resolvedTunnelSettings struct {
 	Name       string
 	ServerHost string
+	EgressMode string
 	Subnet     string
 	ServerIP   string
 	DNS        string
@@ -283,6 +327,7 @@ func resolveTunnelSettings(state config.State, idx int, update TunnelSettingsUpd
 	settings := resolvedTunnelSettings{
 		Name:       valueOr(strings.TrimSpace(update.Name), current.Name),
 		ServerHost: strings.TrimSpace(update.ServerHost),
+		EgressMode: valueOr(strings.TrimSpace(update.EgressMode), current.EgressMode),
 		Subnet:     valueOr(strings.TrimSpace(update.Subnet), current.IPv4Subnet),
 		DNS:        valueOr(strings.TrimSpace(update.DNS), current.DNS),
 		AllowedIPs: valueOr(strings.TrimSpace(update.AllowedIPs), current.AllowedIPs),
@@ -328,6 +373,11 @@ func validateResolvedTunnelSettings(settings resolvedTunnelSettings) error {
 	if settings.MTU != 0 && (settings.MTU < 576 || settings.MTU > 1500) {
 		return errors.New("MTU must be auto or between 576 and 1500")
 	}
+	switch settings.EgressMode {
+	case "", config.EgressWAN, config.EgressWarp:
+	default:
+		return errors.New("egress mode must be wan or warp")
+	}
 	return nil
 }
 
@@ -354,6 +404,7 @@ func applyTunnelSettings(tunnel config.Tunnel, settings resolvedTunnelSettings) 
 	tunnel.Name = settings.Name
 	tunnel.InterfaceName = settings.Name
 	tunnel.ServerHost = settings.ServerHost
+	tunnel.EgressMode = settings.EgressMode
 	tunnel.ListenPort = settings.Port
 	tunnel.IPv4Subnet = settings.Subnet
 	tunnel.ServerAddress = settings.ServerIP
@@ -418,6 +469,13 @@ func (s *Service) DeleteTunnel(tunnelID string) error {
 			s.log("error", "tunnel.delete.failed", "tunnel delete firewall cleanup failed", tunnelAuditFields(tunnel), err)
 			return &ApplyError{Err: err}
 		}
+		if err := s.reconcileWarpRuntime(state); err != nil {
+			if rollbackErr := s.rollbackRuntimeState(previousState, tunnel.ID); rollbackErr != nil {
+				return errors.Join(&ApplyError{Err: err}, fmt.Errorf("rollback failed: %w", rollbackErr))
+			}
+			s.log("error", "tunnel.delete.failed", "WARP runtime reconciliation failed after tunnel delete", tunnelAuditFields(tunnel), err)
+			return &ApplyError{Err: err}
+		}
 	}
 	if err := s.store.DeleteRenderedTunnel(tunnel.InterfaceName); err != nil {
 		if rollbackErr := s.rollbackRuntimeState(previousState, tunnel.ID); rollbackErr != nil {
@@ -459,6 +517,7 @@ func (s *Service) newTunnel(spec tunnelSpec) (config.Tunnel, error) {
 		ID:                randomID(),
 		Name:              spec.Name,
 		InterfaceName:     spec.InterfaceName,
+		EgressMode:        config.EgressWAN,
 		Enabled:           true,
 		ListenPort:        spec.ListenPort,
 		ServerAddress:     serverIP,
@@ -515,5 +574,6 @@ func validateServerHost(host string) error {
 func firewallRelevantChanged(old, next config.Tunnel) bool {
 	return old.ListenPort != next.ListenPort ||
 		old.IPv4Subnet != next.IPv4Subnet ||
-		old.InterfaceName != next.InterfaceName
+		old.InterfaceName != next.InterfaceName ||
+		old.EgressMode != next.EgressMode
 }

@@ -749,6 +749,63 @@ func TestServerHostEnvChangeDoesNotMarkOverriddenTunnelStale(t *testing.T) {
 	}
 }
 
+func TestTunnelEgressModeChangeDoesNotMarkClientConfigStale(t *testing.T) {
+	cfg := testConfig(t)
+	svc := app.New(cfg)
+	client, err := svc.AddClient("phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ImportWarpConfig(`[Interface]
+PrivateKey = warp-private-key
+Address = 172.16.0.2/32
+
+[Peer]
+PublicKey = warp-peer-public-key
+Endpoint = engage.cloudflareclient.com:2408
+PersistentKeepalive = 25
+`); err != nil {
+		t.Fatal(err)
+	}
+	state, err := svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tunnel := state.Tunnels[0]
+	revision := tunnel.ConfigRevision
+	if _, err := svc.UpdateTunnelSettings(tunnel.ID, app.TunnelSettingsUpdate{
+		Name:       tunnel.Name,
+		ServerHost: tunnel.ServerHost,
+		EgressMode: config.EgressWarp,
+		Subnet:     tunnel.IPv4Subnet,
+		DNS:        tunnel.DNS,
+		AllowedIPs: tunnel.AllowedIPs,
+		Keepalive:  tunnel.Keepalive,
+		MTU:        tunnel.MTU,
+		Port:       tunnel.ListenPort,
+		Enabled:    tunnel.Enabled,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	state, err = svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Tunnels[0].ConfigRevision != revision {
+		t.Fatalf("tunnel revision changed from %d to %d", revision, state.Tunnels[0].ConfigRevision)
+	}
+	if state.Tunnels[0].Clients[0].ConfigRevision != revision {
+		t.Fatal("client config should remain fresh after server-side egress change")
+	}
+	conf, _, err := svc.ClientConfigForDownload(client.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(conf, "Endpoint = vpn.example.com:51820") {
+		t.Fatalf("client config changed unexpectedly:\n%s", conf)
+	}
+}
+
 func TestSessionSecretIsGeneratedAndPersisted(t *testing.T) {
 	cfg := testConfig(t)
 	svc := app.New(cfg)
@@ -759,8 +816,8 @@ func TestSessionSecretIsGeneratedAndPersisted(t *testing.T) {
 	if state.SessionSecret == "" {
 		t.Fatal("expected generated session secret")
 	}
-	if state.SchemaVersion != 2 {
-		t.Fatalf("schema version = %d, want 2", state.SchemaVersion)
+	if state.SchemaVersion != config.CurrentStateSchemaVersion {
+		t.Fatalf("schema version = %d, want %d", state.SchemaVersion, config.CurrentStateSchemaVersion)
 	}
 	if len(state.Tunnels) != 1 {
 		t.Fatalf("tunnels = %d, want 1", len(state.Tunnels))

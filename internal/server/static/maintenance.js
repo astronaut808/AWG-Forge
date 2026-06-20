@@ -4,6 +4,7 @@ function openMaintenance(tab = maintenanceState.tab || "overview") {
     ["overview", "Overview"],
     ["doctor", "Doctor"],
     ["firewall", "Firewall"],
+    ["warp", "WARP"],
     ["backup", "Backup"],
     ["restore", "Restore"],
     ["updates", "Updates"],
@@ -34,6 +35,7 @@ function openMaintenance(tab = maintenanceState.tab || "overview") {
 function renderMaintenanceTab() {
   if (maintenanceState.tab === "doctor") return renderMaintenanceDoctor();
   if (maintenanceState.tab === "firewall") return renderMaintenanceFirewall();
+  if (maintenanceState.tab === "warp") return renderMaintenanceWarp();
   if (maintenanceState.tab === "backup") return renderMaintenanceBackup();
   if (maintenanceState.tab === "restore") return renderMaintenanceRestore();
   if (maintenanceState.tab === "updates") return renderMaintenanceUpdates();
@@ -67,6 +69,10 @@ function renderMaintenanceOverview() {
         `${summary.firewallOk}/${summary.totalTunnels} tunnel checks ok`,
         state?.apply_enabled ? "Runtime repair enabled" : "Dry-run mode",
       ], "firewall")}
+      ${maintenanceOverviewCard("WARP", summary.warpBadge, summary.warpClass, [
+        state?.warp?.configured ? `${state.warp.enabled_tunnel_count || 0} tunnel(s) via WARP` : "Not configured",
+        state?.warp?.registered ? "Registered automatically" : (state?.warp?.endpoint || "Manual import"),
+      ], "warp")}
       ${maintenanceOverviewCard("Recovery", "backup", "ok", [
         "Encrypted backup",
         "Restore dry-run verification",
@@ -76,6 +82,48 @@ function renderMaintenanceOverview() {
         maintenanceState.lastRun.logs ? `last refreshed ${maintenanceState.lastRun.logs}` : "manual refresh",
       ], "logs")}
     </div>
+  `;
+}
+
+function renderMaintenanceWarp() {
+  const warp = state?.warp || {};
+  return `
+    <div class="maintenance-section-head">
+      <div>
+        <h3>WARP egress</h3>
+        <p class="muted">Use automatic registration first. Manual import is only a fallback for configs generated outside awg-forge.</p>
+      </div>
+      <div class="actions">
+        <button type="button" class="primary" data-maint-action="register-warp">${warp.configured ? "Re-register WARP" : "Register WARP"}</button>
+        <button type="button" data-maint-action="restart-warp" ${warp.configured ? "" : "disabled"}>Restart WARP</button>
+        <button type="button" class="danger" data-maint-action="delete-warp" ${warp.configured && Number(warp.enabled_tunnel_count || 0) === 0 ? "" : "disabled"}>Delete WARP</button>
+      </div>
+    </div>
+    <section class="maintenance-card compact maintenance-warp-status">
+      <div class="maintenance-card-head">
+        <h3>Status</h3>
+        <span class="badge ${warp.configured ? "ok" : "neutral"}">${warp.configured ? "configured" : "not configured"}</span>
+      </div>
+      <div class="maintenance-facts">
+        <div><span>Registration</span><strong class="mono">${warp.registered ? "automatic" : "manual"}</strong></div>
+        ${warp.client_id ? `<div><span>Client ID</span><strong class="mono">${escapeHTML(warp.client_id)}</strong></div>` : ""}
+        <div><span>License</span><strong class="mono">${warp.license_set ? "set" : "not stored"}</strong></div>
+        <div><span>Interface</span><strong class="mono">${escapeHTML(warp.interface_name || "warp0")}</strong></div>
+        <div><span>Endpoint</span><strong class="mono">${escapeHTML(warp.endpoint || "-")}</strong></div>
+        <div><span>Address</span><strong class="mono">${escapeHTML(warp.address_v4 || "-")}</strong></div>
+        <div><span>Tunnels</span><strong class="mono">${Number(warp.enabled_tunnel_count || 0)} via WARP</strong></div>
+      </div>
+      ${warp.last_apply_error ? `<p class="bad-text">${escapeHTML(warp.last_apply_error)}</p>` : ""}
+    </section>
+    <details class="maintenance-details">
+      <summary>Manual WARP config import</summary>
+      <form id="maintenance-warp-import-form" class="form-grid single">
+        <p class="muted">You normally do not need this. Use it only when you already have a Cloudflare WARP WireGuard/AmneziaWG config from another generator or WARP client tool.</p>
+        <div><label>WARP WireGuard or AmneziaWG config</label><textarea name="config" rows="7" placeholder="[Interface]&#10;PrivateKey = ...&#10;Address = ...&#10;&#10;[Peer]&#10;PublicKey = ...&#10;Endpoint = ..."></textarea></div>
+        <div class="form-actions"><button class="primary" type="submit">Import WARP config</button></div>
+      </form>
+    </details>
+    <div class="notice">After registration or import, open tunnel settings and switch Egress from Server WAN to Cloudflare WARP. Existing client configs do not need to change.</div>
   `;
 }
 
@@ -365,11 +413,15 @@ function bindMaintenanceEvents() {
       if (action === "run-updates") await runMaintenanceUpdates();
       if (action === "support-bundle") await downloadSupportBundle();
       if (action === "run-logs") await runMaintenanceLogs();
+      if (action === "register-warp") await registerWarp();
+      if (action === "restart-warp") await restartWarp();
+      if (action === "delete-warp") await deleteWarp();
     });
   });
 
   modal.querySelector("#maintenance-backup-form")?.addEventListener("submit", submitMaintenanceBackup);
   modal.querySelector("#maintenance-restore-form")?.addEventListener("submit", submitMaintenanceRestoreVerify);
+  modal.querySelector("#maintenance-warp-import-form")?.addEventListener("submit", submitMaintenanceWarpImport);
 }
 
 function maintenanceSummary() {
@@ -402,6 +454,8 @@ function maintenanceSummary() {
     clientsClass: staleClients ? "warn" : "ok",
     firewallBadge: firewallOk === tunnels.length ? "ok" : "check",
     firewallClass: firewallOk === tunnels.length ? "ok" : "warn",
+    warpBadge: state?.warp?.configured ? (state?.warp?.registered ? "registered" : "configured") : "manual",
+    warpClass: state?.warp?.configured ? "ok" : "neutral",
     auditEvents: (maintenanceState.auditLog || []).length,
     auditBadge: maintenanceState.auditLog ? "loaded" : "manual",
     auditClass: "ok",

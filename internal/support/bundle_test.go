@@ -22,6 +22,20 @@ func TestGenerateRedactsSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	warpConfig := `[Interface]
+PrivateKey = warp-private-key
+Address = 172.16.0.2/32
+MTU = 1280
+
+[Peer]
+PublicKey = warp-peer-public-key
+PresharedKey = warp-preshared-key
+Endpoint = engage.cloudflareclient.com:2408
+PersistentKeepalive = 25
+`
+	if _, err := svc.ImportWarpConfig(warpConfig); err != nil {
+		t.Fatal(err)
+	}
 	state, err := svc.State()
 	if err != nil {
 		t.Fatal(err)
@@ -38,6 +52,8 @@ func TestGenerateRedactsSecrets(t *testing.T) {
 		state.Tunnels[0].ServerPrivateKey,
 		client.PrivateKey,
 		client.PresharedKey,
+		"warp-private-key",
+		"warp-preshared-key",
 	} {
 		if secret != "" && strings.Contains(content, secret) {
 			t.Fatalf("support bundle leaked secret %q in:\n%s", secret, content)

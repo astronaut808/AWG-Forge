@@ -31,6 +31,7 @@ func publicTunnelWithFirewall(tunnel config.Tunnel, status app.TunnelStatus, fw 
 		"id":          tunnel.ID,
 		"name":        tunnel.Name,
 		"interface":   tunnel.InterfaceName,
+		"egress_mode": tunnel.EgressMode,
 		"enabled":     tunnel.Enabled,
 		"listen_port": tunnel.ListenPort,
 		"server_host": tunnel.ServerHost,

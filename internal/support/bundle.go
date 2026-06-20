@@ -106,6 +106,7 @@ func manifest(now time.Time) map[string]any {
 			"private keys removed",
 			"preshared keys removed",
 			"session/password values removed",
+			"WARP private key and preshared key removed",
 			"protocol parameter values removed",
 			"audit log secret-looking fields redacted",
 			"runtime public keys replaced with fingerprints",
@@ -200,9 +201,27 @@ type stateSummary struct {
 	SchemaVersion     int             `json:"schema_version"`
 	ServerHost        string          `json:"server_host"`
 	ExternalInterface string          `json:"external_interface"`
+	Warp              warpSummary     `json:"warp,omitempty"`
 	Tunnels           []tunnelSummary `json:"tunnels"`
 	CreatedAt         time.Time       `json:"created_at"`
 	UpdatedAt         time.Time       `json:"updated_at"`
+}
+
+type warpSummary struct {
+	Configured          bool      `json:"configured"`
+	Registered          bool      `json:"registered"`
+	InterfaceName       string    `json:"interface_name"`
+	ClientID            string    `json:"client_id,omitempty"`
+	DeviceIDHash        string    `json:"device_id_hash,omitempty"`
+	LicenseSet          bool      `json:"license_set"`
+	AccessTokenSet      bool      `json:"access_token_set"`
+	Endpoint            string    `json:"endpoint,omitempty"`
+	AddressV4           string    `json:"address_v4,omitempty"`
+	ProtocolParamKeys   []string  `json:"protocol_param_keys,omitempty"`
+	MTU                 int       `json:"mtu,omitempty"`
+	PersistentKeepalive int       `json:"persistent_keepalive,omitempty"`
+	LastApplyAt         time.Time `json:"last_apply_at,omitempty"`
+	LastApplyError      string    `json:"last_apply_error,omitempty"`
 }
 
 type tunnelSummary struct {
@@ -210,6 +229,7 @@ type tunnelSummary struct {
 	Name                string          `json:"name"`
 	InterfaceName       string          `json:"interface_name"`
 	Enabled             bool            `json:"enabled"`
+	EgressMode          string          `json:"egress_mode"`
 	ListenPort          int             `json:"listen_port"`
 	ServerAddress       string          `json:"server_address"`
 	IPv4Subnet          string          `json:"ipv4_subnet"`
@@ -251,8 +271,24 @@ func redactedState(state config.State) stateSummary {
 		SchemaVersion:     state.SchemaVersion,
 		ServerHost:        state.ServerHost,
 		ExternalInterface: state.ExternalInterface,
-		CreatedAt:         state.CreatedAt,
-		UpdatedAt:         state.UpdatedAt,
+		Warp: warpSummary{
+			Configured:          state.Warp.Configured(),
+			Registered:          state.Warp.Registered(),
+			InterfaceName:       state.Warp.RuntimeInterface(),
+			ClientID:            state.Warp.ClientID,
+			DeviceIDHash:        hashValue(state.Warp.DeviceID),
+			LicenseSet:          state.Warp.LicenseKey != "",
+			AccessTokenSet:      state.Warp.AccessToken != "",
+			Endpoint:            state.Warp.Endpoint,
+			AddressV4:           state.Warp.AddressV4,
+			ProtocolParamKeys:   protocolParamKeys(state.Warp.ProtocolParams),
+			MTU:                 state.Warp.MTU,
+			PersistentKeepalive: state.Warp.PersistentKeepalive,
+			LastApplyAt:         state.Warp.LastApplyAt,
+			LastApplyError:      state.Warp.LastApplyError,
+		},
+		CreatedAt: state.CreatedAt,
+		UpdatedAt: state.UpdatedAt,
 	}
 	for _, tunnel := range state.Tunnels {
 		item := tunnelSummary{
@@ -260,6 +296,7 @@ func redactedState(state config.State) stateSummary {
 			Name:                tunnel.Name,
 			InterfaceName:       tunnel.InterfaceName,
 			Enabled:             tunnel.Enabled,
+			EgressMode:          tunnel.EgressMode,
 			ListenPort:          tunnel.ListenPort,
 			ServerAddress:       tunnel.ServerAddress,
 			IPv4Subnet:          tunnel.IPv4Subnet,

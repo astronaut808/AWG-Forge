@@ -249,6 +249,7 @@ function renderTunnelCard(tunnel) {
         <div class="fact"><span>Subnet</span><strong class="mono">${escapeHTML(tunnel.subnet)}</strong></div>
         <div class="fact"><span>DNS</span><strong class="mono">${escapeHTML(tunnel.dns)}</strong></div>
         <div class="fact"><span>MTU</span><strong class="mono">${formatMTU(tunnel.mtu)}</strong></div>
+        <div class="fact"><span>Egress</span><strong class="mono">${escapeHTML(tunnel.egress_mode === "warp" ? "WARP" : "WAN")}</strong></div>
         <div class="fact"><span>Clients</span><strong>${clients.filter((client) => client.active).length}/${clients.length}</strong></div>
       </div>
       <div class="actions card-actions">

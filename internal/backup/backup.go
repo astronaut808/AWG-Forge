@@ -21,6 +21,7 @@ import (
 	"github.com/astronaut808/awg-forge/internal/buildinfo"
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/render"
+	"github.com/astronaut808/awg-forge/internal/warp"
 )
 
 const (
@@ -292,6 +293,16 @@ func loadAndValidate(password, archivePath string) (validatedBackup, error) {
 }
 
 func validateStateSanity(state config.State) error {
+	if state.Warp.Configured() {
+		if err := warp.Validate(state.Warp); err != nil {
+			return fmt.Errorf("backup validation failed: WARP config is invalid: %w", err)
+		}
+	}
+	if state.Warp.DeviceID != "" || state.Warp.AccessToken != "" {
+		if !state.Warp.Registered() {
+			return errors.New("backup validation failed: WARP registration is incomplete")
+		}
+	}
 	tunnelIDs := map[string]bool{}
 	tunnelNames := map[string]bool{}
 	interfaces := map[string]bool{}
@@ -318,6 +329,15 @@ func validateStateSanity(state config.State) error {
 
 		if strings.TrimSpace(tunnel.InterfaceName) == "" {
 			return fmt.Errorf("backup validation failed: tunnel %s interface is empty", tunnel.Name)
+		}
+		switch tunnel.EgressMode {
+		case "", config.EgressWAN:
+		case config.EgressWarp:
+			if !state.Warp.Configured() {
+				return fmt.Errorf("backup validation failed: tunnel %s uses WARP egress but WARP config is missing", tunnel.Name)
+			}
+		default:
+			return fmt.Errorf("backup validation failed: tunnel %s has invalid egress mode %q", tunnel.Name, tunnel.EgressMode)
 		}
 		if interfaces[tunnel.InterfaceName] {
 			return fmt.Errorf("backup validation failed: interface %q is duplicated", tunnel.InterfaceName)
