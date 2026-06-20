@@ -1,19 +1,25 @@
 # Changelog
 
-## Unreleased
+## v0.10.0 - 2026-06-20
 
 ### Added
 
-- Added initial per-tunnel WARP egress support with manual Cloudflare WARP WireGuard config import.
+- Added per-tunnel Cloudflare WARP egress. Each tunnel can now use either normal server WAN egress or the shared `warp0` WARP outbound interface.
+- Added a Maintenance Center WARP tab for automatic registration, manual config import, restart, and deletion without exposing private keys or WARP account tokens to the UI.
 - Added automatic WARP registration when a tunnel is switched to `Cloudflare WARP` egress from tunnel settings.
 - Added Cloudflare WARP unregister during WARP deletion for automatically registered WARP devices.
-- Added `egress_mode` for tunnels so each tunnel can use either normal server WAN egress or the shared `warp0` WARP outbound interface.
-- Added a Maintenance Center WARP tab for registering, importing, restarting, and deleting WARP config without exposing private keys or WARP account tokens to the UI.
-- Added WARP-aware firewall, doctor, backup validation, and support bundle redaction.
+- Added WARP-aware firewall handling, doctor checks, backup validation, and support bundle redaction.
+- Added a README dashboard screenshot with synthetic demo data.
 
 ### Changed
 
 - Updated pinned AmneziaWG upstream refs to `amneziawg-go` `v0.2.19` and `amneziawg-tools` `v1.0.20260618-2`.
+- Refreshed the Russian and English README files to keep the project overview shorter, clearer, and easier to scan.
+
+### Fixed
+
+- Preserved AmneziaWG-specific WARP protocol parameters during manual WARP config import, so externally generated WARP configs can be rendered and restarted correctly.
+- Kept existing client configs fresh when switching a tunnel between server WAN and WARP egress, because client-facing config content does not change for that operation.
 
 ## v0.9.1 - 2026-06-13
 
