@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.11.0 - 2026-06-21
+
+### Added
+
+- Added a Vite + Preact + TypeScript Web UI source tree under `web/`, with generated assets embedded into the Go binary at build time.
+- Added authenticated realtime dashboard updates through `/api/events`, with polling fallback when server-sent events are unavailable.
+- Added a Mono-inspired UI refresh with improved light/dark themes, tighter dashboard density, restored footer links, and visible build version in the Web UI.
+- Added an optional experimental tunnel-first dashboard mode that groups existing tunnels by protocol and moves protocol selection into the create-tunnel flow.
+- Added client editing from the dashboard, including notes and expiration controls with quick presets and custom date/time selection.
+
+### Changed
+
+- Replaced the previous hand-written static frontend files with reproducible generated assets from the `web/` source tree.
+- Updated CI and `make ci` to type-check, build, and lint the new frontend while keeping the production Docker runtime Node-free.
+- Improved tunnel/client layout, form alignment, select styling, button states, loading indicators, and responsive behavior.
+- Made Maintenance Center logs auto-refresh from newest to oldest without requiring a manual "load logs" action.
+- Simplified public documentation by removing internal planning/research drafts and refreshing README screenshots for the new UI.
+
+### Fixed
+
+- Fixed light-theme form contrast issues in modal forms and restore verification.
+- Fixed repeated parallax event listener registration after dashboard reloads/profile changes.
+- Fixed WARP egress UI copy and stale-config behavior so WARP-only egress changes do not require fresh client configs.
+
 ## v0.10.0 - 2026-06-20
 
 ### Added

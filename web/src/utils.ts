@@ -96,12 +96,6 @@ export function profileTitle(profileID: string): string {
   return "AmneziaWG Legacy / 1.0";
 }
 
-export function profileDescription(profileID: string): string {
-  if (profileID === "awg_2_0") return "Create AWG 2.0 tunnels. Use .conf import for production clients.";
-  if (profileID === "awg_1_5") return "Create AWG 1.5 tunnels with I1-I5 profile parameters.";
-  return "Create and manage AmneziaWG Legacy / 1.0 tunnels.";
-}
-
 export function classNames(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(" ");
 }

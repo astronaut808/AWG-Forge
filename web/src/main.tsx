@@ -24,7 +24,6 @@ import {
   downloadResponse,
   expirationValue,
   formatBytes,
-  profileDescription,
   profileTitle,
   relativeTime,
 } from "./utils";
@@ -44,6 +43,9 @@ type MaintenanceTab = "overview" | "doctor" | "firewall" | "warp" | "backup" | "
 
 const profileKey = "awg-forge.profile";
 const themeKey = "awg-forge.theme";
+const dashboardModeKey = "awg-forge.dashboard-mode";
+const dashboardFilterKey = "awg-forge.dashboard-filter";
+let parallaxInitialized = false;
 
 function App() {
   const [state, setState] = useState<AppState | null>(null);
@@ -52,6 +54,8 @@ function App() {
   const [modal, setModal] = useState<Modal | null>(null);
   const [toast, setToast] = useState("");
   const [theme, setTheme] = useState(initialTheme);
+  const [dashboardMode, setDashboardModeValue] = useState(localStorage.getItem(dashboardModeKey) || "profiles");
+  const [dashboardFilter, setDashboardFilterValue] = useState(localStorage.getItem(dashboardFilterKey) || "all");
   const liveUpdatesEnabled = state !== null;
 
   const load = useCallback(async (options: { quiet?: boolean } = {}) => {
@@ -113,6 +117,16 @@ function App() {
     setActiveProfile(id);
   }
 
+  function setDashboardMode(mode: string) {
+    localStorage.setItem(dashboardModeKey, mode);
+    setDashboardModeValue(mode);
+  }
+
+  function setDashboardFilter(filter: string) {
+    localStorage.setItem(dashboardFilterKey, filter);
+    setDashboardFilterValue(filter);
+  }
+
   function notify(message: string) {
     setToast(message);
     globalThis.setTimeout(() => setToast((current) => (current === message ? "" : current)), 3600);
@@ -138,56 +152,70 @@ function App() {
   if (!state) return <Login onLogin={() => load()} notify={notify} />;
   if (!active) return <Shell state={state} theme={theme} setTheme={setTheme} logout={() => doLogout(setState)} openMaintenance={() => setModal({ kind: "maintenance" })}><Empty title="No profiles" text="Backend returned no protocol profiles." /></Shell>;
 
+  const renderTunnel = (tunnel: Tunnel) => (
+    <TunnelCard
+      key={tunnel.id}
+      tunnel={tunnel}
+      onCreateClient={() => setModal({ kind: "create-client", tunnel })}
+      onSettings={() => setModal({ kind: "settings", tunnel })}
+      onProtocol={() => setModal({ kind: "protocol", tunnel })}
+      onHealth={async () => {
+        setModal({ kind: "health", tunnel });
+        try {
+          const res = await api.tunnelHealth(tunnel.id);
+          setModal({ kind: "health", tunnel, health: res.health });
+        } catch (err) {
+          notify(errorMessage(err));
+        }
+      }}
+      onRestart={() => runAction("tunnel restarted", () => api.restartTunnel(tunnel.id))}
+      onDelete={() => confirm(`Delete tunnel ${tunnel.name} and all its clients?`) && runAction("tunnel deleted", () => api.deleteTunnel(tunnel.id))}
+      onClientConfig={downloadConfig}
+      onClientKey={async (client) => {
+        try {
+          const res = await api.clientImportKey(client.id);
+          setModal({ kind: "import-key", client, key: res.import_key, warning: res.warning });
+        } catch (err) {
+          notify(errorMessage(err));
+        }
+      }}
+      onClientSettings={(client) => setModal({ kind: "client-settings", tunnel, client })}
+      onClientToggle={(client) => runAction(client.enabled ? "client disabled" : "client enabled", () => api.setClientEnabled(client.id, !client.enabled))}
+      onClientDelete={(client) => confirm(`Delete client ${client.name}?`) && runAction("client deleted", () => api.deleteClient(client.id))}
+    />
+  );
+
   return (
-    <Shell state={state} theme={theme} setTheme={setTheme} logout={() => doLogout(setState)} openMaintenance={() => setModal({ kind: "maintenance" })}>
-      <ProfileTabs profiles={profiles} active={active.id} onSelect={selectProfile} />
-      <section class="panel stack">
-        <div class="section-head">
-          <div>
-            <h2>{profileTitle(active.id)}</h2>
-            <p>{profileDescription(active.id)}</p>
-          </div>
-          <button class="button primary" type="button" disabled={!active.available} onClick={() => setModal({ kind: "create-tunnel", profile: active })}>Create tunnel</button>
-        </div>
-        {tunnels.length === 0 ? (
-          <Empty title={`No tunnels for ${active.tab} yet`} text="Create a tunnel first, then add clients inside it." action={<button class="button primary" type="button" onClick={() => setModal({ kind: "create-tunnel", profile: active })}>Create tunnel</button>} />
-        ) : (
-          <div className={classNames("tunnel-grid", tunnels.length === 1 && "single")}>
-            {tunnels.map((tunnel) => (
-              <TunnelCard
-                key={tunnel.id}
-                tunnel={tunnel}
-                onCreateClient={() => setModal({ kind: "create-client", tunnel })}
-                onSettings={() => setModal({ kind: "settings", tunnel })}
-                onProtocol={() => setModal({ kind: "protocol", tunnel })}
-                onHealth={async () => {
-                  setModal({ kind: "health", tunnel });
-                  try {
-                    const res = await api.tunnelHealth(tunnel.id);
-                    setModal({ kind: "health", tunnel, health: res.health });
-                  } catch (err) {
-                    notify(errorMessage(err));
-                  }
-                }}
-                onRestart={() => runAction("tunnel restarted", () => api.restartTunnel(tunnel.id))}
-                onDelete={() => confirm(`Delete tunnel ${tunnel.name} and all its clients?`) && runAction("tunnel deleted", () => api.deleteTunnel(tunnel.id))}
-                onClientConfig={downloadConfig}
-                onClientKey={async (client) => {
-                  try {
-                    const res = await api.clientImportKey(client.id);
-                    setModal({ kind: "import-key", client, key: res.import_key, warning: res.warning });
-                  } catch (err) {
-                    notify(errorMessage(err));
-                  }
-                }}
-                onClientSettings={(client) => setModal({ kind: "client-settings", tunnel, client })}
-                onClientToggle={(client) => runAction(client.enabled ? "client disabled" : "client enabled", () => api.setClientEnabled(client.id, !client.enabled))}
-                onClientDelete={(client) => confirm(`Delete client ${client.name}?`) && runAction("client deleted", () => api.deleteClient(client.id))}
-              />
-            ))}
-          </div>
-        )}
-      </section>
+    <Shell state={state} theme={theme} setTheme={setTheme} logout={() => doLogout(setState)} openMaintenance={() => setModal({ kind: "maintenance" })} dashboardMode={dashboardMode} setDashboardMode={setDashboardMode}>
+      {dashboardMode === "tunnels" ? (
+        <TunnelFirstDashboard
+          profiles={profiles}
+          tunnels={allTunnels}
+          filter={dashboardFilter}
+          setFilter={setDashboardFilter}
+          onCreateTunnel={() => setModal({ kind: "create-tunnel", profile: defaultCreateProfile(profiles, active) })}
+          renderTunnel={renderTunnel}
+        />
+      ) : (
+        <>
+          <ProfileTabs profiles={profiles} active={active.id} onSelect={selectProfile} />
+          <section class="panel stack">
+            <div class="section-head">
+              <div>
+                <h2>{profileTitle(active.id)}</h2>
+              </div>
+              <button class="button primary" type="button" disabled={!active.available} onClick={() => setModal({ kind: "create-tunnel", profile: active })}>Create tunnel</button>
+            </div>
+            {tunnels.length === 0 ? (
+              <Empty title={`No tunnels for ${active.tab} yet`} text="Create a tunnel first, then add clients inside it." action={<button class="button primary" type="button" onClick={() => setModal({ kind: "create-tunnel", profile: active })}>Create tunnel</button>} />
+            ) : (
+              <div className={classNames("tunnel-grid", tunnels.length === 1 && "single")}>
+                {tunnels.map(renderTunnel)}
+              </div>
+            )}
+          </section>
+        </>
+      )}
       {modal && (
         <Dialog onClose={() => setModal(null)}>
           <ModalContent modal={modal} state={state} notify={notify} close={() => setModal(null)} reload={() => load({ quiet: true })} runAction={runAction} />
@@ -234,17 +262,20 @@ type ShellProps = {
   setTheme: (theme: string) => void;
   logout: () => void;
   openMaintenance: () => void;
+  dashboardMode?: string;
+  setDashboardMode?: (mode: string) => void;
   children: preact.ComponentChildren;
 };
 
 function Shell(props: ShellProps) {
-  const { state, theme, setTheme, logout, openMaintenance, children } = props;
+  const { state, theme, setTheme, logout, openMaintenance, dashboardMode, setDashboardMode, children } = props;
   return (
     <main class="app-shell">
       <header class="topbar panel">
         <Brand subtitle={<><span class="mono">{state.server_host}</span> · {state.tunnels.length} tunnel(s)</>} />
         <nav class="toolbar" aria-label="Global actions">
           <button class="button icon" type="button" title="Toggle theme" aria-label="Toggle theme" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>{theme === "dark" ? "☼" : "☾"}</button>
+          {setDashboardMode && <button class="button" type="button" onClick={() => setDashboardMode(dashboardMode === "tunnels" ? "profiles" : "tunnels")}>{dashboardMode === "tunnels" ? "Profile view" : "Tunnel view"}</button>}
           <button class="button" type="button" onClick={openMaintenance}>Maintenance</button>
           <button class="button" type="button" onClick={logout}>Log out</button>
         </nav>
@@ -294,6 +325,59 @@ function ProfileTabs({ profiles, active, onSelect }: { profiles: Profile[]; acti
         </button>
       ))}
     </nav>
+  );
+}
+
+function TunnelFirstDashboard({ profiles, tunnels, filter, setFilter, onCreateTunnel, renderTunnel }: {
+  profiles: Profile[];
+  tunnels: Tunnel[];
+  filter: string;
+  setFilter: (filter: string) => void;
+  onCreateTunnel: () => void;
+  renderTunnel: (tunnel: Tunnel) => preact.ComponentChildren;
+}) {
+  const effectiveFilter = filter === "all" || profiles.some((profile) => profile.id === filter) ? filter : "all";
+  const visibleProfiles = profiles.filter((profile) => effectiveFilter === "all" || profile.id === effectiveFilter);
+  const visibleTunnels = effectiveFilter === "all" ? tunnels : tunnels.filter((tunnel) => tunnel.profile === effectiveFilter);
+  const countFor = (profileID: string) => tunnels.filter((tunnel) => tunnel.profile === profileID).length;
+  return (
+    <section class="panel stack dashboard-v2">
+      <div class="section-head">
+        <div>
+          <h2>Tunnels</h2>
+          <div class="filter-row" aria-label="Tunnel filters">
+            <button className={classNames("filter-pill", effectiveFilter === "all" && "active")} type="button" onClick={() => setFilter("all")}><span class="filter-label">All</span><span class="filter-count">{tunnels.length}</span></button>
+            {profiles.map((profile) => (
+              <button key={profile.id} className={classNames("filter-pill", countFor(profile.id) === 0 && "is-empty", effectiveFilter === profile.id && "active")} type="button" onClick={() => setFilter(profile.id)}>
+                <span class="filter-label">{profile.tab}</span><span class="filter-count">{countFor(profile.id)}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+        <button class="button primary" type="button" disabled={profiles.length === 0} onClick={onCreateTunnel}>Create tunnel</button>
+      </div>
+      {visibleTunnels.length === 0 ? (
+        <Empty title={tunnels.length === 0 ? "No tunnels yet" : "No tunnels in this filter"} text={tunnels.length === 0 ? "Create the first AmneziaWG tunnel." : "Switch filters or create another tunnel."} action={<button class="button primary" type="button" onClick={onCreateTunnel}>Create tunnel</button>} />
+      ) : (
+        <div class="profile-groups">
+          {visibleProfiles.map((profile) => {
+            const group = tunnels.filter((tunnel) => tunnel.profile === profile.id);
+            if (group.length === 0) return null;
+            return (
+              <section class="profile-group" key={profile.id}>
+                <div class="profile-group-head">
+                  <h3>{profileTitle(profile.id)}</h3>
+                  <span>{group.length} tunnel(s)</span>
+                </div>
+                <div className={classNames("tunnel-grid", group.length === 1 && "single")}>
+                  {group.map(renderTunnel)}
+                </div>
+              </section>
+            );
+          })}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -415,10 +499,14 @@ function ModalContent({ modal, state, notify, close, reload, runAction }: {
 }
 
 function CreateTunnelForm({ state, profile, runAction }: { state: AppState; profile: Profile; runAction: (label: string, fn: () => Promise<unknown>) => Promise<void> }) {
-  return <Form title={`Create ${profile.tab} tunnel`} subtitle="Each tunnel has its own interface, port, subnet, keys, and clients." submit="Create tunnel" onSubmit={(form) => runAction("tunnel created", () => api.createTunnel({ profile: profile.id, name: field(form, "name"), port: Number(field(form, "port")), subnet: field(form, "subnet"), egress_mode: field(form, "egress_mode") }))}>
-    <label>Name / interface<input aria-label="Name / interface" name="name" defaultValue={profile.suggested_name || "awg0"} /></label>
-    <label>Listen port<input aria-label="Listen port" name="port" inputMode="numeric" defaultValue={profile.suggested_port || 51820} /></label>
-    <label>IPv4 subnet<input aria-label="IPv4 subnet" name="subnet" defaultValue={profile.suggested_subnet || "10.8.0.0/24"} /></label>
+  const profiles = state.profiles.length ? state.profiles : [profile];
+  const [profileID, setProfileID] = useState(profile.id);
+  const selected = profiles.find((item) => item.id === profileID) || profiles[0] || profile;
+  return <Form title="Create tunnel" subtitle="Choose a protocol version, then create an independent tunnel." submit="Create tunnel" onSubmit={(form) => runAction("tunnel created", () => api.createTunnel({ profile: field(form, "profile"), name: field(form, "name"), port: Number(field(form, "port")), subnet: field(form, "subnet"), egress_mode: field(form, "egress_mode") }))}>
+    <label>Protocol<select aria-label="Protocol" name="profile" value={selected.id} onInput={(event) => setProfileID((event.currentTarget as HTMLSelectElement).value)}>{profiles.map((item) => <option key={item.id} value={item.id}>{profileTitle(item.id)}</option>)}</select></label>
+    <label>Name / interface<input key={`${selected.id}-name`} aria-label="Name / interface" name="name" defaultValue={selected.suggested_name || "awg0"} /></label>
+    <label>Listen port<input key={`${selected.id}-port`} aria-label="Listen port" name="port" inputMode="numeric" defaultValue={selected.suggested_port || 51820} /></label>
+    <label>IPv4 subnet<input key={`${selected.id}-subnet`} aria-label="IPv4 subnet" name="subnet" defaultValue={selected.suggested_subnet || "10.8.0.0/24"} /></label>
     <label>Egress<select aria-label="Egress" name="egress_mode" defaultValue="wan"><option value="wan">Server WAN</option><option value="warp">Cloudflare WARP</option></select></label>
     {!state.warp?.configured && <small class="form-note">WARP will be registered automatically if Cloudflare WARP is selected.</small>}
   </Form>;
@@ -720,6 +808,10 @@ function field(form: HTMLFormElement, name: string): string {
   return String(new FormData(form).get(name) || "");
 }
 
+function defaultCreateProfile(profiles: Profile[], fallback: Profile): Profile {
+  return profiles.find((profile) => profile.id === "awg_2_0" && profile.available) || profiles.find((profile) => profile.available) || fallback;
+}
+
 function versionLabel(version: string): string {
   const trimmed = version.trim();
   if (!trimmed || trimmed === "dev") return "dev";
@@ -768,7 +860,9 @@ function initialTheme(): string {
 }
 
 function initParallax() {
+  if (parallaxInitialized) return;
   if (globalThis.matchMedia("(prefers-reduced-motion: reduce)").matches || !globalThis.matchMedia("(pointer: fine)").matches) return;
+  parallaxInitialized = true;
   globalThis.addEventListener("pointermove", (event) => {
     const x = event.clientX / globalThis.innerWidth - 0.5;
     const y = event.clientY / globalThis.innerHeight - 0.5;
