@@ -103,6 +103,7 @@ Practically:
 
 - `Auto` is a good starting point;
 - `1280` often helps on problematic networks, mobile networks, routers, and complex routes;
+- the Web UI offers `Auto`, common presets, and `Custom` for explicit MTU values;
 - after changing MTU, clients should download fresh `.conf` files.
 
 ## Tunnel Egress and WARP
@@ -116,9 +117,9 @@ WARP is not an AmneziaWG protocol profile. It is an outbound routing mode for ex
 
 Recommended flow:
 
-1. Open `Tunnel settings` for the tunnel that should use WARP.
+1. Select `Cloudflare WARP` in the `Egress` field while creating a tunnel, or open `Tunnel settings` for an existing tunnel.
 2. Change `Egress` from `Server WAN` to `Cloudflare WARP`.
-3. Click `Save`.
+3. Click `Create tunnel` or `Save`.
 
 If WARP is not configured yet, awg-forge automatically registers Cloudflare WARP, creates the shared outbound `warp0` interface, applies runtime routing/NAT, and then switches the tunnel to WARP egress.
 
@@ -147,6 +148,8 @@ APPLY_CONFIG=false
 The audit log stores safe operational events: login success/failure, client create/update/delete, tunnel create/update/delete/restart, firewall repair, backup/support/restore verify, and update checks.
 
 It is meant for cases like “it worked yesterday, then settings changed, now handshakes exist but internet does not work”.
+
+In the Web UI, `Maintenance` -> `Logs` auto-refreshes while the Maintenance window is open and displays newest events first.
 
 The audit log must not contain:
 

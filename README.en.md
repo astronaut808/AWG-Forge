@@ -2,7 +2,7 @@
 
 [README на русском](README.md)
 
-Self-hosted AmneziaWG control panel for Docker: Go backend, static Web UI, and CLI for tunnels, clients, `.conf` files, diagnostics, backup/restore, and safe maintenance.
+Self-hosted AmneziaWG control panel for Docker: Go backend, embedded Web UI, and CLI for tunnels, clients, `.conf` files, diagnostics, backup/restore, and safe maintenance.
 
 awg-forge does not implement a custom VPN protocol. It renders AmneziaWG configs and manages the upstream `awg`, `awg-quick`, and `amneziawg-go` tools bundled in the Docker image.
 
@@ -15,7 +15,7 @@ awg-forge does not implement a custom VPN protocol. It renders AmneziaWG configs
 - IPv4 egress through `Server WAN` or Cloudflare WARP per tunnel.
 - Clients: create, `.conf` download, `vpn://` import key, enable/disable, expiration, delete.
 - Runtime diagnostics: Doctor, firewall repair, health, last seen, received/sent counters.
-- Maintenance Center: WARP, backup, restore verify, support bundle, audit logs, updates, system info.
+- Maintenance Center: WARP, backup, restore verify, support bundle, live audit logs, updates, system info.
 
 The reliable production client import path is the downloaded `.conf`. `vpn://` import key is experimental and depends on AmneziaVPN / DefaultVPN client support. QR import is intentionally not exposed.
 
@@ -29,7 +29,7 @@ chmod +x install.sh
 sudo ./install.sh
 ```
 
-The installer creates `/opt/awg-forge`, generates `.env`, password, and `SESSION_SECRET`, detects the external interface, starts Docker Compose, and prints the SSH tunnel command.
+The installer checks Docker before creating files, creates `/opt/awg-forge`, generates `.env`, password, and `SESSION_SECRET`, detects the external interface, starts Docker Compose, and prints the SSH tunnel command.
 
 By default the Web UI listens on `127.0.0.1:51821`. Open it through an SSH tunnel:
 
@@ -65,7 +65,7 @@ Docker host networking is the recommended production mode. It lets tunnels creat
 
 `SERVER_HOST` can be overridden per tunnel in `Tunnel settings` -> `Server host`.
 
-WARP can be enabled directly from `Tunnel settings` -> `Egress` -> `Cloudflare WARP`. If WARP is not configured yet, awg-forge registers it automatically. See [Configuration](docs/en/configuration.md).
+WARP can be selected while creating a tunnel or enabled later from `Tunnel settings` -> `Egress` -> `Cloudflare WARP`. If WARP is not configured yet, awg-forge registers the shared `warp0` automatically. See [Configuration](docs/en/configuration.md).
 
 ## Startup Check
 
@@ -141,7 +141,7 @@ SERVER_HOST=127.0.0.1 \
 go run ./cmd/awg-forge serve
 ```
 
-Runtime and Docker image do not require Node/npm. Deno is used only for linting static JavaScript files in dev/CI.
+Runtime and Docker image do not require Node/npm. The Web UI is built from `web/` with Vite/Preact/TypeScript and embedded into the Go binary as static files.
 
 ## License
 

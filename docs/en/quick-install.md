@@ -39,7 +39,7 @@ If the repository is already cloned, you can run the local file:
 - offers to remove old AWG-like runtime interfaces, such as `awg0`, `awg0-1`, `awg15`, or `awg20`;
 - detects the external interface with `ip route get 1.1.1.1`;
 - suggests `SERVER_HOST` from the detected source IP, while allowing a custom domain;
-- asks for the tunnel UDP port, Web UI host/port, subnet, DNS, MTU, and protocol profile;
+- asks for the protocol profile first, then tunnel UDP port, Web UI host/port, subnet, DNS, and MTU;
 - generates `PASSWORD` and `SESSION_SECRET`;
 - creates `.env` with `0600` permissions;
 - creates `data/` with `0700` permissions;

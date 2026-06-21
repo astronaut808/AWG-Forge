@@ -103,6 +103,7 @@ awg20.example.com:44867
 
 - `Auto` подходит как стартовое значение;
 - `1280` часто помогает на проблемных сетях, мобильных сетях, роутерах и сложных маршрутах;
+- Web UI предлагает `Auto`, частые presets и `Custom` для явного MTU;
 - после изменения MTU клиентам нужно скачать свежий `.conf`.
 
 ## Egress туннеля и WARP
@@ -116,9 +117,9 @@ WARP не является protocol profile AmneziaWG. Это режим outboun
 
 Рекомендуемый путь:
 
-1. Открой `Tunnel settings` у нужного туннеля.
+1. Выбери `Cloudflare WARP` в поле `Egress` при создании туннеля или открой `Tunnel settings` у существующего туннеля.
 2. Переключи `Egress` с `Server WAN` на `Cloudflare WARP`.
-3. Нажми `Save`.
+3. Нажми `Create tunnel` или `Save`.
 
 Если WARP еще не настроен, awg-forge автоматически зарегистрирует Cloudflare WARP, создаст общий outbound-интерфейс `warp0`, применит runtime routing/NAT и затем переключит туннель на WARP egress.
 
@@ -147,6 +148,8 @@ APPLY_CONFIG=false
 Audit log хранит историю безопасных operational events: login success/fail, create/update/delete clients, create/update/delete/restart tunnels, firewall repair, backup/support/restore verify и update checks.
 
 Он нужен для разбора случаев “вчера работало, потом поменяли настройки, теперь handshake есть, но интернета нет”.
+
+В Web UI вкладка `Maintenance` -> `Logs` автообновляется, пока окно Maintenance открыто, и показывает новые события сверху.
 
 Audit log не должен содержать:
 

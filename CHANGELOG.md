@@ -1,20 +1,51 @@
 # Changelog
 
+## v0.11.0 - 2026-06-21
+
+### Added
+
+- Added a Vite + Preact + TypeScript Web UI source tree under `web/`, with generated assets embedded into the Go binary at build time.
+- Added authenticated realtime dashboard updates through `/api/events`, with polling fallback when server-sent events are unavailable.
+- Added a Mono-inspired UI refresh with improved light/dark themes, tighter dashboard density, restored footer links, and visible build version in the Web UI.
+- Added an optional experimental tunnel-first dashboard mode that groups existing tunnels by protocol and moves protocol selection into the create-tunnel flow.
+- Added client editing from the dashboard, including notes and expiration controls with quick presets and custom date/time selection.
+
+### Changed
+
+- Replaced the previous hand-written static frontend files with reproducible generated assets from the `web/` source tree.
+- Updated CI and `make ci` to type-check, build, and lint the new frontend while keeping the production Docker runtime Node-free.
+- Improved tunnel/client layout, form alignment, select styling, button states, loading indicators, and responsive behavior.
+- Made Maintenance Center logs auto-refresh from newest to oldest without requiring a manual "load logs" action.
+- Simplified public documentation by removing internal planning/research drafts and refreshing README screenshots for the new UI.
+
+### Fixed
+
+- Fixed light-theme form contrast issues in modal forms and restore verification.
+- Fixed repeated parallax event listener registration after dashboard reloads/profile changes.
+- Fixed WARP egress UI copy and stale-config behavior so WARP-only egress changes do not require fresh client configs.
+
 ## v0.10.0 - 2026-06-20
 
 ### Added
 
 - Added per-tunnel Cloudflare WARP egress. Each tunnel can now use either normal server WAN egress or the shared `warp0` WARP outbound interface.
 - Added a Maintenance Center WARP tab for automatic registration, manual config import, restart, and deletion without exposing private keys or WARP account tokens to the UI.
+- Added `Cloudflare WARP` egress selection during tunnel creation, using the existing shared `warp0` when configured or registering it automatically when needed.
 - Added automatic WARP registration when a tunnel is switched to `Cloudflare WARP` egress from tunnel settings.
 - Added Cloudflare WARP unregister during WARP deletion for automatically registered WARP devices.
 - Added WARP-aware firewall handling, doctor checks, backup validation, and support bundle redaction.
 - Added a README dashboard screenshot with synthetic demo data.
+- Added client expiration presets for `1 hour`, `1 day`, `7 days`, `30 days`, plus a custom calendar/date-time option.
+- Added loading indicators for long-running UI actions such as WARP registration, update checks, doctor/firewall actions, backup, restore verification, and support bundle downloads.
 
 ### Changed
 
 - Updated pinned AmneziaWG upstream refs to `amneziawg-go` `v0.2.19` and `amneziawg-tools` `v1.0.20260618-2`.
 - Refreshed the Russian and English README files to keep the project overview shorter, clearer, and easier to scan.
+- Improved form control alignment for tunnel settings, restore verification, native selects, file inputs, and checkbox rows.
+- Restored MTU selection in tunnel settings with `Auto`, common presets, and a custom value.
+- Changed Maintenance Center audit log rendering to show newest events first while preserving backend API order.
+- Removed internal planning, design, and research drafts from the public documentation tree, keeping user/operator docs and protocol reference material focused.
 
 ### Fixed
 

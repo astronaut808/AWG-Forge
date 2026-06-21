@@ -28,6 +28,14 @@ type TunnelSuggestion struct {
 	IPv4Subnet string
 }
 
+type TunnelCreateOptions struct {
+	ProfileID  string
+	Name       string
+	Subnet     string
+	Port       int
+	EgressMode string
+}
+
 func defaultTunnelSpec(profileID, name string, port int, subnet string) tunnelSpec {
 	if name == "" {
 		name = config.DefaultTunnel
@@ -146,6 +154,47 @@ func SuggestedTunnelSpec(profileID string) (name string, port int, subnet string
 }
 
 func (s *Service) CreateTunnel(profileID, name, subnet string, port int) (config.Tunnel, error) {
+	return s.CreateTunnelWithOptions(context.Background(), TunnelCreateOptions{
+		ProfileID: profileID,
+		Name:      name,
+		Subnet:    subnet,
+		Port:      port,
+	})
+}
+
+func (s *Service) CreateTunnelWithOptions(ctx context.Context, options TunnelCreateOptions) (config.Tunnel, error) {
+	egressMode := valueOr(strings.TrimSpace(options.EgressMode), config.EgressWAN)
+	if err := validateEgressMode(egressMode); err != nil {
+		return config.Tunnel{}, err
+	}
+	if egressMode == config.EgressWarp {
+		needsRegistration, err := s.warpRegistrationNeeded()
+		if err != nil {
+			return config.Tunnel{}, err
+		}
+		if needsRegistration {
+			if ctx == nil {
+				ctx = context.Background()
+			}
+			if _, err := s.RegisterWarp(ctx); err != nil {
+				return config.Tunnel{}, fmt.Errorf("automatic WARP registration failed: %w", err)
+			}
+		}
+	}
+	return s.createTunnel(options.ProfileID, options.Name, options.Subnet, options.Port, egressMode)
+}
+
+func (s *Service) warpRegistrationNeeded() (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state, err := s.initLocked()
+	if err != nil {
+		return false, err
+	}
+	return !state.Warp.Configured(), nil
+}
+
+func (s *Service) createTunnel(profileID, name, subnet string, port int, egressMode string) (config.Tunnel, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if profileID == "" {
@@ -201,6 +250,7 @@ func (s *Service) CreateTunnel(profileID, name, subnet string, port int) (config
 	if err != nil {
 		return config.Tunnel{}, err
 	}
+	tunnel.EgressMode = egressMode
 	state.Tunnels = append(state.Tunnels, tunnel)
 	state.UpdatedAt = time.Now().UTC()
 	if err := s.store.Save(state); err != nil {
@@ -357,6 +407,15 @@ func resolveTunnelSettings(state config.State, idx int, update TunnelSettingsUpd
 	return settings, nil
 }
 
+func validateEgressMode(mode string) error {
+	switch mode {
+	case "", config.EgressWAN, config.EgressWarp:
+		return nil
+	default:
+		return errors.New("egress mode must be wan or warp")
+	}
+}
+
 func validateResolvedTunnelSettings(settings resolvedTunnelSettings) error {
 	if !tunnelNameRE.MatchString(settings.Name) {
 		return errors.New("tunnel name must start with a letter and contain only letters, numbers, dots, underscores, or dashes")
@@ -373,12 +432,7 @@ func validateResolvedTunnelSettings(settings resolvedTunnelSettings) error {
 	if settings.MTU != 0 && (settings.MTU < 576 || settings.MTU > 1500) {
 		return errors.New("MTU must be auto or between 576 and 1500")
 	}
-	switch settings.EgressMode {
-	case "", config.EgressWAN, config.EgressWarp:
-	default:
-		return errors.New("egress mode must be wan or warp")
-	}
-	return nil
+	return validateEgressMode(settings.EgressMode)
 }
 
 func validateTunnelUniqueness(state config.State, idx int, settings resolvedTunnelSettings) error {

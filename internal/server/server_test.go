@@ -232,6 +232,55 @@ func TestClientConfigDownloadUsesClientNameFilename(t *testing.T) {
 	}
 }
 
+func TestEventsAPIStreamsPublicState(t *testing.T) {
+	cfg := config.Config{
+		ConfigDir:           t.TempDir(),
+		TunnelName:          "awg0",
+		ServerHost:          "vpn.example.com",
+		ListenPort:          51820,
+		WebUIHost:           "127.0.0.1",
+		WebUIPort:           51821,
+		ExternalInterface:   "eth0",
+		IPv4Subnet:          "10.8.0.0/24",
+		DNS:                 "1.1.1.1",
+		AllowedIPs:          "0.0.0.0/0",
+		PersistentKeepalive: 0,
+		MTU:                 1420,
+		ProtocolProfile:     "awg_legacy_1_0",
+		ApplyConfig:         false,
+	}
+	w := &web{cfg: cfg, service: app.New(cfg)}
+	ctx, cancel := context.WithCancel(context.Background())
+	r := httptest.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:51821/api/events", nil)
+	rr := httptest.NewRecorder()
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		w.eventsAPI(rr, r)
+	}()
+
+	deadline := time.After(2 * time.Second)
+	for !strings.Contains(rr.Body.String(), "event: state") {
+		select {
+		case <-deadline:
+			cancel()
+			t.Fatalf("event stream did not include state event; body = %q", rr.Body.String())
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	cancel()
+	<-done
+
+	if got, want := rr.Header().Get("Content-Type"), "text/event-stream; charset=utf-8"; got != want {
+		t.Fatalf("Content-Type = %q, want %q", got, want)
+	}
+	if !strings.Contains(rr.Body.String(), `"authenticated":true`) {
+		t.Fatalf("event stream body does not include public state: %q", rr.Body.String())
+	}
+}
+
 func TestClientImportKeyAPIReturnsVPNKey(t *testing.T) {
 	cfg := config.Config{
 		ConfigDir:           t.TempDir(),

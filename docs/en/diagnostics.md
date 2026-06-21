@@ -176,7 +176,7 @@ The tunnel `Health` action samples runtime counters and shows client status.
 
 Possible statuses:
 
-- `traffic flowing`: handshake exists and rx/tx counters are moving;
+- `traffic flowing`: handshake exists and received/sent counters are moving;
 - `idle, handshake ok`: handshake exists, but traffic did not move during the short sample window;
 - `client sends traffic, server sends 0 bytes back`: possible NAT, forwarding, route, DNS, or upstream firewall issue.
 
@@ -221,7 +221,7 @@ runtime <tunnel>/awg: <interface> link exists, but awg cannot access it: Protoco
 the Linux interface exists, but the AmneziaWG runtime cannot read it as an AWG interface. This usually means a stale or broken runtime link after a failed apply, tool version change, or manual runtime experiment. Restart the tunnel from the UI or CLI:
 
 ```bash
-docker exec awg-forge awg-forge tunnel restart <tunnel-id-or-name>
+docker exec awg-forge awg-forge tunnel restart
 docker exec awg-forge awg-forge doctor
 ```
 
@@ -229,7 +229,7 @@ If restart does not help, remove the stale link in the host/container network na
 
 ```bash
 docker exec awg-forge ip link delete <interface>
-docker exec awg-forge awg-forge tunnel restart <tunnel-id-or-name>
+docker exec awg-forge awg-forge tunnel restart
 ```
 
 If `doctor` reports an `external route` mismatch, NAT may be configured for the wrong interface. Check `ip route get 1.1.1.1` and update `EXTERNAL_INTERFACE`.

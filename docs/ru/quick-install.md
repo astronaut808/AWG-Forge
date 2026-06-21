@@ -39,7 +39,7 @@ sudo AWG_FORGE_HOME=/srv/awg-forge ./install.sh
 - предлагает удалить найденные старые AWG-like runtime-интерфейсы, например `awg0`, `awg0-1`, `awg15` или `awg20`;
 - определяет внешний интерфейс через `ip route get 1.1.1.1`;
 - предлагает `SERVER_HOST` из найденного source IP, но позволяет указать домен;
-- спрашивает UDP-порт туннеля, Web UI host/port, subnet, DNS, MTU и protocol profile;
+- сначала спрашивает protocol profile, затем UDP-порт туннеля, Web UI host/port, subnet, DNS и MTU;
 - генерирует `PASSWORD` и `SESSION_SECRET`;
 - создает `.env` с правами `0600`;
 - создает `data/` с правами `0700`;

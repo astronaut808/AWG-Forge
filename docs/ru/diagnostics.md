@@ -176,7 +176,7 @@ Repair удаляет дубли только этих managed rules и доба
 
 Возможные статусы:
 
-- `traffic flowing`: handshake есть, rx/tx counters растут;
+- `traffic flowing`: handshake есть, received/sent counters растут;
 - `idle, handshake ok`: handshake есть, но трафик не двигался во время sample window;
 - `client sends traffic, server sends 0 bytes back`: возможная проблема NAT, forwarding, route, DNS или upstream firewall.
 
@@ -221,7 +221,7 @@ runtime <tunnel>/awg: <interface> link exists, but awg cannot access it: Protoco
 это значит, что Linux interface существует, но AmneziaWG runtime не может прочитать его как AWG interface. Обычно это stale/broken runtime link после неудачного apply, смены версии tools или ручных экспериментов. Перезапусти туннель из UI или CLI:
 
 ```bash
-docker exec awg-forge awg-forge tunnel restart <tunnel-id-or-name>
+docker exec awg-forge awg-forge tunnel restart
 docker exec awg-forge awg-forge doctor
 ```
 
@@ -229,7 +229,7 @@ docker exec awg-forge awg-forge doctor
 
 ```bash
 docker exec awg-forge ip link delete <interface>
-docker exec awg-forge awg-forge tunnel restart <tunnel-id-or-name>
+docker exec awg-forge awg-forge tunnel restart
 ```
 
 Если `doctor` показывает `external route` mismatch, значит NAT может уходить не через тот interface. Проверь `ip route get 1.1.1.1` и обнови `EXTERNAL_INTERFACE`.

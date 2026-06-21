@@ -18,10 +18,6 @@ Russian documentation:
 - [README на русском](../../README.md)
 - [Русская документация](../ru/README.md)
 
-Technical documents:
+Reference:
 
-- [Frontend product plan](../frontend-spec.md)
-- [Multi-profile and multi-tunnel architecture](../multi-profile-architecture.md)
 - [Protocol matrix](../protocol-matrix.md)
-- [AWG 2.0 design](../awg-2.0-design.md)
-- [AmneziaVPN import and subscription research](../research/amnezia-import-subscriptions.md)
