@@ -150,6 +150,12 @@ a {
   padding: 24px;
 }
 
+.login-stack {
+  width: min(560px, 100%);
+  display: grid;
+  gap: 12px;
+}
+
 .panel {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -739,7 +745,7 @@ section.panel.stack {
 }
 
 .login-card {
-  width: min(560px, 100%);
+  width: 100%;
   padding: 28px;
   display: grid;
   gap: 22px;
@@ -747,6 +753,8 @@ section.panel.stack {
 
 .login-card .brand {
   align-items: center;
+  justify-content: center;
+  min-width: 0;
 }
 
 .login-card .brand h1 {

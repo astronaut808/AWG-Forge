@@ -149,7 +149,14 @@ function App() {
   }
 
   if (!authChecked) return <Splash />;
-  if (!state) return <Login onLogin={() => load()} notify={notify} />;
+  if (!state) {
+    return (
+      <>
+        <Login onLogin={() => load()} notify={notify} theme={theme} setTheme={setTheme} />
+        <Toast message={toast} />
+      </>
+    );
+  }
   if (!active) return <Shell state={state} theme={theme} setTheme={setTheme} logout={() => doLogout(setState)} openMaintenance={() => setModal({ kind: "maintenance" })}><Empty title="No profiles" text="Backend returned no protocol profiles." /></Shell>;
 
   const renderTunnel = (tunnel: Tunnel) => (
@@ -226,32 +233,41 @@ function App() {
   );
 }
 
-function Login({ onLogin, notify }: { onLogin: () => Promise<void>; notify: (message: string) => void }) {
+function Login({ onLogin, notify, theme, setTheme }: { onLogin: () => Promise<void>; notify: (message: string) => void; theme: string; setTheme: (theme: string) => void }) {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   return (
     <main class="login-shell">
-      <section class="panel login-card">
-        <Brand />
-        <form
-          class="form single"
-          onSubmit={async (event) => {
-            event.preventDefault();
-            setBusy(true);
-            try {
-              await api.login(password);
-              await onLogin();
-            } catch (err) {
-              notify(errorMessage(err));
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          <label>Password<input aria-label="Password" type="password" autocomplete="current-password" value={password} onInput={(event) => setPassword((event.currentTarget as HTMLInputElement).value)} /></label>
-          <button class="button primary wide" disabled={busy} type="submit">{busy ? "Logging in..." : "Log in"}</button>
-        </form>
-      </section>
+      <div class="login-stack">
+        <section class="panel login-card">
+          <Brand />
+          <form
+            class="form single"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              setBusy(true);
+              try {
+                await api.login(password);
+                await onLogin();
+              } catch (err) {
+                notify(errorMessage(err));
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            <label>Password<input aria-label="Password" type="password" autocomplete="current-password" value={password} onInput={(event) => setPassword((event.currentTarget as HTMLInputElement).value)} /></label>
+            <button class="button primary wide" disabled={busy} type="submit">{busy ? "Logging in..." : "Log in"}</button>
+          </form>
+        </section>
+        <FooterLinks
+          extra={(
+            <button class="footer-link icon" type="button" title="Toggle theme" aria-label="Toggle theme" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+              {theme === "dark" ? "☼" : "☾"}
+            </button>
+          )}
+        />
+      </div>
     </main>
   );
 }
@@ -300,8 +316,8 @@ function Brand({ subtitle }: { subtitle?: preact.ComponentChildren }) {
   );
 }
 
-function FooterLinks({ version }: { version: string }) {
-  const label = versionLabel(version);
+function FooterLinks({ version, extra }: { version?: string; extra?: preact.ComponentChildren }) {
+  const label = version ? versionLabel(version) : "";
   return (
     <footer class="app-footer" aria-label="Project links">
       <a class="footer-link icon" href="https://github.com/astronaut808/awg-forge" target="_blank" rel="noreferrer" aria-label="awg-forge on GitHub">
@@ -310,7 +326,8 @@ function FooterLinks({ version }: { version: string }) {
         </svg>
       </a>
       <a class="footer-link" href="https://github.com/astronaut808/awg-forge/tree/master/docs/ru" target="_blank" rel="noreferrer">Docs</a>
-      <span class="footer-version" title="awg-forge version">{label}</span>
+      {version && <span class="footer-version" title="awg-forge version">{label}</span>}
+      {extra}
     </footer>
   );
 }
