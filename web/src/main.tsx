@@ -193,7 +193,7 @@ function App() {
           tunnels={allTunnels}
           filter={dashboardFilter}
           setFilter={setDashboardFilter}
-          onCreateTunnel={() => setModal({ kind: "create-tunnel", profile: defaultCreateProfile(profiles, active) })}
+          onCreateTunnel={(profile) => setModal({ kind: "create-tunnel", profile: profile || defaultCreateProfile(profiles, active) })}
           renderTunnel={renderTunnel}
         />
       ) : (
@@ -333,10 +333,11 @@ function TunnelFirstDashboard({ profiles, tunnels, filter, setFilter, onCreateTu
   tunnels: Tunnel[];
   filter: string;
   setFilter: (filter: string) => void;
-  onCreateTunnel: () => void;
+  onCreateTunnel: (profile?: Profile) => void;
   renderTunnel: (tunnel: Tunnel) => preact.ComponentChildren;
 }) {
   const effectiveFilter = filter === "all" || profiles.some((profile) => profile.id === filter) ? filter : "all";
+  const filteredProfile = profiles.find((profile) => profile.id === effectiveFilter);
   const visibleProfiles = profiles.filter((profile) => effectiveFilter === "all" || profile.id === effectiveFilter);
   const visibleTunnels = effectiveFilter === "all" ? tunnels : tunnels.filter((tunnel) => tunnel.profile === effectiveFilter);
   const countFor = (profileID: string) => tunnels.filter((tunnel) => tunnel.profile === profileID).length;
@@ -354,10 +355,14 @@ function TunnelFirstDashboard({ profiles, tunnels, filter, setFilter, onCreateTu
             ))}
           </div>
         </div>
-        <button class="button primary" type="button" disabled={profiles.length === 0} onClick={onCreateTunnel}>Create tunnel</button>
+        <button class="button primary" type="button" disabled={profiles.length === 0} onClick={() => onCreateTunnel()}>Create tunnel</button>
       </div>
       {visibleTunnels.length === 0 ? (
-        <Empty title={tunnels.length === 0 ? "No tunnels yet" : "No tunnels in this filter"} text={tunnels.length === 0 ? "Create the first AmneziaWG tunnel." : "Switch filters or create another tunnel."} action={<button class="button primary" type="button" onClick={onCreateTunnel}>Create tunnel</button>} />
+        <Empty
+          title={tunnels.length === 0 ? "No tunnels yet" : "No tunnels in this filter"}
+          text={tunnels.length === 0 ? "Create the first AmneziaWG tunnel." : "Create a tunnel for the selected protocol."}
+          action={<button class="button primary" type="button" onClick={() => onCreateTunnel(filteredProfile)}>Create tunnel</button>}
+        />
       ) : (
         <div class="profile-groups">
           {visibleProfiles.map((profile) => {

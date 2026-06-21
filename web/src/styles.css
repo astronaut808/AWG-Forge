@@ -16,8 +16,7 @@
 
 :root {
   color-scheme: dark;
-  --bg: #020804;
-  --bg-grid: rgba(56, 157, 198, 0.08);
+  --bg: #020706;
   --surface: #07100f;
   --surface-2: #0c1716;
   --surface-3: #111f1e;
@@ -43,8 +42,7 @@
 
 :root[data-theme="light"] {
   color-scheme: light;
-  --bg: #eef6f8;
-  --bg-grid: rgba(56, 157, 198, 0.16);
+  --bg: #f1f8fa;
   --surface: #f9fdff;
   --surface-2: #f2f8fb;
   --surface-3: #e9f3f7;
@@ -66,24 +64,7 @@
 html {
   min-height: 100%;
   position: relative;
-  background:
-    radial-gradient(circle at calc(18% + var(--px)) calc(10% + var(--py)), rgba(56, 157, 198, 0.1), transparent 28rem),
-    linear-gradient(180deg, rgba(56, 157, 198, 0.05), transparent 18rem),
-    var(--bg);
-}
-
-html::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  opacity: 0.55;
-  pointer-events: none;
-  background-image:
-    linear-gradient(var(--bg-grid) 1px, transparent 1px),
-    linear-gradient(90deg, var(--bg-grid) 1px, transparent 1px);
-  background-size: 42px 42px;
-  mask-image: linear-gradient(to bottom, #000 0 58%, transparent 100%);
+  background: var(--bg);
 }
 
 body {
