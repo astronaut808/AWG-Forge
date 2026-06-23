@@ -1,4 +1,4 @@
-# awg-forge
+# AWG-Forge
 
 [README на русском](README.md)
 
@@ -6,13 +6,13 @@ Self-hosted AmneziaWG control panel for Docker: Go backend, embedded Web UI, and
 
 ![awg-forge dashboard](docs/assets/awg-forge-dashboard.jpg)
 
-## Why awg-forge
+## Why AWG-Forge
 
-- Uses AmneziaWG instead of inventing a custom VPN protocol: less magic, better compatibility, and more predictable behavior.
-- Provides a ready-to-run self-hosted setup without manually wiring `awg`, `awg-quick`, `amneziawg-go`, firewall rules, and client configs together.
-- Does not expose the Web UI by default: the panel listens on `127.0.0.1` and is opened through an SSH tunnel.
-- Lets one VPS run multiple independent tunnels without manually editing Docker port mappings.
-- Splits daily management and maintenance cleanly: Web UI for common actions, CLI for diagnostics, repair, and automation.
+- Ready-to-run Docker-based setup: backend, Web UI, CLI, and runtime tools are shipped together.
+- Safe default for the panel: the Web UI listens on `127.0.0.1`, not on the server's public interface.
+- Multiple independent tunnels on one VPS: different profiles, UDP ports, and egress scenarios without manually editing Docker port mappings.
+- Flexible IPv4 egress: a tunnel can exit directly through the server or through Cloudflare WARP.
+- Management and maintenance in one place: daily actions through the Web UI, diagnostics and automation through the CLI.
 
 ## Supported
 
@@ -69,7 +69,7 @@ Docker host networking is the recommended production mode. It lets tunnels creat
 
 `SERVER_HOST` can be overridden per tunnel in `Tunnel settings` -> `Server host`.
 
-WARP can be selected while creating a tunnel or enabled later from `Tunnel settings` -> `Egress` -> `Cloudflare WARP`. If WARP is not configured yet, awg-forge registers the shared `warp0` automatically. See [Configuration](docs/en/configuration.md).
+WARP can be selected while creating a tunnel or enabled later from `Tunnel settings` -> `Egress` -> `Cloudflare WARP`. If WARP is not configured yet, AWG-Forge registers the shared `warp0` automatically. See [Configuration](docs/en/configuration.md).
 
 ## Startup Check
 
@@ -146,6 +146,19 @@ go run ./cmd/awg-forge serve
 ```
 
 Runtime and Docker image do not require Node/npm. The Web UI is built from `web/` with Vite/Preact/TypeScript and embedded into the Go binary as static files.
+
+## Support the project
+
+If AWG-Forge is useful to you, you can support development with a donation:
+
+- USDT (TRC20): `TBQcgJ9UoGEBXBwPMcf97t3uJiTCRnVmji`
+- GRAM (ex TON): `UQCrUmIsUBgIJJJNKpvOO5dxpUH5r7xCz9-AJ2IHUTIckJhS`
+
+## Project independence
+
+AWG-Forge is an independent open-source project for administering AmneziaWG infrastructure.
+
+This project is not affiliated with Amnezia.org, and is not developed or supported by the Amnezia team. The AmneziaWG name is used only to describe compatibility with the corresponding protocol and tooling.
 
 ## License
 
