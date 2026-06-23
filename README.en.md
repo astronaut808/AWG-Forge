@@ -2,9 +2,7 @@
 
 [README на русском](README.md)
 
-Self-hosted AmneziaWG control panel for Docker: Go backend, embedded Web UI, and CLI for tunnels, clients, `.conf` files, diagnostics, backup/restore, and safe maintenance.
-
-awg-forge does not implement a custom VPN protocol. It renders AmneziaWG configs and manages the upstream `awg`, `awg-quick`, and `amneziawg-go` tools bundled in the Docker image.
+Self-hosted AmneziaWG control panel for Docker: Go backend, embedded Web UI, and CLI for tunnels, clients, diagnostics, backup/restore, and safe maintenance.
 
 ![awg-forge dashboard](docs/assets/awg-forge-dashboard.jpg)
 
