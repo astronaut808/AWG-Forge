@@ -2,22 +2,26 @@
 
 [README на русском](README.md)
 
-Self-hosted AmneziaWG control panel for Docker: Go backend, embedded Web UI, and CLI for tunnels, clients, `.conf` files, diagnostics, backup/restore, and safe maintenance.
-
-awg-forge does not implement a custom VPN protocol. It renders AmneziaWG configs and manages the upstream `awg`, `awg-quick`, and `amneziawg-go` tools bundled in the Docker image.
+Self-hosted AmneziaWG control panel for Docker: Go backend, embedded Web UI, and CLI for tunnels, clients, diagnostics, backup/restore, and safe maintenance.
 
 ![awg-forge dashboard](docs/assets/awg-forge-dashboard.jpg)
 
+## Why awg-forge
+
+- Uses AmneziaWG instead of inventing a custom VPN protocol: less magic, better compatibility, and more predictable behavior.
+- Provides a ready-to-run self-hosted setup without manually wiring `awg`, `awg-quick`, `amneziawg-go`, firewall rules, and client configs together.
+- Does not expose the Web UI by default: the panel listens on `127.0.0.1` and is opened through an SSH tunnel.
+- Lets one VPS run multiple independent tunnels without manually editing Docker port mappings.
+- Splits daily management and maintenance cleanly: Web UI for common actions, CLI for diagnostics, repair, and automation.
+
 ## Supported
 
-- AmneziaWG Legacy / 1.0, 1.5-oriented profile, and 2.0.
-- Multiple independent tunnels with separate profiles, ports, and subnets.
-- IPv4 egress through `Server WAN` or Cloudflare WARP per tunnel.
-- Clients: create, `.conf` download, `vpn://` import key, enable/disable, expiration, delete.
-- Runtime diagnostics: Doctor, firewall repair, health, last seen, received/sent counters.
+- AmneziaWG profiles: Legacy / 1.0, 1.5-oriented profile, and 2.0.
+- Tunnels: separate profiles, UDP ports, subnets, endpoint settings, and IPv4 egress.
+- Egress: `Server WAN` or Cloudflare WARP per tunnel.
+- Clients: create, download `.conf`, `vpn://` import key, enable/disable, expiration, delete.
+- Diagnostics: Doctor, firewall repair, health, last seen, received/sent counters.
 - Maintenance Center: WARP, backup, restore verify, support bundle, live audit logs, updates, system info.
-
-The reliable production client import path is the downloaded `.conf`. `vpn://` import key is experimental and depends on AmneziaVPN / DefaultVPN client support. QR import is intentionally not exposed.
 
 ## Quick Start
 

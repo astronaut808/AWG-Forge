@@ -2,26 +2,30 @@
 
 [English README](README.en.md)
 
-Самостоятельно размещаемая панель управления AmneziaWG для Docker: Go backend, встроенный Web UI и CLI для туннелей, клиентов, `.conf`, диагностики, backup/restore и безопасного обслуживания.
-
-awg-forge не реализует собственный VPN-протокол. Он генерирует конфиги AmneziaWG и управляет upstream-инструментами `awg`, `awg-quick` и `amneziawg-go`, которые входят в Docker-образ.
+Self-hosted панель управления AmneziaWG для Docker: Go backend, встроенный Web UI и CLI для туннелей, клиентов, диагностики, backup/restore и безопасного обслуживания.
 
 ![Главный экран awg-forge](docs/assets/awg-forge-dashboard.jpg)
 
-## Что Поддерживается
+## Почему awg-forge
 
-- AmneziaWG Legacy / 1.0, 1.5-oriented profile и 2.0.
-- Несколько независимых туннелей с разными профилями, портами и подсетями.
-- IPv4 egress через `Server WAN` или Cloudflare WARP на уровне отдельного туннеля.
+- Работает поверх AmneziaWG, а не пытается изобрести собственный VPN-протокол. Меньше магии, больше совместимости и предсказуемого поведения.
+- Дает готовый self-hosted setup без ручной сборки обвязки вокруг `awg`, `awg-quick`, `amneziawg-go`, firewall rules и клиентских конфигов.
+- По умолчанию не выставляет Web UI наружу: панель слушает `127.0.0.1` и открывается через SSH tunnel.
+- Позволяет держать несколько независимых туннелей на одном VPS без ручного редактирования Docker port mappings.
+- Разделяет повседневное управление и обслуживание: Web UI для обычных действий, CLI для диагностики, ремонта и автоматизации.
+
+## Что поддерживается
+
+- Профили AmneziaWG: Legacy / 1.0, 1.5-oriented profile и 2.0.
+- Туннели: отдельные профили, UDP-порты, подсети, endpoint-настройки и IPv4 egress.
+- Egress: `Server WAN` или Cloudflare WARP на уровне отдельного туннеля.
 - Клиенты: создание, скачивание `.conf`, `vpn://` import key, enable/disable, expiration, delete.
-- Runtime diagnostics: Doctor, firewall repair, health, last seen, received/sent counters.
+- Диагностика: Doctor, firewall repair, health, last seen, received/sent counters.
 - Maintenance Center: WARP, backup, restore verify, support bundle, live audit logs, updates, system info.
 
-Надежный production-импорт клиента — скачанный `.conf`. `vpn://` import key экспериментальный и зависит от клиента AmneziaVPN / DefaultVPN. QR import намеренно не используется.
+## Быстрый старт
 
-## Быстрый Старт
-
-Интерактивная установка на Linux/VPS (необходим Docker):
+Интерактивная установка на Linux/VPS. Нужен Docker:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
@@ -29,21 +33,21 @@ chmod +x install.sh
 sudo ./install.sh
 ```
 
-Скрипт проверит Docker до создания файлов, создаст `/opt/awg-forge`, сгенерирует `.env`, пароль и `SESSION_SECRET`, определит внешний интерфейс, запустит Docker Compose и покажет SSH tunnel команду.
+Скрипт проверит Docker до создания файлов, создаст `/opt/awg-forge`, сгенерирует `.env`, пароль и `SESSION_SECRET`, определит внешний интерфейс, запустит Docker Compose и покажет команду для SSH tunnel.
 
-По умолчанию Web UI слушает `127.0.0.1:51821`. Открывай через SSH tunnel:
+По умолчанию Web UI слушает `127.0.0.1:51821`. Открывай его через SSH tunnel:
 
 ```bash
 ssh -L 51821:127.0.0.1:51821 user@server
 ```
 
-Затем:
+Затем открой в браузере:
 
 ```text
 http://127.0.0.1:51821
 ```
 
-## Ручной Запуск
+## Ручной запуск
 
 ```bash
 git clone https://github.com/astronaut808/awg-forge.git
@@ -55,7 +59,7 @@ docker compose up -d
 
 Рекомендуемый production-режим — Docker host networking. Так туннели, созданные в UI, могут использовать разные UDP-порты без изменения Docker port mappings.
 
-## Важные Настройки
+## Важные настройки
 
 - `SERVER_HOST` — endpoint по умолчанию для клиентских конфигов.
 - `EXTERNAL_INTERFACE` — внешний интерфейс сервера для WAN egress.
@@ -65,9 +69,11 @@ docker compose up -d
 
 `SERVER_HOST` можно переопределить для конкретного туннеля в `Tunnel settings` -> `Server host`.
 
-WARP можно выбрать при создании туннеля или включить позже в `Tunnel settings` -> `Egress` -> `Cloudflare WARP`. Если WARP еще не настроен, awg-forge зарегистрирует общий `warp0` автоматически. Подробнее: [Конфигурация](docs/ru/configuration.md).
+WARP можно выбрать при создании туннеля или включить позже в `Tunnel settings` -> `Egress` -> `Cloudflare WARP`. Если WARP еще не настроен, awg-forge автоматически зарегистрирует общий `warp0`.
 
-## Проверка После Запуска
+Подробнее: [Конфигурация](docs/ru/configuration.md).
+
+## Проверка после запуска
 
 1. Создай клиента в UI.
 2. Импортируй скачанный `.conf` в AmneziaVPN.
