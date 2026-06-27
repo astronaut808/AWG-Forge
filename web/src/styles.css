@@ -379,54 +379,19 @@ textarea:focus-visible {
   width: 100%;
 }
 
-.button.active,
-.tab.active {
+.button.active {
   color: var(--brand);
   border-color: var(--border-strong);
   box-shadow: inset 0 0 0 1px rgba(56, 157, 198, 0.24);
 }
 
-.tabs {
-  padding: 6px;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
-}
-
-.tab {
-  min-height: 46px;
-  padding: 8px 10px;
-  color: var(--text);
-  text-align: left;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: rgba(56, 157, 198, 0.03);
-  cursor: pointer;
-}
-
-.tab:hover {
-  color: var(--brand);
-  border-color: var(--border-strong);
-  background: rgba(56, 157, 198, 0.08);
-}
-
-.tab strong,
-.tab span {
-  display: block;
-}
-
-.tab strong {
-  font-size: 18px;
-}
-
-.tab span {
-  color: var(--muted);
-  font-size: 12px;
-}
-
 .dashboard-v2 {
   gap: 0;
   overflow: hidden;
+}
+
+.dashboard-v2 .section-head {
+  align-items: center;
 }
 
 .filter-row {
@@ -495,6 +460,13 @@ textarea:focus-visible {
   color: var(--brand);
   border-color: var(--border-strong);
   background: color-mix(in srgb, var(--surface), var(--brand) 12%);
+}
+
+.dashboard-v2 > .empty {
+  min-height: 118px;
+  border-right: 0;
+  border-left: 0;
+  border-radius: 0;
 }
 
 .profile-groups {
@@ -1008,7 +980,6 @@ textarea {
     flex-wrap: wrap;
   }
 
-  .tabs,
   .tunnel-grid,
   .tunnel-grid.single {
     grid-template-columns: 1fr;

@@ -33,7 +33,7 @@ chmod +x install.sh
 sudo ./install.sh
 ```
 
-Скрипт проверит Docker до создания файлов, создаст `/opt/awg-forge`, сгенерирует `.env`, пароль и `SESSION_SECRET`, определит внешний интерфейс, запустит Docker Compose и покажет команду для SSH tunnel.
+Скрипт проверит Docker до создания файлов, создаст `/opt/awg-forge`, сгенерирует `.env`, пароль и `SESSION_SECRET`, создаст первый туннель в `state.json`, запустит Docker Compose и покажет команду для SSH tunnel. По умолчанию первый туннель создается на AmneziaWG 2.0.
 
 По умолчанию Web UI слушает `127.0.0.1:51821`. Открывай его через SSH tunnel:
 
@@ -61,13 +61,13 @@ docker compose up -d
 
 ## Важные настройки
 
-- `SERVER_HOST` — endpoint по умолчанию для клиентских конфигов.
+- `.env` хранит настройки запуска контейнера и Web UI; туннели хранятся в `data/state.json`.
 - `EXTERNAL_INTERFACE` — внешний интерфейс сервера для WAN egress.
 - `WEBUI_HOST=127.0.0.1` — безопасный дефолт для доступа через SSH tunnel.
 - `APPLY_CONFIG=true` — применять runtime-туннели и firewall rules.
 - `SESSION_COOKIE_SECURE=auto|true|false` — политика Secure cookie для Web UI.
 
-`SERVER_HOST` можно переопределить для конкретного туннеля в `Tunnel settings` -> `Server host`.
+Endpoint меняется для конкретного туннеля в `Tunnel settings` -> `Server host`. Если после обновления в `.env` остались старые tunnel-переменные вроде `SERVER_HOST`, `LISTEN_PORT` или `IPV4_SUBNET`, их можно удалить после проверки настроек в UI.
 
 WARP можно выбрать при создании туннеля или включить позже в `Tunnel settings` -> `Egress` -> `Cloudflare WARP`. Если WARP еще не настроен, AWG-Forge автоматически зарегистрирует общий `warp0`.
 
@@ -143,7 +143,6 @@ WEBUI_HOST=127.0.0.1 \
 WEBUI_PORT=51821 \
 PASSWORD=test \
 APPLY_CONFIG=false \
-SERVER_HOST=127.0.0.1 \
 go run ./cmd/awg-forge serve
 ```
 

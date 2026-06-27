@@ -41,20 +41,16 @@ type Modal =
 
 type MaintenanceTab = "overview" | "doctor" | "firewall" | "warp" | "backup" | "restore" | "updates" | "support" | "logs" | "system";
 
-const profileKey = "awg-forge.profile";
 const themeKey = "awg-forge.theme";
-const dashboardModeKey = "awg-forge.dashboard-mode";
 const dashboardFilterKey = "awg-forge.dashboard-filter";
 let parallaxInitialized = false;
 
 function App() {
   const [state, setState] = useState<AppState | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
-  const [activeProfile, setActiveProfile] = useState(localStorage.getItem(profileKey) || "awg_legacy_1_0");
   const [modal, setModal] = useState<Modal | null>(null);
   const [toast, setToast] = useState("");
   const [theme, setTheme] = useState(initialTheme);
-  const [dashboardMode, setDashboardModeValue] = useState(localStorage.getItem(dashboardModeKey) || "profiles");
   const [dashboardFilter, setDashboardFilterValue] = useState(localStorage.getItem(dashboardFilterKey) || "all");
   const liveUpdatesEnabled = state !== null;
 
@@ -63,9 +59,6 @@ function App() {
       const next = await api.state();
       setState(next);
       setAuthChecked(true);
-      if (!next.profiles.find((profile) => profile.id === activeProfile) && next.profiles[0]) {
-        setActiveProfile(next.profiles[0].id);
-      }
     } catch (err) {
       setAuthChecked(true);
       if (err instanceof api.APIError && err.status === 401) {
@@ -74,7 +67,7 @@ function App() {
       }
       if (!options.quiet) notify(errorMessage(err));
     }
-  }, [activeProfile]);
+  }, []);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -108,19 +101,8 @@ function App() {
   }, [liveUpdatesEnabled, load]);
 
   const profiles = state?.profiles || [];
-  const active = profiles.find((profile) => profile.id === activeProfile) || profiles[0];
+  const active = defaultCreateProfile(profiles);
   const allTunnels = state?.tunnels || [];
-  const tunnels = active ? allTunnels.filter((tunnel) => tunnel.profile === active.id) : [];
-
-  function selectProfile(id: string) {
-    localStorage.setItem(profileKey, id);
-    setActiveProfile(id);
-  }
-
-  function setDashboardMode(mode: string) {
-    localStorage.setItem(dashboardModeKey, mode);
-    setDashboardModeValue(mode);
-  }
 
   function setDashboardFilter(filter: string) {
     localStorage.setItem(dashboardFilterKey, filter);
@@ -193,36 +175,15 @@ function App() {
   );
 
   return (
-    <Shell state={state} theme={theme} setTheme={setTheme} logout={() => doLogout(setState)} openMaintenance={() => setModal({ kind: "maintenance" })} dashboardMode={dashboardMode} setDashboardMode={setDashboardMode}>
-      {dashboardMode === "tunnels" ? (
-        <TunnelFirstDashboard
-          profiles={profiles}
-          tunnels={allTunnels}
-          filter={dashboardFilter}
-          setFilter={setDashboardFilter}
-          onCreateTunnel={(profile) => setModal({ kind: "create-tunnel", profile: profile || defaultCreateProfile(profiles, active) })}
-          renderTunnel={renderTunnel}
-        />
-      ) : (
-        <>
-          <ProfileTabs profiles={profiles} active={active.id} onSelect={selectProfile} />
-          <section class="panel stack">
-            <div class="section-head">
-              <div>
-                <h2>{profileTitle(active.id)}</h2>
-              </div>
-              <button class="button primary" type="button" disabled={!active.available} onClick={() => setModal({ kind: "create-tunnel", profile: active })}>Create tunnel</button>
-            </div>
-            {tunnels.length === 0 ? (
-              <Empty title={`No tunnels for ${active.tab} yet`} text="Create a tunnel first, then add clients inside it." action={<button class="button primary" type="button" onClick={() => setModal({ kind: "create-tunnel", profile: active })}>Create tunnel</button>} />
-            ) : (
-              <div className={classNames("tunnel-grid", tunnels.length === 1 && "single")}>
-                {tunnels.map(renderTunnel)}
-              </div>
-            )}
-          </section>
-        </>
-      )}
+    <Shell state={state} theme={theme} setTheme={setTheme} logout={() => doLogout(setState)} openMaintenance={() => setModal({ kind: "maintenance" })}>
+      <TunnelFirstDashboard
+        profiles={profiles}
+        tunnels={allTunnels}
+        filter={dashboardFilter}
+        setFilter={setDashboardFilter}
+        onCreateTunnel={(profile) => setModal({ kind: "create-tunnel", profile: profile || active })}
+        renderTunnel={renderTunnel}
+      />
       {modal && (
         <Dialog onClose={() => setModal(null)}>
           <ModalContent modal={modal} state={state} notify={notify} close={() => setModal(null)} reload={() => load({ quiet: true })} runAction={runAction} />
@@ -278,20 +239,17 @@ type ShellProps = {
   setTheme: (theme: string) => void;
   logout: () => void;
   openMaintenance: () => void;
-  dashboardMode?: string;
-  setDashboardMode?: (mode: string) => void;
   children: preact.ComponentChildren;
 };
 
 function Shell(props: ShellProps) {
-  const { state, theme, setTheme, logout, openMaintenance, dashboardMode, setDashboardMode, children } = props;
+  const { state, theme, setTheme, logout, openMaintenance, children } = props;
   return (
     <main class="app-shell">
       <header class="topbar panel">
         <Brand subtitle={<><span class="mono">{state.server_host}</span> · {state.tunnels.length} tunnel(s)</>} />
         <nav class="toolbar" aria-label="Global actions">
           <button class="button icon" type="button" title="Toggle theme" aria-label="Toggle theme" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>{theme === "dark" ? "☼" : "☾"}</button>
-          {setDashboardMode && <button class="button" type="button" onClick={() => setDashboardMode(dashboardMode === "tunnels" ? "profiles" : "tunnels")}>{dashboardMode === "tunnels" ? "Profile view" : "Tunnel view"}</button>}
           <button class="button" type="button" onClick={openMaintenance}>Maintenance</button>
           <button class="button" type="button" onClick={logout}>Log out</button>
         </nav>
@@ -332,19 +290,6 @@ function FooterLinks({ version, extra }: { version?: string; extra?: preact.Comp
   );
 }
 
-function ProfileTabs({ profiles, active, onSelect }: { profiles: Profile[]; active: string; onSelect: (id: string) => void }) {
-  return (
-    <nav class="tabs panel" aria-label="Protocol profiles">
-      {profiles.map((profile) => (
-        <button key={profile.id} className={classNames("tab", profile.id === active && "active")} type="button" onClick={() => onSelect(profile.id)}>
-          <strong>{profile.tab}</strong>
-          <span>{profile.label}</span>
-        </button>
-      ))}
-    </nav>
-  );
-}
-
 function TunnelFirstDashboard({ profiles, tunnels, filter, setFilter, onCreateTunnel, renderTunnel }: {
   profiles: Profile[];
   tunnels: Tunnel[];
@@ -366,7 +311,7 @@ function TunnelFirstDashboard({ profiles, tunnels, filter, setFilter, onCreateTu
           <div class="filter-row" aria-label="Tunnel filters">
             <button className={classNames("filter-pill", effectiveFilter === "all" && "active")} type="button" onClick={() => setFilter("all")}><span class="filter-label">All</span><span class="filter-count">{tunnels.length}</span></button>
             {profiles.map((profile) => (
-              <button key={profile.id} className={classNames("filter-pill", countFor(profile.id) === 0 && "is-empty", effectiveFilter === profile.id && "active")} type="button" onClick={() => setFilter(profile.id)}>
+              <button key={profile.id} className={classNames("filter-pill", countFor(profile.id) === 0 && "is-empty", effectiveFilter === profile.id && "active")} type="button" onClick={() => setFilter(profile.id)} title={`${profileTitle(profile.id)} · ${countFor(profile.id)} tunnel(s)`}>
                 <span class="filter-label">{profile.tab}</span><span class="filter-count">{countFor(profile.id)}</span>
               </button>
             ))}
@@ -377,7 +322,7 @@ function TunnelFirstDashboard({ profiles, tunnels, filter, setFilter, onCreateTu
       {visibleTunnels.length === 0 ? (
         <Empty
           title={tunnels.length === 0 ? "No tunnels yet" : "No tunnels in this filter"}
-          text={tunnels.length === 0 ? "Create the first AmneziaWG tunnel." : "Create a tunnel for the selected protocol."}
+          text={tunnels.length === 0 ? "Create the first AmneziaWG tunnel." : filteredProfile ? `Create an ${profileTitle(filteredProfile.id)} tunnel.` : "Create a tunnel for the selected protocol."}
           action={<button class="button primary" type="button" onClick={() => onCreateTunnel(filteredProfile)}>Create tunnel</button>}
         />
       ) : (
@@ -830,7 +775,7 @@ function field(form: HTMLFormElement, name: string): string {
   return String(new FormData(form).get(name) || "");
 }
 
-function defaultCreateProfile(profiles: Profile[], fallback: Profile): Profile {
+function defaultCreateProfile(profiles: Profile[], fallback?: Profile): Profile | undefined {
   return profiles.find((profile) => profile.id === "awg_2_0" && profile.available) || profiles.find((profile) => profile.available) || fallback;
 }
 
