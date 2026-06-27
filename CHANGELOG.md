@@ -8,11 +8,13 @@
 - Changed the quick installer default profile to AmneziaWG 2.0 when the profile prompt is accepted with Enter.
 - Made existing `state.json` the source of truth for tunnel endpoint/settings on repeated installs; old tunnel variables in `.env` are now ignored after state exists.
 - Removed the legacy profile dashboard switch and made the tunnel-first dashboard the only Web UI mode, with compact protocol filters and protocol-aware empty-state tunnel creation.
+- Changed AWG 2.0 defaults to generate a fresh `1200..1232` byte QUIC Initial-like `I1` CPS signature with multiple connection-ID profiles and documented-size random chunks instead of reusing the AWG 1.5 DNS-like signature.
 
 ### Added
 
 - Added Doctor guidance for upgraded installs that still contain legacy tunnel variables in `.env`, with a safe cleanup note after verifying tunnel settings in the UI.
 - Added regression tests for AWG 2.0 default initialization, explicit first-tunnel init options, invalid initial tunnel names, and existing-state precedence over changed env tunnel values.
+- Added protocol tests for randomized AWG 2.0 QUIC-like `I1` generation, `1200..1232` byte CPS signature validation, and per-token random chunk limits.
 
 ## v0.11.0 - 2026-06-21
 

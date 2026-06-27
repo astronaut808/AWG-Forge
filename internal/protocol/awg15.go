@@ -14,6 +14,8 @@ const defaultTimedNoiseI2 = "<r 8><t><r 16>"
 const defaultDigitsNoiseI3 = "<rd 12><r 12>"
 const defaultCharsNoiseI4 = "<rc 16><r 10>"
 const defaultRandomNoiseI5 = "<r 32>"
+const maxSignaturePacketSize = 1232
+const maxRandomSignatureTokenSize = 1000
 
 type AWG15 struct{}
 
@@ -98,8 +100,8 @@ func validateSignatureParam(key, value string) error {
 		totalSize += size
 		rest = strings.TrimSpace(rest[loc[1]:])
 	}
-	if totalSize > 1024 {
-		return fmt.Errorf("%s signature packet is too large", key)
+	if totalSize > maxSignaturePacketSize {
+		return fmt.Errorf("%s signature packet is too large; max %d bytes", key, maxSignaturePacketSize)
 	}
 	return nil
 }
@@ -121,8 +123,8 @@ func signatureTokenSize(token string) (int, error) {
 		return 0, fmt.Errorf("invalid token")
 	}
 	n, err := strconv.Atoi(parts[1])
-	if err != nil || n < 0 || n > 1024 {
-		return 0, fmt.Errorf("random token size must be 0..1024")
+	if err != nil || n < 0 || n > maxRandomSignatureTokenSize {
+		return 0, fmt.Errorf("random token size must be 0..%d", maxRandomSignatureTokenSize)
 	}
 	return n, nil
 }

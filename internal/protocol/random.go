@@ -2,7 +2,8 @@ package protocol
 
 import (
 	"crypto/rand"
-	"encoding/binary"
+	"encoding/hex"
+	"errors"
 	"math/big"
 )
 
@@ -15,9 +16,20 @@ func randomInt(min, max int) (int, error) {
 }
 
 func randomUint32Below(max uint32) (uint32, error) {
-	var b [4]byte
-	if _, err := rand.Read(b[:]); err != nil {
+	if max == 0 {
+		return 0, errors.New("random upper bound must be greater than zero")
+	}
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(max)))
+	if err != nil {
 		return 0, err
 	}
-	return binary.BigEndian.Uint32(b[:]) % max, nil
+	return uint32(n.Int64()), nil
+}
+
+func randomHexBytes(size int) (string, error) {
+	b := make([]byte, size)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }

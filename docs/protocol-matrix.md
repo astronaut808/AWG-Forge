@@ -8,7 +8,7 @@ awg-forge is a launcher and manager for existing AmneziaWG implementations. It d
 | --- | --- | --- |
 | `awg_legacy_1_0` | Implemented | Renders AmneziaWG Legacy / 1.0 config fields: `Jc`, `Jmin`, `Jmax`, `S1`, `S2`, `H1`, `H2`, `H3`, `H4`. Defaults are generated for obfuscation, not WireGuard fallback. |
 | `awg_1_5` | Implemented | Adds `I1-I5` signature/masking packets to client configs. Defaults include the official DNS-like `I1` conversion packet plus small generated runtime-random signature packets for `I2-I5`. |
-| `awg_2_0` | Implemented | Uses `I1-I5`, adds `S3` and `S4`, supports `H1-H4` ranges, validates non-overlapping header ranges, and renders fresh tunnel/client configs. `.conf` import has been validated on desktop and iOS clients with compatible AmneziaVPN builds. |
+| `awg_2_0` | Implemented | Uses `I1-I5`, adds `S3` and `S4`, supports `H1-H4` ranges, validates non-overlapping header ranges, and renders fresh tunnel/client configs. Defaults use a generated QUIC Initial-like `I1` CPS signature. `.conf` import has been validated on desktop and iOS clients with compatible AmneziaVPN builds. |
 
 ## Planned, Not Implemented
 
@@ -83,10 +83,12 @@ For AWG 2.0, defaults are:
 - `S1-S3`: random `15..64`;
 - `S4`: random `8..32`;
 - `H1-H4`: non-overlapping ranges, not single values;
-- `I1`: the same DNS-like CPS value currently used by the 1.5 profile;
+- `I1`: generated per tunnel as a `1200..1232` byte QUIC Initial-like CPS packet, with a randomized protected first byte, QUIC v1 marker, one of several destination/source connection ID profiles, a valid QUIC varint length field, and runtime-random protected payload bytes split into `<r ...>` chunks of at most `1000` bytes;
 - `I2-I5`: the same small CPS entropy chain currently used by the 1.5 profile.
 
 Zero-valued obfuscation parameters are treated as weak defaults because Amnezia docs note that all-zero behavior falls back toward standard WireGuard behavior.
+
+AWG 2.0 uses a randomized QUIC Initial-like `I1` signature by default. Only the UDP payload shape is modeled: Ethernet/IP/UDP headers from packet captures are not included. The generated packet is intended for AmneziaWG CPS masking, not for establishing a real QUIC session. Its size is randomized within `1200..1232` bytes, and large random sections are split into documented CPS `<r ...>` chunks.
 
 ## Validation Status For AWG 2.0
 
@@ -108,3 +110,4 @@ Not implemented:
 - [amnezia-vpn/amneziawg-go README](https://github.com/amnezia-vpn/amneziawg-go)
 - [amnezia-client `protocols_defs.h`](https://raw.githubusercontent.com/amnezia-vpn/amnezia-client/dev/client/protocols/protocols_defs.h)
 - [amnezia-client `importController.cpp`](https://raw.githubusercontent.com/amnezia-vpn/amnezia-client/dev/client/ui/controllers/importController.cpp)
+- [RFC 9000, QUIC: A UDP-Based Multiplexed and Secure Transport](https://www.rfc-editor.org/rfc/rfc9000)

@@ -12,6 +12,9 @@ func TestAWG15DefaultsIncludeFullSignatureChain(t *testing.T) {
 			t.Fatalf("%s default is empty", key)
 		}
 	}
+	if params["I1"] != defaultDNSLikeI1 {
+		t.Fatal("AWG 1.5 should keep the DNS-like I1 default")
+	}
 	if err := (AWG15{}).Validate(params); err != nil {
 		t.Fatal(err)
 	}

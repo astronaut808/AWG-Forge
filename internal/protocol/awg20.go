@@ -33,13 +33,17 @@ func (AWG20) GenerateDefaults() (config.ProtocolParams, error) {
 	if err != nil {
 		return nil, err
 	}
+	i1, err := defaultQUICLikeI1()
+	if err != nil {
+		return nil, err
+	}
 	params["S3"] = strconv.Itoa(s3)
 	params["S4"] = strconv.Itoa(s4)
 	params["H1"] = ranges[0]
 	params["H2"] = ranges[1]
 	params["H3"] = ranges[2]
 	params["H4"] = ranges[3]
-	params["I1"] = defaultDNSLikeI1
+	params["I1"] = i1
 	params["I2"] = defaultTimedNoiseI2
 	params["I3"] = defaultDigitsNoiseI3
 	params["I4"] = defaultCharsNoiseI4
@@ -105,6 +109,134 @@ func (p AWG20) RenderClientInterface(ctx RenderContext, client config.Client) ([
 
 func (AWG20) RenderClientPeer(ctx RenderContext, client config.Client) ([]ConfigLine, error) {
 	return Legacy10{}.RenderClientPeer(ctx, client)
+}
+
+const (
+	quicInitialMinPayloadSize = 1200
+	quicInitialMaxPayloadSize = 1232
+)
+
+type quicInitialProfile struct {
+	destinationConnectionIDLengths []int
+	sourceConnectionIDLengths      []int
+}
+
+var quicInitialProfiles = []quicInitialProfile{
+	{
+		destinationConnectionIDLengths: []int{8},
+		sourceConnectionIDLengths:      []int{0},
+	},
+	{
+		destinationConnectionIDLengths: []int{8, 12},
+		sourceConnectionIDLengths:      []int{0, 8},
+	},
+	{
+		destinationConnectionIDLengths: []int{8, 12, 16},
+		sourceConnectionIDLengths:      []int{8},
+	},
+}
+
+func defaultQUICLikeI1() (string, error) {
+	profile, err := randomQUICInitialProfile()
+	if err != nil {
+		return "", err
+	}
+	firstByte, err := randomQUICInitialFirstByte()
+	if err != nil {
+		return "", err
+	}
+	dcidLen, err := randomIntChoice(profile.destinationConnectionIDLengths)
+	if err != nil {
+		return "", err
+	}
+	dcid, err := randomHexBytes(dcidLen)
+	if err != nil {
+		return "", err
+	}
+	scidLen, err := randomIntChoice(profile.sourceConnectionIDLengths)
+	if err != nil {
+		return "", err
+	}
+	scid, err := randomHexBytes(scidLen)
+	if err != nil {
+		return "", err
+	}
+
+	totalPayloadSize, err := randomInt(quicInitialMinPayloadSize, quicInitialMaxPayloadSize)
+	if err != nil {
+		return "", err
+	}
+	headerBeforeLength := 1 + 4 + 1 + dcidLen + 1 + scidLen + 1
+	const lengthFieldSize = 2
+	protectedPayloadSize := totalPayloadSize - headerBeforeLength - lengthFieldSize
+	if protectedPayloadSize <= 0 {
+		return "", fmt.Errorf("invalid QUIC-like I1 protected payload size")
+	}
+	lengthHex, err := quicVarInt2Hex(protectedPayloadSize)
+	if err != nil {
+		return "", err
+	}
+
+	prefix := fmt.Sprintf(
+		"%02x00000001%02x%s%02x%s00%s",
+		firstByte,
+		dcidLen,
+		dcid,
+		scidLen,
+		scid,
+		lengthHex,
+	)
+	return fmt.Sprintf("<b 0x%s>%s", prefix, randomSignatureTokens(protectedPayloadSize)), nil
+}
+
+func randomSignatureTokens(size int) string {
+	if size <= 0 {
+		return ""
+	}
+	var builder strings.Builder
+	for size > 0 {
+		chunk := size
+		if chunk > maxRandomSignatureTokenSize {
+			chunk = maxRandomSignatureTokenSize
+		}
+		_, _ = fmt.Fprintf(&builder, "<r %d>", chunk)
+		size -= chunk
+	}
+	return builder.String()
+}
+
+func randomQUICInitialProfile() (quicInitialProfile, error) {
+	n, err := randomUint32Below(uint32(len(quicInitialProfiles)))
+	if err != nil {
+		return quicInitialProfile{}, err
+	}
+	return quicInitialProfiles[n], nil
+}
+
+func randomQUICInitialFirstByte() (byte, error) {
+	n, err := randomUint32Below(16)
+	if err != nil {
+		return 0, err
+	}
+	return byte(0xc0 | n), nil
+}
+
+func randomIntChoice(values []int) (int, error) {
+	if len(values) == 0 {
+		return 0, fmt.Errorf("empty random choice set")
+	}
+	n, err := randomUint32Below(uint32(len(values)))
+	if err != nil {
+		return 0, err
+	}
+	return values[n], nil
+}
+
+func quicVarInt2Hex(value int) (string, error) {
+	if value < 64 || value > 16383 {
+		return "", fmt.Errorf("QUIC varint value out of 2-byte range")
+	}
+	return fmt.Sprintf("%04x", 0x4000|value), nil
 }
 
 func defaultHeaderRanges() ([4]string, error) {
