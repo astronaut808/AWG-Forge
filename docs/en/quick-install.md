@@ -1,6 +1,6 @@
 # Quick Install
 
-`install.sh` is an interactive installer for a fresh Linux/VPS server. It creates runtime `.env`, prepares `data/`, bootstraps the first tunnel into `state.json`, starts Docker Compose, and prints the next steps.
+`install.sh` is an interactive installer for a fresh Linux/VPS server. It creates runtime `.env`, prepares `data/`, initializes the first tunnel into `state.json`, starts Docker Compose, and prints the next steps.
 
 Install [Docker Engine from the official documentation](https://docs.docker.com/engine/install/) first. If Docker or Docker Compose is unavailable, the installer exits before creating `/opt/awg-forge` or any project files.
 
@@ -44,7 +44,7 @@ If the repository is already cloned, you can run the local file:
 - generates `PASSWORD` and `SESSION_SECRET`;
 - creates runtime `.env` with `0600` permissions;
 - creates `data/` with `0700` permissions;
-- creates one-time `data/bootstrap.env`, which awg-forge consumes into `data/state.json` on first startup;
+- before starting the service, runs a one-shot `docker run ... awg-forge init` command that creates `data/state.json` with the first tunnel;
 - creates `docker-compose.yml` if it does not exist;
 - uses the host networking Compose file;
 - runs `docker compose up -d`;

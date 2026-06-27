@@ -4,8 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -13,9 +11,7 @@ import (
 	"github.com/astronaut808/awg-forge/internal/protocol"
 )
 
-const bootstrapFileName = "bootstrap.env"
-
-type BootstrapTunnel struct {
+type InitOptions struct {
 	ServerHost          string
 	ExternalInterface   string
 	ProfileID           string
@@ -29,34 +25,32 @@ type BootstrapTunnel struct {
 }
 
 func (s *Service) Init() (config.State, error) {
+	return s.InitWithOptions(InitOptionsFromConfig(s.cfg))
+}
+
+func (s *Service) InitWithOptions(options InitOptions) (config.State, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.initLocked()
+	return s.initWithOptionsLocked(options)
 }
 
 func (s *Service) initLocked() (config.State, error) {
+	return s.initWithOptionsLocked(InitOptionsFromConfig(s.cfg))
+}
+
+func (s *Service) initWithOptionsLocked(options InitOptions) (config.State, error) {
 	if state, err := s.store.Load(); err == nil {
 		return s.repairLoadedState(state)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return config.State{}, err
 	}
 
-	bootstrap, removeBootstrap, err := s.bootstrapTunnel()
-	if err != nil {
-		return config.State{}, err
-	}
-	state, err := s.createInitialState(bootstrap)
-	if err != nil {
-		return config.State{}, err
-	}
-	if removeBootstrap {
-		_ = os.Remove(filepath.Join(s.cfg.ConfigDir, bootstrapFileName))
-	}
-	return state, nil
+	return s.createInitialState(options)
 }
 
-func (s *Service) createInitialState(bootstrap BootstrapTunnel) (config.State, error) {
-	if err := validateBootstrap(bootstrap); err != nil {
+func (s *Service) createInitialState(options InitOptions) (config.State, error) {
+	options, spec, err := resolveInitOptions(options)
+	if err != nil {
 		return config.State{}, err
 	}
 	now := time.Now().UTC()
@@ -64,20 +58,20 @@ func (s *Service) createInitialState(bootstrap BootstrapTunnel) (config.State, e
 	if err != nil {
 		return config.State{}, err
 	}
-	tunnel, err := s.newTunnel(defaultTunnelSpec(bootstrap.ProfileID, bootstrap.Name, bootstrap.ListenPort, bootstrap.IPv4Subnet))
+	tunnel, err := s.newTunnel(spec)
 	if err != nil {
 		return config.State{}, err
 	}
-	tunnel.ServerHost = strings.TrimSpace(bootstrap.ServerHost)
-	tunnel.DNS = strings.TrimSpace(bootstrap.DNS)
-	tunnel.AllowedIPs = strings.TrimSpace(bootstrap.AllowedIPs)
-	tunnel.Keepalive = bootstrap.PersistentKeepalive
-	tunnel.MTU = bootstrap.MTU
+	tunnel.ServerHost = options.ServerHost
+	tunnel.DNS = options.DNS
+	tunnel.AllowedIPs = options.AllowedIPs
+	tunnel.Keepalive = options.PersistentKeepalive
+	tunnel.MTU = options.MTU
 	state := config.State{
 		SchemaVersion:     config.CurrentStateSchemaVersion,
 		SessionSecret:     secret,
-		ServerHost:        strings.TrimSpace(bootstrap.ServerHost),
-		ExternalInterface: strings.TrimSpace(bootstrap.ExternalInterface),
+		ServerHost:        options.ServerHost,
+		ExternalInterface: options.ExternalInterface,
 		Warp:              config.Warp{InterfaceName: "warp0", MTU: 1280, PersistentKeepalive: 25},
 		Tunnels:           []config.Tunnel{tunnel},
 		CreatedAt:         now,
@@ -89,18 +83,7 @@ func (s *Service) createInitialState(bootstrap BootstrapTunnel) (config.State, e
 	return state, s.renderTunnelFromState(state, tunnel.ID, false)
 }
 
-func (s *Service) bootstrapTunnel() (BootstrapTunnel, bool, error) {
-	path := filepath.Join(s.cfg.ConfigDir, bootstrapFileName)
-	if b, err := os.ReadFile(path); err == nil {
-		bootstrap, err := parseBootstrapEnv(string(b), s.cfg)
-		return bootstrap, true, err
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return BootstrapTunnel{}, false, err
-	}
-	return bootstrapFromConfig(s.cfg), false, nil
-}
-
-func bootstrapFromConfig(cfg config.Config) BootstrapTunnel {
+func InitOptionsFromConfig(cfg config.Config) InitOptions {
 	profileID := strings.TrimSpace(cfg.ProtocolProfile)
 	if profileID == "" {
 		profileID = "awg_2_0"
@@ -117,7 +100,7 @@ func bootstrapFromConfig(cfg config.Config) BootstrapTunnel {
 	if externalInterface == "" {
 		externalInterface = "eth0"
 	}
-	return BootstrapTunnel{
+	return InitOptions{
 		ServerHost:          cfg.ServerHost,
 		ExternalInterface:   externalInterface,
 		ProfileID:           profileID,
@@ -131,76 +114,61 @@ func bootstrapFromConfig(cfg config.Config) BootstrapTunnel {
 	}
 }
 
-func parseBootstrapEnv(text string, cfg config.Config) (BootstrapTunnel, error) {
-	values := make(map[string]string)
-	for _, line := range strings.Split(text, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		key, value, ok := strings.Cut(line, "=")
-		if !ok {
-			return BootstrapTunnel{}, fmt.Errorf("invalid bootstrap line %q", line)
-		}
-		values[strings.TrimSpace(key)] = strings.TrimSpace(value)
+func resolveInitOptions(options InitOptions) (InitOptions, tunnelSpec, error) {
+	options.ServerHost = strings.TrimSpace(options.ServerHost)
+	options.ExternalInterface = strings.TrimSpace(options.ExternalInterface)
+	options.ProfileID = strings.TrimSpace(options.ProfileID)
+	options.Name = strings.TrimSpace(options.Name)
+	options.IPv4Subnet = strings.TrimSpace(options.IPv4Subnet)
+	options.DNS = strings.TrimSpace(options.DNS)
+	options.AllowedIPs = strings.TrimSpace(options.AllowedIPs)
+	if options.ProfileID == "" {
+		options.ProfileID = "awg_2_0"
 	}
-	bootstrap := bootstrapFromConfig(cfg)
-	setString := func(key string, dst *string) {
-		if value, ok := values[key]; ok {
-			*dst = value
-		}
+	if options.ExternalInterface == "" {
+		options.ExternalInterface = "eth0"
 	}
-	setInt := func(key string, dst *int) error {
-		value, ok := values[key]
-		if !ok || value == "" {
-			return nil
-		}
-		n, err := strconv.Atoi(value)
-		if err != nil {
-			return fmt.Errorf("%s must be an integer", key)
-		}
-		*dst = n
-		return nil
+	if options.DNS == "" {
+		options.DNS = "1.1.1.1"
 	}
-	setString("SERVER_HOST", &bootstrap.ServerHost)
-	setString("EXTERNAL_INTERFACE", &bootstrap.ExternalInterface)
-	setString("PROTOCOL_PROFILE", &bootstrap.ProfileID)
-	setString("TUNNEL_NAME", &bootstrap.Name)
-	setString("IPV4_SUBNET", &bootstrap.IPv4Subnet)
-	setString("DNS", &bootstrap.DNS)
-	setString("ALLOWED_IPS", &bootstrap.AllowedIPs)
-	if err := setInt("LISTEN_PORT", &bootstrap.ListenPort); err != nil {
-		return BootstrapTunnel{}, err
+	if options.AllowedIPs == "" {
+		options.AllowedIPs = "0.0.0.0/0"
 	}
-	if err := setInt("PERSISTENT_KEEPALIVE", &bootstrap.PersistentKeepalive); err != nil {
-		return BootstrapTunnel{}, err
+	spec := defaultTunnelSpec(options.ProfileID, options.Name, options.ListenPort, options.IPv4Subnet)
+	if err := validateInitialTunnelOptions(options, spec); err != nil {
+		return InitOptions{}, tunnelSpec{}, err
 	}
-	if err := setInt("MTU", &bootstrap.MTU); err != nil {
-		return BootstrapTunnel{}, err
+	normalizedSubnet, _, err := normalizeIPv4CIDR(spec.IPv4Subnet)
+	if err != nil {
+		return InitOptions{}, tunnelSpec{}, err
 	}
-	return bootstrap, validateBootstrap(bootstrap)
+	spec.IPv4Subnet = normalizedSubnet
+	return options, spec, nil
 }
 
-func validateBootstrap(bootstrap BootstrapTunnel) error {
-	if err := validateServerHost(strings.TrimSpace(bootstrap.ServerHost)); err != nil {
+func validateInitialTunnelOptions(options InitOptions, spec tunnelSpec) error {
+	if err := validateServerHost(options.ServerHost); err != nil {
 		return err
 	}
-	if strings.TrimSpace(bootstrap.ExternalInterface) == "" {
+	if options.ExternalInterface == "" {
 		return errors.New("external interface is required")
 	}
-	if strings.TrimSpace(bootstrap.DNS) == "" {
+	if options.DNS == "" {
 		return errors.New("DNS is required")
 	}
-	if strings.TrimSpace(bootstrap.AllowedIPs) == "" {
+	if options.AllowedIPs == "" {
 		return errors.New("allowed IPs are required")
 	}
-	if bootstrap.ListenPort != 0 && (bootstrap.ListenPort < 1 || bootstrap.ListenPort > 65535) {
+	if !tunnelNameRE.MatchString(spec.Name) {
+		return errors.New("tunnel name must start with a letter and contain only letters, numbers, dots, underscores, or dashes")
+	}
+	if spec.ListenPort < 1 || spec.ListenPort > 65535 {
 		return errors.New("listen port must be 1..65535")
 	}
-	if bootstrap.PersistentKeepalive < 0 {
+	if options.PersistentKeepalive < 0 {
 		return errors.New("persistent keepalive must be non-negative")
 	}
-	if bootstrap.MTU != 0 && (bootstrap.MTU < 576 || bootstrap.MTU > 1500) {
+	if options.MTU != 0 && (options.MTU < 576 || options.MTU > 1500) {
 		return errors.New("MTU must be auto or between 576 and 1500")
 	}
 	return nil

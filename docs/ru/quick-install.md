@@ -1,6 +1,6 @@
 # Быстрая установка
 
-`install.sh` — интерактивный установщик для нового Linux/VPS сервера. Он создает runtime `.env`, подготавливает `data/`, bootstrap-ит первый туннель в `state.json`, запускает Docker Compose и показывает дальнейшие шаги.
+`install.sh` — интерактивный установщик для нового Linux/VPS сервера. Он создает runtime `.env`, подготавливает `data/`, инициализирует первый туннель в `state.json`, запускает Docker Compose и показывает дальнейшие шаги.
 
 Перед запуском установи [Docker Engine с официальной документации](https://docs.docker.com/engine/install/). Если Docker или Docker Compose отсутствуют, скрипт завершится до создания `/opt/awg-forge` и любых файлов проекта.
 
@@ -44,7 +44,7 @@ sudo AWG_FORGE_HOME=/srv/awg-forge ./install.sh
 - генерирует `PASSWORD` и `SESSION_SECRET`;
 - создает runtime `.env` с правами `0600`;
 - создает `data/` с правами `0700`;
-- создает одноразовый `data/bootstrap.env`, который awg-forge при первом старте переносит в `data/state.json`;
+- до запуска сервиса выполняет одноразовый `docker run ... awg-forge init`, который создает `data/state.json` с первым туннелем;
 - создает `docker-compose.yml`, если его еще нет;
 - использует host networking compose-файл;
 - запускает `docker compose up -d`;

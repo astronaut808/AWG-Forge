@@ -16,11 +16,11 @@ The main example is [.env.example](../../.env.example).
 - `AUDIT_LOG_MAX_SIZE`: file size before rotation. Defaults to `5242880`.
 - `AUDIT_LOG_MAX_FILES`: number of rotated files to keep. Defaults to `3`.
 
-## First Tunnel Bootstrap
+## First Tunnel Initialization
 
 New installs keep runtime settings in `.env` and tunnel settings in `state.json`.
 
-During a fresh install, `install.sh` writes the first tunnel request to `data/bootstrap.env`. On first startup, awg-forge consumes that file, creates `state.json`, renders configs, and removes `bootstrap.env`. After that, tunnel settings are managed from the Web UI/API and persisted in `state.json`.
+During a fresh install, `install.sh` runs a one-shot `awg-forge init` container before starting the service. That command creates `data/state.json` with the selected first tunnel. After that, `docker compose up -d` starts from ready state, and tunnel settings are managed from the Web UI/API and persisted in `state.json`.
 
 The installer asks for the protocol profile before tunnel defaults, so profile-specific defaults stay aligned. Pressing Enter on the profile question selects AWG 2.0:
 
@@ -76,7 +76,7 @@ If the interface is wrong, handshakes may work while internet through the VPN do
 
 Each tunnel has a `Server host` field in the Web UI. It defines the host awg-forge uses in `Endpoint = <host>:<port>` for client `.conf` files.
 
-On new installs this value is written to `state.json` during first bootstrap. Changing `SERVER_HOST` in `.env` after state exists does not rewrite existing tunnels.
+On new installs this value is written to `state.json` during the first `awg-forge init`. Changing `SERVER_HOST` in `.env` after state exists does not rewrite existing tunnels.
 
 This is useful when different tunnels are published through different subdomains, for example:
 

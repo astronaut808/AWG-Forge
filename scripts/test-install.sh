@@ -35,16 +35,15 @@ rm -f "$ENV_FILE"
 mkdir -p "$DATA_DIR"
 write_env "127.0.0.1" "51821" "password" "secret" "eth0"
 if grep -Eq '^(SERVER_HOST|TUNNEL_NAME|LISTEN_PORT|IPV4_SUBNET|DNS|ALLOWED_IPS|PERSISTENT_KEEPALIVE|MTU|PROTOCOL_PROFILE)=' "$ENV_FILE"; then
-  printf 'FAIL runtime .env contains tunnel bootstrap variables\n' >&2
+  printf 'FAIL runtime .env contains tunnel init variables\n' >&2
   exit 1
 fi
-write_bootstrap "vpn.example.com" "awg20" "51830" "eth0" "10.20.0.0/24" "1.1.1.1" "0.0.0.0/0" "0" "0" "awg_2_0"
-if ! grep -q '^PROTOCOL_PROFILE=awg_2_0$' "$DATA_DIR/bootstrap.env"; then
-  printf 'FAIL bootstrap.env did not contain the selected tunnel profile\n' >&2
+if [[ -e "$DATA_DIR/bootstrap.env" ]]; then
+  printf 'FAIL installer created deprecated bootstrap.env\n' >&2
   exit 1
 fi
 
-printf 'OK   runtime env and one-time bootstrap are split\n'
+printf 'OK   runtime env is split from explicit state init\n'
 
 missing_docker_dir="$test_dir/must-not-exist"
 INSTALL_DIR_DEFAULT="$missing_docker_dir"

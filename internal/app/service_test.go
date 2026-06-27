@@ -94,43 +94,60 @@ func TestFreshInitDefaultsToAWG20(t *testing.T) {
 	}
 }
 
-func TestInitConsumesBootstrapFile(t *testing.T) {
+func TestInitWithOptionsCreatesFirstTunnel(t *testing.T) {
 	cfg := config.Config{
 		ConfigDir:         t.TempDir(),
 		ServerHost:        "fallback.example.com",
 		ExternalInterface: "eth0",
 	}
-	bootstrap := strings.Join([]string{
-		"SERVER_HOST=edge.example.com",
-		"EXTERNAL_INTERFACE=ens3",
-		"PROTOCOL_PROFILE=awg_1_5",
-		"TUNNEL_NAME=awg15",
-		"LISTEN_PORT=51825",
-		"IPV4_SUBNET=10.15.0.0/24",
-		"DNS=9.9.9.9",
-		"ALLOWED_IPS=0.0.0.0/0",
-		"PERSISTENT_KEEPALIVE=25",
-		"MTU=1280",
-	}, "\n")
-	if err := os.WriteFile(filepath.Join(cfg.ConfigDir, "bootstrap.env"), []byte(bootstrap), 0600); err != nil {
-		t.Fatal(err)
-	}
-	state, err := app.New(cfg).Init()
+	state, err := app.New(cfg).InitWithOptions(app.InitOptions{
+		ServerHost:          "edge.example.com",
+		ExternalInterface:   "ens3",
+		ProfileID:           "awg_1_5",
+		Name:                "awg15",
+		ListenPort:          51825,
+		IPv4Subnet:          "10.15.0.0/24",
+		DNS:                 "9.9.9.9",
+		AllowedIPs:          "0.0.0.0/0",
+		PersistentKeepalive: 25,
+		MTU:                 1280,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(cfg.ConfigDir, "bootstrap.env")); !os.IsNotExist(err) {
-		t.Fatalf("bootstrap.env still exists or stat failed: %v", err)
-	}
 	if state.ServerHost != "edge.example.com" || state.ExternalInterface != "ens3" {
-		t.Fatalf("bootstrap host/interface not applied: %#v", state)
+		t.Fatalf("init host/interface not applied: %#v", state)
 	}
 	tunnel := state.Tunnels[0]
 	if tunnel.ProtocolProfileID != "awg_1_5" || tunnel.InterfaceName != "awg15" || tunnel.ListenPort != 51825 {
-		t.Fatalf("bootstrap tunnel not applied: %#v", tunnel)
+		t.Fatalf("init tunnel not applied: %#v", tunnel)
 	}
 	if tunnel.DNS != "9.9.9.9" || tunnel.Keepalive != 25 || tunnel.MTU != 1280 {
-		t.Fatalf("bootstrap tunnel settings not applied: %#v", tunnel)
+		t.Fatalf("init tunnel settings not applied: %#v", tunnel)
+	}
+}
+
+func TestInitWithOptionsRejectsInvalidTunnelName(t *testing.T) {
+	cfg := config.Config{
+		ConfigDir:         t.TempDir(),
+		ServerHost:        "vpn.example.com",
+		ExternalInterface: "eth0",
+	}
+	_, err := app.New(cfg).InitWithOptions(app.InitOptions{
+		ServerHost:        "vpn.example.com",
+		ExternalInterface: "eth0",
+		ProfileID:         "awg_2_0",
+		Name:              "2bad",
+		ListenPort:        51830,
+		IPv4Subnet:        "10.20.0.0/24",
+		DNS:               "1.1.1.1",
+		AllowedIPs:        "0.0.0.0/0",
+	})
+	if err == nil || !strings.Contains(err.Error(), "tunnel name must start") {
+		t.Fatalf("expected invalid tunnel name error, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.ConfigDir, "state.json")); !os.IsNotExist(err) {
+		t.Fatalf("state.json was created after invalid init: %v", err)
 	}
 }
 

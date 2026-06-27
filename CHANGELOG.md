@@ -4,7 +4,7 @@
 
 ### Changed
 
-- Changed fresh installs to keep runtime/container settings in `.env` and bootstrap the first tunnel into `state.json` through one-time `data/bootstrap.env`.
+- Changed fresh installs to keep runtime/container settings in `.env` and initialize the first tunnel directly into `state.json` with a one-shot `awg-forge init` container before `docker compose up -d`.
 - Changed the quick installer default profile to AmneziaWG 2.0 when the profile prompt is accepted with Enter.
 - Made existing `state.json` the source of truth for tunnel endpoint/settings on repeated installs; old tunnel variables in `.env` are now ignored after state exists.
 - Removed the legacy profile dashboard switch and made the tunnel-first dashboard the only Web UI mode, with compact protocol filters and protocol-aware empty-state tunnel creation.
@@ -12,7 +12,7 @@
 ### Added
 
 - Added Doctor guidance for upgraded installs that still contain legacy tunnel variables in `.env`, with a safe cleanup note after verifying tunnel settings in the UI.
-- Added regression tests for AWG 2.0 default bootstrap, one-time bootstrap consumption, and existing-state precedence over changed env tunnel values.
+- Added regression tests for AWG 2.0 default initialization, explicit first-tunnel init options, invalid initial tunnel names, and existing-state precedence over changed env tunnel values.
 
 ## v0.11.0 - 2026-06-21
 

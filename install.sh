@@ -2,6 +2,7 @@
 set -euo pipefail
 
 APP_NAME="awg-forge"
+IMAGE="ghcr.io/astronaut808/awg-forge:latest"
 INSTALL_DIR_DEFAULT="/opt/awg-forge"
 ENV_FILE=".env"
 COMPOSE_FILE="docker-compose.yml"
@@ -436,6 +437,16 @@ YAML
   ok "created $COMPOSE_FILE"
 }
 
+ensure_image_available() {
+  if docker image inspect "$IMAGE" >/dev/null 2>&1; then
+    return
+  fi
+  fail "$IMAGE is not available locally"
+  printf 'Rerun the installer and allow image pull, or pull it manually:\n' >&2
+  printf 'docker pull %s\n' "$IMAGE" >&2
+  exit 1
+}
+
 prepare_workdir() {
   local script_dir
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P || true)"
@@ -488,7 +499,7 @@ EOF
   ok "created $ENV_FILE"
 }
 
-write_bootstrap() {
+initialize_state() {
   local server_host="$1"
   local tunnel_name="$2"
   local listen_port="$3"
@@ -500,20 +511,24 @@ write_bootstrap() {
   local mtu="$9"
   local profile="${10}"
 
-  cat >"$DATA_DIR/bootstrap.env" <<EOF
-SERVER_HOST=$server_host
-EXTERNAL_INTERFACE=$external_interface
-PROTOCOL_PROFILE=$profile
-TUNNEL_NAME=$tunnel_name
-LISTEN_PORT=$listen_port
-IPV4_SUBNET=$ipv4_subnet
-DNS=$dns
-ALLOWED_IPS=$allowed_ips
-PERSISTENT_KEEPALIVE=$keepalive
-MTU=$mtu
-EOF
-  chmod 600 "$DATA_DIR/bootstrap.env" || true
-  ok "created $DATA_DIR/bootstrap.env"
+  ensure_image_available
+  local data_dir_abs
+  data_dir_abs="$(pwd -P)/$DATA_DIR"
+  docker run --rm --pull=never \
+    --env-file "$ENV_FILE" \
+    -v "$data_dir_abs:/etc/awg-forge" \
+    "$IMAGE" awg-forge init \
+      --server-host "$server_host" \
+      --external-interface "$external_interface" \
+      --profile "$profile" \
+      --tunnel-name "$tunnel_name" \
+      --listen-port "$listen_port" \
+      --ipv4-subnet "$ipv4_subnet" \
+      --dns "$dns" \
+      --allowed-ips "$allowed_ips" \
+      --keepalive "$keepalive" \
+      --mtu "$mtu"
+  ok "created $DATA_DIR/state.json"
 }
 
 doctor_has_failures() {
@@ -705,16 +720,22 @@ main() {
   mkdir -p "$DATA_DIR"
   chmod 700 "$DATA_DIR" || true
   ok "created $DATA_DIR/"
-  if ! $existing_state; then
-    write_bootstrap "$server_host" "$tunnel_name" "$listen_port" "$external_interface" "$ipv4_subnet" "$dns" "$allowed_ips" "$keepalive" "$mtu" "$profile"
-  fi
   write_compose_if_missing
 
   printf '\n'
-  bold "Start Docker"
-  if confirm "Pull latest image before start?" "y"; then
-    $compose pull
+  bold "Prepare Docker image"
+  if confirm "Pull latest image before initialization/start?" "y"; then
+    docker pull "$IMAGE"
   fi
+
+  if ! $existing_state; then
+    printf '\n'
+    bold "Initialize state"
+    initialize_state "$server_host" "$tunnel_name" "$listen_port" "$external_interface" "$ipv4_subnet" "$dns" "$allowed_ips" "$keepalive" "$mtu" "$profile"
+  fi
+
+  printf '\n'
+  bold "Start Docker"
   $compose up -d --force-recreate
 
   printf '\n'
