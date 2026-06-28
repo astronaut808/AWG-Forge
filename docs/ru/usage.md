@@ -124,4 +124,7 @@ awg-forge logs
 
 Действие `Import key` экспериментальное. Оно возвращает `vpn://` key, внутри которого лежит тот же сгенерированный клиентский конфиг, закодированный для AmneziaVPN-style text import. Мы проверили его на iOS, но сам формат не iOS-specific. Используй его только для проверки совместимости с AmneziaVPN или DefaultVPN. Для роутеров, native AmneziaWG app и production fallback нужно продолжать использовать `.conf`.
 
-QR import не показывается в UI и не поддерживается как product path.
+QR import пока не показывается в UI и не поддерживается как product path. Future QR support должен быть отдельной проверенной совместимостью:
+
+- native AmneziaWG app: QR от полного `.conf`, например `qrencode -t ansiutf8 < tunnel.conf`;
+- AmneziaVPN: отдельная проверка формата импорта, потому что поведение может отличаться от native AmneziaWG.

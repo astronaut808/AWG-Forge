@@ -124,4 +124,7 @@ The supported path is `.conf` file import.
 
 The `Import key` action is experimental. It returns a `vpn://` key that contains the same rendered client config encoded for AmneziaVPN-style text import. It has been checked on iOS, but the format is not iOS-specific. Use it only for compatibility testing with AmneziaVPN or DefaultVPN. Routers, the AmneziaWG native app, and production fallback should continue to use `.conf`.
 
-QR import is not shown in the UI and is not supported as a product path.
+QR import is not shown in the UI and is not supported as a product path yet. Future QR support should be implemented as explicit, tested compatibility:
+
+- native AmneziaWG app: QR from the full `.conf`, for example `qrencode -t ansiutf8 < tunnel.conf`;
+- AmneziaVPN: separate import-format validation, because its behavior may differ from the native AmneziaWG app.
