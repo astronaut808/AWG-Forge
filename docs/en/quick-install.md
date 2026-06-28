@@ -12,6 +12,12 @@ sudo ./install.sh
 
 Downloading the script first is recommended for interactive installs. In some `curl | sudo bash` TTY/sudo environments the prompt can appear stuck because the script body and interactive answers use different input streams.
 
+To test a non-release image, pass `IMAGE`:
+
+```bash
+sudo IMAGE=ghcr.io/astronaut808/awg-forge:test ./install.sh
+```
+
 By default, it installs into:
 
 ```text

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 APP_NAME="awg-forge"
-IMAGE="ghcr.io/astronaut808/awg-forge:latest"
+IMAGE="${IMAGE:-ghcr.io/astronaut808/awg-forge:latest}"
 INSTALL_DIR_DEFAULT="/opt/awg-forge"
 ENV_FILE=".env"
 COMPOSE_FILE="docker-compose.yml"
@@ -417,10 +417,10 @@ write_compose_if_missing() {
     ok "$COMPOSE_FILE exists"
     return
   fi
-  cat >"$COMPOSE_FILE" <<'YAML'
+  cat >"$COMPOSE_FILE" <<YAML
 services:
   awg-forge:
-    image: ghcr.io/astronaut808/awg-forge:latest
+    image: $IMAGE
     container_name: awg-forge
     env_file: .env
     network_mode: host
@@ -724,7 +724,7 @@ main() {
 
   printf '\n'
   bold "Prepare Docker image"
-  if confirm "Pull latest image before initialization/start?" "y"; then
+  if confirm "Pull $IMAGE before initialization/start?" "y"; then
     docker pull "$IMAGE"
   fi
 
