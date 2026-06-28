@@ -50,7 +50,7 @@ sudo AWG_FORGE_HOME=/srv/awg-forge ./install.sh
 - генерирует `PASSWORD` и `SESSION_SECRET`;
 - создает runtime `.env` с правами `0600`;
 - создает `data/` с правами `0700`;
-- до запуска сервиса выполняет одноразовый `docker run ... awg-forge init`, который создает `data/state.json` с первым туннелем;
+- до запуска сервиса выполняет одноразовый `docker run ... init`, который создает `data/state.json` с первым туннелем;
 - создает `docker-compose.yml`, если его еще нет;
 - использует host networking compose-файл;
 - запускает `docker compose up -d`;

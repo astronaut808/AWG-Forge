@@ -517,7 +517,7 @@ initialize_state() {
   docker run --rm --pull=never \
     --env-file "$ENV_FILE" \
     -v "$data_dir_abs:/etc/awg-forge" \
-    "$IMAGE" awg-forge init \
+    "$IMAGE" init \
       --server-host "$server_host" \
       --external-interface "$external_interface" \
       --profile "$profile" \

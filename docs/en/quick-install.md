@@ -50,7 +50,7 @@ If the repository is already cloned, you can run the local file:
 - generates `PASSWORD` and `SESSION_SECRET`;
 - creates runtime `.env` with `0600` permissions;
 - creates `data/` with `0700` permissions;
-- before starting the service, runs a one-shot `docker run ... awg-forge init` command that creates `data/state.json` with the first tunnel;
+- before starting the service, runs a one-shot `docker run ... init` command that creates `data/state.json` with the first tunnel;
 - creates `docker-compose.yml` if it does not exist;
 - uses the host networking Compose file;
 - runs `docker compose up -d`;
