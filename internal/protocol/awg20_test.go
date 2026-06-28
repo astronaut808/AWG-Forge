@@ -25,6 +25,35 @@ func TestAWG20DefaultsValidate(t *testing.T) {
 	assertQUICLikeI1(t, params["I1"])
 }
 
+func TestAWG20DefaultsUseNonOverlappingHeaderRanges(t *testing.T) {
+	params, err := AWG20{}.GenerateDefaults()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := make([]headerRange, 0, 4)
+	for _, key := range []string{"H1", "H2", "H3", "H4"} {
+		rng, err := parseHeaderRange(params[key])
+		if err != nil {
+			t.Fatalf("%s is not a valid range: %v", key, err)
+		}
+		if rng.start == rng.end {
+			t.Fatalf("%s default should be a range, got single value %d", key, rng.start)
+		}
+		if rng.start < 1024 {
+			t.Fatalf("%s range starts too close to reserved/default-looking values: %d", key, rng.start)
+		}
+		if rng.end-rng.start < 30000 {
+			t.Fatalf("%s range is too narrow: %d-%d", key, rng.start, rng.end)
+		}
+		for _, prev := range seen {
+			if rng.overlaps(prev) {
+				t.Fatalf("%s overlaps previous generated range", key)
+			}
+		}
+		seen = append(seen, rng)
+	}
+}
+
 func TestAWG20DefaultsRandomizeQUICLikeI1(t *testing.T) {
 	first, err := AWG20{}.GenerateDefaults()
 	if err != nil {
@@ -42,18 +71,39 @@ func TestAWG20DefaultsRandomizeQUICLikeI1(t *testing.T) {
 	t.Fatal("expected AWG 2.0 I1 to change across generated defaults")
 }
 
+func TestAWG20DefaultsAvoidParserBoundaryRandomChunks(t *testing.T) {
+	for i := 0; i < 20; i++ {
+		params, err := AWG20{}.GenerateDefaults()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, token := range signatureTokenRE.FindAllString(params["I1"], -1) {
+			if !strings.HasPrefix(token, "<r ") {
+				continue
+			}
+			size, err := signatureTokenSize(token)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if size > randomSignatureChunkMax {
+				t.Fatalf("generated random chunk crosses parser-safe boundary: %s", token)
+			}
+		}
+	}
+}
+
 func TestAWG20AcceptsQUICLikeI1SizeRange(t *testing.T) {
 	params, err := AWG20{}.GenerateDefaults()
 	if err != nil {
 		t.Fatal(err)
 	}
-	params["I1"] = "<b 0xcf000000010811223344556677880000449e><r 1000><r 182>"
+	params["I1"] = "<b 0xcf000000010811223344556677880000449e><r 999><r 183>"
 	if err := (AWG20{}).Validate(params); err != nil {
 		t.Fatal(err)
 	}
-	params["I1"] = "<r 1001>"
+	params["I1"] = "<r 1000>"
 	if err := (AWG20{}).Validate(params); err == nil {
-		t.Fatal("expected single random token larger than 1000 bytes to be rejected")
+		t.Fatal("expected parser-boundary random token to be rejected")
 	}
 	params["I1"] = "<r 1233>"
 	if err := (AWG20{}).Validate(params); err == nil {

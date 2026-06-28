@@ -114,6 +114,8 @@ func (AWG20) RenderClientPeer(ctx RenderContext, client config.Client) ([]Config
 const (
 	quicInitialMinPayloadSize = 1200
 	quicInitialMaxPayloadSize = 1232
+	randomSignatureChunkMin   = 180
+	randomSignatureChunkMax   = 999
 )
 
 type quicInitialProfile struct {
@@ -186,23 +188,31 @@ func defaultQUICLikeI1() (string, error) {
 		scid,
 		lengthHex,
 	)
-	return fmt.Sprintf("<b 0x%s>%s", prefix, randomSignatureTokens(protectedPayloadSize)), nil
+	tokens, err := randomSignatureTokens(protectedPayloadSize)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("<b 0x%s>%s", prefix, tokens), nil
 }
 
-func randomSignatureTokens(size int) string {
+func randomSignatureTokens(size int) (string, error) {
 	if size <= 0 {
-		return ""
+		return "", nil
 	}
 	var builder strings.Builder
 	for size > 0 {
 		chunk := size
-		if chunk > maxRandomSignatureTokenSize {
-			chunk = maxRandomSignatureTokenSize
+		if chunk > randomSignatureChunkMax {
+			next, err := randomInt(randomSignatureChunkMin, randomSignatureChunkMax)
+			if err != nil {
+				return "", err
+			}
+			chunk = next
 		}
 		_, _ = fmt.Fprintf(&builder, "<r %d>", chunk)
 		size -= chunk
 	}
-	return builder.String()
+	return builder.String(), nil
 }
 
 func randomQUICInitialProfile() (quicInitialProfile, error) {
@@ -240,16 +250,23 @@ func quicVarInt2Hex(value int) (string, error) {
 }
 
 func defaultHeaderRanges() ([4]string, error) {
-	const width uint32 = 31
+	const (
+		minWidth uint32 = 30000
+		maxWidth uint32 = 65535
+		minStart uint32 = 1024
+	)
 	used := make([]headerRange, 0, 4)
 	var out [4]string
 	for i := 0; i < 4; i++ {
 		for {
-			base, err := randomUint32Below(2147483000)
+			width, err := randomUint32Range(minWidth, maxWidth)
 			if err != nil {
 				return out, err
 			}
-			start := 1024 + base
+			start, err := randomUint32Range(minStart, 4294967295-width)
+			if err != nil {
+				return out, err
+			}
 			end := start + width
 			next := headerRange{start: uint64(start), end: uint64(end)}
 			overlaps := false

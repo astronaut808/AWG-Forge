@@ -58,7 +58,7 @@ Legacy / 1.0 и 1.5:
 - `Jmin`: random `64..256`;
 - `Jmax`: random `768..1024`, всегда больше `Jmin`;
 - `S1/S2`: random `15..64`;
-- `H1-H4`: random unique non-zero single values.
+- `H1-H4`: crypto-random unique non-zero single values, без modulo reduction.
 
 AWG 2.0:
 
@@ -67,13 +67,13 @@ AWG 2.0:
 - `Jmax`: random `768..1024`;
 - `S1-S3`: random `15..64`;
 - `S4`: random `8..32`;
-- `H1-H4`: non-overlapping ranges;
-- `I1`: генерируется для каждого туннеля как `1200..1232` byte QUIC Initial-like CPS packet: randomized protected first byte, QUIC v1 marker, один из нескольких destination/source connection ID profiles, корректный QUIC varint length и runtime-random protected payload, разбитый на `<r ...>` chunks не больше `1000` bytes каждый;
+- `H1-H4`: crypto-random non-overlapping ranges шириной `30000..65535`;
+- `I1`: генерируется для каждого туннеля как `1200..1232` byte QUIC Initial-like CPS packet: randomized protected first byte, QUIC v1 marker, один из нескольких destination/source connection ID profiles, корректный QUIC varint length и runtime-random protected payload, разбитый на parser-safe randomized `<r ...>` chunks не больше `999` bytes каждый;
 - `I2-I5`: небольшая CPS-цепочка, аналогичная текущему 1.5 профилю.
 
 Zero-valued obfuscation params считаются слабыми defaults, потому что all-zero behavior двигает поведение в сторону обычного WireGuard.
 
-AWG 2.0 по умолчанию использует рандомизированную QUIC Initial-like сигнатуру `I1`. Моделируется только форма UDP payload: Ethernet/IP/UDP headers из packet capture в конфиг не попадают. Сигнатура нужна для AmneziaWG CPS-маскировки, а не для установки настоящей QUIC-сессии. Размер рандомизируется в диапазоне `1200..1232` bytes, а крупные random-блоки разбиваются на документированные CPS `<r ...>` части.
+AWG 2.0 по умолчанию использует рандомизированную QUIC Initial-like сигнатуру `I1`. Моделируется только форма UDP payload: Ethernet/IP/UDP headers из packet capture в конфиг не попадают. Сигнатура нужна для AmneziaWG CPS-маскировки, а не для установки настоящей QUIC-сессии. Размер рандомизируется в диапазоне `1200..1232` bytes, а крупные random-блоки разбиваются на randomized CPS `<r ...>` части ниже границы парсера.
 
 ## Статус проверки AWG 2.0
 

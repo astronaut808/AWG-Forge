@@ -73,7 +73,7 @@ The current Amnezia client import path detects AWG 2.0 when a WireGuard/AWG conf
 | `Jmax` | random `768..1024`, always greater than `Jmin` |
 | `S1` | random `15..64` |
 | `S2` | random `15..64`, avoiding `S1 + 56 == S2` |
-| `H1-H4` | random unique non-zero single values |
+| `H1-H4` | crypto-random unique non-zero single values, generated without modulo reduction |
 
 For AWG 2.0, defaults are:
 
@@ -82,13 +82,13 @@ For AWG 2.0, defaults are:
 - `Jmax`: random `768..1024`;
 - `S1-S3`: random `15..64`;
 - `S4`: random `8..32`;
-- `H1-H4`: non-overlapping ranges, not single values;
-- `I1`: generated per tunnel as a `1200..1232` byte QUIC Initial-like CPS packet, with a randomized protected first byte, QUIC v1 marker, one of several destination/source connection ID profiles, a valid QUIC varint length field, and runtime-random protected payload bytes split into `<r ...>` chunks of at most `1000` bytes;
+- `H1-H4`: crypto-random non-overlapping ranges with width `30000..65535`, not single values;
+- `I1`: generated per tunnel as a `1200..1232` byte QUIC Initial-like CPS packet, with a randomized protected first byte, QUIC v1 marker, one of several destination/source connection ID profiles, a valid QUIC varint length field, and runtime-random protected payload bytes split into parser-safe randomized `<r ...>` chunks of at most `999` bytes;
 - `I2-I5`: the same small CPS entropy chain currently used by the 1.5 profile.
 
 Zero-valued obfuscation parameters are treated as weak defaults because Amnezia docs note that all-zero behavior falls back toward standard WireGuard behavior.
 
-AWG 2.0 uses a randomized QUIC Initial-like `I1` signature by default. Only the UDP payload shape is modeled: Ethernet/IP/UDP headers from packet captures are not included. The generated packet is intended for AmneziaWG CPS masking, not for establishing a real QUIC session. Its size is randomized within `1200..1232` bytes, and large random sections are split into documented CPS `<r ...>` chunks.
+AWG 2.0 uses a randomized QUIC Initial-like `I1` signature by default. Only the UDP payload shape is modeled: Ethernet/IP/UDP headers from packet captures are not included. The generated packet is intended for AmneziaWG CPS masking, not for establishing a real QUIC session. Its size is randomized within `1200..1232` bytes, and large random sections are split into randomized CPS `<r ...>` chunks below the parser boundary.
 
 ## Validation Status For AWG 2.0
 

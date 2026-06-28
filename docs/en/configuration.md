@@ -105,6 +105,18 @@ Practically:
 - the Web UI offers `Auto`, common presets, and `Custom` for explicit MTU values;
 - after changing MTU, clients should download fresh `.conf` files.
 
+## IPv6 and AllowedIPs
+
+The current awg-forge release manages IPv4 egress. Generated client configs intentionally use:
+
+```ini
+AllowedIPs = 0.0.0.0/0
+```
+
+`::/0` is not added automatically because the server side does not yet create IPv6 subnets, client IPv6 addresses, IPv6 forwarding, or NAT66/ip6tables/nftables rules. Adding `::/0` without full IPv6 egress could send client IPv6 traffic into the tunnel and blackhole it.
+
+If you need IPv6 leak protection before full IPv6 support lands, disable IPv6 on the client/router or configure IPv4-only behavior on the client side.
+
 ## Tunnel Egress and WARP
 
 Each tunnel can use one of two egress modes:

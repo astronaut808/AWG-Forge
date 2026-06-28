@@ -15,7 +15,7 @@ const defaultDigitsNoiseI3 = "<rd 12><r 12>"
 const defaultCharsNoiseI4 = "<rc 16><r 10>"
 const defaultRandomNoiseI5 = "<r 32>"
 const maxSignaturePacketSize = 1232
-const maxRandomSignatureTokenSize = 1000
+const maxRandomSignatureTokenSize = 999
 
 type AWG15 struct{}
 

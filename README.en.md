@@ -18,6 +18,7 @@ Self-hosted AmneziaWG control panel for Docker: Go backend, embedded Web UI, and
 
 - AmneziaWG profiles: Legacy / 1.0, 1.5-oriented profile, and 2.0.
 - Tunnels: separate profiles, UDP ports, subnets, endpoint settings, and IPv4 egress.
+- IPv6 egress is not supported yet; generated client configs intentionally use `AllowedIPs = 0.0.0.0/0` without `::/0`.
 - Egress: `Server WAN` or Cloudflare WARP per tunnel.
 - Clients: create, download `.conf`, `vpn://` import key, enable/disable, expiration, delete.
 - Diagnostics: Doctor, firewall repair, health, last seen, received/sent counters.

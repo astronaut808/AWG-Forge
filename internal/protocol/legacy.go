@@ -49,12 +49,10 @@ func (Legacy10) GenerateDefaults() (config.ProtocolParams, error) {
 	headers := map[uint32]bool{}
 	nextHeader := func() (uint32, error) {
 		for {
-			v, err := u32()
+			v, err := randomUint32Range(5, 4294967295)
 			if err != nil {
 				return 0, err
 			}
-			// Keep generated values inside the upstream recommended non-zero range.
-			v = 5 + (v % 2147483643)
 			if !headers[v] {
 				headers[v] = true
 				return v, nil
@@ -217,10 +215,6 @@ func defaultLegacyParams() (config.ProtocolParams, error) {
 
 func validateLegacyParams(params config.ProtocolParams) error {
 	return Legacy10{}.Validate(params)
-}
-
-func u32() (uint32, error) {
-	return randomUint32Below(1<<32 - 1)
 }
 
 func validateJunkAndBasePadding(params config.ProtocolParams) (int, int, error) {
