@@ -66,15 +66,7 @@ ENV CONFIG_DIR=/etc/awg-forge \
     AMNEZIAWG_UPDATE_MODE=manual \
     WEBUI_HOST=127.0.0.1 \
     WEBUI_PORT=51821 \
-    TUNNEL_NAME=awg0 \
-    LISTEN_PORT=51820 \
     EXTERNAL_INTERFACE=eth0 \
-    IPV4_SUBNET=10.8.0.0/24 \
-    DNS=1.1.1.1 \
-    ALLOWED_IPS=0.0.0.0/0 \
-    PERSISTENT_KEEPALIVE=0 \
-    MTU=0 \
-    PROTOCOL_PROFILE=awg_legacy_1_0 \
     APPLY_CONFIG=true
 VOLUME ["/etc/awg-forge"]
 ENTRYPOINT ["/usr/bin/dumb-init", "--", "/usr/local/bin/docker-entrypoint.sh"]
