@@ -170,15 +170,16 @@ Repair удаляет дубли только этих managed rules и доба
 
 В UI эта операция доступна через `Maintenance` -> `Firewall` -> `Repair firewall`. Если `APPLY_CONFIG=false`, кнопка визуально недоступна и показывает причину; если `APPLY_CONFIG=true`, действие требует подтверждения.
 
-## Health В UI
+## Статусы Клиентов В UI
 
-Кнопка `Health` на туннеле делает короткий sample runtime counters и показывает состояние клиентов.
+Список клиентов показывает базовый runtime status без отдельного окна диагностики:
 
-Возможные статусы:
+- `active now`: клиент недавно сделал handshake;
+- `seen recently`: клиент подключался ранее, но сейчас может быть неактивен;
+- `never seen`: handshake еще не было;
+- `last seen`, `received` и `sent`: время последнего handshake и runtime counters со стороны сервера.
 
-- `traffic flowing`: handshake есть, received/sent counters растут;
-- `idle, handshake ok`: handshake есть, но трафик не двигался во время sample window;
-- `client sends traffic, server sends 0 bytes back`: возможная проблема NAT, forwarding, route, DNS или upstream firewall.
+Для глубокой диагностики используй `Maintenance` -> `Doctor`, `Support bundle` и CLI-команды ниже.
 
 ## Проверка IPv4 Egress
 
@@ -236,7 +237,7 @@ docker exec awg-forge awg-forge tunnel restart
 
 Если `rp_filter` в strict mode (`1`), reverse path filtering может отбрасывать VPN-трафик при нестандартных маршрутах или дополнительных firewall/router rules. В простом host-networking setup это редко основная причина, но такой WARN полезен при сложной сети.
 
-Если `Health` показывает `client sends traffic, server sends 0 bytes back`, а counters в:
+Если в строке клиента видно, что `received` растет, а `sent` остается `0 B`, и counters в:
 
 ```bash
 docker exec awg-forge iptables -L FORWARD -v -n

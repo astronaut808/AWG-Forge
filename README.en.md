@@ -21,7 +21,7 @@ Self-hosted AmneziaWG control panel for Docker: Go backend, embedded Web UI, and
 - IPv6 egress is not supported yet; generated client configs intentionally use `AllowedIPs = 0.0.0.0/0` without `::/0`.
 - Egress: `Server WAN` or Cloudflare WARP per tunnel.
 - Clients: create, download `.conf`, `vpn://` import key, enable/disable, expiration, delete.
-- Diagnostics: Doctor, firewall repair, health, last seen, received/sent counters.
+- Diagnostics: Doctor, firewall repair, client status, last seen, received/sent counters.
 - Maintenance Center: WARP, backup, restore verify, support bundle, live audit logs, updates, system info.
 
 ## Quick Start

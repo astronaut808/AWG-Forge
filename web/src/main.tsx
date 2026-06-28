@@ -11,7 +11,6 @@ import type {
   Profile,
   RestoreReport,
   Tunnel,
-  TunnelHealth,
   UpdatesReport,
 } from "./types";
 import {
@@ -35,7 +34,6 @@ type Modal =
   | { kind: "protocol"; tunnel: Tunnel }
   | { kind: "create-client"; tunnel: Tunnel }
   | { kind: "client-settings"; tunnel: Tunnel; client: Client }
-  | { kind: "health"; tunnel: Tunnel; health?: TunnelHealth }
   | { kind: "import-key"; client: Client; key: string; warning: string }
   | { kind: "maintenance" };
 
@@ -148,15 +146,6 @@ function App() {
       onCreateClient={() => setModal({ kind: "create-client", tunnel })}
       onSettings={() => setModal({ kind: "settings", tunnel })}
       onProtocol={() => setModal({ kind: "protocol", tunnel })}
-      onHealth={async () => {
-        setModal({ kind: "health", tunnel });
-        try {
-          const res = await api.tunnelHealth(tunnel.id);
-          setModal({ kind: "health", tunnel, health: res.health });
-        } catch (err) {
-          notify(errorMessage(err));
-        }
-      }}
       onRestart={() => runAction("tunnel restarted", () => api.restartTunnel(tunnel.id))}
       onDelete={() => confirm(`Delete tunnel ${tunnel.name} and all its clients?`) && runAction("tunnel deleted", () => api.deleteTunnel(tunnel.id))}
       onClientConfig={downloadConfig}
@@ -353,7 +342,6 @@ function TunnelCard(props: {
   onCreateClient: () => void;
   onSettings: () => void;
   onProtocol: () => void;
-  onHealth: () => void;
   onRestart: () => void;
   onDelete: () => void;
   onClientConfig: (id: string) => void;
@@ -389,7 +377,6 @@ function TunnelCard(props: {
         <button class="button primary" type="button" onClick={props.onCreateClient}>Create client</button>
         <button class="button" type="button" onClick={props.onSettings}>Settings</button>
         <button class="button" type="button" onClick={props.onProtocol}>Protocol</button>
-        <button class="button" type="button" onClick={props.onHealth}>Health</button>
         <button class="button" type="button" onClick={props.onRestart}>Restart</button>
         <button class="button danger" type="button" onClick={props.onDelete}>Delete</button>
       </div>
@@ -460,7 +447,6 @@ function ModalContent({ modal, state, notify, close, reload, runAction }: {
   if (modal.kind === "protocol") return <ProtocolForm tunnel={modal.tunnel} runAction={runAction} />;
   if (modal.kind === "create-client") return <CreateClientForm tunnel={modal.tunnel} notify={notify} runAction={runAction} />;
   if (modal.kind === "client-settings") return <ClientSettingsForm client={modal.client} runAction={runAction} />;
-  if (modal.kind === "health") return <HealthPanel tunnel={modal.tunnel} health={modal.health} />;
   if (modal.kind === "import-key") return <ImportKeyPanel modal={modal} notify={notify} />;
   return <MaintenanceCenter state={state} notify={notify} close={close} reload={reload} />;
 }
@@ -571,22 +557,6 @@ function ExpirationField({ current, keepCurrent = false }: { current?: string; k
     </select></label>
     {mode === "custom" && <label>Custom expiration<input aria-label="Custom expiration" name="expires_custom" type="datetime-local" min={dateTimeLocalValue()} defaultValue={dateTimeLocalValue(current || expirationValue("1d"))} /></label>}
   </>;
-}
-
-function HealthPanel({ tunnel, health }: { tunnel: Tunnel; health?: TunnelHealth }) {
-  return <PanelTitle title="Clients health" subtitle={health ? `${health.name || tunnel.name} · ${health.sample_seconds} second sample` : `${tunnel.name} · sampling traffic for 2 seconds...`}>
-    {!health ? <p>Reading runtime handshakes and transfer counters.</p> : (
-      <div class="list">
-        {health.warnings?.map((warning) => <div class="notice" key={warning}>{warning}</div>)}
-        {health.clients.length ? health.clients.map((client) => (
-          <div class="client-row" key={client.id}>
-            <div><strong>{client.name}</strong><p class="mono">{client.address}</p><p>{client.status}{client.latest_handshake ? ` · handshake ${client.latest_handshake}` : ""}</p>{client.warning && <p>{client.warning}</p>}</div>
-            <div class="actions"><Badge tone={healthTone(client.status)}>received +{formatBytes(client.rx_delta_bytes)}</Badge><Badge tone={healthTone(client.status)}>sent +{formatBytes(client.tx_delta_bytes)}</Badge></div>
-          </div>
-        )) : <Empty title="No clients" text="This tunnel has no clients yet." />}
-      </div>
-    )}
-  </PanelTitle>;
 }
 
 function ImportKeyPanel({ modal, notify }: { modal: Extract<Modal, { kind: "import-key" }>; notify: (message: string) => void }) {
@@ -808,12 +778,6 @@ function toneFromLevel(level: Level): string {
   if (level === "neutral") return "neutral";
   if (level === "bad" || level === "fail") return "bad";
   return "muted";
-}
-
-function healthTone(status: string): string {
-  if (status.includes("flowing") || status.includes("ok")) return "ok";
-  if (status.includes("disabled")) return "neutral";
-  return "bad";
 }
 
 function sortNewestFirst(events: AuditEvent[]): AuditEvent[] {

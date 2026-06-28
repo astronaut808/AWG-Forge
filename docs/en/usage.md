@@ -23,7 +23,6 @@ Tunnel actions:
 - `Edit`: rename a client or store admin-only notes without changing VPN config.
 - `Settings`: tunnel settings, including optional per-tunnel `Server host` endpoint override.
 - `Protocol`: protocol params and regenerate.
-- `Health`: handshake and runtime traffic counters for clients.
 - `Restart`: restart a tunnel.
 - `Delete`: delete a tunnel or client.
 
@@ -53,12 +52,15 @@ The client list shows two different kinds of status:
 
 - `enabled` / `disabled`: whether the client is allowed in awg-forge config.
 - `active now`, `seen recently`, `offline`, `never seen`: approximate runtime status from `awg show` and persisted `last_seen_at`.
+- `last seen`, `received`, `sent`: latest handshake time and runtime counters from the server side.
 
 AmneziaWG/WireGuard does not keep a permanent TCP-like connection, so `active now` is only an approximate online indicator, not a strict online/offline status. In the dashboard, active means the latest handshake is younger than about 3 minutes. The UI also shows `received` / `sent` counters when runtime exposes them.
 
 When runtime reports a handshake, awg-forge persists that the client has connected before and stores the latest handshake time in `state.json`. After an interface restart, the client may show `last seen` until a fresh runtime handshake appears.
 
 Doctor may warn about clients with no handshake yet. This is useful for spotting unused or wrongly imported configs, but it does not mean the whole tunnel is broken when other clients on the same tunnel work.
+
+For deeper diagnostics, use `Maintenance` -> `Doctor`.
 
 ## Client Expiration
 
