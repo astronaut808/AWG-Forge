@@ -635,10 +635,40 @@ function MaintenanceCenter({ state, notify, reload }: { state: AppState; notify:
     {tab === "updates" && <div class="stack"><button class="button primary" disabled={Boolean(busyAction)} type="button" onClick={() => action("updates", "updates checked", async () => setUpdateReport((await api.updates()).updates))}><ButtonContent busy={busyAction === "updates"}>Check updates</ButtonContent></button>{updateReport && <ResultList results={updateReport.components.map((item) => ({ level: item.status === "current" ? "ok" : "warn", area: item.name, message: `${item.current_ref} → ${item.latest_ref}` }))} />}</div>}
     {tab === "support" && <div class="stack"><p>Create a sanitized support bundle without private keys or client configs.</p><button class="button primary" disabled={Boolean(busyAction)} type="button" onClick={() => action("support", "support bundle download started", async () => { const res = await fetch("/api/support-bundle"); if (!res.ok) throw new Error("support bundle failed"); await downloadResponse(res, "awg-forge-support.zip"); })}><ButtonContent busy={busyAction === "support"}>Download support bundle</ButtonContent></button></div>}
     {tab === "logs" && <div class="stack"><p class="note">Audit log updates automatically while Maintenance is open.</p><div class="list">{events.length === 0 ? <div class="empty compact">No audit events yet.</div> : events.map((event) => <div class="row" key={`${event.time}-${event.event}`}><strong>{event.event}</strong><p>{event.time} · {event.level} · {event.message}{event.error ? ` · ${event.error}` : ""}</p></div>)}</div></div>}
-    {tab === "system" && <pre class="command-block">{`docker exec awg-forge awg-forge doctor
-docker exec awg-forge awg-forge firewall repair
-docker compose logs -f`}</pre>}
+    {tab === "system" && <SystemPanel state={state} />}
   </PanelTitle>;
+}
+
+function SystemPanel({ state }: { state: AppState }) {
+  const clients = state.tunnels.flatMap((tunnel) => tunnel.clients);
+  const enabledClients = clients.filter((client) => client.enabled && !client.expired).length;
+  const upTunnels = state.tunnels.filter((tunnel) => tunnel.status?.up).length;
+  const ports = state.published_udp_ports.length ? state.published_udp_ports.join(", ") : "host networking / dynamic";
+  const build = state.build;
+
+  return <div class="stack">
+    <div>
+      <h3>System</h3>
+      <p class="note">Current UI/runtime context without secrets.</p>
+    </div>
+    <div class="metric-grid">
+      <Metric title="Server host" value={state.server_host || "-"} />
+      <Metric title="Apply config" value={state.apply_enabled ? "enabled" : "manual"} />
+      <Metric title="Tunnels" value={`${upTunnels}/${state.tunnels.length} up`} />
+      <Metric title="Clients" value={`${enabledClients}/${clients.length} enabled`} />
+      <Metric title="Profiles" value={String(state.profiles.length)} />
+      <Metric title="Published UDP" value={ports} />
+      <Metric title="WARP" value={state.warp.configured ? `${state.warp.enabled_tunnel_count} tunnel(s)` : "not configured"} />
+      <Metric title="Version" value={build?.version || "dev"} />
+      <Metric title="Commit" value={shortCommit(build?.commit)} />
+      <Metric title="Update mode" value={build?.amneziawg_update_mode || "-"} />
+      <Metric title="amneziawg-go" value={shortCommit(build?.amneziawg_go_ref)} />
+      <Metric title="amneziawg-tools" value={shortCommit(build?.amneziawg_tools_ref)} />
+    </div>
+    <pre class="command-block">{`docker exec awg-forge awg-forge doctor
+docker exec awg-forge awg show
+docker compose logs -f`}</pre>
+  </div>;
 }
 
 function WarpPanel({ state, action, busyAction }: { state: AppState; action: (key: string, label: string, fn: () => Promise<void>) => Promise<void>; busyAction: string }) {
@@ -753,6 +783,12 @@ function versionLabel(version: string): string {
   const trimmed = version.trim();
   if (!trimmed || trimmed === "dev") return "dev";
   return trimmed.startsWith("v") ? trimmed : `v${trimmed}`;
+}
+
+function shortCommit(value = ""): string {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "unknown") return "-";
+  return trimmed.length > 12 ? trimmed.slice(0, 12) : trimmed;
 }
 
 function mtuValue(form: HTMLFormElement): number {
