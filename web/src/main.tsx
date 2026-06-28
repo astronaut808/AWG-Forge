@@ -11,7 +11,6 @@ import type {
   Profile,
   RestoreReport,
   Tunnel,
-  TunnelHealth,
   UpdatesReport,
 } from "./types";
 import {
@@ -35,26 +34,21 @@ type Modal =
   | { kind: "protocol"; tunnel: Tunnel }
   | { kind: "create-client"; tunnel: Tunnel }
   | { kind: "client-settings"; tunnel: Tunnel; client: Client }
-  | { kind: "health"; tunnel: Tunnel; health?: TunnelHealth }
   | { kind: "import-key"; client: Client; key: string; warning: string }
   | { kind: "maintenance" };
 
 type MaintenanceTab = "overview" | "doctor" | "firewall" | "warp" | "backup" | "restore" | "updates" | "support" | "logs" | "system";
 
-const profileKey = "awg-forge.profile";
 const themeKey = "awg-forge.theme";
-const dashboardModeKey = "awg-forge.dashboard-mode";
 const dashboardFilterKey = "awg-forge.dashboard-filter";
 let parallaxInitialized = false;
 
 function App() {
   const [state, setState] = useState<AppState | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
-  const [activeProfile, setActiveProfile] = useState(localStorage.getItem(profileKey) || "awg_legacy_1_0");
   const [modal, setModal] = useState<Modal | null>(null);
   const [toast, setToast] = useState("");
   const [theme, setTheme] = useState(initialTheme);
-  const [dashboardMode, setDashboardModeValue] = useState(localStorage.getItem(dashboardModeKey) || "profiles");
   const [dashboardFilter, setDashboardFilterValue] = useState(localStorage.getItem(dashboardFilterKey) || "all");
   const liveUpdatesEnabled = state !== null;
 
@@ -63,9 +57,6 @@ function App() {
       const next = await api.state();
       setState(next);
       setAuthChecked(true);
-      if (!next.profiles.find((profile) => profile.id === activeProfile) && next.profiles[0]) {
-        setActiveProfile(next.profiles[0].id);
-      }
     } catch (err) {
       setAuthChecked(true);
       if (err instanceof api.APIError && err.status === 401) {
@@ -74,7 +65,7 @@ function App() {
       }
       if (!options.quiet) notify(errorMessage(err));
     }
-  }, [activeProfile]);
+  }, []);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -108,19 +99,8 @@ function App() {
   }, [liveUpdatesEnabled, load]);
 
   const profiles = state?.profiles || [];
-  const active = profiles.find((profile) => profile.id === activeProfile) || profiles[0];
+  const active = defaultCreateProfile(profiles);
   const allTunnels = state?.tunnels || [];
-  const tunnels = active ? allTunnels.filter((tunnel) => tunnel.profile === active.id) : [];
-
-  function selectProfile(id: string) {
-    localStorage.setItem(profileKey, id);
-    setActiveProfile(id);
-  }
-
-  function setDashboardMode(mode: string) {
-    localStorage.setItem(dashboardModeKey, mode);
-    setDashboardModeValue(mode);
-  }
 
   function setDashboardFilter(filter: string) {
     localStorage.setItem(dashboardFilterKey, filter);
@@ -166,15 +146,6 @@ function App() {
       onCreateClient={() => setModal({ kind: "create-client", tunnel })}
       onSettings={() => setModal({ kind: "settings", tunnel })}
       onProtocol={() => setModal({ kind: "protocol", tunnel })}
-      onHealth={async () => {
-        setModal({ kind: "health", tunnel });
-        try {
-          const res = await api.tunnelHealth(tunnel.id);
-          setModal({ kind: "health", tunnel, health: res.health });
-        } catch (err) {
-          notify(errorMessage(err));
-        }
-      }}
       onRestart={() => runAction("tunnel restarted", () => api.restartTunnel(tunnel.id))}
       onDelete={() => confirm(`Delete tunnel ${tunnel.name} and all its clients?`) && runAction("tunnel deleted", () => api.deleteTunnel(tunnel.id))}
       onClientConfig={downloadConfig}
@@ -193,36 +164,15 @@ function App() {
   );
 
   return (
-    <Shell state={state} theme={theme} setTheme={setTheme} logout={() => doLogout(setState)} openMaintenance={() => setModal({ kind: "maintenance" })} dashboardMode={dashboardMode} setDashboardMode={setDashboardMode}>
-      {dashboardMode === "tunnels" ? (
-        <TunnelFirstDashboard
-          profiles={profiles}
-          tunnels={allTunnels}
-          filter={dashboardFilter}
-          setFilter={setDashboardFilter}
-          onCreateTunnel={(profile) => setModal({ kind: "create-tunnel", profile: profile || defaultCreateProfile(profiles, active) })}
-          renderTunnel={renderTunnel}
-        />
-      ) : (
-        <>
-          <ProfileTabs profiles={profiles} active={active.id} onSelect={selectProfile} />
-          <section class="panel stack">
-            <div class="section-head">
-              <div>
-                <h2>{profileTitle(active.id)}</h2>
-              </div>
-              <button class="button primary" type="button" disabled={!active.available} onClick={() => setModal({ kind: "create-tunnel", profile: active })}>Create tunnel</button>
-            </div>
-            {tunnels.length === 0 ? (
-              <Empty title={`No tunnels for ${active.tab} yet`} text="Create a tunnel first, then add clients inside it." action={<button class="button primary" type="button" onClick={() => setModal({ kind: "create-tunnel", profile: active })}>Create tunnel</button>} />
-            ) : (
-              <div className={classNames("tunnel-grid", tunnels.length === 1 && "single")}>
-                {tunnels.map(renderTunnel)}
-              </div>
-            )}
-          </section>
-        </>
-      )}
+    <Shell state={state} theme={theme} setTheme={setTheme} logout={() => doLogout(setState)} openMaintenance={() => setModal({ kind: "maintenance" })}>
+      <TunnelFirstDashboard
+        profiles={profiles}
+        tunnels={allTunnels}
+        filter={dashboardFilter}
+        setFilter={setDashboardFilter}
+        onCreateTunnel={(profile) => setModal({ kind: "create-tunnel", profile: profile || active })}
+        renderTunnel={renderTunnel}
+      />
       {modal && (
         <Dialog onClose={() => setModal(null)}>
           <ModalContent modal={modal} state={state} notify={notify} close={() => setModal(null)} reload={() => load({ quiet: true })} runAction={runAction} />
@@ -278,20 +228,17 @@ type ShellProps = {
   setTheme: (theme: string) => void;
   logout: () => void;
   openMaintenance: () => void;
-  dashboardMode?: string;
-  setDashboardMode?: (mode: string) => void;
   children: preact.ComponentChildren;
 };
 
 function Shell(props: ShellProps) {
-  const { state, theme, setTheme, logout, openMaintenance, dashboardMode, setDashboardMode, children } = props;
+  const { state, theme, setTheme, logout, openMaintenance, children } = props;
   return (
     <main class="app-shell">
       <header class="topbar panel">
         <Brand subtitle={<><span class="mono">{state.server_host}</span> · {state.tunnels.length} tunnel(s)</>} />
         <nav class="toolbar" aria-label="Global actions">
           <button class="button icon" type="button" title="Toggle theme" aria-label="Toggle theme" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>{theme === "dark" ? "☼" : "☾"}</button>
-          {setDashboardMode && <button class="button" type="button" onClick={() => setDashboardMode(dashboardMode === "tunnels" ? "profiles" : "tunnels")}>{dashboardMode === "tunnels" ? "Profile view" : "Tunnel view"}</button>}
           <button class="button" type="button" onClick={openMaintenance}>Maintenance</button>
           <button class="button" type="button" onClick={logout}>Log out</button>
         </nav>
@@ -332,19 +279,6 @@ function FooterLinks({ version, extra }: { version?: string; extra?: preact.Comp
   );
 }
 
-function ProfileTabs({ profiles, active, onSelect }: { profiles: Profile[]; active: string; onSelect: (id: string) => void }) {
-  return (
-    <nav class="tabs panel" aria-label="Protocol profiles">
-      {profiles.map((profile) => (
-        <button key={profile.id} className={classNames("tab", profile.id === active && "active")} type="button" onClick={() => onSelect(profile.id)}>
-          <strong>{profile.tab}</strong>
-          <span>{profile.label}</span>
-        </button>
-      ))}
-    </nav>
-  );
-}
-
 function TunnelFirstDashboard({ profiles, tunnels, filter, setFilter, onCreateTunnel, renderTunnel }: {
   profiles: Profile[];
   tunnels: Tunnel[];
@@ -366,7 +300,7 @@ function TunnelFirstDashboard({ profiles, tunnels, filter, setFilter, onCreateTu
           <div class="filter-row" aria-label="Tunnel filters">
             <button className={classNames("filter-pill", effectiveFilter === "all" && "active")} type="button" onClick={() => setFilter("all")}><span class="filter-label">All</span><span class="filter-count">{tunnels.length}</span></button>
             {profiles.map((profile) => (
-              <button key={profile.id} className={classNames("filter-pill", countFor(profile.id) === 0 && "is-empty", effectiveFilter === profile.id && "active")} type="button" onClick={() => setFilter(profile.id)}>
+              <button key={profile.id} className={classNames("filter-pill", countFor(profile.id) === 0 && "is-empty", effectiveFilter === profile.id && "active")} type="button" onClick={() => setFilter(profile.id)} title={`${profileTitle(profile.id)} · ${countFor(profile.id)} tunnel(s)`}>
                 <span class="filter-label">{profile.tab}</span><span class="filter-count">{countFor(profile.id)}</span>
               </button>
             ))}
@@ -377,7 +311,7 @@ function TunnelFirstDashboard({ profiles, tunnels, filter, setFilter, onCreateTu
       {visibleTunnels.length === 0 ? (
         <Empty
           title={tunnels.length === 0 ? "No tunnels yet" : "No tunnels in this filter"}
-          text={tunnels.length === 0 ? "Create the first AmneziaWG tunnel." : "Create a tunnel for the selected protocol."}
+          text={tunnels.length === 0 ? "Create the first AmneziaWG tunnel." : filteredProfile ? `Create an ${profileTitle(filteredProfile.id)} tunnel.` : "Create a tunnel for the selected protocol."}
           action={<button class="button primary" type="button" onClick={() => onCreateTunnel(filteredProfile)}>Create tunnel</button>}
         />
       ) : (
@@ -408,7 +342,6 @@ function TunnelCard(props: {
   onCreateClient: () => void;
   onSettings: () => void;
   onProtocol: () => void;
-  onHealth: () => void;
   onRestart: () => void;
   onDelete: () => void;
   onClientConfig: (id: string) => void;
@@ -444,7 +377,6 @@ function TunnelCard(props: {
         <button class="button primary" type="button" onClick={props.onCreateClient}>Create client</button>
         <button class="button" type="button" onClick={props.onSettings}>Settings</button>
         <button class="button" type="button" onClick={props.onProtocol}>Protocol</button>
-        <button class="button" type="button" onClick={props.onHealth}>Health</button>
         <button class="button" type="button" onClick={props.onRestart}>Restart</button>
         <button class="button danger" type="button" onClick={props.onDelete}>Delete</button>
       </div>
@@ -515,7 +447,6 @@ function ModalContent({ modal, state, notify, close, reload, runAction }: {
   if (modal.kind === "protocol") return <ProtocolForm tunnel={modal.tunnel} runAction={runAction} />;
   if (modal.kind === "create-client") return <CreateClientForm tunnel={modal.tunnel} notify={notify} runAction={runAction} />;
   if (modal.kind === "client-settings") return <ClientSettingsForm client={modal.client} runAction={runAction} />;
-  if (modal.kind === "health") return <HealthPanel tunnel={modal.tunnel} health={modal.health} />;
   if (modal.kind === "import-key") return <ImportKeyPanel modal={modal} notify={notify} />;
   return <MaintenanceCenter state={state} notify={notify} close={close} reload={reload} />;
 }
@@ -628,22 +559,6 @@ function ExpirationField({ current, keepCurrent = false }: { current?: string; k
   </>;
 }
 
-function HealthPanel({ tunnel, health }: { tunnel: Tunnel; health?: TunnelHealth }) {
-  return <PanelTitle title="Clients health" subtitle={health ? `${health.name || tunnel.name} · ${health.sample_seconds} second sample` : `${tunnel.name} · sampling traffic for 2 seconds...`}>
-    {!health ? <p>Reading runtime handshakes and transfer counters.</p> : (
-      <div class="list">
-        {health.warnings?.map((warning) => <div class="notice" key={warning}>{warning}</div>)}
-        {health.clients.length ? health.clients.map((client) => (
-          <div class="client-row" key={client.id}>
-            <div><strong>{client.name}</strong><p class="mono">{client.address}</p><p>{client.status}{client.latest_handshake ? ` · handshake ${client.latest_handshake}` : ""}</p>{client.warning && <p>{client.warning}</p>}</div>
-            <div class="actions"><Badge tone={healthTone(client.status)}>received +{formatBytes(client.rx_delta_bytes)}</Badge><Badge tone={healthTone(client.status)}>sent +{formatBytes(client.tx_delta_bytes)}</Badge></div>
-          </div>
-        )) : <Empty title="No clients" text="This tunnel has no clients yet." />}
-      </div>
-    )}
-  </PanelTitle>;
-}
-
 function ImportKeyPanel({ modal, notify }: { modal: Extract<Modal, { kind: "import-key" }>; notify: (message: string) => void }) {
   async function copyImportKey() {
     try {
@@ -720,10 +635,40 @@ function MaintenanceCenter({ state, notify, reload }: { state: AppState; notify:
     {tab === "updates" && <div class="stack"><button class="button primary" disabled={Boolean(busyAction)} type="button" onClick={() => action("updates", "updates checked", async () => setUpdateReport((await api.updates()).updates))}><ButtonContent busy={busyAction === "updates"}>Check updates</ButtonContent></button>{updateReport && <ResultList results={updateReport.components.map((item) => ({ level: item.status === "current" ? "ok" : "warn", area: item.name, message: `${item.current_ref} → ${item.latest_ref}` }))} />}</div>}
     {tab === "support" && <div class="stack"><p>Create a sanitized support bundle without private keys or client configs.</p><button class="button primary" disabled={Boolean(busyAction)} type="button" onClick={() => action("support", "support bundle download started", async () => { const res = await fetch("/api/support-bundle"); if (!res.ok) throw new Error("support bundle failed"); await downloadResponse(res, "awg-forge-support.zip"); })}><ButtonContent busy={busyAction === "support"}>Download support bundle</ButtonContent></button></div>}
     {tab === "logs" && <div class="stack"><p class="note">Audit log updates automatically while Maintenance is open.</p><div class="list">{events.length === 0 ? <div class="empty compact">No audit events yet.</div> : events.map((event) => <div class="row" key={`${event.time}-${event.event}`}><strong>{event.event}</strong><p>{event.time} · {event.level} · {event.message}{event.error ? ` · ${event.error}` : ""}</p></div>)}</div></div>}
-    {tab === "system" && <pre class="command-block">{`docker exec awg-forge awg-forge doctor
-docker exec awg-forge awg-forge firewall repair
-docker compose logs -f`}</pre>}
+    {tab === "system" && <SystemPanel state={state} />}
   </PanelTitle>;
+}
+
+function SystemPanel({ state }: { state: AppState }) {
+  const clients = state.tunnels.flatMap((tunnel) => tunnel.clients);
+  const enabledClients = clients.filter((client) => client.enabled && !client.expired).length;
+  const upTunnels = state.tunnels.filter((tunnel) => tunnel.status?.up).length;
+  const ports = state.published_udp_ports.length ? state.published_udp_ports.join(", ") : "host networking / dynamic";
+  const build = state.build;
+
+  return <div class="stack">
+    <div>
+      <h3>System</h3>
+      <p class="note">Current UI/runtime context without secrets.</p>
+    </div>
+    <div class="metric-grid">
+      <Metric title="Server host" value={state.server_host || "-"} />
+      <Metric title="Apply config" value={state.apply_enabled ? "enabled" : "manual"} />
+      <Metric title="Tunnels" value={`${upTunnels}/${state.tunnels.length} up`} />
+      <Metric title="Clients" value={`${enabledClients}/${clients.length} enabled`} />
+      <Metric title="Profiles" value={String(state.profiles.length)} />
+      <Metric title="Published UDP" value={ports} />
+      <Metric title="WARP" value={state.warp.configured ? `${state.warp.enabled_tunnel_count} tunnel(s)` : "not configured"} />
+      <Metric title="Version" value={build?.version || "dev"} />
+      <Metric title="Commit" value={shortCommit(build?.commit)} />
+      <Metric title="Update mode" value={build?.amneziawg_update_mode || "-"} />
+      <Metric title="amneziawg-go" value={shortCommit(build?.amneziawg_go_ref)} />
+      <Metric title="amneziawg-tools" value={shortCommit(build?.amneziawg_tools_ref)} />
+    </div>
+    <pre class="command-block">{`docker exec awg-forge awg-forge doctor
+docker exec awg-forge awg show
+docker compose logs -f`}</pre>
+  </div>;
 }
 
 function WarpPanel({ state, action, busyAction }: { state: AppState; action: (key: string, label: string, fn: () => Promise<void>) => Promise<void>; busyAction: string }) {
@@ -830,7 +775,7 @@ function field(form: HTMLFormElement, name: string): string {
   return String(new FormData(form).get(name) || "");
 }
 
-function defaultCreateProfile(profiles: Profile[], fallback: Profile): Profile {
+function defaultCreateProfile(profiles: Profile[], fallback?: Profile): Profile | undefined {
   return profiles.find((profile) => profile.id === "awg_2_0" && profile.available) || profiles.find((profile) => profile.available) || fallback;
 }
 
@@ -838,6 +783,12 @@ function versionLabel(version: string): string {
   const trimmed = version.trim();
   if (!trimmed || trimmed === "dev") return "dev";
   return trimmed.startsWith("v") ? trimmed : `v${trimmed}`;
+}
+
+function shortCommit(value = ""): string {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "unknown") return "-";
+  return trimmed.length > 12 ? trimmed.slice(0, 12) : trimmed;
 }
 
 function mtuValue(form: HTMLFormElement): number {
@@ -863,12 +814,6 @@ function toneFromLevel(level: Level): string {
   if (level === "neutral") return "neutral";
   if (level === "bad" || level === "fail") return "bad";
   return "muted";
-}
-
-function healthTone(status: string): string {
-  if (status.includes("flowing") || status.includes("ok")) return "ok";
-  if (status.includes("disabled")) return "neutral";
-  return "bad";
 }
 
 function sortNewestFirst(events: AuditEvent[]): AuditEvent[] {

@@ -58,6 +58,7 @@ func Check(cfg config.Config, service *app.Service) []Result {
 	c.checkRPFilter("external interface", cfg.ExternalInterface)
 	c.checkDir(cfg.ConfigDir)
 	c.checkSessionCookie(cfg)
+	c.checkLegacyTunnelEnv(cfg, state)
 	if !cfg.ApplyConfig {
 		c.warn("apply", "APPLY_CONFIG=false; configs render but tunnels are not applied automatically")
 	}
@@ -85,6 +86,13 @@ func Check(cfg config.Config, service *app.Service) []Result {
 		c.checkTunnelRuntime(tunnel)
 	}
 	return c.results
+}
+
+func (c *checker) checkLegacyTunnelEnv(cfg config.Config, state config.State) {
+	if !cfg.LegacyTunnelEnvPresent() || len(state.Tunnels) == 0 {
+		return
+	}
+	c.warn("legacy tunnel env", "state.json is initialized; remove ignored tunnel variables from .env after verifying UI settings: "+strings.Join(cfg.LegacyTunnelEnvVars, ", "))
 }
 
 func (c *checker) checkWarp(cfg config.Config, state config.State) {

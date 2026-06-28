@@ -73,6 +73,106 @@ func TestConcurrentClientCreationDoesNotLoseState(t *testing.T) {
 	}
 }
 
+func TestFreshInitDefaultsToAWG20(t *testing.T) {
+	cfg := config.Config{
+		ConfigDir:         t.TempDir(),
+		ServerHost:        "vpn.example.com",
+		ExternalInterface: "eth0",
+	}
+	state, err := app.New(cfg).Init()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := state.Tunnels[0].ProtocolProfileID; got != "awg_2_0" {
+		t.Fatalf("profile = %s, want awg_2_0", got)
+	}
+	if got := state.Tunnels[0].InterfaceName; got != "awg20" {
+		t.Fatalf("interface = %s, want awg20", got)
+	}
+	if got := state.Tunnels[0].IPv4Subnet; got != "10.20.0.0/24" {
+		t.Fatalf("subnet = %s, want 10.20.0.0/24", got)
+	}
+}
+
+func TestInitWithOptionsCreatesFirstTunnel(t *testing.T) {
+	cfg := config.Config{
+		ConfigDir:         t.TempDir(),
+		ServerHost:        "fallback.example.com",
+		ExternalInterface: "eth0",
+	}
+	state, err := app.New(cfg).InitWithOptions(app.InitOptions{
+		ServerHost:          "edge.example.com",
+		ExternalInterface:   "ens3",
+		ProfileID:           "awg_1_5",
+		Name:                "awg15",
+		ListenPort:          51825,
+		IPv4Subnet:          "10.15.0.0/24",
+		DNS:                 "9.9.9.9",
+		AllowedIPs:          "0.0.0.0/0",
+		PersistentKeepalive: 25,
+		MTU:                 1280,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.ServerHost != "edge.example.com" || state.ExternalInterface != "ens3" {
+		t.Fatalf("init host/interface not applied: %#v", state)
+	}
+	tunnel := state.Tunnels[0]
+	if tunnel.ProtocolProfileID != "awg_1_5" || tunnel.InterfaceName != "awg15" || tunnel.ListenPort != 51825 {
+		t.Fatalf("init tunnel not applied: %#v", tunnel)
+	}
+	if tunnel.DNS != "9.9.9.9" || tunnel.Keepalive != 25 || tunnel.MTU != 1280 {
+		t.Fatalf("init tunnel settings not applied: %#v", tunnel)
+	}
+}
+
+func TestInitWithOptionsRejectsInvalidTunnelName(t *testing.T) {
+	cfg := config.Config{
+		ConfigDir:         t.TempDir(),
+		ServerHost:        "vpn.example.com",
+		ExternalInterface: "eth0",
+	}
+	_, err := app.New(cfg).InitWithOptions(app.InitOptions{
+		ServerHost:        "vpn.example.com",
+		ExternalInterface: "eth0",
+		ProfileID:         "awg_2_0",
+		Name:              "2bad",
+		ListenPort:        51830,
+		IPv4Subnet:        "10.20.0.0/24",
+		DNS:               "1.1.1.1",
+		AllowedIPs:        "0.0.0.0/0",
+	})
+	if err == nil || !strings.Contains(err.Error(), "tunnel name must start") {
+		t.Fatalf("expected invalid tunnel name error, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.ConfigDir, "state.json")); !os.IsNotExist(err) {
+		t.Fatalf("state.json was created after invalid init: %v", err)
+	}
+}
+
+func TestExistingStateWinsOverChangedEnvServerHost(t *testing.T) {
+	cfg := testConfig(t)
+	svc := app.New(cfg)
+	state, err := svc.Init()
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalRevision := state.Tunnels[0].ConfigRevision
+	cfg.ServerHost = "changed.example.com"
+	cfg.LegacyTunnelEnvVars = []string{"SERVER_HOST"}
+	state, err = app.New(cfg).Init()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.ServerHost != "vpn.example.com" {
+		t.Fatalf("state server host = %s, want existing state value", state.ServerHost)
+	}
+	if state.Tunnels[0].ConfigRevision != originalRevision {
+		t.Fatalf("revision changed from %d to %d", originalRevision, state.Tunnels[0].ConfigRevision)
+	}
+}
+
 func TestClientIPAllocationSupportsNon24Subnet(t *testing.T) {
 	cfg := testConfig(t)
 	svc := app.New(cfg)
@@ -621,7 +721,7 @@ func TestUpdateClientSettingsRejectsInvalidName(t *testing.T) {
 	}
 }
 
-func TestServerHostEnvChangeUpdatesStateAndMarksClientsStale(t *testing.T) {
+func TestServerHostEnvChangeIsIgnoredAfterStateExists(t *testing.T) {
 	cfg := testConfig(t)
 	svc := app.New(cfg)
 	client, err := svc.AddClient("phone")
@@ -639,21 +739,21 @@ func TestServerHostEnvChangeUpdatesStateAndMarksClientsStale(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state.ServerHost != "new.example.com" {
-		t.Fatalf("server host = %q, want new.example.com", state.ServerHost)
+	if state.ServerHost != "vpn.example.com" {
+		t.Fatalf("server host = %q, want existing state value", state.ServerHost)
 	}
-	if state.Tunnels[0].ConfigRevision <= oldRevision {
-		t.Fatal("expected tunnel config revision to increase")
+	if state.Tunnels[0].ConfigRevision != oldRevision {
+		t.Fatalf("tunnel config revision changed from %d to %d", oldRevision, state.Tunnels[0].ConfigRevision)
 	}
-	if state.Tunnels[0].Clients[0].ConfigRevision >= state.Tunnels[0].ConfigRevision {
-		t.Fatal("expected existing client config to be stale")
+	if state.Tunnels[0].Clients[0].ConfigRevision != oldRevision {
+		t.Fatal("client config should remain fresh when env server host changes")
 	}
 	conf, _, err := svc.ClientConfigForDownload(client.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(conf, "Endpoint = new.example.com:51820") {
-		t.Fatalf("client config did not use updated endpoint:\n%s", conf)
+	if !strings.Contains(conf, "Endpoint = vpn.example.com:51820") {
+		t.Fatalf("client config did not keep state endpoint:\n%s", conf)
 	}
 }
 

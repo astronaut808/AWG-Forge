@@ -18,9 +18,10 @@ Self-hosted AmneziaWG control panel for Docker: Go backend, embedded Web UI, and
 
 - AmneziaWG profiles: Legacy / 1.0, 1.5-oriented profile, and 2.0.
 - Tunnels: separate profiles, UDP ports, subnets, endpoint settings, and IPv4 egress.
+- IPv6 egress is not supported yet; generated client configs intentionally use `AllowedIPs = 0.0.0.0/0` without `::/0`.
 - Egress: `Server WAN` or Cloudflare WARP per tunnel.
 - Clients: create, download `.conf`, `vpn://` import key, enable/disable, expiration, delete.
-- Diagnostics: Doctor, firewall repair, health, last seen, received/sent counters.
+- Diagnostics: Doctor, firewall repair, client status, last seen, received/sent counters.
 - Maintenance Center: WARP, backup, restore verify, support bundle, live audit logs, updates, system info.
 
 ## Quick Start
@@ -33,7 +34,7 @@ chmod +x install.sh
 sudo ./install.sh
 ```
 
-The installer checks Docker before creating files, creates `/opt/awg-forge`, generates `.env`, password, and `SESSION_SECRET`, detects the external interface, starts Docker Compose, and prints the SSH tunnel command.
+The installer checks Docker before creating files, creates `/opt/awg-forge`, generates `.env`, password, and `SESSION_SECRET`, creates the first tunnel in `state.json`, starts Docker Compose, and prints the SSH tunnel command. New installs default to AmneziaWG 2.0 for the first tunnel.
 
 By default the Web UI listens on `127.0.0.1:51821`. Open it through an SSH tunnel:
 
@@ -61,13 +62,13 @@ Docker host networking is the recommended production mode. It lets tunnels creat
 
 ## Important Settings
 
-- `SERVER_HOST` is the default endpoint host for client configs.
+- `.env` stores container and Web UI runtime settings; tunnels are stored in `data/state.json`.
 - `EXTERNAL_INTERFACE` is the server external interface for WAN egress.
 - `WEBUI_HOST=127.0.0.1` is the safe default for SSH tunnel access.
 - `APPLY_CONFIG=true` applies runtime tunnels and firewall rules.
 - `SESSION_COOKIE_SECURE=auto|true|false` controls the Web UI Secure cookie policy.
 
-`SERVER_HOST` can be overridden per tunnel in `Tunnel settings` -> `Server host`.
+Change a tunnel endpoint from `Tunnel settings` -> `Server host`. If an upgraded `.env` still contains old tunnel variables such as `SERVER_HOST`, `LISTEN_PORT`, or `IPV4_SUBNET`, you can remove them after verifying tunnel settings in the UI.
 
 WARP can be selected while creating a tunnel or enabled later from `Tunnel settings` -> `Egress` -> `Cloudflare WARP`. If WARP is not configured yet, AWG-Forge registers the shared `warp0` automatically. See [Configuration](docs/en/configuration.md).
 
@@ -141,7 +142,6 @@ WEBUI_HOST=127.0.0.1 \
 WEBUI_PORT=51821 \
 PASSWORD=test \
 APPLY_CONFIG=false \
-SERVER_HOST=127.0.0.1 \
 go run ./cmd/awg-forge serve
 ```
 

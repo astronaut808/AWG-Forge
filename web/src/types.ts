@@ -131,24 +131,6 @@ export type FirewallReport = {
   results: FirewallRuleResult[];
 };
 
-export type HealthClient = {
-  id: string;
-  name: string;
-  address: string;
-  status: string;
-  latest_handshake: string;
-  warning: string;
-  rx_delta_bytes: number;
-  tx_delta_bytes: number;
-};
-
-export type TunnelHealth = {
-  name: string;
-  sample_seconds: number;
-  warnings: string[];
-  clients: HealthClient[];
-};
-
 export type UpdateComponent = {
   name: string;
   current_ref: string;

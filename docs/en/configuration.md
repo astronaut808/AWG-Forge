@@ -4,20 +4,11 @@ The main example is [.env.example](../../.env.example).
 
 ## Common Variables
 
-- `SERVER_HOST`: public DNS name or IP clients connect to.
-- `TUNNEL_NAME`: first tunnel name and interface, for example `awg0`, `awg15`, or `awg20`.
-- `LISTEN_PORT`: default port for the first tunnel.
 - `WEBUI_HOST`: Web UI bind address. Defaults to `127.0.0.1`.
 - `WEBUI_PORT`: Web UI port. Defaults to `51821`.
 - `PASSWORD`: Web UI password. Required for public binds and recommended always.
 - `SESSION_COOKIE_SECURE`: Secure cookie policy for UI sessions. Values: `auto`, `true`, `false`. Defaults to `auto`.
 - `EXTERNAL_INTERFACE`: server egress interface, often `eth0` or `ens3`. In bridge networking this is usually `eth0` inside the container.
-- `IPV4_SUBNET`: subnet for the first tunnel, for example `10.8.0.0/24`.
-- `DNS`: DNS value rendered into client configs.
-- `ALLOWED_IPS`: client-side allowed IPs. Usually `0.0.0.0/0`.
-- `PERSISTENT_KEEPALIVE`: `PersistentKeepalive` value in client configs. Defaults to `0`.
-- `MTU`: tunnel MTU. `0` means auto/omit, so `MTU = ...` is not rendered. Common explicit values: `1280`, `1380`, `1400`, `1420`.
-- `PROTOCOL_PROFILE`: first tunnel profile. Usually `awg_legacy_1_0`.
 - `APPLY_CONFIG`: when `true`, awg-forge applies runtime tunnel changes with AmneziaWG tools.
 - `PUBLISHED_UDP_PORTS`: published Docker UDP ports/ranges, for example `51820-51840,7443`.
 - `AUDIT_LOG_ENABLED`: enables the safe audit log. Defaults to `true`.
@@ -25,7 +16,13 @@ The main example is [.env.example](../../.env.example).
 - `AUDIT_LOG_MAX_SIZE`: file size before rotation. Defaults to `5242880`.
 - `AUDIT_LOG_MAX_FILES`: number of rotated files to keep. Defaults to `3`.
 
-The quick installer asks for `PROTOCOL_PROFILE` before tunnel defaults, so profile-specific defaults stay aligned:
+## First Tunnel Initialization
+
+New installs keep runtime settings in `.env` and tunnel settings in `state.json`.
+
+During a fresh install, `install.sh` runs a one-shot `awg-forge init` container before starting the service. That command creates `data/state.json` with the selected first tunnel. After that, `docker compose up -d` starts from ready state, and tunnel settings are managed from the Web UI/API and persisted in `state.json`.
+
+The installer asks for the protocol profile before tunnel defaults, so profile-specific defaults stay aligned. Pressing Enter on the profile question selects AWG 2.0:
 
 | Profile | Tunnel name | Port | Subnet |
 | --- | --- | --- | --- |
@@ -34,6 +31,8 @@ The quick installer asks for `PROTOCOL_PROFILE` before tunnel defaults, so profi
 | `awg_2_0` | `awg20` | `51830` | `10.20.0.0/24` |
 
 When creating more tunnels in the Web UI, awg-forge suggests free names, ports, and subnets across all profiles. Backend validation still rejects manual conflicts.
+
+If you upgrade from an older awg-forge version and `.env` still contains `SERVER_HOST`, `LISTEN_PORT`, `IPV4_SUBNET`, `DNS`, `ALLOWED_IPS`, `PERSISTENT_KEEPALIVE`, `MTU`, or `PROTOCOL_PROFILE`, those values are ignored after `state.json` exists. Verify tunnel settings in the UI, then remove old tunnel variables from `.env` to avoid confusion.
 
 ## SESSION_SECRET
 
@@ -73,11 +72,11 @@ EXTERNAL_INTERFACE=ens3
 
 If the interface is wrong, handshakes may work while internet through the VPN does not.
 
-## SERVER_HOST and Tunnel Endpoint
+## Tunnel Endpoint
 
-`SERVER_HOST` defines the global host awg-forge uses in `Endpoint = <host>:<port>` for client `.conf` files.
+Each tunnel has a `Server host` field in the Web UI. It defines the host awg-forge uses in `Endpoint = <host>:<port>` for client `.conf` files.
 
-Each tunnel also has a `Server host` field in the Web UI. When it is empty, the tunnel inherits the global `SERVER_HOST`. When it is set, it overrides the endpoint host only for that tunnel.
+On new installs this value is written to `state.json` during the first `awg-forge init`. Changing `SERVER_HOST` in `.env` after state exists does not rewrite existing tunnels.
 
 This is useful when different tunnels are published through different subdomains, for example:
 
@@ -95,7 +94,7 @@ Important:
 
 ## MTU
 
-`MTU=0` means awg-forge does not add `MTU = ...` to server/client configs.
+`MTU=0` in a tunnel means awg-forge does not add `MTU = ...` to server/client configs.
 
 If you explicitly set tunnel MTU, it is rendered exactly the same into server and client configs. awg-forge does not use hidden MTU decisions.
 
@@ -105,6 +104,18 @@ Practically:
 - `1280` often helps on problematic networks, mobile networks, routers, and complex routes;
 - the Web UI offers `Auto`, common presets, and `Custom` for explicit MTU values;
 - after changing MTU, clients should download fresh `.conf` files.
+
+## IPv6 and AllowedIPs
+
+The current awg-forge release manages IPv4 egress. Generated client configs intentionally use:
+
+```ini
+AllowedIPs = 0.0.0.0/0
+```
+
+`::/0` is not added automatically because the server side does not yet create IPv6 subnets, client IPv6 addresses, IPv6 forwarding, or NAT66/ip6tables/nftables rules. Adding `::/0` without full IPv6 egress could send client IPv6 traffic into the tunnel and blackhole it.
+
+If you need IPv6 leak protection before full IPv6 support lands, disable IPv6 on the client/router or configure IPv4-only behavior on the client side.
 
 ## Tunnel Egress and WARP
 

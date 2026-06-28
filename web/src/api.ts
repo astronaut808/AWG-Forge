@@ -4,7 +4,6 @@ import type {
   DoctorResult,
   FirewallReport,
   RestoreReport,
-  TunnelHealth,
   UpdatesReport,
   WarpSummary,
 } from "./types";
@@ -93,10 +92,6 @@ export function restartTunnel(id: string) {
     body: {},
     idempotencyKey: newIdempotencyKey(),
   });
-}
-
-export function tunnelHealth(id: string): Promise<{ health: TunnelHealth }> {
-  return request(`/api/tunnels/${encodeURIComponent(id)}/health`);
 }
 
 export function updateProtocol(id: string, profile: string, params: Record<string, string>) {

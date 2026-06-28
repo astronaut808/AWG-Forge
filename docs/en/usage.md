@@ -23,7 +23,6 @@ Tunnel actions:
 - `Edit`: rename a client or store admin-only notes without changing VPN config.
 - `Settings`: tunnel settings, including optional per-tunnel `Server host` endpoint override.
 - `Protocol`: protocol params and regenerate.
-- `Health`: handshake and runtime traffic counters for clients.
 - `Restart`: restart a tunnel.
 - `Delete`: delete a tunnel or client.
 
@@ -53,12 +52,15 @@ The client list shows two different kinds of status:
 
 - `enabled` / `disabled`: whether the client is allowed in awg-forge config.
 - `active now`, `seen recently`, `offline`, `never seen`: approximate runtime status from `awg show` and persisted `last_seen_at`.
+- `last seen`, `received`, `sent`: latest handshake time and runtime counters from the server side.
 
 AmneziaWG/WireGuard does not keep a permanent TCP-like connection, so `active now` is only an approximate online indicator, not a strict online/offline status. In the dashboard, active means the latest handshake is younger than about 3 minutes. The UI also shows `received` / `sent` counters when runtime exposes them.
 
 When runtime reports a handshake, awg-forge persists that the client has connected before and stores the latest handshake time in `state.json`. After an interface restart, the client may show `last seen` until a fresh runtime handshake appears.
 
 Doctor may warn about clients with no handshake yet. This is useful for spotting unused or wrongly imported configs, but it does not mean the whole tunnel is broken when other clients on the same tunnel work.
+
+For deeper diagnostics, use `Maintenance` -> `Doctor`.
 
 ## Client Expiration
 
@@ -104,6 +106,7 @@ docker exec awg-forge awg-forge tunnel create awg_1_5 awg15 51825 10.15.0.0/24
 
 ```bash
 awg-forge init
+awg-forge init --server-host vpn.example.com --external-interface eth0 --profile awg_2_0 --tunnel-name awg20 --listen-port 51830 --ipv4-subnet 10.20.0.0/24
 awg-forge serve
 awg-forge render
 awg-forge doctor
@@ -123,4 +126,7 @@ The supported path is `.conf` file import.
 
 The `Import key` action is experimental. It returns a `vpn://` key that contains the same rendered client config encoded for AmneziaVPN-style text import. It has been checked on iOS, but the format is not iOS-specific. Use it only for compatibility testing with AmneziaVPN or DefaultVPN. Routers, the AmneziaWG native app, and production fallback should continue to use `.conf`.
 
-QR import is not shown in the UI and is not supported as a product path.
+QR import is not shown in the UI and is not supported as a product path yet. Future QR support should be implemented as explicit, tested compatibility:
+
+- native AmneziaWG app: QR from the full `.conf`, for example `qrencode -t ansiutf8 < tunnel.conf`;
+- AmneziaVPN: separate import-format validation, because its behavior may differ from the native AmneziaWG app.

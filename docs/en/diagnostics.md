@@ -170,15 +170,16 @@ When `APPLY_CONFIG=false`, `firewall check/repair` does not change anything and 
 
 In the UI, use `Maintenance` -> `Firewall` -> `Repair firewall`. When `APPLY_CONFIG=false`, the button is visually unavailable and explains why; when `APPLY_CONFIG=true`, the action requires confirmation.
 
-## Health In UI
+## Client Status In UI
 
-The tunnel `Health` action samples runtime counters and shows client status.
+The client list shows basic runtime status without a separate diagnostics dialog:
 
-Possible statuses:
+- `active now`: the client had a recent handshake;
+- `seen recently`: the client connected before, but may not be active now;
+- `never seen`: no handshake has been observed yet;
+- `last seen`, `received`, and `sent`: latest handshake time and runtime counters from the server side.
 
-- `traffic flowing`: handshake exists and received/sent counters are moving;
-- `idle, handshake ok`: handshake exists, but traffic did not move during the short sample window;
-- `client sends traffic, server sends 0 bytes back`: possible NAT, forwarding, route, DNS, or upstream firewall issue.
+For deeper diagnostics, use `Maintenance` -> `Doctor`, `Support bundle`, and the CLI commands below.
 
 ## Check IPv4 Egress
 
@@ -236,7 +237,7 @@ If `doctor` reports an `external route` mismatch, NAT may be configured for the 
 
 If `rp_filter` is in strict mode (`1`), reverse path filtering may drop VPN traffic on hosts with non-standard routing or additional firewall/router rules. In a simple host-networking setup it is rarely the first cause, but the WARN is useful on more complex networks.
 
-If `Health` reports `client sends traffic, server sends 0 bytes back`, but counters in:
+If the client row shows `received` increasing while `sent` stays at `0 B`, and counters in:
 
 ```bash
 docker exec awg-forge iptables -L FORWARD -v -n

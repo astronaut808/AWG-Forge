@@ -37,8 +37,15 @@ type TunnelCreateOptions struct {
 }
 
 func defaultTunnelSpec(profileID, name string, port int, subnet string) tunnelSpec {
+	baseName, basePort, baseSubnet := SuggestedTunnelSpec(profileID)
 	if name == "" {
-		name = config.DefaultTunnel
+		name = baseName
+	}
+	if port == 0 {
+		port = basePort
+	}
+	if subnet == "" {
+		subnet = baseSubnet
 	}
 	return tunnelSpec{
 		ProfileID:     profileID,

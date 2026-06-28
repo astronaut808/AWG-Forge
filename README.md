@@ -18,9 +18,10 @@ Self-hosted панель управления AmneziaWG для Docker: Go backen
 
 - Профили AmneziaWG: Legacy / 1.0, 1.5-oriented profile и 2.0.
 - Туннели: отдельные профили, UDP-порты, подсети, endpoint-настройки и IPv4 egress.
+- IPv6 egress пока не поддерживается; клиентские конфиги намеренно используют `AllowedIPs = 0.0.0.0/0` без `::/0`.
 - Egress: `Server WAN` или Cloudflare WARP на уровне отдельного туннеля.
 - Клиенты: создание, скачивание `.conf`, `vpn://` import key, enable/disable, expiration, delete.
-- Диагностика: Doctor, firewall repair, health, last seen, received/sent counters.
+- Диагностика: Doctor, firewall repair, client status, last seen, received/sent counters.
 - Maintenance Center: WARP, backup, restore verify, support bundle, live audit logs, updates, system info.
 
 ## Быстрый старт
@@ -33,7 +34,7 @@ chmod +x install.sh
 sudo ./install.sh
 ```
 
-Скрипт проверит Docker до создания файлов, создаст `/opt/awg-forge`, сгенерирует `.env`, пароль и `SESSION_SECRET`, определит внешний интерфейс, запустит Docker Compose и покажет команду для SSH tunnel.
+Скрипт проверит Docker до создания файлов, создаст `/opt/awg-forge`, сгенерирует `.env`, пароль и `SESSION_SECRET`, создаст первый туннель в `state.json`, запустит Docker Compose и покажет команду для SSH tunnel. По умолчанию первый туннель создается на AmneziaWG 2.0.
 
 По умолчанию Web UI слушает `127.0.0.1:51821`. Открывай его через SSH tunnel:
 
@@ -61,13 +62,13 @@ docker compose up -d
 
 ## Важные настройки
 
-- `SERVER_HOST` — endpoint по умолчанию для клиентских конфигов.
+- `.env` хранит настройки запуска контейнера и Web UI; туннели хранятся в `data/state.json`.
 - `EXTERNAL_INTERFACE` — внешний интерфейс сервера для WAN egress.
 - `WEBUI_HOST=127.0.0.1` — безопасный дефолт для доступа через SSH tunnel.
 - `APPLY_CONFIG=true` — применять runtime-туннели и firewall rules.
 - `SESSION_COOKIE_SECURE=auto|true|false` — политика Secure cookie для Web UI.
 
-`SERVER_HOST` можно переопределить для конкретного туннеля в `Tunnel settings` -> `Server host`.
+Endpoint меняется для конкретного туннеля в `Tunnel settings` -> `Server host`. Если после обновления в `.env` остались старые tunnel-переменные вроде `SERVER_HOST`, `LISTEN_PORT` или `IPV4_SUBNET`, их можно удалить после проверки настроек в UI.
 
 WARP можно выбрать при создании туннеля или включить позже в `Tunnel settings` -> `Egress` -> `Cloudflare WARP`. Если WARP еще не настроен, AWG-Forge автоматически зарегистрирует общий `warp0`.
 
@@ -143,7 +144,6 @@ WEBUI_HOST=127.0.0.1 \
 WEBUI_PORT=51821 \
 PASSWORD=test \
 APPLY_CONFIG=false \
-SERVER_HOST=127.0.0.1 \
 go run ./cmd/awg-forge serve
 ```
 

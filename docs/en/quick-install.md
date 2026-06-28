@@ -1,6 +1,6 @@
 # Quick Install
 
-`install.sh` is an interactive installer for a fresh Linux/VPS server. It creates `.env`, prepares `data/`, starts Docker Compose, and prints the next steps.
+`install.sh` is an interactive installer for a fresh Linux/VPS server. It creates runtime `.env`, prepares `data/`, initializes the first tunnel into `state.json`, starts Docker Compose, and prints the next steps.
 
 Install [Docker Engine from the official documentation](https://docs.docker.com/engine/install/) first. If Docker or Docker Compose is unavailable, the installer exits before creating `/opt/awg-forge` or any project files.
 
@@ -11,6 +11,12 @@ sudo ./install.sh
 ```
 
 Downloading the script first is recommended for interactive installs. In some `curl | sudo bash` TTY/sudo environments the prompt can appear stuck because the script body and interactive answers use different input streams.
+
+To test a non-release image, pass `IMAGE`:
+
+```bash
+sudo IMAGE=ghcr.io/astronaut808/awg-forge:test ./install.sh
+```
 
 By default, it installs into:
 
@@ -38,11 +44,13 @@ If the repository is already cloned, you can run the local file:
 - detects an existing install on repeated runs and offers reconfigure or full reinstall;
 - offers to remove old AWG-like runtime interfaces, such as `awg0`, `awg0-1`, `awg15`, or `awg20`;
 - detects the external interface with `ip route get 1.1.1.1`;
-- suggests `SERVER_HOST` from the detected source IP, while allowing a custom domain;
-- asks for the protocol profile first, then tunnel UDP port, Web UI host/port, subnet, DNS, and MTU;
+- on fresh installs, suggests the first tunnel endpoint host from the detected source IP, while allowing a custom domain;
+- on fresh installs, asks for the protocol profile first, then tunnel UDP port, Web UI host/port, subnet, DNS, and MTU;
+- defaults the first tunnel profile to AmneziaWG 2.0 when you press Enter;
 - generates `PASSWORD` and `SESSION_SECRET`;
-- creates `.env` with `0600` permissions;
+- creates runtime `.env` with `0600` permissions;
 - creates `data/` with `0700` permissions;
+- before starting the service, runs a one-shot `docker run ... init` command that creates `data/state.json` with the first tunnel;
 - creates `docker-compose.yml` if it does not exist;
 - uses the host networking Compose file;
 - runs `docker compose up -d`;
@@ -65,7 +73,7 @@ If the working directory already contains `.env`, `data/`, or `docker-compose.ym
 3) Abort
 ```
 
-`Reconfigure` keeps `data/`, backs up the old `.env`, and recreates the container with the new environment.
+`Reconfigure` keeps `data/`, backs up the old `.env`, and recreates the container with the new runtime environment. Existing tunnels remain in `data/state.json` and are not rebuilt from `.env`.
 
 `Full reinstall` first saves the current files into a directory like:
 
@@ -76,6 +84,12 @@ reinstall-backup-YYYYMMDD-HHMMSS/
 It then stops the container, removes managed firewall rules, AWG runtime interfaces, `.env`, `data/`, and `docker-compose.yml`, and continues as a fresh install.
 
 Important: after a full reinstall, old client configs no longer match the server because state, keys, and tunnel parameters are recreated. Issue fresh `.conf` files to clients.
+
+## Old Tunnel Variables In `.env`
+
+Older awg-forge versions stored first-tunnel fields in `.env`, such as `SERVER_HOST`, `LISTEN_PORT`, `IPV4_SUBNET`, `DNS`, `ALLOWED_IPS`, `PERSISTENT_KEEPALIVE`, `MTU`, and `PROTOCOL_PROFILE`.
+
+Current versions use `.env` only for runtime settings after `state.json` exists. If Doctor warns about legacy tunnel env variables, verify tunnel settings in the Web UI and then remove those old lines from `.env`.
 
 ## Security
 

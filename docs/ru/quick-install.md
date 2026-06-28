@@ -1,6 +1,6 @@
 # Быстрая установка
 
-`install.sh` — интерактивный установщик для нового Linux/VPS сервера. Он создает `.env`, подготавливает `data/`, запускает Docker Compose и показывает дальнейшие шаги.
+`install.sh` — интерактивный установщик для нового Linux/VPS сервера. Он создает runtime `.env`, подготавливает `data/`, инициализирует первый туннель в `state.json`, запускает Docker Compose и показывает дальнейшие шаги.
 
 Перед запуском установи [Docker Engine с официальной документации](https://docs.docker.com/engine/install/). Если Docker или Docker Compose отсутствуют, скрипт завершится до создания `/opt/awg-forge` и любых файлов проекта.
 
@@ -11,6 +11,12 @@ sudo ./install.sh
 ```
 
 Для интерактивной установки рекомендуется сначала скачать файл. В некоторых окружениях `curl | sudo bash` prompt может выглядеть зависшим из-за особенностей TTY/sudo: тело скрипта и ответы пользователя идут через разные input streams.
+
+Для проверки не-релизного образа можно передать `IMAGE`:
+
+```bash
+sudo IMAGE=ghcr.io/astronaut808/awg-forge:test ./install.sh
+```
 
 По умолчанию установка идет в:
 
@@ -38,11 +44,13 @@ sudo AWG_FORGE_HOME=/srv/awg-forge ./install.sh
 - при повторном запуске обнаруживает существующую установку и предлагает reconfigure или full reinstall;
 - предлагает удалить найденные старые AWG-like runtime-интерфейсы, например `awg0`, `awg0-1`, `awg15` или `awg20`;
 - определяет внешний интерфейс через `ip route get 1.1.1.1`;
-- предлагает `SERVER_HOST` из найденного source IP, но позволяет указать домен;
-- сначала спрашивает protocol profile, затем UDP-порт туннеля, Web UI host/port, subnet, DNS и MTU;
+- при чистой установке предлагает endpoint host первого туннеля из найденного source IP, но позволяет указать домен;
+- при чистой установке сначала спрашивает protocol profile, затем UDP-порт туннеля, Web UI host/port, subnet, DNS и MTU;
+- по умолчанию выбирает AmneziaWG 2.0, если просто нажать Enter на вопросе профиля;
 - генерирует `PASSWORD` и `SESSION_SECRET`;
-- создает `.env` с правами `0600`;
+- создает runtime `.env` с правами `0600`;
 - создает `data/` с правами `0700`;
+- до запуска сервиса выполняет одноразовый `docker run ... init`, который создает `data/state.json` с первым туннелем;
 - создает `docker-compose.yml`, если его еще нет;
 - использует host networking compose-файл;
 - запускает `docker compose up -d`;
@@ -65,7 +73,7 @@ sudo AWG_FORGE_HOME=/srv/awg-forge ./install.sh
 3) Abort
 ```
 
-`Reconfigure` оставляет `data/` на месте, делает backup старого `.env` и пересоздает контейнер с новыми переменными.
+`Reconfigure` оставляет `data/` на месте, делает backup старого `.env` и пересоздает контейнер с новыми runtime-переменными. Существующие туннели остаются в `data/state.json` и не пересоздаются из `.env`.
 
 `Full reinstall` сначала сохраняет текущие файлы в директорию вида:
 
@@ -76,6 +84,12 @@ reinstall-backup-YYYYMMDD-HHMMSS/
 Потом останавливает контейнер, удаляет managed firewall rules, AWG runtime-интерфейсы, `.env`, `data/` и `docker-compose.yml`, после чего запускает установку как с чистого состояния.
 
 Важно: после full reinstall старые клиентские конфиги больше не подходят, потому что состояние, ключи и параметры туннеля создаются заново. Клиентам нужно выдать свежие `.conf`.
+
+## Старые tunnel-переменные в `.env`
+
+Старые версии awg-forge хранили параметры первого туннеля в `.env`: `SERVER_HOST`, `LISTEN_PORT`, `IPV4_SUBNET`, `DNS`, `ALLOWED_IPS`, `PERSISTENT_KEEPALIVE`, `MTU`, `PROTOCOL_PROFILE`.
+
+В актуальной версии после появления `state.json` файл `.env` используется только для runtime-настроек. Если Doctor предупреждает о legacy tunnel env variables, проверь настройки туннелей в Web UI и затем удали старые строки из `.env`.
 
 ## Безопасность
 

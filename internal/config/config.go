@@ -36,33 +36,35 @@ type Config struct {
 	AuditLogPath        string
 	AuditLogMaxSize     int64
 	AuditLogMaxFiles    int
+	LegacyTunnelEnvVars []string
 }
 
 func FromEnv() (Config, error) {
 	configDir := getenv("CONFIG_DIR", DefaultConfigDir)
 	cfg := Config{
 		ConfigDir:           configDir,
-		TunnelName:          getenv("TUNNEL_NAME", DefaultTunnel),
+		TunnelName:          getenv("TUNNEL_NAME", ""),
 		ServerHost:          getenv("SERVER_HOST", "127.0.0.1"),
-		ListenPort:          getenvInt("LISTEN_PORT", 51820),
+		ListenPort:          getenvInt("LISTEN_PORT", 0),
 		WebUIHost:           getenv("WEBUI_HOST", "127.0.0.1"),
 		WebUIPort:           getenvInt("WEBUI_PORT", 51821),
 		Password:            os.Getenv("PASSWORD"),
 		SessionSecret:       os.Getenv("SESSION_SECRET"),
 		SessionCookieSecure: getenv("SESSION_COOKIE_SECURE", "auto"),
 		ExternalInterface:   getenv("EXTERNAL_INTERFACE", "eth0"),
-		IPv4Subnet:          getenv("IPV4_SUBNET", "10.8.0.0/24"),
+		IPv4Subnet:          getenv("IPV4_SUBNET", ""),
 		DNS:                 getenv("DNS", "1.1.1.1"),
 		AllowedIPs:          getenv("ALLOWED_IPS", "0.0.0.0/0"),
 		PersistentKeepalive: getenvInt("PERSISTENT_KEEPALIVE", 0),
 		MTU:                 getenvInt("MTU", 0),
-		ProtocolProfile:     getenv("PROTOCOL_PROFILE", "awg_legacy_1_0"),
+		ProtocolProfile:     getenv("PROTOCOL_PROFILE", "awg_2_0"),
 		ApplyConfig:         getenvBool("APPLY_CONFIG", false),
 		PublishedUDPPorts:   os.Getenv("PUBLISHED_UDP_PORTS"),
 		AuditLogEnabled:     getenvBool("AUDIT_LOG_ENABLED", true),
 		AuditLogPath:        getenv("AUDIT_LOG_PATH", filepath.Join(configDir, "audit.log")),
 		AuditLogMaxSize:     getenvInt64("AUDIT_LOG_MAX_SIZE", 5*1024*1024),
 		AuditLogMaxFiles:    getenvInt("AUDIT_LOG_MAX_FILES", 3),
+		LegacyTunnelEnvVars: legacyTunnelEnvVars(),
 	}
 	if cfg.WebUIHost == "0.0.0.0" || cfg.WebUIHost == "::" {
 		if cfg.Password == "" {
@@ -74,10 +76,37 @@ func FromEnv() (Config, error) {
 	default:
 		return Config{}, errors.New("SESSION_COOKIE_SECURE must be auto, true, or false")
 	}
-	if _, _, err := net.ParseCIDR(cfg.IPv4Subnet); err != nil {
-		return Config{}, err
+	if cfg.IPv4Subnet != "" {
+		if _, _, err := net.ParseCIDR(cfg.IPv4Subnet); err != nil {
+			return Config{}, err
+		}
 	}
 	return cfg, nil
+}
+
+func (c Config) LegacyTunnelEnvPresent() bool {
+	return len(c.LegacyTunnelEnvVars) > 0
+}
+
+func legacyTunnelEnvVars() []string {
+	keys := []string{
+		"SERVER_HOST",
+		"TUNNEL_NAME",
+		"LISTEN_PORT",
+		"IPV4_SUBNET",
+		"DNS",
+		"ALLOWED_IPS",
+		"PERSISTENT_KEEPALIVE",
+		"MTU",
+		"PROTOCOL_PROFILE",
+	}
+	var present []string
+	for _, key := range keys {
+		if os.Getenv(key) != "" {
+			present = append(present, key)
+		}
+	}
+	return present
 }
 
 func getenv(key, fallback string) string {

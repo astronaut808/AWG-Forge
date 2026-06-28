@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"strconv"
@@ -43,8 +44,7 @@ func run(args []string) error {
 
 	switch args[0] {
 	case "init":
-		_, err := svc.Init()
-		return err
+		return runInit(cfg, svc, args[1:])
 	case "serve":
 		if _, err := svc.Init(); err != nil {
 			return err
@@ -74,6 +74,29 @@ func run(args []string) error {
 	default:
 		return usage()
 	}
+}
+
+func runInit(cfg config.Config, svc *app.Service, args []string) error {
+	options := app.InitOptionsFromConfig(cfg)
+	flags := flag.NewFlagSet("init", flag.ContinueOnError)
+	flags.StringVar(&options.ServerHost, "server-host", options.ServerHost, "server host or public IP written to generated client configs")
+	flags.StringVar(&options.ExternalInterface, "external-interface", options.ExternalInterface, "external WAN interface for IPv4 masquerade")
+	flags.StringVar(&options.ProfileID, "profile", options.ProfileID, "protocol profile: awg_legacy_1_0, awg_1_5, or awg_2_0")
+	flags.StringVar(&options.Name, "tunnel-name", options.Name, "first tunnel name and interface")
+	flags.IntVar(&options.ListenPort, "listen-port", options.ListenPort, "first tunnel UDP listen port")
+	flags.StringVar(&options.IPv4Subnet, "ipv4-subnet", options.IPv4Subnet, "first tunnel IPv4 subnet")
+	flags.StringVar(&options.DNS, "dns", options.DNS, "DNS value for generated client configs")
+	flags.StringVar(&options.AllowedIPs, "allowed-ips", options.AllowedIPs, "AllowedIPs value for generated client configs")
+	flags.IntVar(&options.PersistentKeepalive, "keepalive", options.PersistentKeepalive, "PersistentKeepalive value for generated client configs")
+	flags.IntVar(&options.MTU, "mtu", options.MTU, "MTU value, or 0 for auto")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("usage: awg-forge init [--server-host host] [--external-interface iface] [--profile id] [--tunnel-name name] [--listen-port port] [--ipv4-subnet cidr] [--dns dns] [--allowed-ips cidr] [--keepalive seconds] [--mtu mtu]")
+	}
+	_, err := svc.InitWithOptions(options)
+	return err
 }
 
 func runTunnel(svc *app.Service, args []string) error {
