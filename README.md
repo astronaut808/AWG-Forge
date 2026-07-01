@@ -90,7 +90,7 @@ Doctor:
 docker exec awg-forge awg-forge doctor
 ```
 
-## Обслуживание
+## Удаление
 
 Удаление установленного экземпляра:
 

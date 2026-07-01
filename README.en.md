@@ -88,7 +88,7 @@ Doctor:
 docker exec awg-forge awg-forge doctor
 ```
 
-## Maintenance
+## Uninstall
 
 Uninstall an installed instance:
 
