@@ -635,7 +635,7 @@ function ClientConfigPanel({ client, notify }: { client: Client; notify: (messag
         </div>
         <div class="segmented qr-mode-tabs" role="tablist" aria-label="QR import mode">
           <button class={qrMode === "amneziavpn" ? "active" : ""} type="button" role="tab" aria-selected={qrMode === "amneziavpn"} onClick={() => setQRMode("amneziavpn")}>AmneziaVPN</button>
-          <button class={qrMode === "amneziawg" ? "active" : ""} type="button" role="tab" aria-selected={qrMode === "amneziawg"} onClick={() => setQRMode("amneziawg")}>AmneziaWG .conf</button>
+          <button class={qrMode === "amneziawg" ? "active" : ""} type="button" role="tab" aria-selected={qrMode === "amneziawg"} onClick={() => setQRMode("amneziawg")}>AmneziaWG</button>
         </div>
         <div class="qr-panel">
           <button class="qr-image-button" type="button" onClick={() => setExpandedQR(qrMode)} aria-label={`Open ${activeQRTitle} larger`}>
