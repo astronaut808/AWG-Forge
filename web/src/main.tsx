@@ -665,8 +665,9 @@ function ClientConfigPanel({ client, notify }: { client: Client; notify: (messag
       </section>
     </div>
     <p class="note">All import methods contain client secrets. Share them only with the target device.</p>
-    {expandedQR && <div class="qr-lightbox" role="dialog" aria-modal="true" aria-label={expandedQRTitle} onClick={() => setExpandedQR("")}>
-      <div class="qr-lightbox-card" onClick={(event) => event.stopPropagation()}>
+    {expandedQR && <dialog open class="qr-lightbox" aria-label={expandedQRTitle}>
+      <button class="qr-lightbox-backdrop-button" type="button" onClick={() => setExpandedQR("")} aria-label="Close QR preview" />
+      <div class="qr-lightbox-card">
         <div class="qr-lightbox-head">
           <div>
             <h3>{expandedQRTitle}</h3>
@@ -682,7 +683,7 @@ function ClientConfigPanel({ client, notify }: { client: Client; notify: (messag
         </div>}
         <a class="button" href={expandedQRURL} download={expandedQR === "amneziavpn" ? vpnQRDownloadName : `${client.name}-amneziawg.png`}>Download QR</a>
       </div>
-    </div>}
+    </dialog>}
   </PanelTitle>;
 }
 
