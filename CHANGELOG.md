@@ -1,17 +1,17 @@
 # Changelog
 
-## Unreleased
+## v0.13.0 - 2026-07-02
 
 ### Added
 
 - Added a unified client `Config` dialog with separate AmneziaVPN QR, AmneziaWG `.conf` QR, `.conf` download, and `vpn://` copy options.
 - Added authenticated client QR codes in the Web UI, generated server-side as PNG with `no-store` caching and `.conf` download fallback.
-- Added AmneziaVPN-compatible QR export using the JSON `last_config` wrapper, zlib compression, Qt/qCompress-style binary header, and base64url payload expected by AmneziaVPN.
+- Added AmneziaVPN-compatible QR export using the JSON `last_config` wrapper, zlib compression, Qt/qCompress-style binary header, base64url payload, and compatibility-critical JSON types expected by AmneziaVPN.
 
 ### Changed
 
 - Removed automatic `.conf` download after client creation; client import now requires an explicit `Config` action.
-- Split the client `Config` dialog into two QR cards and one import-options card, with enlarged QR preview and preserved single-QR series API compatibility.
+- Changed the client `Config` dialog to show one active QR mode at a time, with compact inline QR, click-to-enlarge preview, QR download, and preserved single-QR series API compatibility.
 
 ## v0.12.0 - 2026-06-27
 
