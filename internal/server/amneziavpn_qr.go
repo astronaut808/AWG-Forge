@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net"
 	"strconv"
 	"strings"
@@ -14,7 +15,11 @@ import (
 	"github.com/astronaut808/awg-forge/internal/app"
 )
 
-const amneziaVPNQRPackMagic uint32 = 0x07C00100
+const (
+	amneziaVPNQRPackMagic     uint32 = 0x07C00100
+	amneziaVPNQRPackHeaderLen        = 12
+	amneziaVPNQRMaxInputBytes        = 1 << 20
+)
 
 type amneziaVPNConfig struct {
 	Containers       []amneziaVPNContainer `json:"containers"`
@@ -149,6 +154,9 @@ func buildAmneziaVPNQRPack(jsonBytes []byte) (string, error) {
 	if len(jsonBytes) == 0 {
 		return "", fmt.Errorf("empty AmneziaVPN config")
 	}
+	if len(jsonBytes) > amneziaVPNQRMaxInputBytes {
+		return "", fmt.Errorf("amneziavpn config is too large")
+	}
 	var compressed bytes.Buffer
 	zw := zlib.NewWriter(&compressed)
 	if _, err := zw.Write(jsonBytes); err != nil {
@@ -160,11 +168,22 @@ func buildAmneziaVPNQRPack(jsonBytes []byte) (string, error) {
 	}
 
 	zlibBytes := compressed.Bytes()
-	buf := make([]byte, 12+len(zlibBytes))
+	zlibLen := len(zlibBytes)
+	jsonLen := len(jsonBytes)
+	if zlibLen > amneziaVPNQRMaxInputBytes {
+		return "", fmt.Errorf("compressed amneziavpn config is too large")
+	}
+	if zlibLen > math.MaxInt-amneziaVPNQRPackHeaderLen {
+		return "", fmt.Errorf("amneziavpn QR payload is too large")
+	}
+	if uint64(zlibLen) > math.MaxUint32-4 || uint64(jsonLen) > math.MaxUint32 {
+		return "", fmt.Errorf("amneziavpn QR payload exceeds qCompress length limit")
+	}
+	buf := make([]byte, amneziaVPNQRPackHeaderLen+zlibLen)
 	binary.BigEndian.PutUint32(buf[0:4], amneziaVPNQRPackMagic)
-	binary.BigEndian.PutUint32(buf[4:8], uint32(len(zlibBytes)+4))
-	binary.BigEndian.PutUint32(buf[8:12], uint32(len(jsonBytes)))
-	copy(buf[12:], zlibBytes)
+	binary.BigEndian.PutUint32(buf[4:8], uint32(zlibLen)+4)
+	binary.BigEndian.PutUint32(buf[8:amneziaVPNQRPackHeaderLen], uint32(jsonLen))
+	copy(buf[amneziaVPNQRPackHeaderLen:], zlibBytes)
 	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 

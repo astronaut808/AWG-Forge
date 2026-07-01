@@ -381,15 +381,45 @@ func TestBuildAmneziaVPNQRPackHeaderAndDecompression(t *testing.T) {
 	if got := binary.BigEndian.Uint32(decoded[0:4]); got != amneziaVPNQRPackMagic {
 		t.Fatalf("magic = %#x, want %#x", got, amneziaVPNQRPackMagic)
 	}
-	if got, want := binary.BigEndian.Uint32(decoded[4:8]), uint32(len(decoded[12:])+4); got != want {
+	if got, want := binary.BigEndian.Uint32(decoded[4:8]), uint32(len(decoded[amneziaVPNQRPackHeaderLen:])+4); got != want {
 		t.Fatalf("compressed length field = %d, want %d", got, want)
 	}
-	if got, want := binary.BigEndian.Uint32(decoded[8:12]), uint32(len(original)); got != want {
+	if got, want := binary.BigEndian.Uint32(decoded[8:amneziaVPNQRPackHeaderLen]), uint32(len(original)); got != want {
 		t.Fatalf("uncompressed length field = %d, want %d", got, want)
 	}
-	decompressed := decompressZlibPayload(t, decoded[12:])
+	decompressed := decompressZlibPayload(t, decoded[amneziaVPNQRPackHeaderLen:])
 	if !bytes.Equal(decompressed, original) {
 		t.Fatalf("decompressed JSON = %s, want %s", decompressed, original)
+	}
+}
+
+func TestBuildAmneziaVPNQRPackRejectsOversizedInput(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload []byte
+		wantErr string
+	}{
+		{
+			name:    "empty",
+			payload: nil,
+			wantErr: "empty",
+		},
+		{
+			name:    "too large",
+			payload: bytes.Repeat([]byte("x"), amneziaVPNQRMaxInputBytes+1),
+			wantErr: "too large",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := buildAmneziaVPNQRPack(tt.payload)
+			if err == nil {
+				t.Fatal("expected AmneziaVPN QR packer to reject payload")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("error = %q, want substring %q", err, tt.wantErr)
+			}
+		})
 	}
 }
 
