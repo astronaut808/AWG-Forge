@@ -558,6 +558,8 @@ function ClientConfigPanel({ client, notify }: { client: Client; notify: (messag
   const vpnQRURL = api.clientAmneziaVPNQRCodeURL(client.id, vpnQRChunk);
   const expandedQRURL = expandedQR === "amneziavpn" ? vpnQRURL : awgQRURL;
   const expandedQRTitle = expandedQR === "amneziavpn" ? "AmneziaVPN QR" : "AmneziaWG QR";
+  const hasVPNQRSeries = vpnQRChunks > 1;
+  const vpnQRDownloadName = hasVPNQRSeries ? `${client.name}-amneziavpn-${vpnQRChunk + 1}-of-${vpnQRChunks}.png` : `${client.name}-amneziavpn.png`;
 
   useEffect(() => {
     notifyRef.current = notify;
@@ -620,20 +622,20 @@ function ClientConfigPanel({ client, notify }: { client: Client; notify: (messag
       <section class="config-option">
         <div>
           <h3>AmneziaVPN QR</h3>
-          <p>Scan in AmneziaVPN. If several QR codes are shown, scan them in order.</p>
+          <p>Scan this in AmneziaVPN. Current exports use one QR code; use .conf if import fails.</p>
         </div>
         <div class="qr-panel">
           <button class="qr-image-button" type="button" onClick={() => setExpandedQR("amneziavpn")} aria-label="Open AmneziaVPN QR larger">
             <img class="qr-image" src={vpnQRURL} alt={`AmneziaVPN import QR for ${client.name}`} />
           </button>
-          <div class="qr-series">
-            {vpnQRChunks > 1 && <button class="button" type="button" disabled={vpnQRChunk === 0} onClick={() => setVPNQRChunk((value) => Math.max(0, value - 1))}>Previous</button>}
+          {hasVPNQRSeries && <div class="qr-series">
+            <button class="button" type="button" disabled={vpnQRChunk === 0} onClick={() => setVPNQRChunk((value) => Math.max(0, value - 1))}>Previous</button>
             <span>QR {vpnQRChunk + 1} / {vpnQRChunks}</span>
-            {vpnQRChunks > 1 && <button class="button" type="button" disabled={vpnQRChunk + 1 >= vpnQRChunks} onClick={() => setVPNQRChunk((value) => Math.min(vpnQRChunks - 1, value + 1))}>Next</button>}
-          </div>
+            <button class="button" type="button" disabled={vpnQRChunk + 1 >= vpnQRChunks} onClick={() => setVPNQRChunk((value) => Math.min(vpnQRChunks - 1, value + 1))}>Next</button>
+          </div>}
         </div>
         <div class="action-row">
-          <a class="button" href={vpnQRURL} download={`${client.name}-amneziavpn-${vpnQRChunk + 1}-of-${vpnQRChunks}.png`}>Download QR {vpnQRChunks > 1 ? `${vpnQRChunk + 1}` : ""}</a>
+          <a class="button" href={vpnQRURL} download={vpnQRDownloadName}>Download QR {hasVPNQRSeries ? `${vpnQRChunk + 1}` : ""}</a>
         </div>
       </section>
       <section class="config-option">
@@ -669,17 +671,17 @@ function ClientConfigPanel({ client, notify }: { client: Client; notify: (messag
         <div class="qr-lightbox-head">
           <div>
             <h3>{expandedQRTitle}</h3>
-            <p>{expandedQR === "amneziavpn" ? `QR ${vpnQRChunk + 1} / ${vpnQRChunks}` : "Raw .conf QR"}</p>
+            <p>{expandedQR === "amneziavpn" ? (hasVPNQRSeries ? `QR ${vpnQRChunk + 1} / ${vpnQRChunks}` : "AmneziaVPN import QR") : "Raw .conf QR"}</p>
           </div>
           <button class="button icon" type="button" onClick={() => setExpandedQR("")} aria-label="Close QR preview">×</button>
         </div>
         <img class="qr-lightbox-image" src={expandedQRURL} alt={`${expandedQRTitle} for ${client.name}`} />
-        {expandedQR === "amneziavpn" && <div class="qr-series">
-          {vpnQRChunks > 1 && <button class="button" type="button" disabled={vpnQRChunk === 0} onClick={() => setVPNQRChunk((value) => Math.max(0, value - 1))}>Previous</button>}
+        {expandedQR === "amneziavpn" && hasVPNQRSeries && <div class="qr-series">
+          <button class="button" type="button" disabled={vpnQRChunk === 0} onClick={() => setVPNQRChunk((value) => Math.max(0, value - 1))}>Previous</button>
           <span>QR {vpnQRChunk + 1} / {vpnQRChunks}</span>
-          {vpnQRChunks > 1 && <button class="button" type="button" disabled={vpnQRChunk + 1 >= vpnQRChunks} onClick={() => setVPNQRChunk((value) => Math.min(vpnQRChunks - 1, value + 1))}>Next</button>}
+          <button class="button" type="button" disabled={vpnQRChunk + 1 >= vpnQRChunks} onClick={() => setVPNQRChunk((value) => Math.min(vpnQRChunks - 1, value + 1))}>Next</button>
         </div>}
-        <a class="button" href={expandedQRURL} download={expandedQR === "amneziavpn" ? `${client.name}-amneziavpn-${vpnQRChunk + 1}-of-${vpnQRChunks}.png` : `${client.name}-amneziawg.png`}>Download QR</a>
+        <a class="button" href={expandedQRURL} download={expandedQR === "amneziavpn" ? vpnQRDownloadName : `${client.name}-amneziawg.png`}>Download QR</a>
       </div>
     </div>}
   </PanelTitle>;
