@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -423,6 +424,84 @@ func TestBuildAmneziaVPNQRPackRejectsOversizedInput(t *testing.T) {
 	}
 }
 
+func TestBuildAmneziaVPNQRPayloadRoundTripsToExpectedJSON(t *testing.T) {
+	ctx := amneziaVPNTestExportContext(t)
+	payload, err := buildAmneziaVPNQRPayload(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actualJSON := decodeAmneziaVPNQRPayload(t, payload).JSON
+	expectedJSON := expectedAmneziaVPNQRJSON(t, ctx)
+	if !reflect.DeepEqual(actualJSON, expectedJSON) {
+		t.Fatalf("decoded AmneziaVPN QR JSON mismatch\nactual: %#v\nexpected: %#v", actualJSON, expectedJSON)
+	}
+}
+
+func TestAmneziaVPNJSONCompatibility(t *testing.T) {
+	ctx := amneziaVPNTestExportContext(t)
+	payload, err := buildAmneziaVPNQRPayload(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded := decodeAmneziaVPNQRPayload(t, payload)
+	var outer decodedAmneziaVPNConfig
+	if err := json.Unmarshal(decoded.JSONBytes, &outer); err != nil {
+		t.Fatal(err)
+	}
+	if outer.DefaultContainer != "amnezia-awg" {
+		t.Fatalf("defaultContainer = %q, want amnezia-awg", outer.DefaultContainer)
+	}
+	if len(outer.Containers) != 1 {
+		t.Fatalf("containers length = %d, want 1", len(outer.Containers))
+	}
+	container := outer.Containers[0]
+	if container.Container != "amnezia-awg" {
+		t.Fatalf("container = %q, want amnezia-awg", container.Container)
+	}
+	if container.AWG.Port != "51820" {
+		t.Fatalf("outer awg.port = %q, want string 51820", container.AWG.Port)
+	}
+	if container.AWG.ProtocolVersion != "2" {
+		t.Fatalf("protocol_version = %q, want 2", container.AWG.ProtocolVersion)
+	}
+	if container.AWG.TransportProto != "udp" {
+		t.Fatalf("transport_proto = %q, want udp", container.AWG.TransportProto)
+	}
+	if container.AWG.LastConfig == "" {
+		t.Fatal("last_config must be a JSON string")
+	}
+	var last decodedAmneziaVPNLastConfig
+	if err := json.Unmarshal([]byte(container.AWG.LastConfig), &last); err != nil {
+		t.Fatalf("last_config must be a JSON string with compatible field types: %v", err)
+	}
+	if last.Port != 51820 {
+		t.Fatalf("last_config.port = %d, want JSON number 51820", last.Port)
+	}
+	if !reflect.DeepEqual(last.AllowedIPs, []string{"0.0.0.0/0"}) {
+		t.Fatalf("last_config.allowed_ips = %#v, want JSON string array", last.AllowedIPs)
+	}
+}
+
+func TestAmneziaVPNQRPayloadSemanticRoundTrip(t *testing.T) {
+	ctx := amneziaVPNTestExportContext(t)
+	payload, err := buildAmneziaVPNQRPayload(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded := decodeAmneziaVPNQRPayload(t, payload)
+	reencoded, err := json.Marshal(decoded.JSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reparsed map[string]any
+	if err := json.Unmarshal(reencoded, &reparsed); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(decoded.JSON, reparsed) {
+		t.Fatalf("re-encoded AmneziaVPN QR JSON changed semantics\nactual: %#v\nreparsed: %#v", decoded.JSON, reparsed)
+	}
+}
+
 func TestBuildAmneziaVPNClientConfigShape(t *testing.T) {
 	ctx := amneziaVPNTestExportContext(t)
 	jsonBytes, err := buildAmneziaVPNClientConfig(ctx)
@@ -461,10 +540,17 @@ func TestBuildAmneziaVPNClientConfigShape(t *testing.T) {
 	if err := json.Unmarshal([]byte(lastConfig), &last); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"allowed_ips", "client_ip", "client_priv_key", "config", "hostName", "mtu", "persistent_keep_alive", "port", "psk_key", "server_pub_key"} {
+	for _, key := range []string{"client_ip", "client_priv_key", "config", "hostName", "mtu", "persistent_keep_alive", "psk_key", "server_pub_key"} {
 		if last[key] == "" {
 			t.Fatalf("last_config missing %s: %#v", key, last)
 		}
+	}
+	if got, ok := last["port"].(float64); !ok || got != 51820 {
+		t.Fatalf("last_config port = %#v (%T), want number 51820", last["port"], last["port"])
+	}
+	allowedIPs, ok := last["allowed_ips"].([]any)
+	if !ok || len(allowedIPs) != 1 || allowedIPs[0] != "0.0.0.0/0" {
+		t.Fatalf("last_config allowed_ips = %#v (%T), want string array", last["allowed_ips"], last["allowed_ips"])
 	}
 	for _, key := range []string{"S3", "S4", "H1", "H2", "H3", "H4", "I1", "I2", "I3", "I4", "I5"} {
 		if last[key] == "" {
@@ -498,6 +584,63 @@ func TestBuildAmneziaVPNClientConfigOmitsEmptyOptionalParams(t *testing.T) {
 			t.Fatalf("optional empty param %s must be omitted: %#v", key, last)
 		}
 	}
+}
+
+type decodedAmneziaVPNPayload struct {
+	JSONBytes []byte
+	JSON      map[string]any
+}
+
+type decodedAmneziaVPNConfig struct {
+	Containers       []decodedAmneziaVPNContainer `json:"containers"`
+	DefaultContainer string                       `json:"defaultContainer"`
+	Description      string                       `json:"description"`
+	DNS1             string                       `json:"dns1,omitempty"`
+	DNS2             string                       `json:"dns2,omitempty"`
+	HostName         string                       `json:"hostName"`
+}
+
+type decodedAmneziaVPNContainer struct {
+	AWG       decodedAmneziaVPNAWG `json:"awg"`
+	Container string               `json:"container"`
+}
+
+type decodedAmneziaVPNAWG struct {
+	IsThirdPartyConfig bool   `json:"isThirdPartyConfig"`
+	LastConfig         string `json:"last_config"`
+	Port               string `json:"port"`
+	ProtocolVersion    string `json:"protocol_version"`
+	TransportProto     string `json:"transport_proto"`
+}
+
+type decodedAmneziaVPNLastConfig struct {
+	AllowedIPs          []string `json:"allowed_ips"`
+	ClientIP            string   `json:"client_ip"`
+	ClientPrivateKey    string   `json:"client_priv_key"`
+	Config              string   `json:"config"`
+	HostName            string   `json:"hostName"`
+	MTU                 string   `json:"mtu"`
+	PersistentKeepalive string   `json:"persistent_keep_alive"`
+	Port                int      `json:"port"`
+	PresharedKey        string   `json:"psk_key"`
+	ServerPublicKey     string   `json:"server_pub_key"`
+
+	Jc   string `json:"Jc"`
+	Jmin string `json:"Jmin"`
+	Jmax string `json:"Jmax"`
+	S1   string `json:"S1"`
+	S2   string `json:"S2"`
+	S3   string `json:"S3"`
+	S4   string `json:"S4"`
+	H1   string `json:"H1"`
+	H2   string `json:"H2"`
+	H3   string `json:"H3"`
+	H4   string `json:"H4"`
+	I1   string `json:"I1,omitempty"`
+	I2   string `json:"I2,omitempty"`
+	I3   string `json:"I3,omitempty"`
+	I4   string `json:"I4,omitempty"`
+	I5   string `json:"I5,omitempty"`
 }
 
 func amneziaVPNTestExportContext(t *testing.T) app.ClientExportContext {
@@ -545,6 +688,92 @@ func decompressZlibPayload(t *testing.T, payload []byte) []byte {
 		t.Fatal(err)
 	}
 	return out
+}
+
+func expectedAmneziaVPNQRJSON(t *testing.T, ctx app.ClientExportContext) map[string]any {
+	t.Helper()
+	lastConfigJSON, err := json.Marshal(amneziaVPNLastConfig{
+		AllowedIPs:          []string{"0.0.0.0/0"},
+		ClientIP:            "10.8.0.2/32",
+		ClientPrivateKey:    ctx.Client.PrivateKey,
+		Config:              ctx.RenderedConf,
+		HostName:            "vpn.example.com",
+		MTU:                 "1280",
+		PersistentKeepalive: "25",
+		Port:                51820,
+		PresharedKey:        ctx.Client.PresharedKey,
+		ServerPublicKey:     ctx.Tunnel.ServerPublicKey,
+		Jc:                  ctx.Tunnel.ProtocolParams["Jc"],
+		Jmin:                ctx.Tunnel.ProtocolParams["Jmin"],
+		Jmax:                ctx.Tunnel.ProtocolParams["Jmax"],
+		S1:                  ctx.Tunnel.ProtocolParams["S1"],
+		S2:                  ctx.Tunnel.ProtocolParams["S2"],
+		S3:                  ctx.Tunnel.ProtocolParams["S3"],
+		S4:                  ctx.Tunnel.ProtocolParams["S4"],
+		H1:                  ctx.Tunnel.ProtocolParams["H1"],
+		H2:                  ctx.Tunnel.ProtocolParams["H2"],
+		H3:                  ctx.Tunnel.ProtocolParams["H3"],
+		H4:                  ctx.Tunnel.ProtocolParams["H4"],
+		I1:                  ctx.Tunnel.ProtocolParams["I1"],
+		I2:                  ctx.Tunnel.ProtocolParams["I2"],
+		I3:                  ctx.Tunnel.ProtocolParams["I3"],
+		I4:                  ctx.Tunnel.ProtocolParams["I4"],
+		I5:                  ctx.Tunnel.ProtocolParams["I5"],
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedBytes, err := json.Marshal(amneziaVPNConfig{
+		Containers: []amneziaVPNContainer{{
+			AWG: amneziaVPNAWG{
+				IsThirdPartyConfig: true,
+				LastConfig:         string(lastConfigJSON),
+				Port:               "51820",
+				ProtocolVersion:    "2",
+				TransportProto:     "udp",
+			},
+			Container: "amnezia-awg",
+		}},
+		DefaultContainer: "amnezia-awg",
+		Description:      "Phone QR",
+		DNS1:             "1.1.1.1",
+		DNS2:             "9.9.9.9",
+		HostName:         "vpn.example.com",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var expected map[string]any
+	if err := json.Unmarshal(expectedBytes, &expected); err != nil {
+		t.Fatal(err)
+	}
+	return expected
+}
+
+func decodeAmneziaVPNQRPayload(t *testing.T, payload string) decodedAmneziaVPNPayload {
+	t.Helper()
+	decoded, err := base64.RawURLEncoding.DecodeString(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded) < amneziaVPNQRPackHeaderLen {
+		t.Fatalf("decoded AmneziaVPN QR payload too short: %d", len(decoded))
+	}
+	if got := binary.BigEndian.Uint32(decoded[0:4]); got != amneziaVPNQRPackMagic {
+		t.Fatalf("magic = %#x, want %#x", got, amneziaVPNQRPackMagic)
+	}
+	jsonBytes := decompressZlibPayload(t, decoded[amneziaVPNQRPackHeaderLen:])
+	if got, want := binary.BigEndian.Uint32(decoded[4:8]), uint32(len(decoded[amneziaVPNQRPackHeaderLen:])+4); got != want {
+		t.Fatalf("compressed length field = %d, want %d", got, want)
+	}
+	if got, want := binary.BigEndian.Uint32(decoded[8:amneziaVPNQRPackHeaderLen]), uint32(len(jsonBytes)); got != want {
+		t.Fatalf("uncompressed length field = %d, want %d", got, want)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(jsonBytes, &out); err != nil {
+		t.Fatal(err)
+	}
+	return decodedAmneziaVPNPayload{JSONBytes: jsonBytes, JSON: out}
 }
 
 type lockedRecorder struct {

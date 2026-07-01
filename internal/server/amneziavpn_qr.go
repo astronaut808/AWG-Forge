@@ -44,16 +44,16 @@ type amneziaVPNAWG struct {
 }
 
 type amneziaVPNLastConfig struct {
-	AllowedIPs          string `json:"allowed_ips"`
-	ClientIP            string `json:"client_ip"`
-	ClientPrivateKey    string `json:"client_priv_key"`
-	Config              string `json:"config"`
-	HostName            string `json:"hostName"`
-	MTU                 string `json:"mtu,omitempty"`
-	PersistentKeepalive string `json:"persistent_keep_alive"`
-	Port                string `json:"port"`
-	PresharedKey        string `json:"psk_key"`
-	ServerPublicKey     string `json:"server_pub_key"`
+	AllowedIPs          []string `json:"allowed_ips"`
+	ClientIP            string   `json:"client_ip"`
+	ClientPrivateKey    string   `json:"client_priv_key"`
+	Config              string   `json:"config"`
+	HostName            string   `json:"hostName"`
+	MTU                 string   `json:"mtu,omitempty"`
+	PersistentKeepalive string   `json:"persistent_keep_alive"`
+	Port                int      `json:"port"`
+	PresharedKey        string   `json:"psk_key"`
+	ServerPublicKey     string   `json:"server_pub_key"`
 
 	Jc   string `json:"Jc,omitempty"`
 	Jmin string `json:"Jmin,omitempty"`
@@ -82,16 +82,23 @@ func buildAmneziaVPNClientConfig(ctx app.ClientExportContext) ([]byte, error) {
 		return nil, fmt.Errorf("empty endpoint host")
 	}
 
+	// Do not change these JSON types casually.
+	// AmneziaVPN imports the QR successfully even when visible .conf text matches,
+	// but it builds the runnable profile from structured last_config fields.
+	// In particular, port must stay a JSON number and allowed_ips must stay an
+	// array; changing them to strings can produce profiles that fail to connect.
+	// The types intentionally match the wg-easy AmneziaVPN QR reference and the
+	// AmneziaVPN compatibility investigation.
 	port := strconv.Itoa(ctx.Tunnel.ListenPort)
 	params := ctx.Tunnel.ProtocolParams
 	last := amneziaVPNLastConfig{
-		AllowedIPs:          ctx.Tunnel.AllowedIPs,
+		AllowedIPs:          []string{ctx.Tunnel.AllowedIPs},
 		ClientIP:            ctx.Client.IPv4Address + "/32",
 		ClientPrivateKey:    ctx.Client.PrivateKey,
 		Config:              ctx.RenderedConf,
 		HostName:            host,
 		PersistentKeepalive: strconv.Itoa(ctx.Tunnel.Keepalive),
-		Port:                port,
+		Port:                ctx.Tunnel.ListenPort,
 		PresharedKey:        ctx.Client.PresharedKey,
 		ServerPublicKey:     ctx.Tunnel.ServerPublicKey,
 		Jc:                  params["Jc"],
