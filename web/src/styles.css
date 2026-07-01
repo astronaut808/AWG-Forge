@@ -978,16 +978,16 @@ textarea {
 
 .config-options {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(420px, 1.4fr) minmax(280px, 0.8fr);
   gap: 12px;
 }
 
 .config-option {
   min-width: 0;
-  padding: 14px;
+  padding: 12px;
   display: grid;
   align-content: start;
-  gap: 12px;
+  gap: 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface-2);
@@ -1009,6 +1009,18 @@ textarea {
 
 .config-option.single {
   max-width: 720px;
+}
+
+.qr-config-option {
+  min-height: 100%;
+}
+
+.qr-mode-tabs {
+  flex-wrap: nowrap;
+}
+
+.qr-mode-tabs button {
+  flex: 1 1 0;
 }
 
 .config-actions {
@@ -1035,7 +1047,7 @@ textarea {
   display: grid;
   place-items: center;
   gap: 12px;
-  padding: 16px;
+  padding: 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--field-bg);
@@ -1058,7 +1070,7 @@ textarea {
 }
 
 .qr-image {
-  width: min(420px, 100%);
+  width: min(300px, 100%);
   height: auto;
   aspect-ratio: 1;
   padding: 10px;

@@ -38,6 +38,7 @@ type Modal =
   | { kind: "maintenance" };
 
 type MaintenanceTab = "overview" | "doctor" | "firewall" | "warp" | "backup" | "restore" | "updates" | "support" | "logs" | "system";
+type QRImportMode = "amneziavpn" | "amneziawg";
 
 const themeKey = "awg-forge.theme";
 const dashboardFilterKey = "awg-forge.dashboard-filter";
@@ -553,13 +554,21 @@ function ClientConfigPanel({ client, notify }: { client: Client; notify: (messag
   const [importWarning, setImportWarning] = useState("");
   const [vpnQRChunks, setVPNQRChunks] = useState(1);
   const [vpnQRChunk, setVPNQRChunk] = useState(0);
-  const [expandedQR, setExpandedQR] = useState<"" | "amneziavpn" | "amneziawg">("");
+  const [qrMode, setQRMode] = useState<QRImportMode>("amneziavpn");
+  const [expandedQR, setExpandedQR] = useState<"" | QRImportMode>("");
   const [busy, setBusy] = useState(false);
   const vpnQRURL = api.clientAmneziaVPNQRCodeURL(client.id, vpnQRChunk);
   const expandedQRURL = expandedQR === "amneziavpn" ? vpnQRURL : awgQRURL;
   const expandedQRTitle = expandedQR === "amneziavpn" ? "AmneziaVPN QR" : "AmneziaWG QR";
   const hasVPNQRSeries = vpnQRChunks > 1;
   const vpnQRDownloadName = hasVPNQRSeries ? `${client.name}-amneziavpn-${vpnQRChunk + 1}-of-${vpnQRChunks}.png` : `${client.name}-amneziavpn.png`;
+  const activeQRURL = qrMode === "amneziavpn" ? vpnQRURL : awgQRURL;
+  const activeQRTitle = qrMode === "amneziavpn" ? "AmneziaVPN QR" : "AmneziaWG QR";
+  const activeQRDescription = qrMode === "amneziavpn"
+    ? "For AmneziaVPN import. Use .conf if scanning fails."
+    : "Raw .conf QR for AmneziaWG-compatible clients.";
+  const activeQRAlt = qrMode === "amneziavpn" ? `AmneziaVPN import QR for ${client.name}` : `AmneziaWG config QR for ${client.name}`;
+  const activeQRDownloadName = qrMode === "amneziavpn" ? vpnQRDownloadName : `${client.name}-amneziawg.png`;
 
   useEffect(() => {
     notifyRef.current = notify;
@@ -619,37 +628,27 @@ function ClientConfigPanel({ client, notify }: { client: Client; notify: (messag
 
   return <PanelTitle title="Client config" subtitle={`${client.name} · ${client.address}`}>
     <div class="config-options">
-      <section class="config-option">
+      <section class="config-option qr-config-option">
         <div>
-          <h3>AmneziaVPN QR</h3>
-          <p>Scan this in AmneziaVPN. Current exports use one QR code; use .conf if import fails.</p>
+          <h3>{activeQRTitle}</h3>
+          <p>{activeQRDescription}</p>
+        </div>
+        <div class="segmented qr-mode-tabs" role="tablist" aria-label="QR import mode">
+          <button class={qrMode === "amneziavpn" ? "active" : ""} type="button" role="tab" aria-selected={qrMode === "amneziavpn"} onClick={() => setQRMode("amneziavpn")}>AmneziaVPN</button>
+          <button class={qrMode === "amneziawg" ? "active" : ""} type="button" role="tab" aria-selected={qrMode === "amneziawg"} onClick={() => setQRMode("amneziawg")}>AmneziaWG .conf</button>
         </div>
         <div class="qr-panel">
-          <button class="qr-image-button" type="button" onClick={() => setExpandedQR("amneziavpn")} aria-label="Open AmneziaVPN QR larger">
-            <img class="qr-image" src={vpnQRURL} alt={`AmneziaVPN import QR for ${client.name}`} />
+          <button class="qr-image-button" type="button" onClick={() => setExpandedQR(qrMode)} aria-label={`Open ${activeQRTitle} larger`}>
+            <img class="qr-image" src={activeQRURL} alt={activeQRAlt} />
           </button>
-          {hasVPNQRSeries && <div class="qr-series">
+          {qrMode === "amneziavpn" && hasVPNQRSeries && <div class="qr-series">
             <button class="button" type="button" disabled={vpnQRChunk === 0} onClick={() => setVPNQRChunk((value) => Math.max(0, value - 1))}>Previous</button>
             <span>QR {vpnQRChunk + 1} / {vpnQRChunks}</span>
             <button class="button" type="button" disabled={vpnQRChunk + 1 >= vpnQRChunks} onClick={() => setVPNQRChunk((value) => Math.min(vpnQRChunks - 1, value + 1))}>Next</button>
           </div>}
         </div>
         <div class="action-row">
-          <a class="button" href={vpnQRURL} download={vpnQRDownloadName}>Download QR {hasVPNQRSeries ? `${vpnQRChunk + 1}` : ""}</a>
-        </div>
-      </section>
-      <section class="config-option">
-        <div>
-          <h3>AmneziaWG QR</h3>
-          <p>Scan this in AmneziaWG-compatible clients. This is the raw full .conf QR.</p>
-        </div>
-        <div class="qr-panel">
-          <button class="qr-image-button" type="button" onClick={() => setExpandedQR("amneziawg")} aria-label="Open AmneziaWG QR larger">
-            <img class="qr-image" src={awgQRURL} alt={`AmneziaWG config QR for ${client.name}`} />
-          </button>
-        </div>
-        <div class="action-row">
-          <a class="button" href={awgQRURL} download={`${client.name}-amneziawg.png`}>Download QR</a>
+          <a class="button" href={activeQRURL} download={activeQRDownloadName}>Download QR {qrMode === "amneziavpn" && hasVPNQRSeries ? `${vpnQRChunk + 1}` : ""}</a>
         </div>
       </section>
       <section class="config-option">
