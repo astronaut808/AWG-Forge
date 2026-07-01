@@ -34,7 +34,7 @@ type Modal =
   | { kind: "protocol"; tunnel: Tunnel }
   | { kind: "create-client"; tunnel: Tunnel }
   | { kind: "client-settings"; tunnel: Tunnel; client: Client }
-  | { kind: "import-key"; client: Client; key: string; warning: string }
+  | { kind: "client-config"; client: Client }
   | { kind: "maintenance" };
 
 type MaintenanceTab = "overview" | "doctor" | "firewall" | "warp" | "backup" | "restore" | "updates" | "support" | "logs" | "system";
@@ -148,15 +148,7 @@ function App() {
       onProtocol={() => setModal({ kind: "protocol", tunnel })}
       onRestart={() => runAction("tunnel restarted", () => api.restartTunnel(tunnel.id))}
       onDelete={() => confirm(`Delete tunnel ${tunnel.name} and all its clients?`) && runAction("tunnel deleted", () => api.deleteTunnel(tunnel.id))}
-      onClientConfig={downloadConfig}
-      onClientKey={async (client) => {
-        try {
-          const res = await api.clientImportKey(client.id);
-          setModal({ kind: "import-key", client, key: res.import_key, warning: res.warning });
-        } catch (err) {
-          notify(errorMessage(err));
-        }
-      }}
+      onClientConfig={(client) => setModal({ kind: "client-config", client })}
       onClientSettings={(client) => setModal({ kind: "client-settings", tunnel, client })}
       onClientToggle={(client) => runAction(client.enabled ? "client disabled" : "client enabled", () => api.setClientEnabled(client.id, !client.enabled))}
       onClientDelete={(client) => confirm(`Delete client ${client.name}?`) && runAction("client deleted", () => api.deleteClient(client.id))}
@@ -344,8 +336,7 @@ function TunnelCard(props: {
   onProtocol: () => void;
   onRestart: () => void;
   onDelete: () => void;
-  onClientConfig: (id: string) => void;
-  onClientKey: (client: Client) => void;
+  onClientConfig: (client: Client) => void;
   onClientSettings: (client: Client) => void;
   onClientToggle: (client: Client) => void;
   onClientDelete: (client: Client) => void;
@@ -386,8 +377,7 @@ function TunnelCard(props: {
           <ClientRow
             key={client.id}
             client={client}
-            onConfig={() => props.onClientConfig(client.id)}
-            onKey={() => props.onClientKey(client)}
+            onConfig={() => props.onClientConfig(client)}
             onSettings={() => props.onClientSettings(client)}
             onToggle={() => props.onClientToggle(client)}
             onDelete={() => props.onClientDelete(client)}
@@ -398,7 +388,7 @@ function TunnelCard(props: {
   );
 }
 
-function ClientRow({ client, onConfig, onKey, onSettings, onToggle, onDelete }: { client: Client; onConfig: () => void; onKey: () => void; onSettings: () => void; onToggle: () => void; onDelete: () => void }) {
+function ClientRow({ client, onConfig, onSettings, onToggle, onDelete }: { client: Client; onConfig: () => void; onSettings: () => void; onToggle: () => void; onDelete: () => void }) {
   const lastSeen = client.runtime?.last_seen_at || client.last_seen_at;
   const status = client.expired ? "expired" : activeLabel(lastSeen);
   return (
@@ -421,7 +411,6 @@ function ClientRow({ client, onConfig, onKey, onSettings, onToggle, onDelete }: 
       </div>
       <div class="actions">
         <button class="button" type="button" onClick={onConfig}>Config</button>
-        <button class="button" type="button" onClick={onKey}>Import key</button>
         <button class="button" type="button" onClick={onSettings}>Edit</button>
         <button class="button" type="button" onClick={onToggle}>{client.enabled ? "Disable" : "Enable"}</button>
         <button class="button danger" type="button" onClick={onDelete}>Delete</button>
@@ -445,9 +434,9 @@ function ModalContent({ modal, state, notify, close, reload, runAction }: {
   if (modal.kind === "create-tunnel") return <CreateTunnelForm state={state} profile={modal.profile} runAction={runAction} />;
   if (modal.kind === "settings") return <TunnelSettingsForm state={state} tunnel={modal.tunnel} runAction={runAction} />;
   if (modal.kind === "protocol") return <ProtocolForm tunnel={modal.tunnel} runAction={runAction} />;
-  if (modal.kind === "create-client") return <CreateClientForm tunnel={modal.tunnel} notify={notify} runAction={runAction} />;
+  if (modal.kind === "create-client") return <CreateClientForm tunnel={modal.tunnel} runAction={runAction} />;
   if (modal.kind === "client-settings") return <ClientSettingsForm client={modal.client} runAction={runAction} />;
-  if (modal.kind === "import-key") return <ImportKeyPanel modal={modal} notify={notify} />;
+  if (modal.kind === "client-config") return <ClientConfigPanel client={modal.client} notify={notify} />;
   return <MaintenanceCenter state={state} notify={notify} close={close} reload={reload} />;
 }
 
@@ -509,11 +498,9 @@ function ProtocolForm({ tunnel, runAction }: { tunnel: Tunnel; runAction: (label
   </Form>;
 }
 
-function CreateClientForm({ tunnel, notify, runAction }: { tunnel: Tunnel; notify: (message: string) => void; runAction: (label: string, fn: () => Promise<unknown>, options?: { reload?: boolean; close?: boolean }) => Promise<void> }) {
-  return <Form title="Create client" subtitle={`${tunnel.name} · ${tunnel.profile}`} submit="Create client" onSubmit={(form) => runAction("client created", async () => {
-    const res = await api.createClient(tunnel.id, field(form, "name"), expirationFromForm(form));
-    if (res.client?.id) downloadConfig(res.client.id);
-    notify("client config download started");
+function CreateClientForm({ tunnel, runAction }: { tunnel: Tunnel; runAction: (label: string, fn: () => Promise<unknown>, options?: { reload?: boolean; close?: boolean }) => Promise<void> }) {
+  return <Form title="Create client" subtitle={`${tunnel.name} · ${tunnel.profile}`} submit="Create client" onSubmit={(form) => runAction("client created; open Config to choose import method", async () => {
+    await api.createClient(tunnel.id, field(form, "name"), expirationFromForm(form));
   })}>
     <label>Client name<input aria-label="Client name" name="name" /></label>
     <ExpirationField />
@@ -559,20 +546,142 @@ function ExpirationField({ current, keepCurrent = false }: { current?: string; k
   </>;
 }
 
-function ImportKeyPanel({ modal, notify }: { modal: Extract<Modal, { kind: "import-key" }>; notify: (message: string) => void }) {
-  async function copyImportKey() {
+function ClientConfigPanel({ client, notify }: { client: Client; notify: (message: string) => void }) {
+  const awgQRURL = api.clientQRCodeURL(client.id);
+  const notifyRef = useRef(notify);
+  const [importKey, setImportKey] = useState("");
+  const [importWarning, setImportWarning] = useState("");
+  const [vpnQRChunks, setVPNQRChunks] = useState(1);
+  const [vpnQRChunk, setVPNQRChunk] = useState(0);
+  const [expandedQR, setExpandedQR] = useState<"" | "amneziavpn" | "amneziawg">("");
+  const [busy, setBusy] = useState(false);
+  const vpnQRURL = api.clientAmneziaVPNQRCodeURL(client.id, vpnQRChunk);
+  const expandedQRURL = expandedQR === "amneziavpn" ? vpnQRURL : awgQRURL;
+  const expandedQRTitle = expandedQR === "amneziavpn" ? "AmneziaVPN QR" : "AmneziaWG QR";
+
+  useEffect(() => {
+    notifyRef.current = notify;
+  }, [notify]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setVPNQRChunks(1);
+    setVPNQRChunk(0);
+    api.clientAmneziaVPNQRSeries(client.id)
+      .then((res) => {
+        if (cancelled) return;
+        setVPNQRChunks(Math.max(1, res.chunks));
+      })
+      .catch((err) => notifyRef.current(errorMessage(err)));
+    return () => {
+      cancelled = true;
+    };
+  }, [client.id]);
+
+  useEffect(() => {
+    if (!expandedQR) return;
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setExpandedQR("");
+    }
+    globalThis.addEventListener("keydown", closeOnEscape);
+    return () => globalThis.removeEventListener("keydown", closeOnEscape);
+  }, [expandedQR]);
+
+  async function loadImportKey(): Promise<string> {
+    if (importKey) return importKey;
+    if (busy) return "";
+    setBusy(true);
     try {
-      await navigator.clipboard.writeText(modal.key);
-      notify("import key copied");
+      const res = await api.clientImportKey(client.id);
+      setImportKey(res.import_key);
+      setImportWarning(res.warning);
+      return res.import_key;
+    } catch (err) {
+      notify(errorMessage(err));
+      return "";
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function copyImportKey() {
+    const key = importKey || await loadImportKey();
+    if (!key) return;
+    try {
+      await navigator.clipboard.writeText(key);
+      notify("vpn:// link copied");
     } catch {
       notify("clipboard is unavailable; select and copy the key manually");
     }
   }
 
-  return <PanelTitle title="Experimental import key" subtitle={`${modal.client.name} · AmneziaVPN / DefaultVPN only`}>
-    <textarea class="mono import-key" aria-label="Import key" readOnly value={modal.key} />
-    <p>{modal.warning}</p>
-    <div class="actions"><button class="button primary" type="button" onClick={copyImportKey}>Copy key</button><button class="button" type="button" onClick={() => downloadConfig(modal.client.id)}>Download .conf</button></div>
+  return <PanelTitle title="Client config" subtitle={`${client.name} · ${client.address}`}>
+    <div class="config-options">
+      <section class="config-option">
+        <div>
+          <h3>AmneziaVPN QR</h3>
+          <p>Scan in AmneziaVPN. If several QR codes are shown, scan them in order.</p>
+        </div>
+        <div class="qr-panel">
+          <button class="qr-image-button" type="button" onClick={() => setExpandedQR("amneziavpn")} aria-label="Open AmneziaVPN QR larger">
+            <img class="qr-image" src={vpnQRURL} alt={`AmneziaVPN import QR for ${client.name}`} />
+          </button>
+          <div class="qr-series">
+            {vpnQRChunks > 1 && <button class="button" type="button" disabled={vpnQRChunk === 0} onClick={() => setVPNQRChunk((value) => Math.max(0, value - 1))}>Previous</button>}
+            <span>QR {vpnQRChunk + 1} / {vpnQRChunks}</span>
+            {vpnQRChunks > 1 && <button class="button" type="button" disabled={vpnQRChunk + 1 >= vpnQRChunks} onClick={() => setVPNQRChunk((value) => Math.min(vpnQRChunks - 1, value + 1))}>Next</button>}
+          </div>
+        </div>
+        <div class="action-row">
+          <a class="button" href={vpnQRURL} download={`${client.name}-amneziavpn-${vpnQRChunk + 1}-of-${vpnQRChunks}.png`}>Download QR {vpnQRChunks > 1 ? `${vpnQRChunk + 1}` : ""}</a>
+        </div>
+      </section>
+      <section class="config-option">
+        <div>
+          <h3>AmneziaWG QR</h3>
+          <p>Scan this in AmneziaWG-compatible clients. This is the raw full .conf QR.</p>
+        </div>
+        <div class="qr-panel">
+          <button class="qr-image-button" type="button" onClick={() => setExpandedQR("amneziawg")} aria-label="Open AmneziaWG QR larger">
+            <img class="qr-image" src={awgQRURL} alt={`AmneziaWG config QR for ${client.name}`} />
+          </button>
+        </div>
+        <div class="action-row">
+          <a class="button" href={awgQRURL} download={`${client.name}-amneziawg.png`}>Download QR</a>
+        </div>
+      </section>
+      <section class="config-option">
+        <div>
+          <h3>Import options</h3>
+          <p>Use the config file for manual import, or copy vpn:// for compatible text import flows.</p>
+        </div>
+        <div class="config-actions">
+          <button class="button primary" type="button" onClick={() => downloadConfig(client.id)}>Download .conf</button>
+          <button class="button" disabled={busy} type="button" onClick={copyImportKey}>Copy vpn:// key</button>
+        </div>
+        {importKey && <textarea class="mono import-key" aria-label="vpn:// import link" readOnly value={importKey} />}
+        {importWarning && <p class="note">{importWarning}</p>}
+      </section>
+    </div>
+    <p class="note">All import methods contain client secrets. Share them only with the target device.</p>
+    {expandedQR && <div class="qr-lightbox" role="dialog" aria-modal="true" aria-label={expandedQRTitle} onClick={() => setExpandedQR("")}>
+      <div class="qr-lightbox-card" onClick={(event) => event.stopPropagation()}>
+        <div class="qr-lightbox-head">
+          <div>
+            <h3>{expandedQRTitle}</h3>
+            <p>{expandedQR === "amneziavpn" ? `QR ${vpnQRChunk + 1} / ${vpnQRChunks}` : "Raw .conf QR"}</p>
+          </div>
+          <button class="button icon" type="button" onClick={() => setExpandedQR("")} aria-label="Close QR preview">×</button>
+        </div>
+        <img class="qr-lightbox-image" src={expandedQRURL} alt={`${expandedQRTitle} for ${client.name}`} />
+        {expandedQR === "amneziavpn" && <div class="qr-series">
+          {vpnQRChunks > 1 && <button class="button" type="button" disabled={vpnQRChunk === 0} onClick={() => setVPNQRChunk((value) => Math.max(0, value - 1))}>Previous</button>}
+          <span>QR {vpnQRChunk + 1} / {vpnQRChunks}</span>
+          {vpnQRChunks > 1 && <button class="button" type="button" disabled={vpnQRChunk + 1 >= vpnQRChunks} onClick={() => setVPNQRChunk((value) => Math.min(vpnQRChunks - 1, value + 1))}>Next</button>}
+        </div>}
+        <a class="button" href={expandedQRURL} download={expandedQR === "amneziavpn" ? `${client.name}-amneziavpn-${vpnQRChunk + 1}-of-${vpnQRChunks}.png` : `${client.name}-amneziawg.png`}>Download QR</a>
+      </div>
+    </div>}
   </PanelTitle>;
 }
 

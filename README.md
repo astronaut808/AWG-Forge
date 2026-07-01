@@ -20,7 +20,7 @@ Self-hosted панель управления AmneziaWG для Docker: Go backen
 - Туннели: отдельные профили, UDP-порты, подсети, endpoint-настройки и IPv4 egress.
 - IPv6 egress пока не поддерживается; клиентские конфиги намеренно используют `AllowedIPs = 0.0.0.0/0` без `::/0`.
 - Egress: `Server WAN` или Cloudflare WARP на уровне отдельного туннеля.
-- Клиенты: создание, скачивание `.conf`, `vpn://` import key, enable/disable, expiration, delete.
+- Клиенты: создание, скачивание `.conf`, AmneziaWG `.conf` QR, AmneziaVPN QR, `vpn://` ключ, enable/disable, expiration, delete.
 - Диагностика: Doctor, firewall repair, client status, last seen, received/sent counters.
 - Maintenance Center: WARP, backup, restore verify, support bundle, live audit logs, updates, system info.
 

@@ -2,9 +2,13 @@ package server
 
 import (
 	"bytes"
+	"compress/zlib"
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
+	"image/png"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +16,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -232,6 +237,352 @@ func TestClientConfigDownloadUsesClientNameFilename(t *testing.T) {
 	}
 }
 
+func TestClientQRAPIReturnsPNG(t *testing.T) {
+	cfg := config.Config{
+		ConfigDir:           t.TempDir(),
+		TunnelName:          "awg0",
+		ServerHost:          "vpn.example.com",
+		ListenPort:          51820,
+		WebUIHost:           "127.0.0.1",
+		WebUIPort:           51821,
+		ExternalInterface:   "eth0",
+		IPv4Subnet:          "10.8.0.0/24",
+		DNS:                 "1.1.1.1",
+		AllowedIPs:          "0.0.0.0/0",
+		PersistentKeepalive: 0,
+		MTU:                 1420,
+		ProtocolProfile:     "awg_legacy_1_0",
+	}
+	svc := app.New(cfg)
+	client, err := svc.AddClient("Phone QR")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := &web{service: svc}
+	r := httptest.NewRequest(http.MethodGet, "/api/clients/"+client.ID+"/qr", nil)
+	rr := httptest.NewRecorder()
+
+	w.clientQRAPI(rr, r, client.ID)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rr.Code, rr.Body.String())
+	}
+	if got, want := rr.Header().Get("Content-Type"), "image/png"; got != want {
+		t.Fatalf("Content-Type = %q, want %q", got, want)
+	}
+	if got, want := rr.Header().Get("Content-Disposition"), `inline; filename="Phone-QR.png"`; got != want {
+		t.Fatalf("Content-Disposition = %q, want %q", got, want)
+	}
+	if got, want := rr.Header().Get("Cache-Control"), "no-store"; got != want {
+		t.Fatalf("Cache-Control = %q, want %q", got, want)
+	}
+	requireReadableQRCodePNG(t, rr.Body.Bytes())
+}
+
+func TestClientAmneziaVPNQRAPIReturnsPNG(t *testing.T) {
+	cfg := config.Config{
+		ConfigDir:           t.TempDir(),
+		TunnelName:          "awg0",
+		ServerHost:          "vpn.example.com",
+		ListenPort:          51820,
+		WebUIHost:           "127.0.0.1",
+		WebUIPort:           51821,
+		ExternalInterface:   "eth0",
+		IPv4Subnet:          "10.8.0.0/24",
+		DNS:                 "1.1.1.1",
+		AllowedIPs:          "0.0.0.0/0",
+		PersistentKeepalive: 0,
+		MTU:                 1420,
+		ProtocolProfile:     "awg_2_0",
+	}
+	svc := app.New(cfg)
+	client, err := svc.AddClient("Phone QR")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := &web{service: svc}
+	r := httptest.NewRequest(http.MethodGet, "/api/clients/"+client.ID+"/amnezia-vpn-qr", nil)
+	rr := httptest.NewRecorder()
+
+	w.clientAmneziaVPNQRAPI(rr, r, client.ID)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rr.Code, rr.Body.String())
+	}
+	if got, want := rr.Header().Get("Content-Type"), "image/png"; got != want {
+		t.Fatalf("Content-Type = %q, want %q", got, want)
+	}
+	if got, want := rr.Header().Get("Content-Disposition"), `inline; filename="Phone-QR-amneziavpn.png"`; got != want {
+		t.Fatalf("Content-Disposition = %q, want %q", got, want)
+	}
+	if got := rr.Header().Get("X-QR-Chunk"); got != "1" {
+		t.Fatalf("X-QR-Chunk = %q, want 1", got)
+	}
+	if got := rr.Header().Get("X-QR-Chunks"); got != "1" {
+		t.Fatalf("X-QR-Chunks = %q, want 1", got)
+	}
+	if got, want := rr.Header().Get("Cache-Control"), "no-store"; got != want {
+		t.Fatalf("Cache-Control = %q, want %q", got, want)
+	}
+	requireReadableQRCodePNG(t, rr.Body.Bytes())
+}
+
+func TestAmneziaVPNQRSeriesReturnsSingleChunk(t *testing.T) {
+	cfg := config.Config{
+		ConfigDir:           t.TempDir(),
+		TunnelName:          "awg0",
+		ServerHost:          "vpn.example.com",
+		ListenPort:          51820,
+		WebUIHost:           "127.0.0.1",
+		WebUIPort:           51821,
+		ExternalInterface:   "eth0",
+		IPv4Subnet:          "10.8.0.0/24",
+		DNS:                 "1.1.1.1",
+		AllowedIPs:          "0.0.0.0/0",
+		PersistentKeepalive: 0,
+		MTU:                 1420,
+		ProtocolProfile:     "awg_2_0",
+	}
+	svc := app.New(cfg)
+	client, err := svc.AddClient("Phone QR")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := &web{service: svc}
+	r := httptest.NewRequest(http.MethodGet, "/api/clients/"+client.ID+"/amnezia-vpn-qr-series", nil)
+	rr := httptest.NewRecorder()
+
+	w.clientAmneziaVPNQRSeriesAPI(rr, r, client.ID)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rr.Code, rr.Body.String())
+	}
+	var payload struct {
+		Chunks int `json:"chunks"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Chunks != 1 {
+		t.Fatalf("chunks = %d, want 1", payload.Chunks)
+	}
+}
+
+func TestBuildAmneziaVPNQRPackHeaderAndDecompression(t *testing.T) {
+	original := []byte(`{"description":"phone","hostName":"vpn.example.com"}`)
+	payload, err := buildAmneziaVPNQRPack(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := binary.BigEndian.Uint32(decoded[0:4]); got != amneziaVPNQRPackMagic {
+		t.Fatalf("magic = %#x, want %#x", got, amneziaVPNQRPackMagic)
+	}
+	if got, want := binary.BigEndian.Uint32(decoded[4:8]), uint32(len(decoded[12:])+4); got != want {
+		t.Fatalf("compressed length field = %d, want %d", got, want)
+	}
+	if got, want := binary.BigEndian.Uint32(decoded[8:12]), uint32(len(original)); got != want {
+		t.Fatalf("uncompressed length field = %d, want %d", got, want)
+	}
+	decompressed := decompressZlibPayload(t, decoded[12:])
+	if !bytes.Equal(decompressed, original) {
+		t.Fatalf("decompressed JSON = %s, want %s", decompressed, original)
+	}
+}
+
+func TestBuildAmneziaVPNClientConfigShape(t *testing.T) {
+	ctx := amneziaVPNTestExportContext(t)
+	jsonBytes, err := buildAmneziaVPNClientConfig(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var outer map[string]any
+	if err := json.Unmarshal(jsonBytes, &outer); err != nil {
+		t.Fatal(err)
+	}
+	if outer["defaultContainer"] != "amnezia-awg" {
+		t.Fatalf("defaultContainer = %v", outer["defaultContainer"])
+	}
+	if outer["description"] != "Phone QR" {
+		t.Fatalf("description = %v", outer["description"])
+	}
+	if outer["hostName"] != "vpn.example.com" {
+		t.Fatalf("hostName = %v", outer["hostName"])
+	}
+	if outer["dns1"] != "1.1.1.1" || outer["dns2"] != "9.9.9.9" {
+		t.Fatalf("dns fields = %v/%v", outer["dns1"], outer["dns2"])
+	}
+	containers := outer["containers"].([]any)
+	awg := containers[0].(map[string]any)["awg"].(map[string]any)
+	if awg["isThirdPartyConfig"] != true {
+		t.Fatalf("isThirdPartyConfig = %v", awg["isThirdPartyConfig"])
+	}
+	if awg["port"] != "51820" || awg["transport_proto"] != "udp" || awg["protocol_version"] != "2" {
+		t.Fatalf("unexpected awg metadata: %#v", awg)
+	}
+	lastConfig, ok := awg["last_config"].(string)
+	if !ok {
+		t.Fatalf("last_config type = %T, want string", awg["last_config"])
+	}
+	var last map[string]any
+	if err := json.Unmarshal([]byte(lastConfig), &last); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"allowed_ips", "client_ip", "client_priv_key", "config", "hostName", "mtu", "persistent_keep_alive", "port", "psk_key", "server_pub_key"} {
+		if last[key] == "" {
+			t.Fatalf("last_config missing %s: %#v", key, last)
+		}
+	}
+	for _, key := range []string{"S3", "S4", "H1", "H2", "H3", "H4", "I1", "I2", "I3", "I4", "I5"} {
+		if last[key] == "" {
+			t.Fatalf("last_config missing AWG 2.0 param %s: %#v", key, last)
+		}
+	}
+	if !strings.Contains(last["config"].(string), "[Interface]") || !strings.Contains(last["config"].(string), "[Peer]") {
+		t.Fatalf("last_config config does not contain rendered .conf: %v", last["config"])
+	}
+}
+
+func TestBuildAmneziaVPNClientConfigOmitsEmptyOptionalParams(t *testing.T) {
+	ctx := amneziaVPNTestExportContext(t)
+	for _, key := range []string{"I2", "I3", "I4", "I5"} {
+		delete(ctx.Tunnel.ProtocolParams, key)
+	}
+	jsonBytes, err := buildAmneziaVPNClientConfig(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var outer amneziaVPNConfig
+	if err := json.Unmarshal(jsonBytes, &outer); err != nil {
+		t.Fatal(err)
+	}
+	var last map[string]any
+	if err := json.Unmarshal([]byte(outer.Containers[0].AWG.LastConfig), &last); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"I2", "I3", "I4", "I5"} {
+		if _, ok := last[key]; ok {
+			t.Fatalf("optional empty param %s must be omitted: %#v", key, last)
+		}
+	}
+}
+
+func amneziaVPNTestExportContext(t *testing.T) app.ClientExportContext {
+	t.Helper()
+	cfg := config.Config{
+		ConfigDir:           t.TempDir(),
+		TunnelName:          "awg0",
+		ServerHost:          "vpn.example.com",
+		ListenPort:          51820,
+		WebUIHost:           "127.0.0.1",
+		WebUIPort:           51821,
+		ExternalInterface:   "eth0",
+		IPv4Subnet:          "10.8.0.0/24",
+		DNS:                 "1.1.1.1, 2001:4860:4860::8888, 9.9.9.9",
+		AllowedIPs:          "0.0.0.0/0",
+		PersistentKeepalive: 25,
+		MTU:                 1280,
+		ProtocolProfile:     "awg_2_0",
+	}
+	svc := app.New(cfg)
+	client, err := svc.AddClient("Phone QR")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, err := svc.ClientExportContext(client.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ctx
+}
+
+func decompressZlibPayload(t *testing.T, payload []byte) []byte {
+	t.Helper()
+	zr, err := zlib.NewReader(bytes.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := zr.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}()
+	out, err := io.ReadAll(zr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+type lockedRecorder struct {
+	*httptest.ResponseRecorder
+	mu sync.Mutex
+}
+
+func newLockedRecorder() *lockedRecorder {
+	return &lockedRecorder{ResponseRecorder: httptest.NewRecorder()}
+}
+
+func (r *lockedRecorder) Write(data []byte) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.ResponseRecorder.Write(data)
+}
+
+func (r *lockedRecorder) WriteHeader(code int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.ResponseRecorder.WriteHeader(code)
+}
+
+func (r *lockedRecorder) Flush() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.ResponseRecorder.Flush()
+}
+
+func (r *lockedRecorder) BodyString() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.Body.String()
+}
+
+func requireReadableQRCodePNG(t *testing.T, body []byte) {
+	t.Helper()
+	if !bytes.HasPrefix(body, []byte("\x89PNG\r\n\x1a\n")) {
+		t.Fatalf("response is not a PNG")
+	}
+	img, err := png.Decode(bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("PNG decode failed: %v", err)
+	}
+	bounds := img.Bounds()
+	if bounds.Dx() < 128 || bounds.Dy() < 128 {
+		t.Fatalf("QR image too small: %dx%d", bounds.Dx(), bounds.Dy())
+	}
+	if isDark(img.At(bounds.Min.X, bounds.Min.Y)) ||
+		isDark(img.At(bounds.Max.X-1, bounds.Min.Y)) ||
+		isDark(img.At(bounds.Min.X, bounds.Max.Y-1)) ||
+		isDark(img.At(bounds.Max.X-1, bounds.Max.Y-1)) {
+		t.Fatalf("QR image corners must be quiet-zone white")
+	}
+
+	blackPixels := 0
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			if isDark(img.At(x, y)) {
+				blackPixels++
+			}
+		}
+	}
+	if blackPixels == 0 {
+		t.Fatal("QR image does not contain black modules")
+	}
+}
+
 func TestEventsAPIStreamsPublicState(t *testing.T) {
 	cfg := config.Config{
 		ConfigDir:           t.TempDir(),
@@ -252,7 +603,7 @@ func TestEventsAPIStreamsPublicState(t *testing.T) {
 	w := &web{cfg: cfg, service: app.New(cfg)}
 	ctx, cancel := context.WithCancel(context.Background())
 	r := httptest.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:51821/api/events", nil)
-	rr := httptest.NewRecorder()
+	rr := newLockedRecorder()
 	done := make(chan struct{})
 
 	go func() {
@@ -261,11 +612,11 @@ func TestEventsAPIStreamsPublicState(t *testing.T) {
 	}()
 
 	deadline := time.After(2 * time.Second)
-	for !strings.Contains(rr.Body.String(), "event: state") {
+	for !strings.Contains(rr.BodyString(), "event: state") {
 		select {
 		case <-deadline:
 			cancel()
-			t.Fatalf("event stream did not include state event; body = %q", rr.Body.String())
+			t.Fatalf("event stream did not include state event; body = %q", rr.BodyString())
 		default:
 			time.Sleep(10 * time.Millisecond)
 		}
@@ -276,8 +627,8 @@ func TestEventsAPIStreamsPublicState(t *testing.T) {
 	if got, want := rr.Header().Get("Content-Type"), "text/event-stream; charset=utf-8"; got != want {
 		t.Fatalf("Content-Type = %q, want %q", got, want)
 	}
-	if !strings.Contains(rr.Body.String(), `"authenticated":true`) {
-		t.Fatalf("event stream body does not include public state: %q", rr.Body.String())
+	if !strings.Contains(rr.BodyString(), `"authenticated":true`) {
+		t.Fatalf("event stream body does not include public state: %q", rr.BodyString())
 	}
 }
 

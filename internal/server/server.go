@@ -5,6 +5,9 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"net"
 	"net/http"
@@ -22,6 +25,7 @@ import (
 	"github.com/astronaut808/awg-forge/internal/doctor"
 	"github.com/astronaut808/awg-forge/internal/support"
 	"github.com/astronaut808/awg-forge/internal/updates"
+	"github.com/boombuler/barcode/qr"
 )
 
 //go:embed static/*
@@ -38,6 +42,9 @@ type web struct {
 
 const idempotencyTTL = 10 * time.Minute
 const maxJSONBodyBytes = 1 << 20
+const clientQRTargetSize = 1024
+const clientQRQuietZoneModules = 4
+const clientQRMinModulePixels = 4
 
 type idempotencyEntry struct {
 	status    int
@@ -649,6 +656,12 @@ func (w *web) clientAPI(rw http.ResponseWriter, r *http.Request) {
 		w.deleteClientAPI(rw, r, id)
 	case "import-key":
 		w.clientImportKeyAPI(rw, r, id)
+	case "amnezia-vpn-qr-series":
+		w.clientAmneziaVPNQRSeriesAPI(rw, r, id)
+	case "amnezia-vpn-qr":
+		w.clientAmneziaVPNQRAPI(rw, r, id)
+	case "qr":
+		w.clientQRAPI(rw, r, id)
 	default:
 		writeError(rw, http.StatusNotFound, "not found")
 	}
@@ -713,6 +726,132 @@ func (w *web) deleteClientAPI(rw http.ResponseWriter, r *http.Request, id string
 		}
 		return http.StatusOK, map[string]any{"ok": true}
 	})
+}
+
+func (w *web) clientQRAPI(rw http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodGet {
+		writeError(rw, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	conf, client, err := w.service.ClientConfigForDownload(id)
+	if err != nil {
+		http.NotFound(rw, r)
+		return
+	}
+	code, err := qr.Encode(conf, qr.L, qr.Auto)
+	if err != nil {
+		w.audit("warn", "client.qr.rejected", "client QR generation failed", map[string]any{"client_id": id}, err)
+		writeError(rw, http.StatusBadRequest, "client config is too large for QR")
+		return
+	}
+	w.audit("info", "client.qr.viewed", "client config QR viewed", map[string]any{"client_id": id}, nil)
+	if err := writeQRCodePNG(rw, code, configFilename(client)+".png"); err != nil {
+		w.audit("warn", "client.qr.write_failed", "client QR response write failed", map[string]any{"client_id": id}, err)
+	}
+}
+
+func (w *web) clientAmneziaVPNQRAPI(rw http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodGet {
+		writeError(rw, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	ctx, err := w.service.ClientExportContext(id)
+	if err != nil {
+		writeError(rw, http.StatusNotFound, "not found")
+		return
+	}
+	if raw := r.URL.Query().Get("chunk"); raw != "" {
+		chunkIndex, err := strconv.Atoi(raw)
+		if err != nil || chunkIndex != 0 {
+			writeError(rw, http.StatusBadRequest, "invalid QR chunk")
+			return
+		}
+	}
+	payload, err := buildAmneziaVPNQRPayload(ctx)
+	if err != nil {
+		w.audit("warn", "client.amneziavpn_qr.rejected", "client AmneziaVPN QR generation failed", map[string]any{"client_id": id}, err)
+		writeError(rw, http.StatusBadRequest, "client AmneziaVPN QR payload could not be built")
+		return
+	}
+	code, err := qr.Encode(payload, qr.L, qr.Auto)
+	if err != nil {
+		w.audit("warn", "client.amneziavpn_qr.rejected", "client AmneziaVPN QR generation failed", map[string]any{"client_id": id}, err)
+		writeError(rw, http.StatusBadRequest, "client AmneziaVPN QR is too large")
+		return
+	}
+	w.audit("info", "client.amneziavpn_qr.viewed", "client AmneziaVPN import QR viewed", map[string]any{"client_id": id}, nil)
+	rw.Header().Set("X-QR-Chunk", "1")
+	rw.Header().Set("X-QR-Chunks", "1")
+	if err := writeQRCodePNG(rw, code, fmt.Sprintf("%s-amneziavpn.png", configFilename(ctx.Client))); err != nil {
+		w.audit("warn", "client.amneziavpn_qr.write_failed", "client AmneziaVPN QR response write failed", map[string]any{"client_id": id}, err)
+	}
+}
+
+func (w *web) clientAmneziaVPNQRSeriesAPI(rw http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodGet {
+		writeError(rw, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if _, err := w.service.ClientExportContext(id); err != nil {
+		writeError(rw, http.StatusNotFound, "not found")
+		return
+	}
+	writeJSON(rw, http.StatusOK, map[string]any{"chunks": 1})
+}
+
+func writeQRCodePNG(rw http.ResponseWriter, code image.Image, filename string) error {
+	noStore(rw)
+	rw.Header().Set("Content-Type", "image/png")
+	rw.Header().Set("Content-Disposition", `inline; filename="`+filename+`"`)
+	return png.Encode(rw, renderQRCodeImage(code))
+}
+
+func renderQRCodeImage(code image.Image) image.Image {
+	bounds := code.Bounds()
+	modulesX := bounds.Dx()
+	modulesY := bounds.Dy()
+	largest := modulesX
+	if modulesY > largest {
+		largest = modulesY
+	}
+	modulePixels := clientQRTargetSize / (largest + clientQRQuietZoneModules*2)
+	if modulePixels < clientQRMinModulePixels {
+		modulePixels = clientQRMinModulePixels
+	}
+
+	width := (modulesX + clientQRQuietZoneModules*2) * modulePixels
+	height := (modulesY + clientQRQuietZoneModules*2) * modulePixels
+	dst := image.NewRGBA(image.Rect(0, 0, width, height))
+	fillImage(dst, color.White)
+
+	for y := 0; y < modulesY; y++ {
+		for x := 0; x < modulesX; x++ {
+			if !isDark(code.At(bounds.Min.X+x, bounds.Min.Y+y)) {
+				continue
+			}
+			startX := (x + clientQRQuietZoneModules) * modulePixels
+			startY := (y + clientQRQuietZoneModules) * modulePixels
+			for yy := 0; yy < modulePixels; yy++ {
+				for xx := 0; xx < modulePixels; xx++ {
+					dst.Set(startX+xx, startY+yy, color.Black)
+				}
+			}
+		}
+	}
+	return dst
+}
+
+func fillImage(img *image.RGBA, c color.Color) {
+	for y := img.Bounds().Min.Y; y < img.Bounds().Max.Y; y++ {
+		for x := img.Bounds().Min.X; x < img.Bounds().Max.X; x++ {
+			img.Set(x, y, c)
+		}
+	}
+}
+
+func isDark(c color.Color) bool {
+	r, g, b, _ := c.RGBA()
+	return r+g+b < 0xffff*3/2
 }
 
 func (w *web) clientImportKeyAPI(rw http.ResponseWriter, r *http.Request, id string) {
