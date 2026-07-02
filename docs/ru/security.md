@@ -39,8 +39,11 @@ Opaque origins вроде `null` и browser-extension origins отклоняют
 
 - private keys;
 - preshared keys;
+- passwords;
 - session secrets;
-- полные client configs.
+- backup passwords;
+- полные client configs;
+- import keys, `vpn://` links, QR payloads или packed AmneziaVPN QR strings.
 
 ## File Permissions
 

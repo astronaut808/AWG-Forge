@@ -42,7 +42,7 @@ Maintenance actions are available through the `Maintenance` button:
 
 Changing tunnel settings or protocol params can make old client configs stale.
 
-After such changes, affected clients show a `stale` badge until a fresh `.conf` is downloaded.
+After such changes, affected clients show a `stale` badge until a fresh config is exported from `Config`.
 
 Client rename and notes are metadata-only changes and do not make configs stale.
 

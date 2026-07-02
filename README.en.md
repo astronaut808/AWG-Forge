@@ -75,7 +75,7 @@ WARP can be selected while creating a tunnel or enabled later from `Tunnel setti
 ## Startup Check
 
 1. Create a client in the UI.
-2. Import the downloaded `.conf` into AmneziaVPN.
+2. Open the client's `Config` and import through AmneziaVPN QR or a downloaded `.conf`.
 3. Check IPv4 egress:
 
 ```bash
