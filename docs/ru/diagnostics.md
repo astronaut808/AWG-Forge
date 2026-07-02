@@ -64,6 +64,7 @@ Bundle не должен включать:
 - password;
 - session secret;
 - rendered server/client configs;
+- import keys, `vpn://` links, QR payloads или packed AmneziaVPN QR strings;
 - raw protocol parameter values.
 
 Bundle также включает `audit-log.redacted.jsonl`: последние audit events с уже отредактированными secret-looking fields.
@@ -211,7 +212,7 @@ EXTERNAL_INTERFACE=ens3
 - проверь IPv4 forwarding;
 - проверь host firewall/UFW;
 - в bridge mode проверь, опубликован ли UDP-порт туннеля;
-- скачай свежий `.conf`, если менялись tunnel settings или protocol params.
+- выдай свежий client config через `Config`, если менялись tunnel settings или protocol params.
 
 Если `doctor` показывает:
 

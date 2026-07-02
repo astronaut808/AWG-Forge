@@ -109,7 +109,7 @@ PASSWORD=...
 
 ## После установки
 
-Открой UI, создай клиента, импортируй `.conf` в AmneziaVPN и проверь IPv4 egress:
+Открой UI, создай клиента, открой `Config`, импортируй через AmneziaVPN QR или скачанный `.conf` и проверь IPv4 egress:
 
 ```bash
 curl -4 https://ifconfig.co

@@ -64,6 +64,7 @@ The bundle should not include:
 - password;
 - session secret;
 - rendered server/client configs;
+- import keys, `vpn://` links, QR payloads, or packed AmneziaVPN QR strings;
 - raw protocol parameter values.
 
 The bundle also includes `audit-log.redacted.jsonl`: recent audit events with secret-looking fields already redacted.
@@ -211,7 +212,7 @@ Then:
 - check IPv4 forwarding;
 - check host firewall/UFW;
 - in bridge mode, check that the tunnel UDP port is published;
-- download a fresh `.conf` if tunnel settings or protocol params changed.
+- issue a fresh client config from `Config` if tunnel settings or protocol params changed.
 
 If `doctor` reports:
 

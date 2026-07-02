@@ -149,6 +149,18 @@ export function clientImportKey(id: string) {
   });
 }
 
+export function clientQRCodeURL(id: string): string {
+  return `/api/clients/${encodeURIComponent(id)}/qr`;
+}
+
+export function clientAmneziaVPNQRCodeURL(id: string, chunk = 0): string {
+  return `/api/clients/${encodeURIComponent(id)}/amnezia-vpn-qr?chunk=${chunk}`;
+}
+
+export function clientAmneziaVPNQRSeries(id: string): Promise<{ chunks: number }> {
+  return request(`/api/clients/${encodeURIComponent(id)}/amnezia-vpn-qr-series`);
+}
+
 export function doctor(): Promise<{ results: DoctorResult[] }> {
   return request("/api/doctor");
 }

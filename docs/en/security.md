@@ -39,8 +39,11 @@ Do not log:
 
 - private keys;
 - preshared keys;
+- passwords;
 - session secrets;
-- full client configs.
+- backup passwords;
+- full client configs;
+- import keys, `vpn://` links, QR payloads, or packed AmneziaVPN QR strings.
 
 ## File Permissions
 

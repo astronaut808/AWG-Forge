@@ -9,8 +9,9 @@
 3. Выбери вкладку профиля: `1.0`, `1.5` или `2.0`.
 4. Создай туннель, если он еще не создан.
 5. Создай клиента внутри нужного туннеля.
-6. После успешного создания клиента `.conf` скачается автоматически.
-7. Импортируй `.conf` в совместимый клиент AmneziaVPN.
+6. Открой `Config` у клиента.
+7. Выбери AmneziaVPN QR, AmneziaWG `.conf` QR, скачивание `.conf` или копирование `vpn://` ключа.
+8. Импортируй конфиг в совместимый клиент AmneziaWG или AmneziaVPN.
 
 ## Действия В UI
 
@@ -18,8 +19,7 @@ Tunnel actions:
 
 - `Create tunnel`: создать новый туннель внутри выбранного профиля.
 - `Create client`: создать клиента внутри конкретного туннеля.
-- `Config`: скачать `.conf` существующего клиента.
-- `Import key`: сгенерировать experimental `vpn://` key для проверки в AmneziaVPN / DefaultVPN.
+- `Config`: выбрать способ импорта клиента: AmneziaVPN QR, AmneziaWG `.conf` QR, скачивание `.conf` или копирование `vpn://` ключа.
 - `Edit`: переименовать клиента или сохранить admin-only notes без изменения VPN-конфига.
 - `Settings`: настройки туннеля, включая optional per-tunnel `Server host` endpoint override.
 - `Protocol`: protocol params и regenerate.
@@ -42,7 +42,7 @@ Maintenance actions доступны через кнопку `Maintenance`:
 
 Изменение настроек туннеля или protocol params может сделать старые клиентские конфиги неактуальными.
 
-После таких изменений затронутые клиенты показывают badge `stale`, пока для них не скачан свежий `.conf`.
+После таких изменений затронутые клиенты показывают badge `stale`, пока для них не экспортирован свежий config через `Config`.
 
 Client rename и notes — metadata-only изменения, они не делают configs stale.
 
@@ -122,11 +122,16 @@ awg-forge logs
 
 ## Client Config Import
 
-Поддерживаемый путь — `.conf` файл.
+Самый надежный путь — импорт `.conf` файла. UI также дает отдельные QR-варианты для разных официальных клиентов. Любой вариант содержит client secrets, поэтому показывай QR только на доверенном экране и не пересылай публично.
 
-Действие `Import key` экспериментальное. Оно возвращает `vpn://` key, внутри которого лежит тот же сгенерированный клиентский конфиг, закодированный для AmneziaVPN-style text import. Мы проверили его на iOS, но сам формат не iOS-specific. Используй его только для проверки совместимости с AmneziaVPN или DefaultVPN. Для роутеров, native AmneziaWG app и production fallback нужно продолжать использовать `.conf`.
+Вариант `AmneziaVPN` показывает QR-код для импорта в AmneziaVPN. Payload — это JSON wrapper с `last_config`, сжатый через zlib, обернутый в Qt/qCompress-style binary header, который ожидает AmneziaVPN, и закодированный как base64url перед генерацией QR. Если конкретная сборка AmneziaVPN его не сканирует, используй fallback через `.conf`.
 
-QR import пока не показывается в UI и не поддерживается как product path. Future QR support должен быть отдельной проверенной совместимостью:
+Вариант `AmneziaWG` показывает raw full `.conf` QR. Он предназначен для AmneziaWG-compatible клиентов, которые умеют сканировать config QR. AmneziaVPN на некоторых платформах может игнорировать raw `.conf` QR.
 
-- native AmneziaWG app: QR от полного `.conf`, например `qrencode -t ansiutf8 < tunnel.conf`;
-- AmneziaVPN: отдельная проверка формата импорта, потому что поведение может отличаться от native AmneziaWG.
+В действии `Config` доступны три варианта:
+
+- `AmneziaVPN`: AmneziaVPN-compatible QR import;
+- `AmneziaWG`: raw full `.conf` QR для AmneziaWG-compatible import;
+- `.conf / vpn://`: надежный fallback для AmneziaWG, AmneziaVPN, роутеров и ручного импорта, плюс копирование `vpn://` ключа для клиентов, которые поддерживают текстовый импорт.
+
+Если официальный клиент не импортирует QR на конкретной платформе или версии, скачай и импортируй `.conf` файлом.

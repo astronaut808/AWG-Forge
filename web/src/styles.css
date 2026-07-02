@@ -936,6 +936,243 @@ textarea {
   min-height: 180px;
 }
 
+.segmented {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.segmented.compact {
+  width: fit-content;
+  max-width: 100%;
+}
+
+.segmented button {
+  min-height: 34px;
+  padding: 0 12px;
+  color: var(--muted);
+  border: 1px solid transparent;
+  border-radius: calc(var(--radius) - 2px);
+  background: transparent;
+  box-shadow: none;
+}
+
+.segmented button:hover,
+.segmented button:focus-visible {
+  color: var(--text);
+  border-color: var(--border);
+  background: var(--field-bg);
+}
+
+.segmented button.active {
+  color: var(--brand);
+  border-color: var(--border-strong);
+  background: color-mix(in srgb, var(--brand), transparent 88%);
+}
+
+.config-options {
+  display: grid;
+  grid-template-columns: minmax(420px, 1.4fr) minmax(280px, 0.8fr);
+  gap: 12px;
+}
+
+.config-option {
+  min-width: 0;
+  padding: 12px;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.config-option h3 {
+  margin: 0 0 6px;
+  font-size: 16px;
+}
+
+.config-option p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.config-option .button {
+  justify-content: center;
+}
+
+.config-option.single {
+  max-width: 720px;
+}
+
+.qr-config-option {
+  min-height: 100%;
+}
+
+.qr-mode-tabs {
+  flex-wrap: nowrap;
+}
+
+.qr-mode-tabs button {
+  flex: 1 1 0;
+}
+
+.config-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.action-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  width: 100%;
+}
+
+.action-row .button {
+  flex: 1 1 180px;
+  max-width: 260px;
+  justify-content: center;
+}
+
+.qr-panel {
+  display: grid;
+  place-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--field-bg);
+}
+
+.qr-image-button {
+  display: grid;
+  width: 100%;
+  place-items: center;
+  padding: 0;
+  color: inherit;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+}
+
+.qr-image-button:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 4px;
+}
+
+.qr-image {
+  width: min(300px, 100%);
+  height: auto;
+  aspect-ratio: 1;
+  padding: 10px;
+  border: 1px solid #d7e3ea;
+  border-radius: var(--radius);
+  background: #fff;
+  image-rendering: pixelated;
+}
+
+.qr-image.compact {
+  width: min(240px, 100%);
+}
+
+.qr-series {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: var(--muted);
+}
+
+.qr-series .button {
+  min-height: 36px;
+  padding: 8px 12px;
+}
+
+.qr-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  width: auto;
+  max-width: none;
+  height: auto;
+  max-height: none;
+  margin: 0;
+  padding: 24px;
+  color: inherit;
+  border: 0;
+  background: color-mix(in srgb, var(--bg), transparent 14%);
+  backdrop-filter: blur(10px);
+}
+
+.qr-lightbox-backdrop-button {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  cursor: zoom-out;
+}
+
+.qr-lightbox-card {
+  position: relative;
+  z-index: 1;
+  width: min(720px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  display: grid;
+  justify-items: center;
+  gap: 16px;
+  padding: 20px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.qr-lightbox-head {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.qr-lightbox-head h3,
+.qr-lightbox-head p {
+  margin: 0;
+}
+
+.qr-lightbox-head p {
+  color: var(--muted);
+}
+
+.qr-lightbox-image {
+  width: min(560px, 100%);
+  height: auto;
+  aspect-ratio: 1;
+  padding: 14px;
+  border: 1px solid #d7e3ea;
+  border-radius: var(--radius);
+  background: #fff;
+  image-rendering: pixelated;
+}
+
 .toast {
   position: fixed;
   right: 24px;
@@ -982,6 +1219,10 @@ textarea {
 
   .tunnel-grid,
   .tunnel-grid.single {
+    grid-template-columns: 1fr;
+  }
+
+  .config-options {
     grid-template-columns: 1fr;
   }
 

@@ -60,7 +60,7 @@ The current Amnezia client import path detects AWG 2.0 when a WireGuard/AWG conf
 | `S3/S4` | Not rendered | Not rendered | Client and server interface |
 | `H1-H4` | Single values | Single values | Ranges by default, single values allowed only for explicit custom params |
 | `I1-I5` | Not rendered by awg-forge Legacy profile | Client interface only in current 1.5-oriented profile | Client and server interface by default, because 2.0 server settings are inherited by generated configs |
-| `protocol_version` | Not an INI field | Not an INI field | Not an INI field; only native Amnezia JSON import metadata should use `"2"` |
+| `protocol_version` | Not an INI field | Not an INI field | Not an INI field; only AmneziaVPN JSON import metadata should use `"2"` |
 
 ## Current Defaults
 
@@ -96,12 +96,13 @@ Validated:
 
 - generated `.conf` imported and connected on a desktop client;
 - generated `.conf` imported and connected on iOS after updating to a compatible AmneziaVPN build;
+- AmneziaVPN-compatible QR export is implemented as structured JSON with `last_config`, zlib/qCompress-style wrapping, base64url payload, and compatibility-critical JSON field types;
 - Docker/server-side `awg show` reports 2.0 params, handshake, and traffic for `awg20`.
 
-Not implemented:
+Still requires broader validation:
 
-- Amnezia native import payloads for 2.0 and iOS;
-- exact native import schema across AmneziaVPN platforms.
+- QR import behavior across AmneziaVPN iOS, Android, and Desktop builds;
+- exact native import schema differences across AmneziaVPN platforms.
 
 ## Sources
 

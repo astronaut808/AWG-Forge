@@ -9,8 +9,9 @@ Main workflow:
 3. Select profile tab `1.0`, `1.5`, or `2.0`.
 4. Create a tunnel if needed.
 5. Create a client inside the selected tunnel.
-6. After successful creation, the `.conf` file downloads automatically.
-7. Import the `.conf` into a compatible AmneziaVPN client.
+6. Open `Config` for the client.
+7. Choose AmneziaVPN QR, AmneziaWG `.conf` QR, `.conf` download, or copy the `vpn://` key.
+8. Import the config into a compatible AmneziaWG or AmneziaVPN client.
 
 ## UI Actions
 
@@ -18,8 +19,7 @@ Tunnel actions:
 
 - `Create tunnel`: create a new tunnel inside the selected profile.
 - `Create client`: create a client inside a specific tunnel.
-- `Config`: download an existing client's `.conf`.
-- `Import key`: generate an experimental `vpn://` key for AmneziaVPN / DefaultVPN testing.
+- `Config`: choose how to import a client config: AmneziaVPN QR, AmneziaWG `.conf` QR, `.conf` download, or `vpn://` key copy.
 - `Edit`: rename a client or store admin-only notes without changing VPN config.
 - `Settings`: tunnel settings, including optional per-tunnel `Server host` endpoint override.
 - `Protocol`: protocol params and regenerate.
@@ -42,7 +42,7 @@ Maintenance actions are available through the `Maintenance` button:
 
 Changing tunnel settings or protocol params can make old client configs stale.
 
-After such changes, affected clients show a `stale` badge until a fresh `.conf` is downloaded.
+After such changes, affected clients show a `stale` badge until a fresh config is exported from `Config`.
 
 Client rename and notes are metadata-only changes and do not make configs stale.
 
@@ -122,11 +122,16 @@ awg-forge logs
 
 ## Client Config Import
 
-The supported path is `.conf` file import.
+The most reliable path is `.conf` file import. The UI also provides separate QR options for different official clients. Every option contains client secrets, so show QR codes only on a trusted screen and never share them publicly.
 
-The `Import key` action is experimental. It returns a `vpn://` key that contains the same rendered client config encoded for AmneziaVPN-style text import. It has been checked on iOS, but the format is not iOS-specific. Use it only for compatibility testing with AmneziaVPN or DefaultVPN. Routers, the AmneziaWG native app, and production fallback should continue to use `.conf`.
+The `AmneziaVPN` option shows a QR code built for AmneziaVPN import. The payload is a JSON wrapper with `last_config`, compressed with zlib, wrapped in the Qt/qCompress-style binary header used by AmneziaVPN, and encoded as base64url before QR generation. If a specific AmneziaVPN build does not scan it, use the `.conf` file fallback.
 
-QR import is not shown in the UI and is not supported as a product path yet. Future QR support should be implemented as explicit, tested compatibility:
+The `AmneziaWG` option shows a raw full `.conf` QR. It is intended for AmneziaWG-compatible clients that scan config QR codes. AmneziaVPN may ignore raw `.conf` QR codes on some platforms.
 
-- native AmneziaWG app: QR from the full `.conf`, for example `qrencode -t ansiutf8 < tunnel.conf`;
-- AmneziaVPN: separate import-format validation, because its behavior may differ from the native AmneziaWG app.
+Use the client `Config` action to choose between:
+
+- `AmneziaVPN`: AmneziaVPN-compatible QR import;
+- `AmneziaWG`: raw full `.conf` QR for AmneziaWG-compatible import;
+- `.conf / vpn://`: the most reliable fallback for AmneziaWG, AmneziaVPN, routers, and manual imports, plus `vpn://` key copy for clients that support text import.
+
+If an official client cannot import the QR on a specific platform or version, download and import the `.conf` file instead.

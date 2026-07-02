@@ -89,7 +89,7 @@ Important:
 
 - `Server host` must not include a scheme, path, or port;
 - the port comes from the tunnel settings;
-- after changing the host, clients should download fresh `.conf` files;
+- after changing the host, clients should re-import a fresh config from `Config`;
 - already imported clients do not update themselves.
 
 ## MTU
@@ -103,7 +103,7 @@ Practically:
 - `Auto` is a good starting point;
 - `1280` often helps on problematic networks, mobile networks, routers, and complex routes;
 - the Web UI offers `Auto`, common presets, and `Custom` for explicit MTU values;
-- after changing MTU, clients should download fresh `.conf` files.
+- after changing MTU, clients should re-import a fresh config from `Config`.
 
 ## IPv6 and AllowedIPs
 

@@ -271,6 +271,31 @@ func (s *Service) ClientConfigForDownload(id string) (string, config.Client, err
 	return conf, client, nil
 }
 
+type ClientExportContext struct {
+	ServerHost   string
+	Tunnel       config.Tunnel
+	Client       config.Client
+	RenderedConf string
+}
+
+func (s *Service) ClientExportContext(id string) (ClientExportContext, error) {
+	state, err := s.Init()
+	if err != nil {
+		return ClientExportContext{}, err
+	}
+	tunnel, client, ok := findClient(state, id)
+	if !ok {
+		return ClientExportContext{}, errors.New("client not found")
+	}
+	conf, err := render.ClientConfig(state, tunnel, client)
+	if err != nil {
+		return ClientExportContext{}, err
+	}
+	_ = s.markClientConfigDelivered(id)
+	s.log("info", "client.config.downloaded", "client config downloaded", clientAuditFields(tunnel, client), nil)
+	return ClientExportContext{ServerHost: state.ServerHost, Tunnel: tunnel, Client: client, RenderedConf: conf}, nil
+}
+
 func (s *Service) ClientImportKey(id string) (string, config.Client, error) {
 	conf, client, err := s.ClientConfigForDownload(id)
 	if err != nil {
