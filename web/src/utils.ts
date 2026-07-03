@@ -35,24 +35,30 @@ export function downloadConfig(clientID: string): void {
   link.remove();
 }
 
-export function dateOnly(value: string): string {
+export function dateOnly(value: string, locale?: string): string {
   if (!value) return "";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
-  return new Intl.DateTimeFormat(undefined, { day: "2-digit", month: "2-digit", year: "numeric" }).format(date);
+  return new Intl.DateTimeFormat(locale, { day: "2-digit", month: "2-digit", year: "numeric" }).format(date);
 }
 
-export function relativeTime(value: string): string {
-  if (!value) return "never";
+export function relativeTime(value: string, labels = {
+  never: "never",
+  unknown: "unknown",
+  secondsAgo: (seconds: number) => `${seconds} seconds ago`,
+  minutesAgo: (minutes: number) => `${minutes} minutes ago`,
+  hoursAgo: (hours: number) => `${hours} hours ago`,
+}, locale?: string): string {
+  if (!value) return labels.never;
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "unknown";
+  if (Number.isNaN(date.getTime())) return labels.unknown;
   const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
-  if (seconds < 60) return `${seconds} seconds ago`;
+  if (seconds < 60) return labels.secondsAgo(seconds);
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes} minutes ago`;
+  if (minutes < 60) return labels.minutesAgo(minutes);
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} hours ago`;
-  return dateOnly(value);
+  if (hours < 24) return labels.hoursAgo(hours);
+  return dateOnly(value, locale);
 }
 
 export function activeLabel(lastSeenAt: string): "active now" | "seen recently" | "offline" | "never seen" {

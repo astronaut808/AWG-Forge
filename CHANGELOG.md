@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.14.0 - 2026-07-04
+
+### Added
+
+- Added a RU/EN language switch in the Web UI, with locale persistence in the browser and localized dashboard, dialogs, maintenance actions, and import flows.
+
 ## v0.13.0 - 2026-07-02
 
 ### Added

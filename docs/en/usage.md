@@ -6,12 +6,13 @@ Main workflow:
 
 1. Open the UI through an SSH tunnel or a protected admin endpoint.
 2. Log in.
-3. Select profile tab `1.0`, `1.5`, or `2.0`.
-4. Create a tunnel if needed.
-5. Create a client inside the selected tunnel.
-6. Open `Config` for the client.
-7. Choose AmneziaVPN QR, AmneziaWG `.conf` QR, `.conf` download, or copy the `vpn://` key.
-8. Import the config into a compatible AmneziaWG or AmneziaVPN client.
+3. Use the `RU` / `EN` button in the top bar to switch the panel language when needed. The choice is saved in the browser.
+4. Select profile tab `1.0`, `1.5`, or `2.0`.
+5. Create a tunnel if needed.
+6. Create a client inside the selected tunnel.
+7. Open `Config` for the client.
+8. Choose AmneziaVPN QR, AmneziaWG `.conf` QR, `.conf` download, or copy the `vpn://` key.
+9. Import the config into a compatible AmneziaWG or AmneziaVPN client.
 
 ## UI Actions
 
