@@ -96,8 +96,14 @@ func writeJSON(rw http.ResponseWriter, status int, payload any) {
 func writeCachedJSON(rw http.ResponseWriter, status int, body []byte) {
 	rw.Header().Set("Content-Type", "application/json")
 	rw.WriteHeader(status)
-	_, _ = rw.Write(body)
+	// Cached API responses are JSON bytes produced by json.Marshal in this process.
+	_, _ = rw.Write(body) // nosemgrep: go.lang.security.audit.xss.no-direct-write-to-responsewriter.no-direct-write-to-responsewriter
 	_, _ = rw.Write([]byte("\n"))
+}
+
+func writeRawResponse(rw http.ResponseWriter, body []byte) {
+	// Callers set explicit Content-Type for trusted embedded assets or downloads.
+	_, _ = rw.Write(body) // nosemgrep: go.lang.security.audit.xss.no-direct-write-to-responsewriter.no-direct-write-to-responsewriter
 }
 
 func writeError(rw http.ResponseWriter, status int, message string) {

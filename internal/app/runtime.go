@@ -224,7 +224,7 @@ func (s *Service) apply(tunnel config.Tunnel) error {
 		return err
 	}
 	if err := exec.Command("ip", "link", "show", tunnel.InterfaceName).Run(); err != nil {
-		if err := runCommand("awg-quick", "up", tunnel.InterfaceName); err != nil {
+		if err := runAWGQuick("up", tunnel.InterfaceName); err != nil {
 			return err
 		}
 		return s.ensureFirewallRules(tunnel)
@@ -264,7 +264,7 @@ func (s *Service) reconcileWarpRuntime(state config.State) error {
 		return err
 	}
 	_ = exec.Command("awg-quick", "down", interfaceName).Run()
-	if err := runCommand("awg-quick", "up", interfaceName); err != nil {
+	if err := runAWGQuick("up", interfaceName); err != nil {
 		return err
 	}
 	return nil
@@ -574,10 +574,10 @@ func hasFilterRule(chain string, args ...string) bool {
 	return exec.Command("iptables", cmdArgs...).Run() == nil
 }
 
-func runCommand(name string, args ...string) error {
-	out, err := exec.Command(name, args...).CombinedOutput()
+func runAWGQuick(args ...string) error {
+	out, err := exec.Command("awg-quick", args...).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("%s %s failed: %s", name, strings.Join(args, " "), strings.TrimSpace(string(out)))
+		return fmt.Errorf("awg-quick %s failed: %s", strings.Join(args, " "), strings.TrimSpace(string(out)))
 	}
 	return nil
 }

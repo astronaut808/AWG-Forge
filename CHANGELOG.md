@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.14.1 - 2026-07-04
+
+### Security
+
+- Hardened GitHub Actions supply-chain safety by pinning workflow actions to immutable commit SHAs.
+- Added a Dependabot update cooldown for Go modules and GitHub Actions dependencies.
+- Added local security scan targets for `gitleaks`, `trivy`, and Semgrep, with generated Web UI assets excluded from source scanning.
+
+### Changed
+
+- Narrowed internal runtime command helpers to explicit allowed commands and documented accepted Semgrep risks for dynamic session cookie security, deployment-level TLS, and raw JSON/download/SSE responses.
+
 ## v0.14.0 - 2026-07-04
 
 ### Added

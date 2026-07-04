@@ -19,6 +19,8 @@ make ui-build
 make lint-go
 make lint-js
 make ci
+make security
+make security-fast
 make docker-build
 ```
 
@@ -57,6 +59,24 @@ git diff --check
 - `npm run ui:check`;
 - `npm run ui:build`;
 - `deno lint web/src`.
+
+## Security Checks
+
+Run the release security gate before publishing a version:
+
+```bash
+make security
+```
+
+`make security` runs `gitleaks`, `trivy`, and Semgrep registry rules. It may need network access for scanner databases and rules.
+
+For a faster local check:
+
+```bash
+make security-fast
+```
+
+Generated frontend assets under `internal/server/static/assets/` and embedded fonts are excluded from Semgrep. The source of truth is `web/src/`; generated output is verified by `npm run ui:build` and `git diff --exit-code -- internal/server/static`.
 
 ## Frontend
 

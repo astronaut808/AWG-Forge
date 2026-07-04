@@ -1,7 +1,7 @@
 COMPOSE ?= docker compose
 CONTAINER ?= awg-forge
 
-.PHONY: test test-shell vet build lint-go lint-js ui-build ui-check ci updates updates-local updates-docker update-amneziawg-refs docker-build docker-up docker-down
+.PHONY: test test-shell vet build lint-go lint-js ui-build ui-check ci security security-fast updates updates-local updates-docker update-amneziawg-refs docker-build docker-up docker-down
 
 test:
 	go test ./...
@@ -30,6 +30,16 @@ ui-build:
 	npm run ui:build
 
 ci: ui-check ui-build test test-shell vet build lint-go lint-js
+
+security:
+	gitleaks detect --source=. --no-banner
+	trivy fs .
+	semgrep --config=auto --disable-version-check .
+
+security-fast:
+	gitleaks detect --source=. --no-banner
+	trivy fs --severity HIGH,CRITICAL --quiet .
+	semgrep --config=p/golang --config=p/typescript --config=p/secrets --disable-version-check .
 
 updates: updates-local
 

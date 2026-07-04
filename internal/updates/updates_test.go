@@ -2,7 +2,7 @@ package updates
 
 import (
 	"context"
-	"fmt"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -56,11 +56,11 @@ func fakeGitHub(t *testing.T, commits map[string]string) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		for repo, sha := range commits {
 			if r.URL.Path == "/repos/"+repo {
-				_, _ = fmt.Fprint(rw, `{"default_branch":"master"}`)
+				_ = json.NewEncoder(rw).Encode(map[string]string{"default_branch": "master"})
 				return
 			}
 			if r.URL.Path == "/repos/"+repo+"/commits/master" {
-				_, _ = fmt.Fprintf(rw, `{"sha":%q}`, sha)
+				_ = json.NewEncoder(rw).Encode(map[string]string{"sha": sha})
 				return
 			}
 		}

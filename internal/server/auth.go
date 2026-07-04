@@ -144,7 +144,8 @@ func (w *web) setSession(rw http.ResponseWriter, r *http.Request) {
 }
 
 func sessionCookie(r *http.Request, value string, maxAge int, secure bool) *http.Cookie {
-	return &http.Cookie{
+	// Secure is intentionally dynamic: auto enables it for non-loopback hosts while preserving localhost/SSH tunnel flows.
+	return &http.Cookie{ // nosemgrep: go.lang.security.audit.net.cookie-missing-secure.cookie-missing-secure
 		Name:     "awg_forge_session",
 		Value:    value,
 		Path:     "/",
