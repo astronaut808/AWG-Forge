@@ -1,0 +1,8 @@
+# Generated Vite bundles. Scan web/src instead and verify reproducibility with npm run ui:build.
+internal/server/static/assets/
+
+# Embedded static binary assets are not source code.
+internal/server/static/fonts/
+
+# Local dependency installs are vendor output.
+node_modules/

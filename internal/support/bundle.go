@@ -460,13 +460,33 @@ func runText(ctx context.Context, args ...string) string {
 	if len(args) == 0 {
 		return ""
 	}
-	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	cmd, ok := runtimeExecCommand(ctx, args[0], args[1:]...)
+	if !ok {
+		return "$ " + strings.Join(args, " ") + "\nerror: unsupported diagnostic command\n"
+	}
 	out, err := cmd.CombinedOutput()
 	text := "$ " + strings.Join(args, " ") + "\n"
 	if err != nil {
 		text += "error: " + err.Error() + "\n"
 	}
 	return sanitizeText(text + string(out))
+}
+
+func runtimeExecCommand(ctx context.Context, name string, args ...string) (*exec.Cmd, bool) {
+	switch name {
+	case "awg":
+		return exec.CommandContext(ctx, "awg", args...), true
+	case "ip":
+		return exec.CommandContext(ctx, "ip", args...), true
+	case "iptables":
+		return exec.CommandContext(ctx, "iptables", args...), true
+	case "ss":
+		return exec.CommandContext(ctx, "ss", args...), true
+	case "sysctl":
+		return exec.CommandContext(ctx, "sysctl", args...), true
+	default:
+		return nil, false
+	}
 }
 
 func doctorText(results []doctor.Result) string {

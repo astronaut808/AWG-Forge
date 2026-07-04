@@ -619,6 +619,8 @@ function ClientConfigPanel({ client, notify }: { client: Client; notify: (messag
     : m.clientConfig.amneziaWGDescription;
   const activeQRAlt = qrMode === "amneziavpn" ? m.clientConfig.amneziaVPNAlt(client.name) : m.clientConfig.amneziaWGAlt(client.name);
   const activeQRDownloadName = qrMode === "amneziavpn" ? vpnQRDownloadName : `${client.name}-amneziawg.png`;
+  const messagesRef = useRef(m);
+  messagesRef.current = m;
 
   useEffect(() => {
     notifyRef.current = notify;
@@ -633,7 +635,7 @@ function ClientConfigPanel({ client, notify }: { client: Client; notify: (messag
         if (cancelled) return;
         setVPNQRChunks(Math.max(1, res.chunks));
       })
-      .catch((err) => notifyRef.current(errorMessage(err, m.common.requestFailed)));
+      .catch((err) => notifyRef.current(errorMessage(err, messagesRef.current.common.requestFailed)));
     return () => {
       cancelled = true;
     };
@@ -747,6 +749,8 @@ function MaintenanceCenter({ state, notify, reload }: { state: AppState; notify:
   const [restore, setRestore] = useState<RestoreReport | null>(null);
   const [busyAction, setBusyAction] = useState("");
   const notifyRef = useRef(notify);
+  const messagesRef = useRef(m);
+  messagesRef.current = m;
 
   useEffect(() => {
     notifyRef.current = notify;
@@ -760,7 +764,7 @@ function MaintenanceCenter({ state, notify, reload }: { state: AppState; notify:
         const res = await api.auditLog();
         if (!closed) setEvents(sortNewestFirst(res.events));
       } catch (err) {
-        if (!quiet && !closed) notifyRef.current(errorMessage(err, m.common.requestFailed));
+        if (!quiet && !closed) notifyRef.current(errorMessage(err, messagesRef.current.common.requestFailed));
       }
     }
 

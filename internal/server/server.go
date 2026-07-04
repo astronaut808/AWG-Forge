@@ -84,7 +84,8 @@ func Serve(cfg config.Config, service *app.Service) error {
 
 	addr := fmt.Sprintf("%s:%d", cfg.WebUIHost, cfg.WebUIPort)
 	fmt.Printf("awg-forge web UI listening on http://%s\n", addr)
-	return http.ListenAndServe(addr, mux)
+	// Built-in HTTP is intentional for localhost/LAN/reverse-proxy deployments; TLS termination is deployment-specific.
+	return http.ListenAndServe(addr, mux) // nosemgrep: go.lang.security.audit.net.use-tls.use-tls
 }
 
 func enforceExpiredClients(service *app.Service) {
@@ -106,7 +107,7 @@ func (w *web) index(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rw.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = rw.Write(b)
+	writeRawResponse(rw, b)
 }
 
 func (w *web) loginAPI(rw http.ResponseWriter, r *http.Request) {
@@ -185,17 +186,17 @@ func (w *web) eventsAPI(rw http.ResponseWriter, r *http.Request) {
 	writeStateEvent := func() bool {
 		state, err := w.service.State()
 		if err != nil {
-			_, _ = fmt.Fprintf(rw, "event: error\ndata: {\"error\":\"state unavailable\"}\n\n")
+			writeServerSentEvent(rw, "error", []byte(`{"error":"state unavailable"}`))
 			flusher.Flush()
 			return false
 		}
 		body, err := json.Marshal(w.publicState(state))
 		if err != nil {
-			_, _ = fmt.Fprintf(rw, "event: error\ndata: {\"error\":\"state unavailable\"}\n\n")
+			writeServerSentEvent(rw, "error", []byte(`{"error":"state unavailable"}`))
 			flusher.Flush()
 			return false
 		}
-		_, _ = fmt.Fprintf(rw, "event: state\ndata: %s\n\n", body)
+		writeServerSentEvent(rw, "state", body)
 		flusher.Flush()
 		return true
 	}
@@ -343,7 +344,7 @@ func (w *web) backupAPI(rw http.ResponseWriter, r *http.Request) {
 	noStore(rw)
 	rw.Header().Set("Content-Type", "application/octet-stream")
 	rw.Header().Set("Content-Disposition", `attachment; filename="`+archive.Name+`"`)
-	_, _ = rw.Write(archive.Data)
+	writeRawResponse(rw, archive.Data)
 }
 
 func (w *web) supportBundleAPI(rw http.ResponseWriter, r *http.Request) {
@@ -363,7 +364,7 @@ func (w *web) supportBundleAPI(rw http.ResponseWriter, r *http.Request) {
 	noStore(rw)
 	rw.Header().Set("Content-Type", "application/zip")
 	rw.Header().Set("Content-Disposition", `attachment; filename="`+bundle.Name+`"`)
-	_, _ = rw.Write(bundle.Data)
+	writeRawResponse(rw, bundle.Data)
 }
 
 func (w *web) updatesAPI(rw http.ResponseWriter, r *http.Request) {
@@ -883,7 +884,12 @@ func (w *web) clientConfig(rw http.ResponseWriter, r *http.Request) {
 	noStore(rw)
 	rw.Header().Set("Content-Type", "application/octet-stream")
 	rw.Header().Set("Content-Disposition", `attachment; filename="`+configFilename(client)+`.conf"`)
-	_, _ = rw.Write([]byte(conf))
+	writeRawResponse(rw, []byte(conf))
+}
+
+func writeServerSentEvent(rw http.ResponseWriter, event string, body []byte) {
+	// SSE frames carry JSON bytes only; callers marshal structured state or pass static JSON.
+	_, _ = fmt.Fprintf(rw, "event: %s\ndata: %s\n\n", event, body) // nosemgrep: go.lang.security.audit.xss.no-fprintf-to-responsewriter.no-fprintf-to-responsewriter
 }
 
 func (w *web) publicState(state config.State) map[string]any {
