@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Added SQLite-backed traffic history collection with daily client aggregates, per-client total traffic in client rows, and aggregate Maintenance traffic totals.
+
 ## v0.15.0 - 2026-07-05
 
 ### Added

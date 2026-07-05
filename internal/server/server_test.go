@@ -238,6 +238,45 @@ func TestClientConfigDownloadUsesClientNameFilename(t *testing.T) {
 	}
 }
 
+func TestTrafficSummaryAPIDisabledDatabase(t *testing.T) {
+	w := &web{cfg: config.Config{DatabaseMode: "off"}}
+	r := httptest.NewRequest(http.MethodGet, "/api/traffic-summary", nil)
+	rr := httptest.NewRecorder()
+
+	w.trafficSummaryAPI(rr, r)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	if got, want := rr.Header().Get("Cache-Control"), "no-store"; got != want {
+		t.Fatalf("Cache-Control = %q, want %q", got, want)
+	}
+	var payload struct {
+		Enabled bool  `json:"enabled"`
+		Rows    []any `json:"rows"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Enabled {
+		t.Fatal("traffic summary should report disabled database")
+	}
+	if payload.Rows == nil || len(payload.Rows) != 0 {
+		t.Fatalf("rows = %#v, want empty array", payload.Rows)
+	}
+}
+
+func TestPublicDatabaseSummary(t *testing.T) {
+	off := publicDatabase(config.Config{})
+	if off["mode"] != "off" || off["enabled"] != false {
+		t.Fatalf("zero config database summary = %#v, want off disabled", off)
+	}
+	sqlite := publicDatabase(config.Config{DatabaseMode: "sqlite"})
+	if sqlite["mode"] != "sqlite" || sqlite["enabled"] != true {
+		t.Fatalf("sqlite database summary = %#v, want sqlite enabled", sqlite)
+	}
+}
+
 func TestClientQRAPIReturnsPNG(t *testing.T) {
 	cfg := config.Config{
 		ConfigDir:           t.TempDir(),
@@ -1238,6 +1277,28 @@ func TestPublicTunnelReportsStaleClientCount(t *testing.T) {
 	}
 	if got, want := status["stale_clients"], 1; got != want {
 		t.Fatalf("stale_clients = %v, want %d", got, want)
+	}
+}
+
+func TestPublicTunnelIncludesClientTrafficSummary(t *testing.T) {
+	tunnel := config.Tunnel{
+		ID: "tunnel-1",
+		Clients: []config.Client{{
+			ID:       "client-1",
+			TunnelID: "tunnel-1",
+			Name:     "phone",
+		}},
+	}
+	payload := publicTunnelWithFirewall(tunnel, app.TunnelStatus{}, firewallSummary{}, nil, map[string]clientTrafficSummary{
+		"client-1": {Enabled: true, RxTotal: 1024, TxTotal: 2048},
+	})
+	clients := payload["clients"].([]map[string]any)
+	traffic := clients[0]["traffic"].(map[string]any)
+	if traffic["enabled"] != true || traffic["rx_total"] != uint64(1024) || traffic["tx_total"] != uint64(2048) {
+		t.Fatalf("client traffic = %#v, want enabled totals", traffic)
+	}
+	if traffic["limit_bytes"] != nil {
+		t.Fatalf("limit_bytes = %#v, want nil until quotas exist", traffic["limit_bytes"])
 	}
 }
 

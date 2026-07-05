@@ -4,6 +4,7 @@ import type {
   DoctorResult,
   FirewallReport,
   RestoreReport,
+  TrafficSummary,
   UpdatesReport,
   WarpSummary,
 } from "./types";
@@ -175,6 +176,10 @@ export function updates(): Promise<{ updates: UpdatesReport }> {
 
 export function auditLog(): Promise<{ events: AuditEvent[] }> {
   return request("/api/audit-log?tail=100");
+}
+
+export function trafficSummary(): Promise<TrafficSummary> {
+  return request("/api/traffic-summary");
 }
 
 export function registerWarp(): Promise<{ warp: WarpSummary }> {
