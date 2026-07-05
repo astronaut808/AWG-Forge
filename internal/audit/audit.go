@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/astronaut808/awg-forge/internal/config"
+	"github.com/astronaut808/awg-forge/internal/sqldb"
 )
 
 const (
@@ -42,11 +43,24 @@ type noopLogger struct{}
 
 func (noopLogger) Log(context.Context, Event) {}
 
+type multiLogger []Logger
+
+func (l multiLogger) Log(ctx context.Context, event Event) {
+	event = normalizeEvent(Sanitize(event))
+	for _, logger := range l {
+		logger.Log(ctx, event)
+	}
+}
+
 type fileLogger struct {
 	path     string
 	maxSize  int64
 	maxFiles int
 	mu       sync.Mutex
+}
+
+type dbLogger struct {
+	cfg config.Config
 }
 
 type ReadOptions struct {
@@ -67,7 +81,11 @@ func New(cfg config.Config) Logger {
 	if maxFiles <= 0 {
 		maxFiles = DefaultMaxFiles
 	}
-	return &fileLogger{path: cfg.AuditLogPath, maxSize: maxSize, maxFiles: maxFiles}
+	loggers := []Logger{&fileLogger{path: cfg.AuditLogPath, maxSize: maxSize, maxFiles: maxFiles}}
+	if cfg.DatabaseMode == sqldb.ModeSQLite {
+		loggers = append(loggers, dbLogger{cfg: cfg})
+	}
+	return multiLogger(loggers)
 }
 
 func (l *fileLogger) Log(ctx context.Context, event Event) {
@@ -76,16 +94,7 @@ func (l *fileLogger) Log(ctx context.Context, event Event) {
 		return
 	default:
 	}
-	event = Sanitize(event)
-	if event.Time.IsZero() {
-		event.Time = time.Now().UTC()
-	}
-	if event.Level == "" {
-		event.Level = "info"
-	}
-	if event.Event == "" {
-		event.Event = "event"
-	}
+	event = normalizeEvent(Sanitize(event))
 	line, err := json.Marshal(event)
 	if err != nil {
 		return
@@ -107,6 +116,30 @@ func (l *fileLogger) Log(ctx context.Context, event Event) {
 	}
 	defer func() { _ = file.Close() }()
 	_, _ = file.Write(line)
+}
+
+func (l dbLogger) Log(ctx context.Context, event Event) {
+	select {
+	case <-ctx.Done():
+		return
+	default:
+	}
+	event = normalizeEvent(Sanitize(event))
+	fields := "{}"
+	if len(event.Fields) > 0 {
+		if raw, err := json.Marshal(event.Fields); err == nil {
+			fields = string(raw)
+		}
+	}
+	_ = sqldb.AppendAuditEvent(ctx, l.cfg, sqldb.AuditEvent{
+		Time:       event.Time,
+		Level:      event.Level,
+		Event:      event.Event,
+		Message:    event.Message,
+		FieldsJSON: fields,
+		Error:      event.Error,
+		RequestID:  event.RequestID,
+	})
 }
 
 func (l *fileLogger) rotateIfNeeded(incoming int64) error {
@@ -153,6 +186,19 @@ func Sanitize(event Event) Event {
 	return event
 }
 
+func normalizeEvent(event Event) Event {
+	if event.Time.IsZero() {
+		event.Time = time.Now().UTC()
+	}
+	if event.Level == "" {
+		event.Level = "info"
+	}
+	if event.Event == "" {
+		event.Event = "event"
+	}
+	return event
+}
+
 func Error(err error) string {
 	if err == nil {
 		return ""
@@ -170,6 +216,98 @@ func ReadFile(path string, opts ReadOptions) ([]Event, error) {
 	}
 	defer func() { _ = file.Close() }()
 	return Read(file, opts)
+}
+
+func ReadConfigured(ctx context.Context, cfg config.Config, opts ReadOptions) ([]Event, error) {
+	fileEvents, fileErr := ReadFile(cfg.AuditLogPath, opts)
+	if cfg.DatabaseMode == sqldb.ModeSQLite {
+		dbEvents, dbErr := readDB(ctx, cfg, opts)
+		if dbErr == nil {
+			return mergeEvents(opts, fileEvents, dbEvents), nil
+		}
+	}
+	if fileErr != nil {
+		return nil, fileErr
+	}
+	return fileEvents, nil
+}
+
+func readDB(ctx context.Context, cfg config.Config, opts ReadOptions) ([]Event, error) {
+	level := normalizeLevel(opts.Level)
+	rows, err := sqldb.ListAuditEvents(ctx, cfg, sqldb.AuditFilter{
+		Tail:  opts.Tail,
+		Level: level,
+		Event: opts.Event,
+	})
+	if err != nil {
+		return nil, err
+	}
+	events := make([]Event, 0, len(rows))
+	for _, row := range rows {
+		event := Event{
+			Time:      row.Time,
+			Level:     row.Level,
+			Event:     row.Event,
+			Message:   row.Message,
+			Error:     row.Error,
+			RequestID: row.RequestID,
+		}
+		if strings.TrimSpace(row.FieldsJSON) != "" && row.FieldsJSON != "{}" {
+			var fields map[string]any
+			if err := json.Unmarshal([]byte(row.FieldsJSON), &fields); err == nil {
+				event.Fields = fields
+			}
+		}
+		events = append(events, Sanitize(event))
+	}
+	return events, nil
+}
+
+func mergeEvents(opts ReadOptions, lists ...[]Event) []Event {
+	tail := opts.Tail
+	if tail <= 0 {
+		tail = DefaultTail
+	}
+	seen := map[string]struct{}{}
+	var merged []Event
+	for _, events := range lists {
+		for _, event := range events {
+			key := eventKey(event)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			merged = append(merged, event)
+		}
+	}
+	sort.SliceStable(merged, func(i, j int) bool {
+		if merged[i].Time.Equal(merged[j].Time) {
+			return merged[i].Event < merged[j].Event
+		}
+		return merged[i].Time.Before(merged[j].Time)
+	})
+	if len(merged) > tail {
+		merged = merged[len(merged)-tail:]
+	}
+	return merged
+}
+
+func eventKey(event Event) string {
+	fields := ""
+	if len(event.Fields) > 0 {
+		if raw, err := json.Marshal(event.Fields); err == nil {
+			fields = string(raw)
+		}
+	}
+	return strings.Join([]string{
+		event.Time.UTC().Format(time.RFC3339Nano),
+		event.Level,
+		event.Event,
+		event.Message,
+		event.Error,
+		event.RequestID,
+		fields,
+	}, "\x00")
 }
 
 func Read(reader io.Reader, opts ReadOptions) ([]Event, error) {

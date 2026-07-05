@@ -6,8 +6,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/astronaut808/awg-forge/internal/config"
+	"github.com/astronaut808/awg-forge/internal/sqldb"
 )
 
 func TestFileLoggerWritesRedactedJSONL(t *testing.T) {
@@ -94,5 +96,104 @@ func TestRotate(t *testing.T) {
 	}
 	if _, err := os.Stat(path + ".1"); err != nil {
 		t.Fatalf("rotated file missing: %v", err)
+	}
+}
+
+func TestDatabaseLoggerWritesAndReadsAuditEvents(t *testing.T) {
+	cfg := testDBConfig(t)
+	if _, err := sqldb.Migrate(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	logger := New(cfg)
+	logger.Log(context.Background(), Event{
+		Level:   "warn",
+		Event:   "client.created",
+		Message: "created",
+		Fields: map[string]any{
+			"client_name": "phone",
+			"private_key": "secret-private",
+		},
+	})
+	events, err := ReadConfigured(context.Background(), cfg, ReadOptions{Tail: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events = %d, want 1", len(events))
+	}
+	if events[0].Event != "client.created" || events[0].Level != "warn" {
+		t.Fatalf("unexpected event: %#v", events[0])
+	}
+	if events[0].Fields["client_name"] != "phone" {
+		t.Fatalf("client_name was not preserved: %#v", events[0].Fields)
+	}
+	if events[0].Fields["private_key"] != "<redacted>" {
+		t.Fatalf("private key field was not redacted: %#v", events[0].Fields)
+	}
+}
+
+func TestReadConfiguredFallsBackToFileWhenDatabaseMissing(t *testing.T) {
+	cfg := testDBConfig(t)
+	logger := New(cfg)
+	logger.Log(context.Background(), Event{Level: "info", Event: "fallback.file", Message: "ok"})
+	events, err := ReadConfigured(context.Background(), cfg, ReadOptions{Tail: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Event != "fallback.file" {
+		t.Fatalf("events = %#v, want fallback file event", events)
+	}
+	if _, err := os.Stat(cfg.DatabasePath); !os.IsNotExist(err) {
+		t.Fatalf("logging before migrate created database or unexpected stat error: %v", err)
+	}
+}
+
+func TestReadConfiguredMergesDatabaseAndJSONL(t *testing.T) {
+	cfg := testDBConfig(t)
+	if _, err := sqldb.Migrate(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	logger := New(cfg)
+	logger.Log(context.Background(), Event{
+		Time:    time.Date(2026, 7, 5, 10, 0, 0, 0, time.UTC),
+		Level:   "info",
+		Event:   "db.and.file",
+		Message: "both",
+	})
+	fileOnly := &fileLogger{path: cfg.AuditLogPath, maxSize: DefaultMaxSize, maxFiles: DefaultMaxFiles}
+	fileOnly.Log(context.Background(), Event{
+		Time:    time.Date(2026, 7, 5, 10, 0, 1, 0, time.UTC),
+		Level:   "warn",
+		Event:   "file.only",
+		Message: "file",
+	})
+	events, err := ReadConfigured(context.Background(), cfg, ReadOptions{Tail: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("events = %d, want 2: %#v", len(events), events)
+	}
+	if events[0].Event != "db.and.file" || events[1].Event != "file.only" {
+		t.Fatalf("unexpected merged events: %#v", events)
+	}
+}
+
+func testDBConfig(t *testing.T) config.Config {
+	t.Helper()
+	dir := t.TempDir()
+	return config.Config{
+		ConfigDir:            dir,
+		AuditLogEnabled:      true,
+		AuditLogPath:         filepath.Join(dir, "audit.log"),
+		AuditLogMaxSize:      DefaultMaxSize,
+		AuditLogMaxFiles:     DefaultMaxFiles,
+		DatabaseMode:         sqldb.ModeSQLite,
+		DatabasePath:         filepath.Join(dir, "awg-forge.db"),
+		DatabaseRetention:    90,
+		DatabaseBusyTimeout:  5 * time.Second,
+		DatabaseQueryTimeout: 2 * time.Second,
+		DatabaseMaxOpenConns: 1,
+		DatabaseMaxIdleConns: 1,
 	}
 }

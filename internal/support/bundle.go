@@ -23,6 +23,7 @@ import (
 	"github.com/astronaut808/awg-forge/internal/buildinfo"
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/doctor"
+	"github.com/astronaut808/awg-forge/internal/sqldb"
 )
 
 type Bundle struct {
@@ -70,6 +71,9 @@ func Generate(ctx context.Context, cfg config.Config, service *app.Service, opts
 	if err := addJSON(zw, "files.json", fileInventory(cfg.ConfigDir)); err != nil {
 		return Bundle{}, err
 	}
+	if err := addDatabaseStatus(ctx, zw, cfg); err != nil {
+		return Bundle{}, err
+	}
 	if err := addAuditLog(zw, cfg); err != nil {
 		return Bundle{}, err
 	}
@@ -109,10 +113,19 @@ func manifest(now time.Time) map[string]any {
 			"WARP private key and preshared key removed",
 			"protocol parameter values removed",
 			"audit log secret-looking fields redacted",
+			"database status includes metadata only, not table rows",
 			"runtime public keys replaced with fingerprints",
 			"rendered config contents excluded",
 		},
 	}
+}
+
+func addDatabaseStatus(ctx context.Context, zw *zip.Writer, cfg config.Config) error {
+	status, err := sqldb.Check(ctx, cfg)
+	if err != nil {
+		return addJSON(zw, "database.error.json", map[string]string{"error": err.Error()})
+	}
+	return addJSON(zw, "database.json", status)
 }
 
 func addAuditLog(zw *zip.Writer, cfg config.Config) error {

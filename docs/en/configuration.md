@@ -15,6 +15,13 @@ The main example is [.env.example](../../.env.example).
 - `AUDIT_LOG_PATH`: audit log path. Defaults to `/etc/awg-forge/audit.log`.
 - `AUDIT_LOG_MAX_SIZE`: file size before rotation. Defaults to `5242880`.
 - `AUDIT_LOG_MAX_FILES`: number of rotated files to keep. Defaults to `3`.
+- `DATABASE_MODE`: optional operational database mode. Values: `off`, `sqlite`, `postgres`. Defaults to `off`; `postgres` is reserved for future support.
+- `DATABASE_PATH`: SQLite database path. Defaults to `/etc/awg-forge/awg-forge.db`.
+- `DATABASE_RETENTION_DAYS`: default operational data retention window. Defaults to `90`.
+- `DATABASE_BUSY_TIMEOUT`: SQLite busy timeout. Defaults to `5s`.
+- `DATABASE_QUERY_TIMEOUT`: database command/query timeout. Defaults to `2s`.
+- `DATABASE_MAX_OPEN_CONNS`: database connection limit. Defaults to `1`.
+- `DATABASE_MAX_IDLE_CONNS`: idle connection limit. Defaults to `1`.
 
 ## First Tunnel Initialization
 
@@ -180,3 +187,32 @@ docker exec awg-forge awg-forge logs --tail 200
 docker exec awg-forge awg-forge logs --level error
 docker exec awg-forge awg-forge logs --event tunnel.apply.failed
 ```
+
+## Operational Database
+
+`DATABASE_MODE=off` is the default. This keeps existing installs file-based and does not create a database.
+
+`DATABASE_MODE=sqlite` enables the local SQLite foundation for operational history such as audit search, login attempts, health history, TLS events, and traffic usage. The current step adds schema management, diagnostics, and SQLite-backed audit events while keeping JSONL as the reliable local audit trail. It does not move `state.json`, private keys, WARP tokens, raw configs, QR payloads, or import links into the database.
+
+Initialize or upgrade the local schema:
+
+```bash
+docker exec awg-forge awg-forge db migrate
+```
+
+Check database status:
+
+```bash
+docker exec awg-forge awg-forge db status
+docker exec awg-forge awg-forge doctor
+```
+
+Apply retention cleanup:
+
+```bash
+docker exec awg-forge awg-forge db retention apply
+```
+
+SQLite uses a local file under `CONFIG_DIR`, with WAL mode, foreign keys enabled, and `0600` file permissions. Do not place this database on a network filesystem.
+
+When SQLite is enabled and migrated, audit events are written to both the existing JSONL audit log and `audit_events`. `Maintenance` -> `Logs` and `awg-forge logs` merge SQLite and JSONL events, then fall back to JSONL if SQLite is unavailable. This prevents SQLite mirror issues from hiding events that reached `audit.log`.

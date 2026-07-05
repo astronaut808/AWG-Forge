@@ -18,6 +18,7 @@ import (
 	"github.com/astronaut808/awg-forge/internal/doctor"
 	"github.com/astronaut808/awg-forge/internal/firewall"
 	"github.com/astronaut808/awg-forge/internal/server"
+	"github.com/astronaut808/awg-forge/internal/sqldb"
 	"github.com/astronaut808/awg-forge/internal/support"
 	"github.com/astronaut808/awg-forge/internal/updates"
 )
@@ -67,6 +68,8 @@ func run(args []string) error {
 		return runFirewall(svc, args[1:])
 	case "logs":
 		return runLogs(cfg, args[1:])
+	case "db":
+		return runDB(cfg, args[1:])
 	case "client":
 		return runClient(svc, args[1:])
 	case "tunnel":
@@ -183,7 +186,90 @@ func runClient(svc *app.Service, args []string) error {
 }
 
 func usage() error {
-	return errors.New("usage: awg-forge init|serve|render|doctor|backup|restore|support-bundle|updates|firewall|logs|client|tunnel")
+	return errors.New("usage: awg-forge init|serve|render|doctor|backup|restore|support-bundle|updates|firewall|logs|db|client|tunnel")
+}
+
+func runDB(cfg config.Config, args []string) error {
+	if len(args) < 1 {
+		return errors.New("usage: awg-forge db status|migrate|retention apply")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.DatabaseQueryTimeout)
+	defer cancel()
+	switch args[0] {
+	case "status":
+		if len(args) != 1 {
+			return errors.New("usage: awg-forge db status")
+		}
+		status, err := sqldb.Check(ctx, cfg)
+		if err != nil {
+			return err
+		}
+		printDBStatus(status)
+		return nil
+	case "migrate":
+		if len(args) != 1 {
+			return errors.New("usage: awg-forge db migrate")
+		}
+		status, err := sqldb.Migrate(ctx, cfg)
+		if err != nil {
+			return err
+		}
+		printDBStatus(status)
+		return nil
+	case "retention":
+		if len(args) != 2 || args[1] != "apply" {
+			return errors.New("usage: awg-forge db retention apply")
+		}
+		report, err := sqldb.ApplyRetention(ctx, cfg, time.Now().UTC())
+		if err != nil {
+			return err
+		}
+		printDBRetentionReport(report)
+		return nil
+	default:
+		return errors.New("usage: awg-forge db status|migrate|retention apply")
+	}
+}
+
+func printDBStatus(status sqldb.Status) {
+	if !status.Enabled {
+		fmt.Println("OK   database: disabled")
+		return
+	}
+	if !status.Exists {
+		fmt.Printf("WARN database: %s enabled but %s does not exist\n", status.Mode, status.Path)
+		return
+	}
+	fmt.Printf("OK   database: %s\n", status.Mode)
+	if status.Path != "" {
+		fmt.Printf("OK   path: %s\n", status.Path)
+	}
+	fmt.Printf("OK   schema: %d\n", status.SchemaVersion)
+	if status.JournalMode != "" {
+		fmt.Printf("OK   journal: %s\n", status.JournalMode)
+	}
+	if status.ForeignKeys != "" {
+		fmt.Printf("OK   foreign keys: %s\n", status.ForeignKeys)
+	}
+	if status.BusyTimeout != "" {
+		fmt.Printf("OK   busy timeout: %sms\n", status.BusyTimeout)
+	}
+	if status.SizeBytes > 0 {
+		fmt.Printf("OK   size: %s\n", formatBytes(status.SizeBytes))
+	}
+	if status.WALSizeBytes > 0 {
+		fmt.Printf("OK   wal: %s\n", formatBytes(status.WALSizeBytes))
+	}
+}
+
+func printDBRetentionReport(report sqldb.RetentionReport) {
+	fmt.Printf("OK   retention: %d days\n", report.RetentionDays)
+	fmt.Printf("OK   audit events deleted: %d\n", report.DeletedAuditEvents)
+	fmt.Printf("OK   login attempts deleted: %d\n", report.DeletedLoginAttempts)
+	fmt.Printf("OK   health checks deleted: %d\n", report.DeletedHealthChecks)
+	fmt.Printf("OK   TLS events deleted: %d\n", report.DeletedTLSEvents)
+	fmt.Printf("OK   traffic samples deleted: %d\n", report.DeletedTrafficSamples)
+	fmt.Printf("OK   daily traffic rows deleted: %d\n", report.DeletedTrafficDailyRows)
 }
 
 func runFirewall(svc *app.Service, args []string) error {
@@ -407,7 +493,9 @@ func runLogs(cfg config.Config, args []string) error {
 			return errors.New("usage: awg-forge logs [--tail N] [--level info|warn|error] [--event name] [--json]")
 		}
 	}
-	events, err := audit.ReadFile(cfg.AuditLogPath, opts)
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.DatabaseQueryTimeout)
+	defer cancel()
+	events, err := audit.ReadConfigured(ctx, cfg, opts)
 	if err != nil {
 		return err
 	}
