@@ -774,7 +774,7 @@ function MaintenanceCenter({ state, notify, reload }: { state: AppState; notify:
       closed = true;
       globalThis.clearInterval(timer);
     };
-  }, []);
+  }, [tab]);
 
   async function action(key: string, label: string, fn: () => Promise<void>) {
     if (busyAction) return;
