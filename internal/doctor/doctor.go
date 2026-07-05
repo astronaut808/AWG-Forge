@@ -1,6 +1,7 @@
 package doctor
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/firewall"
 	"github.com/astronaut808/awg-forge/internal/render"
+	"github.com/astronaut808/awg-forge/internal/sqldb"
 )
 
 type Result struct {
@@ -57,6 +59,7 @@ func Check(cfg config.Config, service *app.Service) []Result {
 	c.checkRPFilter("default", "default")
 	c.checkRPFilter("external interface", cfg.ExternalInterface)
 	c.checkDir(cfg.ConfigDir)
+	c.checkDatabase(cfg)
 	c.checkSessionCookie(cfg)
 	c.checkLegacyTunnelEnv(cfg, state)
 	if !cfg.ApplyConfig {
@@ -86,6 +89,24 @@ func Check(cfg config.Config, service *app.Service) []Result {
 		c.checkTunnelRuntime(tunnel)
 	}
 	return c.results
+}
+
+func (c *checker) checkDatabase(cfg config.Config) {
+	if cfg.DatabaseMode == "" || cfg.DatabaseMode == sqldb.ModeOff {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.DatabaseQueryTimeout)
+	defer cancel()
+	status, err := sqldb.Check(ctx, cfg)
+	if err != nil {
+		c.fail("database", err.Error())
+		return
+	}
+	if !status.Exists {
+		c.warn("database", fmt.Sprintf("%s database is enabled but %s does not exist; run awg-forge db migrate", status.Mode, status.Path))
+		return
+	}
+	c.ok("database", fmt.Sprintf("%s schema=%d journal=%s", status.Mode, status.SchemaVersion, status.JournalMode))
 }
 
 func (c *checker) checkLegacyTunnelEnv(cfg config.Config, state config.State) {

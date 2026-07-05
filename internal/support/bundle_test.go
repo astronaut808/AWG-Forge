@@ -65,6 +65,9 @@ PersistentKeepalive = 25
 	if !strings.Contains(content, `"protocol_param_keys"`) {
 		t.Fatalf("support bundle should include protocol parameter keys:\n%s", content)
 	}
+	if !strings.Contains(content, "database.json") || !strings.Contains(content, `"enabled": false`) {
+		t.Fatalf("support bundle should include database metadata without requiring sqlite:\n%s", content)
+	}
 }
 
 func TestSanitizeTextRedactsRuntimeKeys(t *testing.T) {

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 )
 
 const (
@@ -14,57 +15,73 @@ const (
 )
 
 type Config struct {
-	ConfigDir           string
-	TunnelName          string
-	ServerHost          string
-	ListenPort          int
-	WebUIHost           string
-	WebUIPort           int
-	Password            string
-	SessionSecret       string
-	SessionCookieSecure string
-	ExternalInterface   string
-	IPv4Subnet          string
-	DNS                 string
-	AllowedIPs          string
-	PersistentKeepalive int
-	MTU                 int
-	ProtocolProfile     string
-	ApplyConfig         bool
-	PublishedUDPPorts   string
-	AuditLogEnabled     bool
-	AuditLogPath        string
-	AuditLogMaxSize     int64
-	AuditLogMaxFiles    int
-	LegacyTunnelEnvVars []string
+	ConfigDir            string
+	TunnelName           string
+	ServerHost           string
+	ListenPort           int
+	WebUIHost            string
+	WebUIPort            int
+	Password             string
+	SessionSecret        string
+	SessionCookieSecure  string
+	ExternalInterface    string
+	IPv4Subnet           string
+	DNS                  string
+	AllowedIPs           string
+	PersistentKeepalive  int
+	MTU                  int
+	ProtocolProfile      string
+	ApplyConfig          bool
+	PublishedUDPPorts    string
+	AuditLogEnabled      bool
+	AuditLogPath         string
+	AuditLogMaxSize      int64
+	AuditLogMaxFiles     int
+	DatabaseMode         string
+	DatabasePath         string
+	DatabaseDSN          string
+	DatabaseRetention    int
+	DatabaseBusyTimeout  time.Duration
+	DatabaseQueryTimeout time.Duration
+	DatabaseMaxOpenConns int
+	DatabaseMaxIdleConns int
+	LegacyTunnelEnvVars  []string
 }
 
 func FromEnv() (Config, error) {
 	configDir := getenv("CONFIG_DIR", DefaultConfigDir)
 	cfg := Config{
-		ConfigDir:           configDir,
-		TunnelName:          getenv("TUNNEL_NAME", ""),
-		ServerHost:          getenv("SERVER_HOST", "127.0.0.1"),
-		ListenPort:          getenvInt("LISTEN_PORT", 0),
-		WebUIHost:           getenv("WEBUI_HOST", "127.0.0.1"),
-		WebUIPort:           getenvInt("WEBUI_PORT", 51821),
-		Password:            os.Getenv("PASSWORD"),
-		SessionSecret:       os.Getenv("SESSION_SECRET"),
-		SessionCookieSecure: getenv("SESSION_COOKIE_SECURE", "auto"),
-		ExternalInterface:   getenv("EXTERNAL_INTERFACE", "eth0"),
-		IPv4Subnet:          getenv("IPV4_SUBNET", ""),
-		DNS:                 getenv("DNS", "1.1.1.1"),
-		AllowedIPs:          getenv("ALLOWED_IPS", "0.0.0.0/0"),
-		PersistentKeepalive: getenvInt("PERSISTENT_KEEPALIVE", 0),
-		MTU:                 getenvInt("MTU", 0),
-		ProtocolProfile:     getenv("PROTOCOL_PROFILE", "awg_2_0"),
-		ApplyConfig:         getenvBool("APPLY_CONFIG", false),
-		PublishedUDPPorts:   os.Getenv("PUBLISHED_UDP_PORTS"),
-		AuditLogEnabled:     getenvBool("AUDIT_LOG_ENABLED", true),
-		AuditLogPath:        getenv("AUDIT_LOG_PATH", filepath.Join(configDir, "audit.log")),
-		AuditLogMaxSize:     getenvInt64("AUDIT_LOG_MAX_SIZE", 5*1024*1024),
-		AuditLogMaxFiles:    getenvInt("AUDIT_LOG_MAX_FILES", 3),
-		LegacyTunnelEnvVars: legacyTunnelEnvVars(),
+		ConfigDir:            configDir,
+		TunnelName:           getenv("TUNNEL_NAME", ""),
+		ServerHost:           getenv("SERVER_HOST", "127.0.0.1"),
+		ListenPort:           getenvInt("LISTEN_PORT", 0),
+		WebUIHost:            getenv("WEBUI_HOST", "127.0.0.1"),
+		WebUIPort:            getenvInt("WEBUI_PORT", 51821),
+		Password:             os.Getenv("PASSWORD"),
+		SessionSecret:        os.Getenv("SESSION_SECRET"),
+		SessionCookieSecure:  getenv("SESSION_COOKIE_SECURE", "auto"),
+		ExternalInterface:    getenv("EXTERNAL_INTERFACE", "eth0"),
+		IPv4Subnet:           getenv("IPV4_SUBNET", ""),
+		DNS:                  getenv("DNS", "1.1.1.1"),
+		AllowedIPs:           getenv("ALLOWED_IPS", "0.0.0.0/0"),
+		PersistentKeepalive:  getenvInt("PERSISTENT_KEEPALIVE", 0),
+		MTU:                  getenvInt("MTU", 0),
+		ProtocolProfile:      getenv("PROTOCOL_PROFILE", "awg_2_0"),
+		ApplyConfig:          getenvBool("APPLY_CONFIG", false),
+		PublishedUDPPorts:    os.Getenv("PUBLISHED_UDP_PORTS"),
+		AuditLogEnabled:      getenvBool("AUDIT_LOG_ENABLED", true),
+		AuditLogPath:         getenv("AUDIT_LOG_PATH", filepath.Join(configDir, "audit.log")),
+		AuditLogMaxSize:      getenvInt64("AUDIT_LOG_MAX_SIZE", 5*1024*1024),
+		AuditLogMaxFiles:     getenvInt("AUDIT_LOG_MAX_FILES", 3),
+		DatabaseMode:         getenv("DATABASE_MODE", "off"),
+		DatabasePath:         getenv("DATABASE_PATH", filepath.Join(configDir, "awg-forge.db")),
+		DatabaseDSN:          os.Getenv("DATABASE_DSN"),
+		DatabaseRetention:    getenvInt("DATABASE_RETENTION_DAYS", 90),
+		DatabaseBusyTimeout:  getenvDuration("DATABASE_BUSY_TIMEOUT", 5*time.Second),
+		DatabaseQueryTimeout: getenvDuration("DATABASE_QUERY_TIMEOUT", 2*time.Second),
+		DatabaseMaxOpenConns: getenvInt("DATABASE_MAX_OPEN_CONNS", 1),
+		DatabaseMaxIdleConns: getenvInt("DATABASE_MAX_IDLE_CONNS", 1),
+		LegacyTunnelEnvVars:  legacyTunnelEnvVars(),
 	}
 	if cfg.WebUIHost == "0.0.0.0" || cfg.WebUIHost == "::" {
 		if cfg.Password == "" {
@@ -80,6 +97,26 @@ func FromEnv() (Config, error) {
 		if _, _, err := net.ParseCIDR(cfg.IPv4Subnet); err != nil {
 			return Config{}, err
 		}
+	}
+	switch cfg.DatabaseMode {
+	case "off", "sqlite", "postgres":
+	default:
+		return Config{}, errors.New("DATABASE_MODE must be off, sqlite, or postgres")
+	}
+	if cfg.DatabaseRetention < 1 {
+		return Config{}, errors.New("DATABASE_RETENTION_DAYS must be positive")
+	}
+	if cfg.DatabaseBusyTimeout <= 0 {
+		return Config{}, errors.New("DATABASE_BUSY_TIMEOUT must be positive")
+	}
+	if cfg.DatabaseQueryTimeout <= 0 {
+		return Config{}, errors.New("DATABASE_QUERY_TIMEOUT must be positive")
+	}
+	if cfg.DatabaseMaxOpenConns < 1 {
+		return Config{}, errors.New("DATABASE_MAX_OPEN_CONNS must be positive")
+	}
+	if cfg.DatabaseMaxIdleConns < 0 {
+		return Config{}, errors.New("DATABASE_MAX_IDLE_CONNS must not be negative")
 	}
 	return cfg, nil
 }
@@ -146,4 +183,20 @@ func getenvBool(key string, fallback bool) bool {
 		return fallback
 	}
 	return v == "1" || v == "true" || v == "TRUE" || v == "yes"
+}
+
+func getenvDuration(key string, fallback time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(v)
+	if err == nil {
+		return d
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return fallback
+	}
+	return time.Duration(n) * time.Second
 }

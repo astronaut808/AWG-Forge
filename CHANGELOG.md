@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.15.0 - 2026-07-05
+
+### Added
+
+- Added the optional SQLite database foundation with embedded migrations, `awg-forge db status|migrate`, and Doctor integration when `DATABASE_MODE=sqlite`.
+- Added SQLite-backed audit dual-write and merged SQLite/JSONL audit reads so JSONL remains the reliable local audit trail while SQLite provides an indexed copy.
+- Added `awg-forge db retention apply` for bounded SQLite operational history cleanup.
+- Added database status metadata to support bundles without dumping database table rows.
+- Added database environment configuration for future operational history storage while keeping `DATABASE_MODE=off` as the default.
+
 ## v0.14.1 - 2026-07-04
 
 ### Security

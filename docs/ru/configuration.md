@@ -15,6 +15,13 @@
 - `AUDIT_LOG_PATH`: путь к audit log. По умолчанию `/etc/awg-forge/audit.log`.
 - `AUDIT_LOG_MAX_SIZE`: размер файла до ротации. По умолчанию `5242880`.
 - `AUDIT_LOG_MAX_FILES`: сколько rotated-файлов хранить. По умолчанию `3`.
+- `DATABASE_MODE`: optional operational database mode. Значения: `off`, `sqlite`, `postgres`. По умолчанию `off`; `postgres` зарезервирован для будущей поддержки.
+- `DATABASE_PATH`: путь к SQLite database. По умолчанию `/etc/awg-forge/awg-forge.db`.
+- `DATABASE_RETENTION_DAYS`: default retention window для operational data. По умолчанию `90`.
+- `DATABASE_BUSY_TIMEOUT`: SQLite busy timeout. По умолчанию `5s`.
+- `DATABASE_QUERY_TIMEOUT`: timeout для database commands/queries. По умолчанию `2s`.
+- `DATABASE_MAX_OPEN_CONNS`: лимит database connections. По умолчанию `1`.
+- `DATABASE_MAX_IDLE_CONNS`: лимит idle connections. По умолчанию `1`.
 
 ## Инициализация первого туннеля
 
@@ -180,3 +187,32 @@ docker exec awg-forge awg-forge logs --tail 200
 docker exec awg-forge awg-forge logs --level error
 docker exec awg-forge awg-forge logs --event tunnel.apply.failed
 ```
+
+## Operational Database
+
+`DATABASE_MODE=off` используется по умолчанию. В этом режиме существующие установки остаются file-based, и база не создается.
+
+`DATABASE_MODE=sqlite` включает локальный SQLite foundation для operational history: audit search, login attempts, health history, TLS events и traffic usage. Текущий этап добавляет schema management, diagnostics и SQLite-backed audit events, но оставляет JSONL надежным локальным audit trail. Он не переносит `state.json`, private keys, WARP tokens, raw configs, QR payloads или import links в базу.
+
+Инициализировать или обновить локальную схему:
+
+```bash
+docker exec awg-forge awg-forge db migrate
+```
+
+Проверить статус базы:
+
+```bash
+docker exec awg-forge awg-forge db status
+docker exec awg-forge awg-forge doctor
+```
+
+Применить retention cleanup:
+
+```bash
+docker exec awg-forge awg-forge db retention apply
+```
+
+SQLite использует локальный файл внутри `CONFIG_DIR`, WAL mode, включенные foreign keys и права `0600`. Не размещай эту базу на network filesystem.
+
+Когда SQLite включен и миграции применены, audit events пишутся и в существующий JSONL audit log, и в `audit_events`. `Maintenance` -> `Logs` и `awg-forge logs` объединяют события из SQLite и JSONL, а если SQLite недоступен, читают JSONL. Это не дает проблемам SQLite mirror скрыть события, которые попали в `audit.log`.
