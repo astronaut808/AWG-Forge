@@ -235,7 +235,7 @@ func (w *web) auditLogAPI(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tail, _ := strconv.Atoi(r.URL.Query().Get("tail"))
-	events, err := audit.ReadFile(w.cfg.AuditLogPath, audit.ReadOptions{
+	events, err := audit.ReadConfigured(r.Context(), w.cfg, audit.ReadOptions{
 		Tail:  tail,
 		Level: r.URL.Query().Get("level"),
 		Event: r.URL.Query().Get("event"),

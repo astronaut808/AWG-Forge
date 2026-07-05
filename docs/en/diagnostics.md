@@ -54,6 +54,7 @@ The bundle includes:
 
 - redacted config/state summary;
 - Doctor results;
+- database status metadata when the optional operational database is configured;
 - runtime `ip`, `iptables`, and `awg show` output;
 - config directory inventory without `.conf` contents.
 
@@ -65,6 +66,7 @@ The bundle should not include:
 - session secret;
 - rendered server/client configs;
 - import keys, `vpn://` links, QR payloads, or packed AmneziaVPN QR strings;
+- database table rows;
 - raw protocol parameter values.
 
 The bundle also includes `audit-log.redacted.jsonl`: recent audit events with secret-looking fields already redacted.
