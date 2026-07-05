@@ -498,8 +498,13 @@ function CreateTunnelForm({ state, profile, runAction }: { state: AppState; prof
   </Form>;
 }
 
-function TunnelSettingsForm({ state, tunnel, runAction }: { state: AppState; tunnel: Tunnel; runAction: (label: string, fn: () => Promise<unknown>) => Promise<void> }) {
+function TunnelSettingsForm({ state, tunnel: initialTunnel, runAction }: { state: AppState; tunnel: Tunnel; runAction: (label: string, fn: () => Promise<unknown>, options?: { reload?: boolean; close?: boolean }) => Promise<void> }) {
   const { m } = useI18n();
+  const tunnel = state.tunnels.find((t) => t.id === initialTunnel.id) || initialTunnel;
+  useEffect(() => {
+    const select = document.querySelector(`select[name='egress_mode']`) as HTMLSelectElement;
+    if (select) select.value = tunnel.egress_mode || "wan";
+  }, [tunnel.egress_mode]);
   return <Form title={m.forms.tunnelSettingsTitle} subtitle={`${tunnel.name} · ${profileTitle(tunnel.profile)}`} submit={m.common.save} onSubmit={(form) => runAction(m.forms.settingsSaved, () => api.updateTunnel(tunnel.id, {
     name: field(form, "name"),
     server_host: field(form, "server_host"),
@@ -511,7 +516,7 @@ function TunnelSettingsForm({ state, tunnel, runAction }: { state: AppState; tun
     keepalive: Number(field(form, "keepalive")),
     mtu: mtuValue(form),
     enabled: (form.elements.namedItem("enabled") as HTMLInputElement)?.checked || false,
-  }))}>
+  }), { reload: true })}>
     <label>{m.forms.nameInterface}<input aria-label={m.forms.nameInterface} name="name" defaultValue={tunnel.name} /></label>
     <label>{m.forms.serverHost}<input aria-label={m.forms.serverHost} name="server_host" defaultValue={tunnel.server_host || ""} placeholder={state.server_host} /></label>
     <label>{m.forms.egress}<select aria-label={m.forms.egress} name="egress_mode" defaultValue={tunnel.egress_mode || "wan"}><option value="wan">{m.forms.serverWAN}</option><option value="warp">{m.forms.cloudflareWARP}</option></select></label>
