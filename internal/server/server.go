@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -23,6 +25,7 @@ import (
 	"github.com/astronaut808/awg-forge/internal/buildinfo"
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/doctor"
+	"github.com/astronaut808/awg-forge/internal/sqldb"
 	"github.com/astronaut808/awg-forge/internal/support"
 	"github.com/astronaut808/awg-forge/internal/updates"
 	"github.com/boombuler/barcode/qr"
@@ -59,6 +62,7 @@ func Serve(cfg config.Config, service *app.Service) error {
 		return err
 	}
 	go enforceExpiredClients(service)
+	go collectTrafficHistory(cfg, service)
 	w := &web{cfg: cfg, service: service, sessions: []byte(secret), limits: map[string][]time.Time{}, idem: map[string]*idempotencyEntry{}}
 	mux := http.NewServeMux()
 	mux.Handle("/static/", w.securityHandler(http.FileServer(http.FS(staticFiles))))
@@ -70,6 +74,7 @@ func Serve(cfg config.Config, service *app.Service) error {
 	mux.HandleFunc("/api/backup", w.security(w.requireAuth(w.backupAPI)))
 	mux.HandleFunc("/api/doctor", w.security(w.requireAuth(w.doctorAPI)))
 	mux.HandleFunc("/api/audit-log", w.security(w.requireAuth(w.auditLogAPI)))
+	mux.HandleFunc("/api/traffic-summary", w.security(w.requireAuth(w.trafficSummaryAPI)))
 	mux.HandleFunc("/api/firewall/repair", w.security(w.requireAuth(w.firewallRepairAPI)))
 	mux.HandleFunc("/api/support-bundle", w.security(w.requireAuth(w.supportBundleAPI)))
 	mux.HandleFunc("/api/updates", w.security(w.requireAuth(w.updatesAPI)))
@@ -93,6 +98,55 @@ func enforceExpiredClients(service *app.Service) {
 	defer ticker.Stop()
 	for range ticker.C {
 		_ = service.EnforceExpiredClients()
+	}
+}
+
+func collectTrafficHistory(cfg config.Config, service *app.Service) {
+	if cfg.DatabaseMode != sqldb.ModeSQLite || !cfg.ApplyConfig {
+		return
+	}
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		collectTrafficHistoryOnce(cfg, service)
+		<-ticker.C
+	}
+}
+
+func collectTrafficHistoryOnce(cfg config.Config, service *app.Service) {
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.DatabaseQueryTimeout)
+	defer cancel()
+	state, err := service.State()
+	if err != nil {
+		return
+	}
+	state, runtime := service.ClientRuntimeSnapshot(state)
+	now := time.Now().UTC()
+	var samples []sqldb.TrafficSample
+	for _, tunnel := range state.Tunnels {
+		for _, client := range tunnel.Clients {
+			item, ok := runtime[tunnel.ID][client.ID]
+			if !ok || !item.Present {
+				continue
+			}
+			samples = append(samples, sqldb.TrafficSample{
+				SampledAt:         now,
+				TunnelID:          tunnel.ID,
+				ClientID:          client.ID,
+				RxBytes:           item.RxBytes,
+				TxBytes:           item.TxBytes,
+				LatestHandshakeAt: item.LastSeenAt,
+				Present:           true,
+			})
+		}
+	}
+	if err := sqldb.RecordTrafficSamples(ctx, cfg, samples); err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, sqldb.ErrDisabled) {
+		service.Audit().Log(context.Background(), audit.Event{
+			Level:   "warn",
+			Event:   "traffic_history.record_failed",
+			Message: "traffic history sample write failed",
+			Error:   audit.Error(err),
+		})
 	}
 }
 
@@ -164,7 +218,7 @@ func (w *web) stateAPI(rw http.ResponseWriter, r *http.Request) {
 		writeError(rw, http.StatusInternalServerError, "state unavailable")
 		return
 	}
-	writeJSON(rw, http.StatusOK, w.publicState(state))
+	writeJSON(rw, http.StatusOK, w.publicState(r.Context(), state))
 }
 
 func (w *web) eventsAPI(rw http.ResponseWriter, r *http.Request) {
@@ -190,7 +244,7 @@ func (w *web) eventsAPI(rw http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 			return false
 		}
-		body, err := json.Marshal(w.publicState(state))
+		body, err := json.Marshal(w.publicState(r.Context(), state))
 		if err != nil {
 			writeServerSentEvent(rw, "error", []byte(`{"error":"state unavailable"}`))
 			flusher.Flush()
@@ -246,6 +300,30 @@ func (w *web) auditLogAPI(rw http.ResponseWriter, r *http.Request) {
 	}
 	noStore(rw)
 	writeJSON(rw, http.StatusOK, map[string]any{"events": events})
+}
+
+func (w *web) trafficSummaryAPI(rw http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(rw, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if w.cfg.DatabaseMode != sqldb.ModeSQLite {
+		noStore(rw)
+		writeJSON(rw, http.StatusOK, map[string]any{"enabled": false, "rows": []sqldb.TrafficSummaryRow{}})
+		return
+	}
+	rows, err := sqldb.ListTrafficSummary(r.Context(), w.cfg, time.Now().UTC())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, sqldb.ErrDisabled) {
+			noStore(rw)
+			writeJSON(rw, http.StatusOK, map[string]any{"enabled": false, "rows": []sqldb.TrafficSummaryRow{}})
+			return
+		}
+		writeError(rw, http.StatusInternalServerError, "traffic summary unavailable")
+		return
+	}
+	noStore(rw)
+	writeJSON(rw, http.StatusOK, map[string]any{"enabled": true, "rows": rows})
 }
 
 func (w *web) firewallRepairAPI(rw http.ResponseWriter, r *http.Request) {
@@ -892,19 +970,21 @@ func writeServerSentEvent(rw http.ResponseWriter, event string, body []byte) {
 	_, _ = fmt.Fprintf(rw, "event: %s\ndata: %s\n\n", event, body) // nosemgrep: go.lang.security.audit.xss.no-fprintf-to-responsewriter.no-fprintf-to-responsewriter
 }
 
-func (w *web) publicState(state config.State) map[string]any {
+func (w *web) publicState(ctx context.Context, state config.State) map[string]any {
 	var tunnels []map[string]any
 	firewallReport, firewallErr := w.service.FirewallCheck()
 	state, runtime := w.service.ClientRuntimeSnapshot(state)
+	traffic := w.clientTrafficSummary(ctx, state)
 	for _, tunnel := range state.Tunnels {
 		status, _ := w.service.TunnelStatusByID(tunnel.ID)
-		tunnels = append(tunnels, publicTunnelWithFirewall(tunnel, status, firewallSummaryForTunnel(tunnel, firewallReport, firewallErr), runtime[tunnel.ID]))
+		tunnels = append(tunnels, publicTunnelWithFirewall(tunnel, status, firewallSummaryForTunnel(tunnel, firewallReport, firewallErr), runtime[tunnel.ID], traffic[tunnel.ID]))
 	}
 	return map[string]any{
 		"authenticated":       true,
 		"apply_enabled":       w.cfg.ApplyConfig,
 		"server_host":         state.ServerHost,
 		"warp":                w.service.WarpSummary(state),
+		"database":            publicDatabase(w.cfg),
 		"build":               buildinfo.Current(),
 		"published_udp_ports": w.cfg.PublishedUDPPorts,
 		"profiles": []map[string]any{
@@ -913,6 +993,42 @@ func (w *web) publicState(state config.State) map[string]any {
 			profileMeta("awg_2_0", "2.0", "Modern", true, state),
 		},
 		"tunnels": tunnels,
+	}
+}
+
+func (w *web) clientTrafficSummary(ctx context.Context, state config.State) map[string]map[string]clientTrafficSummary {
+	out := map[string]map[string]clientTrafficSummary{}
+	for _, tunnel := range state.Tunnels {
+		out[tunnel.ID] = map[string]clientTrafficSummary{}
+	}
+	if w.cfg.DatabaseMode != sqldb.ModeSQLite {
+		return out
+	}
+	rows, err := sqldb.ListTrafficSummary(ctx, w.cfg, time.Now().UTC())
+	if err != nil {
+		return out
+	}
+	for _, row := range rows {
+		if _, ok := out[row.TunnelID]; !ok {
+			out[row.TunnelID] = map[string]clientTrafficSummary{}
+		}
+		out[row.TunnelID][row.ClientID] = clientTrafficSummary{
+			Enabled: true,
+			RxTotal: row.RxTotal,
+			TxTotal: row.TxTotal,
+		}
+	}
+	return out
+}
+
+func publicDatabase(cfg config.Config) map[string]any {
+	mode := cfg.DatabaseMode
+	if mode == "" {
+		mode = sqldb.ModeOff
+	}
+	return map[string]any{
+		"mode":    mode,
+		"enabled": mode != sqldb.ModeOff,
 	}
 }
 

@@ -192,7 +192,7 @@ docker exec awg-forge awg-forge logs --event tunnel.apply.failed
 
 `DATABASE_MODE=off` is the default. This keeps existing installs file-based and does not create a database.
 
-`DATABASE_MODE=sqlite` enables the local SQLite foundation for operational history such as audit search, login attempts, health history, TLS events, and traffic usage. The current step adds schema management, diagnostics, and SQLite-backed audit events while keeping JSONL as the reliable local audit trail. It does not move `state.json`, private keys, WARP tokens, raw configs, QR payloads, or import links into the database.
+`DATABASE_MODE=sqlite` enables the local SQLite foundation for operational history such as audit search, login attempts, health history, TLS events, and traffic usage. It keeps JSONL as the reliable local audit trail. It does not move `state.json`, private keys, WARP tokens, raw configs, QR payloads, or import links into the database.
 
 Initialize or upgrade the local schema:
 
@@ -216,3 +216,5 @@ docker exec awg-forge awg-forge db retention apply
 SQLite uses a local file under `CONFIG_DIR`, with WAL mode, foreign keys enabled, and `0600` file permissions. Do not place this database on a network filesystem.
 
 When SQLite is enabled and migrated, audit events are written to both the existing JSONL audit log and `audit_events`. `Maintenance` -> `Logs` and `awg-forge logs` merge SQLite and JSONL events, then fall back to JSONL if SQLite is unavailable. This prevents SQLite mirror issues from hiding events that reached `audit.log`.
+
+When SQLite is enabled, migrated, and `APPLY_CONFIG=true`, awg-forge samples runtime transfer counters once per minute and stores daily client traffic aggregates. The first sample establishes the baseline and is not counted as transferred traffic. Client rows show total recorded traffic, and `Maintenance` -> `Traffic` shows aggregate totals for today, 7 days, and 30 days across clients and tunnels.

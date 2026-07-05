@@ -12,6 +12,8 @@ import type {
   Level,
   Profile,
   RestoreReport,
+  TrafficSummary,
+  TrafficSummaryRow,
   Tunnel,
   UpdatesReport,
 } from "./types";
@@ -39,7 +41,7 @@ type Modal =
   | { kind: "client-config"; client: Client }
   | { kind: "maintenance" };
 
-type MaintenanceTab = "overview" | "doctor" | "firewall" | "warp" | "backup" | "restore" | "updates" | "support" | "logs" | "system";
+type MaintenanceTab = "overview" | "doctor" | "firewall" | "warp" | "backup" | "restore" | "updates" | "support" | "logs" | "traffic" | "system";
 type QRImportMode = "amneziavpn" | "amneziawg";
 
 const themeKey = "awg-forge.theme";
@@ -450,6 +452,7 @@ function ClientRow({ client, onConfig, onSettings, onToggle, onDelete }: { clien
           {client.runtime?.present ? <> · {m.tunnel.received} {formatBytes(client.runtime.rx_bytes)} · {m.tunnel.sent} {formatBytes(client.runtime.tx_bytes)}</> : null}
           {client.expires_at ? <> · {m.tunnel.expires} {dateOnly(client.expires_at, locale)}</> : null}
         </p>
+        {client.traffic?.enabled && <p>{m.tunnel.totalTraffic} {formatBytes(client.traffic.rx_total + client.traffic.tx_total)} / {client.traffic.limit_bytes ? formatBytes(client.traffic.limit_bytes) : "∞"}</p>}
         {client.notes && <p class="note">{client.notes}</p>}
       </div>
       <div class="actions">
@@ -746,6 +749,7 @@ function MaintenanceCenter({ state, notify, reload }: { state: AppState; notify:
   const [firewall, setFirewall] = useState<FirewallReport | null>(null);
   const [updateReport, setUpdateReport] = useState<UpdatesReport | null>(null);
   const [events, setEvents] = useState<AuditEvent[]>([]);
+  const [traffic, setTraffic] = useState<TrafficSummary | null>(null);
   const [restore, setRestore] = useState<RestoreReport | null>(null);
   const [busyAction, setBusyAction] = useState("");
   const notifyRef = useRef(notify);
@@ -776,6 +780,21 @@ function MaintenanceCenter({ state, notify, reload }: { state: AppState; notify:
     };
   }, []);
 
+  useEffect(() => {
+    if (tab !== "traffic") return;
+    let closed = false;
+    api.trafficSummary()
+      .then((res) => {
+        if (!closed) setTraffic(res);
+      })
+      .catch((err) => {
+        if (!closed) notifyRef.current(errorMessage(err, messagesRef.current.common.requestFailed));
+      });
+    return () => {
+      closed = true;
+    };
+  }, [tab]);
+
   async function action(key: string, label: string, fn: () => Promise<void>) {
     if (busyAction) return;
     setBusyAction(key);
@@ -791,7 +810,7 @@ function MaintenanceCenter({ state, notify, reload }: { state: AppState; notify:
   }
 
   return <PanelTitle title={m.maintenance.title} subtitle={m.maintenance.subtitle}>
-    <nav class="subtabs">{(["overview", "doctor", "firewall", "warp", "backup", "restore", "updates", "support", "logs", "system"] as MaintenanceTab[]).map((item) => <button key={item} className={classNames("button", tab === item && "active")} type="button" onClick={() => setTab(item)}>{m.maintenance.tabs[item]}</button>)}</nav>
+    <nav class="subtabs">{(["overview", "doctor", "firewall", "warp", "backup", "restore", "updates", "support", "logs", "traffic", "system"] as MaintenanceTab[]).map((item) => <button key={item} className={classNames("button", tab === item && "active")} type="button" onClick={() => setTab(item)}>{m.maintenance.tabs[item]}</button>)}</nav>
     {tab === "overview" && <div class="metric-grid"><Metric title={m.dashboard.tunnels} value={String(state.tunnels.length)} /><Metric title="WARP" value={state.warp.configured ? `${state.warp.enabled_tunnel_count} ${m.common.enabled}` : m.maintenance.notConfigured} /><Metric title={m.maintenance.applyConfig} value={state.apply_enabled ? m.common.enabled : m.common.manual} /><Metric title={m.common.profiles} value={String(state.profiles.length)} /></div>}
     {tab === "doctor" && <div class="stack"><button class="button primary" disabled={Boolean(busyAction)} type="button" onClick={() => action("doctor", m.maintenance.doctorCompleted, async () => setDoctorResults((await api.doctor()).results))}><ButtonContent busy={busyAction === "doctor"}>{m.maintenance.runDoctor}</ButtonContent></button><ResultList results={doctorResults} /></div>}
     {tab === "firewall" && <div class="stack"><button class="button primary" disabled={!state.apply_enabled || Boolean(busyAction)} type="button" onClick={() => action("firewall", m.maintenance.firewallRepaired, async () => setFirewall((await api.firewallRepair()).firewall))}><ButtonContent busy={busyAction === "firewall"}>{m.maintenance.repairFirewall}</ButtonContent></button>{firewall ? <ResultList results={firewall.results.map((item) => ({ level: item.status === "ok" ? "ok" : item.status === "duplicate" ? "warn" : "fail", area: `${item.tunnel}/${item.name}`, message: item.message || item.rule }))} /> : <p>{m.maintenance.firewallNote}</p>}</div>}
@@ -801,8 +820,83 @@ function MaintenanceCenter({ state, notify, reload }: { state: AppState; notify:
     {tab === "updates" && <div class="stack"><button class="button primary" disabled={Boolean(busyAction)} type="button" onClick={() => action("updates", m.maintenance.updatesChecked, async () => setUpdateReport((await api.updates()).updates))}><ButtonContent busy={busyAction === "updates"}>{m.maintenance.checkUpdates}</ButtonContent></button>{updateReport && <ResultList results={updateReport.components.map((item) => ({ level: item.status === "current" ? "ok" : "warn", area: item.name, message: `${item.current_ref} → ${item.latest_ref}` }))} />}</div>}
     {tab === "support" && <div class="stack"><p>{m.maintenance.supportText}</p><button class="button primary" disabled={Boolean(busyAction)} type="button" onClick={() => action("support", m.maintenance.supportDownloadStarted, async () => { const res = await fetch("/api/support-bundle"); if (!res.ok) throw new Error(m.maintenance.supportDownloadFailed); await downloadResponse(res, "awg-forge-support.zip"); })}><ButtonContent busy={busyAction === "support"}>{m.maintenance.downloadSupport}</ButtonContent></button></div>}
     {tab === "logs" && <div class="stack"><p class="note">{m.maintenance.auditAutoRefresh}</p><div class="list">{events.length === 0 ? <div class="empty compact">{m.maintenance.noAuditEvents}</div> : events.map((event) => <div class="row" key={`${event.time}-${event.event}`}><strong>{event.event}</strong><p>{event.time} · {event.level} · {event.message}{event.error ? ` · ${event.error}` : ""}</p></div>)}</div></div>}
+    {tab === "traffic" && <TrafficPanel state={state} traffic={traffic} reload={async () => setTraffic(await api.trafficSummary())} />}
     {tab === "system" && <SystemPanel state={state} />}
   </PanelTitle>;
+}
+
+function TrafficPanel({ state, traffic, reload }: { state: AppState; traffic: TrafficSummary | null; reload: () => Promise<void> }) {
+  const { m } = useI18n();
+  const [busy, setBusy] = useState(false);
+  const rows = trafficRowsWithNames(state, traffic?.rows || []);
+  const totals = trafficTotals(rows);
+  const topClients = [...rows].sort((a, b) => (b.rx_total + b.tx_total) - (a.rx_total + a.tx_total)).slice(0, 5);
+
+  async function refresh() {
+    setBusy(true);
+    try {
+      await reload();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <div class="stack">
+    <div>
+      <h3>{m.maintenance.traffic}</h3>
+      <p class="note">{traffic?.enabled ? m.maintenance.trafficText : m.maintenance.trafficDisabled}</p>
+    </div>
+    <button class="button primary" disabled={busy} type="button" onClick={() => void refresh()}><ButtonContent busy={busy}>{m.maintenance.refreshTraffic}</ButtonContent></button>
+    {!traffic ? <p>{m.maintenance.noResults}</p> : !traffic.enabled ? <div class="empty compact">{m.maintenance.trafficDisabled}</div> : rows.length === 0 ? <div class="empty compact">{m.maintenance.noTrafficData}</div> : <>
+      <div class="metric-grid">
+        <Metric title={m.maintenance.totalTraffic} value={formatBytes(totals.rxTotal + totals.txTotal)} />
+        <Metric title={m.maintenance.today} value={formatTrafficPair(totals.rxToday, totals.txToday, m)} />
+        <Metric title={m.maintenance.last7d} value={formatTrafficPair(totals.rx7d, totals.tx7d, m)} />
+        <Metric title={m.maintenance.last30d} value={formatTrafficPair(totals.rx30d, totals.tx30d, m)} />
+      </div>
+      <div>
+        <h3>{m.maintenance.topClients}</h3>
+        <div class="list">
+          {topClients.map((row) => <div class="row" key={`${row.tunnel_id}-${row.client_id}`}>
+        <div>
+          <strong>{row.clientName}</strong>
+          <p>{row.tunnelName} · {m.maintenance.totalTraffic}: {formatBytes(row.rx_total + row.tx_total)}</p>
+          <p>{m.maintenance.today}: {formatTrafficPair(row.rx_today, row.tx_today, m)} · {m.maintenance.last7d}: {formatTrafficPair(row.rx_7d, row.tx_7d, m)}</p>
+        </div>
+          </div>)}
+        </div>
+      </div>
+    </>}
+  </div>;
+}
+
+function trafficRowsWithNames(state: AppState, rows: TrafficSummaryRow[]) {
+  return rows.map((row) => {
+    const tunnel = state.tunnels.find((item) => item.id === row.tunnel_id);
+    const client = tunnel?.clients.find((item) => item.id === row.client_id);
+    return {
+      ...row,
+      tunnelName: tunnel?.name || row.tunnel_id,
+      clientName: client?.name || row.client_id,
+    };
+  });
+}
+
+function formatTrafficPair(rxBytes: number, txBytes: number, m: Messages): string {
+  return `${formatBytes(rxBytes)} ${m.tunnel.received} / ${formatBytes(txBytes)} ${m.tunnel.sent}`;
+}
+
+function trafficTotals(rows: TrafficSummaryRow[]) {
+  return rows.reduce((acc, row) => ({
+    rxTotal: acc.rxTotal + row.rx_total,
+    txTotal: acc.txTotal + row.tx_total,
+    rxToday: acc.rxToday + row.rx_today,
+    txToday: acc.txToday + row.tx_today,
+    rx7d: acc.rx7d + row.rx_7d,
+    tx7d: acc.tx7d + row.tx_7d,
+    rx30d: acc.rx30d + row.rx_30d,
+    tx30d: acc.tx30d + row.tx_30d,
+  }), { rxTotal: 0, txTotal: 0, rxToday: 0, txToday: 0, rx7d: 0, tx7d: 0, rx30d: 0, tx30d: 0 });
 }
 
 function SystemPanel({ state }: { state: AppState }) {
@@ -821,6 +915,7 @@ function SystemPanel({ state }: { state: AppState }) {
     <div class="metric-grid">
       <Metric title={m.forms.serverHost} value={state.server_host || "-"} />
       <Metric title={m.maintenance.applyConfig} value={state.apply_enabled ? m.common.enabled : m.common.manual} />
+      <Metric title={m.maintenance.database} value={databaseLabel(state.database)} />
       <Metric title={m.dashboard.tunnels} value={`${upTunnels}/${state.tunnels.length} ${m.status.up}`} />
       <Metric title={m.tunnel.clients} value={`${enabledClients}/${clients.length} ${m.common.enabled}`} />
       <Metric title={m.common.profiles} value={String(state.profiles.length)} />
@@ -836,6 +931,11 @@ function SystemPanel({ state }: { state: AppState }) {
 docker exec awg-forge awg show
 docker compose logs -f`}</pre>
   </div>;
+}
+
+function databaseLabel(database: AppState["database"]): string {
+  if (!database?.mode) return "off";
+  return database.enabled ? database.mode : "off";
 }
 
 function WarpPanel({ state, action, busyAction }: { state: AppState; action: (key: string, label: string, fn: () => Promise<void>) => Promise<void>; busyAction: string }) {

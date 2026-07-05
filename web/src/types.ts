@@ -29,6 +29,31 @@ export type ClientRuntime = {
   tx_bytes: number;
 };
 
+export type TrafficSummaryRow = {
+  tunnel_id: string;
+  client_id: string;
+  rx_total: number;
+  tx_total: number;
+  rx_today: number;
+  tx_today: number;
+  rx_7d: number;
+  tx_7d: number;
+  rx_30d: number;
+  tx_30d: number;
+};
+
+export type TrafficSummary = {
+  enabled: boolean;
+  rows: TrafficSummaryRow[];
+};
+
+export type ClientTraffic = {
+  enabled: boolean;
+  rx_total: number;
+  tx_total: number;
+  limit_bytes: number | null;
+};
+
 export type Client = {
   id: string;
   tunnel_id: string;
@@ -44,6 +69,7 @@ export type Client = {
   last_seen_at: string;
   expires_at: string;
   runtime: ClientRuntime;
+  traffic: ClientTraffic;
   created_at: string;
   updated_at: string;
 };
@@ -101,11 +127,17 @@ export type BuildInfo = {
   amneziawg_update_mode: string;
 };
 
+export type DatabaseSummary = {
+  mode: string;
+  enabled: boolean;
+};
+
 export type AppState = {
   authenticated: boolean;
   apply_enabled: boolean;
   server_host: string;
   warp: WarpSummary;
+  database: DatabaseSummary;
   build: BuildInfo;
   published_udp_ports: number[];
   profiles: Profile[];

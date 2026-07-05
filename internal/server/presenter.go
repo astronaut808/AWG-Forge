@@ -23,10 +23,10 @@ func profileMeta(id, tab, label string, available bool, state config.State) map[
 }
 
 func publicTunnel(tunnel config.Tunnel, status app.TunnelStatus) map[string]any {
-	return publicTunnelWithFirewall(tunnel, status, firewallSummary{}, nil)
+	return publicTunnelWithFirewall(tunnel, status, firewallSummary{}, nil, nil)
 }
 
-func publicTunnelWithFirewall(tunnel config.Tunnel, status app.TunnelStatus, fw firewallSummary, runtime map[string]app.ClientRuntimeStatus) map[string]any {
+func publicTunnelWithFirewall(tunnel config.Tunnel, status app.TunnelStatus, fw firewallSummary, runtime map[string]app.ClientRuntimeStatus, traffic map[string]clientTrafficSummary) map[string]any {
 	return map[string]any{
 		"id":          tunnel.ID,
 		"name":        tunnel.Name,
@@ -44,7 +44,7 @@ func publicTunnelWithFirewall(tunnel config.Tunnel, status app.TunnelStatus, fw 
 		"profile":     tunnel.ProtocolProfileID,
 		"revision":    tunnel.ConfigRevision,
 		"params":      orderedParams(tunnel.ProtocolProfileID, tunnel.ProtocolParams),
-		"clients":     publicClients(tunnel, runtime),
+		"clients":     publicClients(tunnel, runtime, traffic),
 		"status": map[string]any{
 			"up":            status.Up,
 			"apply_enabled": status.ApplyEnabled,
@@ -117,19 +117,19 @@ func staleClientCount(tunnel config.Tunnel) int {
 	return count
 }
 
-func publicClients(tunnel config.Tunnel, runtime map[string]app.ClientRuntimeStatus) []map[string]any {
+func publicClients(tunnel config.Tunnel, runtime map[string]app.ClientRuntimeStatus, traffic map[string]clientTrafficSummary) []map[string]any {
 	out := make([]map[string]any, 0, len(tunnel.Clients))
 	for _, client := range tunnel.Clients {
-		out = append(out, publicClientForTunnel(tunnel, client, runtime[client.ID]))
+		out = append(out, publicClientForTunnel(tunnel, client, runtime[client.ID], traffic[client.ID]))
 	}
 	return out
 }
 
 func publicClient(client config.Client) map[string]any {
-	return publicClientForTunnel(config.Tunnel{}, client, app.ClientRuntimeStatus{})
+	return publicClientForTunnel(config.Tunnel{}, client, app.ClientRuntimeStatus{}, clientTrafficSummary{})
 }
 
-func publicClientForTunnel(tunnel config.Tunnel, client config.Client, runtime app.ClientRuntimeStatus) map[string]any {
+func publicClientForTunnel(tunnel config.Tunnel, client config.Client, runtime app.ClientRuntimeStatus, traffic clientTrafficSummary) map[string]any {
 	now := time.Now().UTC()
 	expired := config.ClientExpired(client, now)
 	return map[string]any{
@@ -153,9 +153,21 @@ func publicClientForTunnel(tunnel config.Tunnel, client config.Client, runtime a
 			"rx_bytes":         runtime.RxBytes,
 			"tx_bytes":         runtime.TxBytes,
 		},
+		"traffic": map[string]any{
+			"enabled":     traffic.Enabled,
+			"rx_total":    traffic.RxTotal,
+			"tx_total":    traffic.TxTotal,
+			"limit_bytes": nil,
+		},
 		"created_at": client.CreatedAt,
 		"updated_at": client.UpdatedAt,
 	}
+}
+
+type clientTrafficSummary struct {
+	Enabled bool
+	RxTotal uint64
+	TxTotal uint64
 }
 
 func publicTime(value time.Time) string {
