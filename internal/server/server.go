@@ -863,6 +863,11 @@ func (w *web) setClientEnabledAPI(rw http.ResponseWriter, r *http.Request, id st
 			w.audit("warn", "client.enabled_state.rejected", "client enabled state request rejected", map[string]any{"client_id": id, "enabled": enabled}, err)
 			return mutationErrorStatus(err, http.StatusNotFound), errorPayload(err.Error())
 		}
+		if enabled {
+			ctx, cancel := context.WithTimeout(r.Context(), w.cfg.DatabaseQueryTimeout)
+			defer cancel()
+			enforceTrafficLimits(ctx, w.cfg, w.service)
+		}
 		return http.StatusOK, map[string]any{"ok": true}
 	})
 }

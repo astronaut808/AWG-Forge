@@ -69,17 +69,23 @@ function App() {
   const liveUpdatesEnabled = state !== null;
   const m = messages[locale];
   const messagesRef = useRef(m);
+  const authenticatedRef = useRef(false);
   messagesRef.current = m;
 
   const load = useCallback(async (options: { quiet?: boolean } = {}) => {
     try {
       const next = await api.state();
+      authenticatedRef.current = true;
       setState(next);
       setAuthChecked(true);
     } catch (err) {
       setAuthChecked(true);
       if (err instanceof api.APIError && err.status === 401) {
+        const wasAuthenticated = authenticatedRef.current;
+        authenticatedRef.current = false;
+        setModal(null);
         setState(null);
+        if (wasAuthenticated) notify(messagesRef.current.common.sessionExpired);
         return;
       }
       if (!options.quiet) notify(errorMessage(err, messagesRef.current.common.requestFailed));
@@ -114,11 +120,14 @@ function App() {
     });
     events.onerror = () => {
       events.close();
+      void load({ quiet: true });
       fallback = globalThis.setInterval(() => void load({ quiet: true }), 5000);
     };
+    const authCheck = globalThis.setInterval(() => void load({ quiet: true }), 60000);
     return () => {
       events.close();
       if (fallback) globalThis.clearInterval(fallback);
+      globalThis.clearInterval(authCheck);
     };
   }, [liveUpdatesEnabled, load]);
 
@@ -177,7 +186,13 @@ function App() {
       onDelete={() => confirm(m.actions.deleteTunnelConfirm(tunnel.name)) && runAction(m.actions.tunnelDeleted, () => api.deleteTunnel(tunnel.id))}
       onClientConfig={(client) => setModal({ kind: "client-config", client })}
       onClientSettings={(client) => setModal({ kind: "client-settings", tunnel, client })}
-      onClientToggle={(client) => runAction(client.enabled ? m.actions.clientDisabled : m.actions.clientEnabled, () => api.setClientEnabled(client.id, !client.enabled))}
+      onClientToggle={(client) => {
+        if (!client.enabled && client.traffic?.exceeded) {
+          notify(m.forms.trafficLimitEnableBlocked);
+          return;
+        }
+        void runAction(client.enabled ? m.actions.clientDisabled : m.actions.clientEnabled, () => api.setClientEnabled(client.id, !client.enabled));
+      }}
       onClientDelete={(client) => confirm(m.actions.deleteClientConfirm(client.name)) && runAction(m.actions.clientDeleted, () => api.deleteClient(client.id))}
     />
   );
@@ -436,6 +451,7 @@ function ClientRow({ client, onConfig, onSettings, onToggle, onDelete }: { clien
   const lastSeen = client.runtime?.last_seen_at || client.last_seen_at;
   const status = client.expired ? "expired" : activeLabel(lastSeen);
   const statusText = clientStatusText(status, m);
+  const enableBlockedByTrafficLimit = !client.enabled && Boolean(client.traffic?.exceeded);
   return (
     <div className={classNames("client-row", !client.active && "dimmed")}>
       <div class="client-main">
@@ -454,12 +470,13 @@ function ClientRow({ client, onConfig, onSettings, onToggle, onDelete }: { clien
           {client.expires_at ? <> · {m.tunnel.expires} {dateOnly(client.expires_at, locale)}</> : null}
         </p>
         {client.traffic?.enabled && <p>{m.tunnel.totalTraffic} {formatBytes(client.traffic.rx_total + client.traffic.tx_total)} / {client.traffic.limit_bytes ? formatBytes(client.traffic.limit_bytes) : "∞"}</p>}
+        {client.traffic?.exceeded && <p class="note">{m.forms.trafficLimitExceededHelp}</p>}
         {client.notes && <p class="note">{client.notes}</p>}
       </div>
       <div class="actions">
         <button class="button" type="button" onClick={onConfig}>{m.common.config}</button>
         <button class="button" type="button" onClick={onSettings}>{m.common.edit}</button>
-        <button class="button" type="button" onClick={onToggle}>{client.enabled ? m.common.disable : m.common.enable}</button>
+        <button class="button" type="button" disabled={enableBlockedByTrafficLimit} title={enableBlockedByTrafficLimit ? m.forms.trafficLimitEnableBlocked : undefined} onClick={onToggle}>{client.enabled ? m.common.disable : m.common.enable}</button>
         <button class="button danger" type="button" onClick={onDelete}>{m.common.delete}</button>
       </div>
     </div>
@@ -504,6 +521,10 @@ function CreateTunnelForm({ state, profile, runAction }: { state: AppState; prof
 
 function TunnelSettingsForm({ state, tunnel, runAction }: { state: AppState; tunnel: Tunnel; runAction: (label: string, fn: () => Promise<unknown>) => Promise<void> }) {
   const { m } = useI18n();
+  const [egressMode, setEgressMode] = useState(tunnel.egress_mode || "wan");
+  useEffect(() => {
+    setEgressMode(tunnel.egress_mode || "wan");
+  }, [tunnel.id, tunnel.egress_mode]);
   return <Form title={m.forms.tunnelSettingsTitle} subtitle={`${tunnel.name} · ${profileTitle(tunnel.profile)}`} submit={m.common.save} onSubmit={(form) => runAction(m.forms.settingsSaved, () => api.updateTunnel(tunnel.id, {
     name: field(form, "name"),
     server_host: field(form, "server_host"),
@@ -518,7 +539,7 @@ function TunnelSettingsForm({ state, tunnel, runAction }: { state: AppState; tun
   }))}>
     <label>{m.forms.nameInterface}<input aria-label={m.forms.nameInterface} name="name" defaultValue={tunnel.name} /></label>
     <label>{m.forms.serverHost}<input aria-label={m.forms.serverHost} name="server_host" defaultValue={tunnel.server_host || ""} placeholder={state.server_host} /></label>
-    <label>{m.forms.egress}<select aria-label={m.forms.egress} name="egress_mode" defaultValue={tunnel.egress_mode || "wan"}><option value="wan">{m.forms.serverWAN}</option><option value="warp">{m.forms.cloudflareWARP}</option></select></label>
+    <label>{m.forms.egress}<select aria-label={m.forms.egress} name="egress_mode" value={egressMode} onInput={(event) => setEgressMode((event.currentTarget as HTMLSelectElement).value)}><option value="wan">{m.forms.serverWAN}</option><option value="warp">{m.forms.cloudflareWARP}</option></select></label>
     <label>{m.forms.listenPort}<input aria-label={m.forms.listenPort} name="port" inputMode="numeric" defaultValue={tunnel.listen_port} /></label>
     {!state.warp?.configured && <small class="form-note">{m.forms.warpAutoRegister}</small>}
     <label>{m.forms.ipv4Subnet}<input aria-label={m.forms.ipv4Subnet} name="subnet" defaultValue={tunnel.subnet} /></label>
@@ -566,7 +587,7 @@ function ClientSettingsForm({ client, runAction }: { client: Client; runAction: 
   })}>
     <label>{m.forms.clientName}<input aria-label={m.forms.clientName} name="name" defaultValue={client.name} /></label>
     <ExpirationField current={client.expires_at} keepCurrent />
-    {client.traffic?.enabled && <label>{m.forms.trafficLimit}<input aria-label={m.forms.trafficLimit} name="traffic_limit_gib" type="number" min="0.001" step="0.001" inputMode="decimal" defaultValue={trafficLimitGiBValue(client.traffic.limit_bytes)} placeholder="∞" /><span class="help">{m.forms.trafficLimitHelp}</span></label>}
+    {client.traffic?.enabled && <label>{m.forms.trafficLimit}<input aria-label={m.forms.trafficLimit} name="traffic_limit_gib" type="number" min="0.001" step="0.001" inputMode="decimal" defaultValue={trafficLimitGiBValue(client.traffic.limit_bytes)} placeholder="∞" /><span class="help">{client.traffic.exceeded ? m.forms.trafficLimitExceededHelp : m.forms.trafficLimitHelp}</span></label>}
     <label class="full">{m.forms.notes}<textarea aria-label={m.forms.notes} name="notes" maxLength={1000} defaultValue={client.notes || ""} /></label>
   </Form>;
 }
@@ -766,6 +787,7 @@ function MaintenanceCenter({ state, notify, reload }: { state: AppState; notify:
   }, [notify]);
 
   useEffect(() => {
+    if (tab !== "logs") return;
     let closed = false;
 
     async function loadAuditLog(quiet: boolean) {
@@ -783,7 +805,7 @@ function MaintenanceCenter({ state, notify, reload }: { state: AppState; notify:
       closed = true;
       globalThis.clearInterval(timer);
     };
-  }, []);
+  }, [tab]);
 
   useEffect(() => {
     if (tab !== "traffic") return;
