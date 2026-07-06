@@ -5,6 +5,7 @@
 ### Added
 
 - Added SQLite-backed traffic history collection with daily client aggregates, per-client total traffic in client rows, and aggregate Maintenance traffic totals.
+- Added traffic quotas with SQLite-stored per-client limits, Web UI limit editing, API/state exposure, and automatic client disablement when recorded traffic reaches the configured limit.
 
 ## v0.15.0 - 2026-07-05
 

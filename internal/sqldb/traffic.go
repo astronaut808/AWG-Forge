@@ -21,16 +21,31 @@ type TrafficSample struct {
 }
 
 type TrafficSummaryRow struct {
-	TunnelID string `json:"tunnel_id"`
-	ClientID string `json:"client_id"`
-	RxTotal  uint64 `json:"rx_total"`
-	TxTotal  uint64 `json:"tx_total"`
-	RxToday  uint64 `json:"rx_today"`
-	TxToday  uint64 `json:"tx_today"`
-	Rx7d     uint64 `json:"rx_7d"`
-	Tx7d     uint64 `json:"tx_7d"`
-	Rx30d    uint64 `json:"rx_30d"`
-	Tx30d    uint64 `json:"tx_30d"`
+	TunnelID   string  `json:"tunnel_id"`
+	ClientID   string  `json:"client_id"`
+	RxTotal    uint64  `json:"rx_total"`
+	TxTotal    uint64  `json:"tx_total"`
+	RxToday    uint64  `json:"rx_today"`
+	TxToday    uint64  `json:"tx_today"`
+	Rx7d       uint64  `json:"rx_7d"`
+	Tx7d       uint64  `json:"tx_7d"`
+	Rx30d      uint64  `json:"rx_30d"`
+	Tx30d      uint64  `json:"tx_30d"`
+	LimitBytes *uint64 `json:"limit_bytes"`
+}
+
+type ClientTrafficLimit struct {
+	TunnelID   string
+	ClientID   string
+	LimitBytes uint64
+}
+
+type ExceededTrafficLimit struct {
+	TunnelID   string
+	ClientID   string
+	LimitBytes uint64
+	TotalBytes uint64
+	ExceededAt time.Time
 }
 
 func RecordTrafficSamples(ctx context.Context, cfg config.Config, samples []TrafficSample) error {
@@ -52,6 +67,42 @@ func ListTrafficSummary(ctx context.Context, cfg config.Config, now time.Time) (
 	}
 	defer func() { _ = db.Close() }()
 	return db.ListTrafficSummary(ctx, now)
+}
+
+func SetClientTrafficLimit(ctx context.Context, cfg config.Config, tunnelID, clientID string, limitBytes *uint64) error {
+	db, err := OpenExisting(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = db.Close() }()
+	return db.SetClientTrafficLimit(ctx, tunnelID, clientID, limitBytes)
+}
+
+func ListClientTrafficLimits(ctx context.Context, cfg config.Config) ([]ClientTrafficLimit, error) {
+	db, err := OpenExisting(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = db.Close() }()
+	return db.ListClientTrafficLimits(ctx)
+}
+
+func ListExceededTrafficLimits(ctx context.Context, cfg config.Config, now time.Time) ([]ExceededTrafficLimit, error) {
+	db, err := OpenExisting(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = db.Close() }()
+	return db.ListExceededTrafficLimits(ctx, now)
+}
+
+func DeleteClientTrafficLimit(ctx context.Context, cfg config.Config, clientID string) error {
+	db, err := OpenExisting(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = db.Close() }()
+	return db.DeleteClientTrafficLimit(ctx, clientID)
 }
 
 func (db *DB) RecordTrafficSamples(ctx context.Context, samples []TrafficSample) error {
@@ -183,6 +234,115 @@ ORDER BY tunnel_id, client_id`, dayToday, dayToday, day7d, day7d, day30d, day30d
 		}
 		out = append(out, row)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	limits, err := db.ListClientTrafficLimits(ctx)
+	if err != nil {
+		return nil, err
+	}
+	byClient := make(map[string]uint64, len(limits))
+	for _, limit := range limits {
+		byClient[limit.TunnelID+"\x00"+limit.ClientID] = limit.LimitBytes
+	}
+	for i := range out {
+		if limit, ok := byClient[out[i].TunnelID+"\x00"+out[i].ClientID]; ok {
+			out[i].LimitBytes = uint64Ptr(limit)
+		}
+	}
+	return out, nil
+}
+
+func (db *DB) SetClientTrafficLimit(ctx context.Context, tunnelID, clientID string, limitBytes *uint64) error {
+	if limitBytes == nil {
+		_, err := db.sql.ExecContext(ctx, "DELETE FROM client_traffic_limits WHERE tunnel_id = ? AND client_id = ?", tunnelID, clientID)
+		return err
+	}
+	if *limitBytes == 0 {
+		return errors.New("traffic limit must be positive")
+	}
+	value, err := sqliteInt(*limitBytes)
+	if err != nil {
+		return err
+	}
+	_, err = db.sql.ExecContext(ctx, `
+INSERT INTO client_traffic_limits (tunnel_id, client_id, limit_bytes, updated_at)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(tunnel_id, client_id) DO UPDATE SET
+    limit_bytes = excluded.limit_bytes,
+    updated_at = excluded.updated_at`,
+		tunnelID,
+		clientID,
+		value,
+		formatTime(time.Now().UTC()),
+	)
+	return err
+}
+
+func (db *DB) DeleteClientTrafficLimit(ctx context.Context, clientID string) error {
+	_, err := db.sql.ExecContext(ctx, "DELETE FROM client_traffic_limits WHERE client_id = ?", clientID)
+	return err
+}
+
+func (db *DB) ListClientTrafficLimits(ctx context.Context) ([]ClientTrafficLimit, error) {
+	rows, err := db.sql.QueryContext(ctx, `
+SELECT tunnel_id, client_id, limit_bytes
+FROM client_traffic_limits
+ORDER BY tunnel_id, client_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []ClientTrafficLimit
+	for rows.Next() {
+		var row ClientTrafficLimit
+		var limit int64
+		if err := rows.Scan(&row.TunnelID, &row.ClientID, &limit); err != nil {
+			return nil, err
+		}
+		if limit > 0 {
+			row.LimitBytes = uint64(limit)
+			out = append(out, row)
+		}
+	}
+	return out, rows.Err()
+}
+
+func (db *DB) ListExceededTrafficLimits(ctx context.Context, now time.Time) ([]ExceededTrafficLimit, error) {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	rows, err := db.sql.QueryContext(ctx, `
+SELECT
+    limits.tunnel_id,
+    limits.client_id,
+    limits.limit_bytes,
+    COALESCE(SUM(daily.rx_bytes + daily.tx_bytes), 0) AS total_bytes
+FROM client_traffic_limits AS limits
+LEFT JOIN client_traffic_daily AS daily
+    ON daily.tunnel_id = limits.tunnel_id AND daily.client_id = limits.client_id
+GROUP BY limits.tunnel_id, limits.client_id, limits.limit_bytes
+HAVING total_bytes >= limits.limit_bytes
+ORDER BY limits.tunnel_id, limits.client_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []ExceededTrafficLimit
+	for rows.Next() {
+		var row ExceededTrafficLimit
+		var limit, total int64
+		if err := rows.Scan(&row.TunnelID, &row.ClientID, &limit, &total); err != nil {
+			return nil, err
+		}
+		if limit <= 0 || total < limit {
+			continue
+		}
+		row.LimitBytes = uint64(limit)
+		row.TotalBytes = uint64(total)
+		row.ExceededAt = now.UTC()
+		out = append(out, row)
+	}
 	return out, rows.Err()
 }
 
@@ -205,4 +365,8 @@ func sqliteInt(value uint64) (int64, error) {
 		return 0, errors.New("traffic counter exceeds sqlite integer range")
 	}
 	return int64(value), nil
+}
+
+func uint64Ptr(value uint64) *uint64 {
+	return &value
 }

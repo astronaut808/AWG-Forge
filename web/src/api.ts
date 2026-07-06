@@ -127,6 +127,14 @@ export function updateClient(id: string, body: { name: string; notes: string; ex
   });
 }
 
+export function updateClientTrafficLimit(id: string, limitBytes: number | null) {
+  return request(`/api/clients/${encodeURIComponent(id)}/traffic-limit`, {
+    method: "PATCH",
+    body: { limit_bytes: limitBytes },
+    idempotencyKey: newIdempotencyKey(),
+  });
+}
+
 export function setClientEnabled(id: string, enabled: boolean) {
   return request(`/api/clients/${encodeURIComponent(id)}/${enabled ? "enable" : "disable"}`, {
     method: "POST",

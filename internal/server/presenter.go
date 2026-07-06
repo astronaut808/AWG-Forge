@@ -157,7 +157,8 @@ func publicClientForTunnel(tunnel config.Tunnel, client config.Client, runtime a
 			"enabled":     traffic.Enabled,
 			"rx_total":    traffic.RxTotal,
 			"tx_total":    traffic.TxTotal,
-			"limit_bytes": nil,
+			"limit_bytes": trafficLimitValue(traffic.LimitBytes),
+			"exceeded":    traffic.Exceeded,
 		},
 		"created_at": client.CreatedAt,
 		"updated_at": client.UpdatedAt,
@@ -165,9 +166,18 @@ func publicClientForTunnel(tunnel config.Tunnel, client config.Client, runtime a
 }
 
 type clientTrafficSummary struct {
-	Enabled bool
-	RxTotal uint64
-	TxTotal uint64
+	Enabled    bool
+	RxTotal    uint64
+	TxTotal    uint64
+	LimitBytes *uint64
+	Exceeded   bool
+}
+
+func trafficLimitValue(limit *uint64) any {
+	if limit == nil {
+		return nil
+	}
+	return *limit
 }
 
 func publicTime(value time.Time) string {

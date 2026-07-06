@@ -710,6 +710,36 @@ func TestUpdateClientSettingsDoesNotMarkConfigStale(t *testing.T) {
 	}
 }
 
+func TestDisableClientForTrafficLimitDoesNotMarkConfigStale(t *testing.T) {
+	svc := app.New(testConfig(t))
+	client, err := svc.AddClient("phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision := state.Tunnels[0].ConfigRevision
+
+	if err := svc.DisableClientForTrafficLimit(client.ID, 6000, 5000); err != nil {
+		t.Fatal(err)
+	}
+	state, err = svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Tunnels[0].Clients[0].Enabled {
+		t.Fatal("client should be disabled after traffic limit enforcement")
+	}
+	if state.Tunnels[0].ConfigRevision != revision {
+		t.Fatalf("tunnel revision changed from %d to %d", revision, state.Tunnels[0].ConfigRevision)
+	}
+	if state.Tunnels[0].Clients[0].ConfigRevision != revision {
+		t.Fatal("traffic limit enforcement should not mark client config stale")
+	}
+}
+
 func TestUpdateClientSettingsRejectsInvalidName(t *testing.T) {
 	svc := app.New(testConfig(t))
 	client, err := svc.AddClient("phone")

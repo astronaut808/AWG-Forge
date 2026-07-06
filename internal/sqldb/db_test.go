@@ -48,8 +48,8 @@ func TestMigrateCreatesSQLiteSchema(t *testing.T) {
 	if !status.Exists {
 		t.Fatal("database file was not created")
 	}
-	if status.SchemaVersion != 1 {
-		t.Fatalf("schema version = %d, want 1", status.SchemaVersion)
+	if status.SchemaVersion != 2 {
+		t.Fatalf("schema version = %d, want 2", status.SchemaVersion)
 	}
 	if status.JournalMode != "wal" {
 		t.Fatalf("journal mode = %q, want wal", status.JournalMode)
@@ -63,8 +63,8 @@ func TestMigrateCreatesSQLiteSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.SchemaVersion != 1 {
-		t.Fatalf("checked schema version = %d, want 1", status.SchemaVersion)
+	if status.SchemaVersion != 2 {
+		t.Fatalf("checked schema version = %d, want 2", status.SchemaVersion)
 	}
 }
 

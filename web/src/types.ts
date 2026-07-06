@@ -40,6 +40,7 @@ export type TrafficSummaryRow = {
   tx_7d: number;
   rx_30d: number;
   tx_30d: number;
+  limit_bytes: number | null;
 };
 
 export type TrafficSummary = {
@@ -52,6 +53,7 @@ export type ClientTraffic = {
   rx_total: number;
   tx_total: number;
   limit_bytes: number | null;
+  exceeded: boolean;
 };
 
 export type Client = {

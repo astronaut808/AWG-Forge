@@ -89,3 +89,96 @@ VALUES
 		t.Fatalf("30d summary = %d/%d, want 90/120", rows[0].Rx30d, rows[0].Tx30d)
 	}
 }
+
+func TestClientTrafficLimitRoundTrip(t *testing.T) {
+	cfg := retentionTestConfig(t)
+	db, err := Open(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	if err := db.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	limit := uint64(50 * 1024 * 1024 * 1024)
+	if err := db.SetClientTrafficLimit(context.Background(), "tunnel", "client", &limit); err != nil {
+		t.Fatal(err)
+	}
+	limits, err := db.ListClientTrafficLimits(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(limits) != 1 || limits[0].LimitBytes != limit {
+		t.Fatalf("limits = %#v, want one %d-byte limit", limits, limit)
+	}
+
+	if err := db.SetClientTrafficLimit(context.Background(), "tunnel", "client", nil); err != nil {
+		t.Fatal(err)
+	}
+	limits, err = db.ListClientTrafficLimits(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(limits) != 0 {
+		t.Fatalf("limits after clear = %#v, want none", limits)
+	}
+}
+
+func TestTrafficSummaryIncludesConfiguredLimit(t *testing.T) {
+	cfg := retentionTestConfig(t)
+	db, err := Open(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	if err := db.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC)
+	limit := uint64(10 * 1024 * 1024 * 1024)
+	if err := db.SetClientTrafficLimit(context.Background(), "tunnel", "client", &limit); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.sql.ExecContext(context.Background(), `
+INSERT INTO client_traffic_daily (day, tunnel_id, client_id, rx_bytes, tx_bytes, updated_at)
+VALUES (?, 'tunnel', 'client', 1024, 2048, ?)`, now.Format("2006-01-02"), formatTime(now)); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := db.ListTrafficSummary(context.Background(), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].LimitBytes == nil || *rows[0].LimitBytes != limit {
+		t.Fatalf("summary rows = %#v, want limit %d", rows, limit)
+	}
+}
+
+func TestListExceededTrafficLimits(t *testing.T) {
+	cfg := retentionTestConfig(t)
+	db, err := Open(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	if err := db.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC)
+	limit := uint64(3000)
+	if err := db.SetClientTrafficLimit(context.Background(), "tunnel", "client", &limit); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.sql.ExecContext(context.Background(), `
+INSERT INTO client_traffic_daily (day, tunnel_id, client_id, rx_bytes, tx_bytes, updated_at)
+VALUES (?, 'tunnel', 'client', 2000, 1000, ?)`, now.Format("2006-01-02"), formatTime(now)); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := db.ListExceededTrafficLimits(context.Background(), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].TotalBytes != 3000 || rows[0].LimitBytes != limit {
+		t.Fatalf("exceeded rows = %#v, want one exact-limit row", rows)
+	}
+}

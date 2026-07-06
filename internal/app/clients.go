@@ -139,6 +139,21 @@ func (s *Service) RemoveClient(id string) error {
 func (s *Service) SetClientEnabled(id string, enabled bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.setClientEnabledLocked(id, enabled, nil)
+}
+
+type trafficLimitDisable struct {
+	TotalBytes uint64
+	LimitBytes uint64
+}
+
+func (s *Service) DisableClientForTrafficLimit(id string, totalBytes, limitBytes uint64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.setClientEnabledLocked(id, false, &trafficLimitDisable{TotalBytes: totalBytes, LimitBytes: limitBytes})
+}
+
+func (s *Service) setClientEnabledLocked(id string, enabled bool, trafficLimit *trafficLimitDisable) error {
 	state, err := s.initLocked()
 	if err != nil {
 		return err
@@ -150,6 +165,9 @@ func (s *Service) SetClientEnabled(id string, enabled bool) error {
 	for ti := range state.Tunnels {
 		for ci := range state.Tunnels[ti].Clients {
 			if state.Tunnels[ti].Clients[ci].ID == id {
+				if state.Tunnels[ti].Clients[ci].Enabled == enabled {
+					return nil
+				}
 				now := time.Now().UTC()
 				state.Tunnels[ti].Clients[ci].Enabled = enabled
 				state.Tunnels[ti].Clients[ci].UpdatedAt = now
@@ -171,7 +189,14 @@ func (s *Service) SetClientEnabled(id string, enabled bool) error {
 					event = "client.enabled"
 					message = "client enabled"
 				}
-				s.log("info", event, message, clientAuditFields(state.Tunnels[ti], state.Tunnels[ti].Clients[ci]), nil)
+				fields := clientAuditFields(state.Tunnels[ti], state.Tunnels[ti].Clients[ci])
+				if trafficLimit != nil {
+					event = "client.traffic_limit.exceeded"
+					message = "client disabled after traffic limit exceeded"
+					fields["traffic_total_bytes"] = trafficLimit.TotalBytes
+					fields["traffic_limit_bytes"] = trafficLimit.LimitBytes
+				}
+				s.log("info", event, message, fields, nil)
 				return nil
 			}
 		}

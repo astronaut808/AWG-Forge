@@ -443,6 +443,7 @@ function ClientRow({ client, onConfig, onSettings, onToggle, onDelete }: { clien
           <span class="status-dot" />
           <strong>{client.name}</strong>
           <Badge tone={client.active ? "ok" : "neutral"}>{client.expired ? m.status.expired : client.enabled ? m.common.enabled : m.common.disabled}</Badge>
+          {client.traffic?.exceeded && <Badge tone="bad">{m.status.limitExceeded}</Badge>}
           <Badge tone={status === "active now" ? "ok" : status === "seen recently" ? "neutral" : "muted"}>{statusText}</Badge>
           {client.needs_new_config && <Badge tone="warn">{m.common.stale}</Badge>}
         </div>
@@ -559,9 +560,13 @@ function CreateClientForm({ tunnel, runAction }: { tunnel: Tunnel; runAction: (l
 
 function ClientSettingsForm({ client, runAction }: { client: Client; runAction: (label: string, fn: () => Promise<unknown>) => Promise<void> }) {
   const { m } = useI18n();
-  return <Form title={m.forms.clientSettingsTitle} subtitle={`${client.name} · ${client.address}`} submit={m.common.save} onSubmit={(form) => runAction(m.forms.clientSaved, () => api.updateClient(client.id, { name: field(form, "name"), notes: field(form, "notes"), expires_at: expirationFromForm(form, client.expires_at) }))}>
+  return <Form title={m.forms.clientSettingsTitle} subtitle={`${client.name} · ${client.address}`} submit={m.common.save} onSubmit={(form) => runAction(m.forms.clientSaved, async () => {
+    await api.updateClient(client.id, { name: field(form, "name"), notes: field(form, "notes"), expires_at: expirationFromForm(form, client.expires_at) });
+    if (client.traffic?.enabled) await api.updateClientTrafficLimit(client.id, trafficLimitBytesFromForm(form, m.forms.trafficLimitInvalid));
+  })}>
     <label>{m.forms.clientName}<input aria-label={m.forms.clientName} name="name" defaultValue={client.name} /></label>
     <ExpirationField current={client.expires_at} keepCurrent />
+    {client.traffic?.enabled && <label>{m.forms.trafficLimit}<input aria-label={m.forms.trafficLimit} name="traffic_limit_gib" type="number" min="0.001" step="0.001" inputMode="decimal" defaultValue={trafficLimitGiBValue(client.traffic.limit_bytes)} placeholder="∞" /><span class="help">{m.forms.trafficLimitHelp}</span></label>}
     <label class="full">{m.forms.notes}<textarea aria-label={m.forms.notes} name="notes" maxLength={1000} defaultValue={client.notes || ""} /></label>
   </Form>;
 }
@@ -1077,6 +1082,21 @@ function expirationFromForm(form: HTMLFormElement, current = ""): string {
   if (mode === "keep") return current;
   if (mode === "custom") return dateTimeLocalToISO(field(form, "expires_custom"));
   return expirationValue(mode);
+}
+
+function trafficLimitGiBValue(value: number | null | undefined): string {
+  if (!value) return "";
+  return String(Number((value / 1024 / 1024 / 1024).toFixed(3)));
+}
+
+function trafficLimitBytesFromForm(form: HTMLFormElement, invalidMessage: string): number | null {
+  const raw = field(form, "traffic_limit_gib").replace(",", ".").trim();
+  if (!raw) return null;
+  const gib = Number(raw);
+  if (!Number.isFinite(gib) || gib <= 0) throw new Error(invalidMessage);
+  const bytes = Math.round(gib * 1024 * 1024 * 1024);
+  if (bytes <= 0) throw new Error(invalidMessage);
+  return bytes;
 }
 
 function errorMessage(err: unknown, fallback = "request failed"): string {
