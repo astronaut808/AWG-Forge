@@ -5,6 +5,16 @@
 ### Added
 
 - Added SQLite-backed traffic history collection with daily client aggregates, per-client total traffic in client rows, and aggregate Maintenance traffic totals.
+- Added traffic quotas with SQLite-stored per-client limits, Web UI limit editing, API/state exposure, and automatic client disablement when recorded traffic reaches the configured limit.
+
+### Fixed
+
+- Hardened Maintenance log polling and tunnel egress mode rendering to cover the UI behavior reported in [#41](https://github.com/astronaut808/AWG-Forge/issues/41).
+- Improved Web UI session-expiry handling so an expired session closes stale modals, clears the cached dashboard state, and returns to login.
+
+### Changed
+
+- Added an Aislop project config and CI quality gate that exclude generated Web UI assets and locale dictionaries from Aislop-only noise while keeping source quality warnings visible.
 
 ## v0.15.0 - 2026-07-05
 

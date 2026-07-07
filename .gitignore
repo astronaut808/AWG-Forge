@@ -13,3 +13,5 @@ node_modules/
 .DS_Store
 docs/en/roadmap.md
 docs/ru/roadmap.md
+.aislop/history.jsonl
+.aislop/agent/

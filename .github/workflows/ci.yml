@@ -72,3 +72,6 @@ jobs:
 
       - name: Lint UI
         run: npm run ui:lint
+
+      - name: Aislop quality gate
+        run: npm run quality:aislop

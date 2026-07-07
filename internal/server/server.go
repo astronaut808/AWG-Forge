@@ -147,6 +147,40 @@ func collectTrafficHistoryOnce(cfg config.Config, service *app.Service) {
 			Message: "traffic history sample write failed",
 			Error:   audit.Error(err),
 		})
+		return
+	}
+	enforceTrafficLimits(ctx, cfg, service)
+}
+
+func enforceTrafficLimits(ctx context.Context, cfg config.Config, service *app.Service) {
+	exceeded, err := sqldb.ListExceededTrafficLimits(ctx, cfg, time.Now().UTC())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, sqldb.ErrDisabled) {
+			return
+		}
+		service.Audit().Log(context.Background(), audit.Event{
+			Level:   "warn",
+			Event:   "traffic_limit.check_failed",
+			Message: "traffic limit check failed",
+			Error:   audit.Error(err),
+		})
+		return
+	}
+	for _, item := range exceeded {
+		if err := service.DisableClientForTrafficLimit(item.ClientID, item.TotalBytes, item.LimitBytes); err != nil {
+			service.Audit().Log(context.Background(), audit.Event{
+				Level:   "warn",
+				Event:   "traffic_limit.enforce_failed",
+				Message: "traffic limit enforcement failed",
+				Fields: map[string]any{
+					"tunnel_id":           item.TunnelID,
+					"client_id":           item.ClientID,
+					"traffic_total_bytes": item.TotalBytes,
+					"traffic_limit_bytes": item.LimitBytes,
+				},
+				Error: audit.Error(err),
+			})
+		}
 	}
 }
 
@@ -727,6 +761,8 @@ func (w *web) clientAPI(rw http.ResponseWriter, r *http.Request) {
 	switch action {
 	case "settings":
 		w.updateClientSettingsAPI(rw, r, id)
+	case "traffic-limit":
+		w.updateClientTrafficLimitAPI(rw, r, id)
 	case "enable":
 		w.setClientEnabledAPI(rw, r, id, true)
 	case "disable":
@@ -775,6 +811,44 @@ func (w *web) updateClientSettingsAPI(rw http.ResponseWriter, r *http.Request, i
 	})
 }
 
+func (w *web) updateClientTrafficLimitAPI(rw http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPatch || !w.validOrigin(r) {
+		writeError(rw, http.StatusForbidden, "forbidden")
+		return
+	}
+	w.withIdempotency(rw, r, "update-client-traffic-limit:"+id, func() (int, any) {
+		var req struct {
+			LimitBytes json.RawMessage `json:"limit_bytes"`
+		}
+		if err := readJSON(rw, r, &req); err != nil {
+			w.audit("warn", "client.traffic_limit.rejected", "client traffic limit request rejected", map[string]any{"client_id": id, "reason": "invalid json"}, err)
+			return http.StatusBadRequest, errorPayload("invalid json")
+		}
+		limitBytesValue, hasLimit, err := parseTrafficLimitBytes(req.LimitBytes)
+		if err != nil {
+			w.audit("warn", "client.traffic_limit.rejected", "client traffic limit request rejected", map[string]any{"client_id": id, "reason": "invalid limit"}, err)
+			return http.StatusBadRequest, errorPayload(err.Error())
+		}
+		var limitBytes *uint64
+		if hasLimit {
+			limitBytes = &limitBytesValue
+		}
+		tunnel, client, ok := w.findClientForAPI(id)
+		if !ok {
+			return http.StatusNotFound, errorPayload("client not found")
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), w.cfg.DatabaseQueryTimeout)
+		defer cancel()
+		if err := sqldb.SetClientTrafficLimit(ctx, w.cfg, tunnel.ID, client.ID, limitBytes); err != nil {
+			w.audit("warn", "client.traffic_limit.rejected", "client traffic limit request rejected", map[string]any{"client_id": id}, err)
+			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
+		}
+		enforceTrafficLimits(ctx, w.cfg, w.service)
+		w.audit("info", "client.traffic_limit.updated", "client traffic limit updated", map[string]any{"client_id": id, "limit_set": limitBytes != nil}, nil)
+		return http.StatusOK, map[string]any{"ok": true}
+	})
+}
+
 func (w *web) setClientEnabledAPI(rw http.ResponseWriter, r *http.Request, id string, enabled bool) {
 	if r.Method != http.MethodPost || !w.validOrigin(r) {
 		writeError(rw, http.StatusForbidden, "forbidden")
@@ -789,6 +863,11 @@ func (w *web) setClientEnabledAPI(rw http.ResponseWriter, r *http.Request, id st
 			w.audit("warn", "client.enabled_state.rejected", "client enabled state request rejected", map[string]any{"client_id": id, "enabled": enabled}, err)
 			return mutationErrorStatus(err, http.StatusNotFound), errorPayload(err.Error())
 		}
+		if enabled {
+			ctx, cancel := context.WithTimeout(r.Context(), w.cfg.DatabaseQueryTimeout)
+			defer cancel()
+			enforceTrafficLimits(ctx, w.cfg, w.service)
+		}
 		return http.StatusOK, map[string]any{"ok": true}
 	})
 }
@@ -802,6 +881,11 @@ func (w *web) deleteClientAPI(rw http.ResponseWriter, r *http.Request, id string
 		if err := w.service.RemoveClient(id); err != nil {
 			w.audit("warn", "client.delete.rejected", "client delete request rejected", map[string]any{"client_id": id}, err)
 			return mutationErrorStatus(err, http.StatusNotFound), errorPayload(err.Error())
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), w.cfg.DatabaseQueryTimeout)
+		defer cancel()
+		if err := sqldb.DeleteClientTrafficLimit(ctx, w.cfg, id); err != nil && !errors.Is(err, sqldb.ErrDisabled) && !errors.Is(err, sql.ErrNoRows) {
+			w.audit("warn", "client.traffic_limit_cleanup.failed", "client traffic limit cleanup failed", map[string]any{"client_id": id}, err)
 		}
 		return http.StatusOK, map[string]any{"ok": true}
 	})
@@ -1013,12 +1097,76 @@ func (w *web) clientTrafficSummary(ctx context.Context, state config.State) map[
 			out[row.TunnelID] = map[string]clientTrafficSummary{}
 		}
 		out[row.TunnelID][row.ClientID] = clientTrafficSummary{
-			Enabled: true,
-			RxTotal: row.RxTotal,
-			TxTotal: row.TxTotal,
+			Enabled:    true,
+			RxTotal:    row.RxTotal,
+			TxTotal:    row.TxTotal,
+			LimitBytes: row.LimitBytes,
+			Exceeded:   trafficExceeded(row.RxTotal, row.TxTotal, row.LimitBytes),
 		}
 	}
+	limits, err := sqldb.ListClientTrafficLimits(ctx, w.cfg)
+	if err != nil {
+		w.audit("warn", "traffic_history.limits_unavailable", "traffic limit summary unavailable", nil, err)
+		return out
+	}
+	for _, limit := range limits {
+		if _, ok := out[limit.TunnelID]; !ok {
+			out[limit.TunnelID] = map[string]clientTrafficSummary{}
+		}
+		summary := out[limit.TunnelID][limit.ClientID]
+		summary.Enabled = true
+		summary.LimitBytes = uint64Ptr(limit.LimitBytes)
+		summary.Exceeded = trafficExceeded(summary.RxTotal, summary.TxTotal, summary.LimitBytes)
+		out[limit.TunnelID][limit.ClientID] = summary
+	}
 	return out
+}
+
+func trafficExceeded(rxTotal, txTotal uint64, limitBytes *uint64) bool {
+	if limitBytes == nil {
+		return false
+	}
+	if rxTotal >= *limitBytes {
+		return true
+	}
+	return txTotal >= *limitBytes-rxTotal
+}
+
+func (w *web) findClientForAPI(id string) (config.Tunnel, config.Client, bool) {
+	state, err := w.service.State()
+	if err != nil {
+		return config.Tunnel{}, config.Client{}, false
+	}
+	for _, tunnel := range state.Tunnels {
+		for _, client := range tunnel.Clients {
+			if client.ID == id {
+				return tunnel, client, true
+			}
+		}
+	}
+	return config.Tunnel{}, config.Client{}, false
+}
+
+func parseTrafficLimitBytes(raw json.RawMessage) (uint64, bool, error) {
+	if len(raw) == 0 {
+		return 0, false, errors.New("limit_bytes is required")
+	}
+	value := strings.TrimSpace(string(raw))
+	if value == "null" {
+		return 0, false, nil
+	}
+	parsed, err := strconv.ParseUint(value, 10, 64)
+	if err != nil {
+		return 0, false, errors.New("limit_bytes must be a positive integer or null")
+	}
+	if parsed == 0 {
+		return 0, false, errors.New("limit_bytes must be positive")
+	}
+	return parsed, true, nil
+}
+
+func uint64Ptr(value uint64) *uint64 {
+	return &value
 }
 
 func publicDatabase(cfg config.Config) map[string]any {

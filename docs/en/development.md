@@ -18,6 +18,7 @@ make ui-check
 make ui-build
 make lint-go
 make lint-js
+make quality
 make ci
 make security
 make security-fast
@@ -58,7 +59,10 @@ git diff --check
 - `golangci-lint run`;
 - `npm run ui:check`;
 - `npm run ui:build`;
-- `deno lint web/src`.
+- `deno lint web/src`;
+- `npm run quality:aislop`, which runs `aislop ci` with the project `.aislop/config.yml`.
+
+The Aislop CI gate currently fails below score `80`. The config excludes reproducible generated Web UI assets and locale dictionaries that produce scanner-only noise. Keep source warnings visible unless a finding is a documented false positive.
 
 ## Security Checks
 

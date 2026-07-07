@@ -25,6 +25,7 @@ import (
 	"github.com/astronaut808/awg-forge/internal/backup"
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/firewall"
+	"github.com/astronaut808/awg-forge/internal/sqldb"
 )
 
 func TestValidOriginAllowsMissingOriginAndRefererForLoopback(t *testing.T) {
@@ -263,6 +264,134 @@ func TestTrafficSummaryAPIDisabledDatabase(t *testing.T) {
 	}
 	if payload.Rows == nil || len(payload.Rows) != 0 {
 		t.Fatalf("rows = %#v, want empty array", payload.Rows)
+	}
+}
+
+func TestUpdateClientTrafficLimitAPI(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Config{
+		ConfigDir:            dir,
+		TunnelName:           "awg0",
+		ServerHost:           "vpn.example.com",
+		ListenPort:           51820,
+		WebUIHost:            "127.0.0.1",
+		WebUIPort:            51821,
+		ExternalInterface:    "eth0",
+		IPv4Subnet:           "10.8.0.0/24",
+		DNS:                  "1.1.1.1",
+		AllowedIPs:           "0.0.0.0/0",
+		ProtocolProfile:      "awg_legacy_1_0",
+		DatabaseMode:         sqldb.ModeSQLite,
+		DatabasePath:         filepath.Join(dir, "awg-forge.db"),
+		DatabaseBusyTimeout:  5 * time.Second,
+		DatabaseQueryTimeout: 2 * time.Second,
+		DatabaseMaxOpenConns: 1,
+		DatabaseMaxIdleConns: 1,
+	}
+	if _, err := sqldb.Migrate(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	svc := app.New(cfg)
+	client, err := svc.AddClient("phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := &web{cfg: cfg, service: svc, idem: map[string]*idempotencyEntry{}}
+
+	r := httptest.NewRequest(http.MethodPatch, "http://127.0.0.1/api/clients/"+client.ID+"/traffic-limit", strings.NewReader(`{"limit_bytes":53687091200}`))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Idempotency-Key", "set-limit")
+	r.Header.Set("Origin", "http://127.0.0.1")
+	rr := httptest.NewRecorder()
+	w.clientAPI(rr, r)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("set status = %d body = %s", rr.Code, rr.Body.String())
+	}
+	limits, err := sqldb.ListClientTrafficLimits(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(limits) != 1 || limits[0].LimitBytes != 53687091200 {
+		t.Fatalf("limits = %#v, want one 50 GiB limit", limits)
+	}
+
+	r = httptest.NewRequest(http.MethodPatch, "http://127.0.0.1/api/clients/"+client.ID+"/traffic-limit", strings.NewReader(`{"limit_bytes":null}`))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Idempotency-Key", "clear-limit")
+	r.Header.Set("Origin", "http://127.0.0.1")
+	rr = httptest.NewRecorder()
+	w.clientAPI(rr, r)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("clear status = %d body = %s", rr.Code, rr.Body.String())
+	}
+	limits, err = sqldb.ListClientTrafficLimits(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(limits) != 0 {
+		t.Fatalf("limits after clear = %#v, want none", limits)
+	}
+}
+
+func TestEnableClientRechecksExceededTrafficLimit(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Config{
+		ConfigDir:            dir,
+		TunnelName:           "awg0",
+		ServerHost:           "vpn.example.com",
+		ListenPort:           51820,
+		WebUIHost:            "127.0.0.1",
+		WebUIPort:            51821,
+		ExternalInterface:    "eth0",
+		IPv4Subnet:           "10.8.0.0/24",
+		DNS:                  "1.1.1.1",
+		AllowedIPs:           "0.0.0.0/0",
+		ProtocolProfile:      "awg_legacy_1_0",
+		DatabaseMode:         sqldb.ModeSQLite,
+		DatabasePath:         filepath.Join(dir, "awg-forge.db"),
+		DatabaseBusyTimeout:  5 * time.Second,
+		DatabaseQueryTimeout: 2 * time.Second,
+		DatabaseMaxOpenConns: 1,
+		DatabaseMaxIdleConns: 1,
+	}
+	if _, err := sqldb.Migrate(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	svc := app.New(cfg)
+	client, err := svc.AddClient("phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC)
+	if err := sqldb.RecordTrafficSamples(context.Background(), cfg, []sqldb.TrafficSample{
+		{SampledAt: now.Add(-time.Minute), TunnelID: client.TunnelID, ClientID: client.ID, RxBytes: 0, TxBytes: 0, Present: true},
+		{SampledAt: now, TunnelID: client.TunnelID, ClientID: client.ID, RxBytes: 6000, TxBytes: 0, Present: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	limit := uint64(5000)
+	if err := sqldb.SetClientTrafficLimit(context.Background(), cfg, client.TunnelID, client.ID, &limit); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.SetClientEnabled(client.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	w := &web{cfg: cfg, service: svc, idem: map[string]*idempotencyEntry{}}
+
+	r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/clients/"+client.ID+"/enable", nil)
+	r.Header.Set("Idempotency-Key", "enable-over-limit")
+	r.Header.Set("Origin", "http://127.0.0.1")
+	rr := httptest.NewRecorder()
+	w.clientAPI(rr, r)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rr.Code, rr.Body.String())
+	}
+	state, err := svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Tunnels[0].Clients[0].Enabled {
+		t.Fatal("client should remain disabled when re-enabled over traffic limit")
 	}
 }
 
@@ -1290,15 +1419,26 @@ func TestPublicTunnelIncludesClientTrafficSummary(t *testing.T) {
 		}},
 	}
 	payload := publicTunnelWithFirewall(tunnel, app.TunnelStatus{}, firewallSummary{}, nil, map[string]clientTrafficSummary{
-		"client-1": {Enabled: true, RxTotal: 1024, TxTotal: 2048},
+		"client-1": {Enabled: true, RxTotal: 1024, TxTotal: 2048, LimitBytes: uint64Ptr(4096)},
 	})
 	clients := payload["clients"].([]map[string]any)
 	traffic := clients[0]["traffic"].(map[string]any)
 	if traffic["enabled"] != true || traffic["rx_total"] != uint64(1024) || traffic["tx_total"] != uint64(2048) {
 		t.Fatalf("client traffic = %#v, want enabled totals", traffic)
 	}
-	if traffic["limit_bytes"] != nil {
-		t.Fatalf("limit_bytes = %#v, want nil until quotas exist", traffic["limit_bytes"])
+	if traffic["limit_bytes"] != uint64(4096) {
+		t.Fatalf("limit_bytes = %#v, want 4096", traffic["limit_bytes"])
+	}
+	if traffic["exceeded"] != false {
+		t.Fatalf("exceeded = %#v, want false", traffic["exceeded"])
+	}
+	payload = publicTunnelWithFirewall(tunnel, app.TunnelStatus{}, firewallSummary{}, nil, map[string]clientTrafficSummary{
+		"client-1": {Enabled: true, RxTotal: 3072, TxTotal: 1024, LimitBytes: uint64Ptr(4096), Exceeded: true},
+	})
+	clients = payload["clients"].([]map[string]any)
+	traffic = clients[0]["traffic"].(map[string]any)
+	if traffic["exceeded"] != true {
+		t.Fatalf("exceeded = %#v, want true", traffic["exceeded"])
 	}
 }
 

@@ -3,12 +3,14 @@
     "ui:dev": "vite --host 127.0.0.1 --port 51923 --config web/vite.config.ts",
     "ui:build": "vite build --config web/vite.config.ts",
     "ui:check": "tsc --noEmit -p web/tsconfig.json",
-    "ui:lint": "deno lint web/src"
+    "ui:lint": "deno lint web/src",
+    "quality:aislop": "aislop ci"
   },
   "devDependencies": {
     "@preact/preset-vite": "^2.10.2",
+    "aislop": "^0.13.1",
     "preact": "^10.26.9",
-    "vite": "^6.3.5",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5"
   }
 }

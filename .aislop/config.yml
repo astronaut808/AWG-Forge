@@ -1,0 +1,10 @@
+exclude:
+  # Generated Vite assets are reproducible build output. Scan the sources in web/src instead.
+  - internal/server/static/assets
+  - internal/server/static/index.html
+  # Locale dictionaries intentionally duplicate the EN/RU object shape and contain UI labels
+  # such as "Backup password"; Aislop reports those as duplicate code / hardcoded secrets.
+  - web/src/i18n.ts
+
+ci:
+  failBelow: 80

@@ -59,6 +59,8 @@ AmneziaWG/WireGuard does not keep a permanent TCP-like connection, so `active no
 
 If SQLite is enabled, client rows show total recorded traffic. `Maintenance` -> `Traffic` shows aggregate traffic history for today, 7 days, and 30 days across all clients and tunnels. Values are sampled from runtime counters once per minute; the first sample is treated as a baseline.
 
+When SQLite is enabled, client settings also include an optional traffic limit in GiB. Empty means unlimited. When recorded traffic reaches the limit, awg-forge disables the client and the row shows `limit exceeded`. Increase or clear the limit, then enable the client again.
+
 When runtime reports a handshake, awg-forge persists that the client has connected before and stores the latest handshake time in `state.json`. After an interface restart, the client may show `last seen` until a fresh runtime handshake appears.
 
 Doctor may warn about clients with no handshake yet. This is useful for spotting unused or wrongly imported configs, but it does not mean the whole tunnel is broken when other clients on the same tunnel work.
