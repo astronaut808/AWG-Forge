@@ -109,7 +109,7 @@ function App() {
 
   useEffect(() => {
     if (!liveUpdatesEnabled) return undefined;
-    let fallback = 0;
+    let fallback: ReturnType<typeof globalThis.setInterval> | null = null;
     const events = new EventSource("/api/events");
     events.addEventListener("state", (event) => {
       try {

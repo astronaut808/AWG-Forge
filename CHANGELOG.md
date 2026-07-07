@@ -12,6 +12,10 @@
 - Hardened Maintenance log polling and tunnel egress mode rendering to cover the UI behavior reported in [#41](https://github.com/astronaut808/AWG-Forge/issues/41).
 - Improved Web UI session-expiry handling so an expired session closes stale modals, clears the cached dashboard state, and returns to login.
 
+### Changed
+
+- Added an Aislop project config and CI quality gate that exclude generated Web UI assets and locale dictionaries from Aislop-only noise while keeping source quality warnings visible.
+
 ## v0.15.0 - 2026-07-05
 
 ### Added
