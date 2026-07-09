@@ -30,7 +30,7 @@ Tunnel actions:
 Maintenance actions are available through the `Maintenance` button:
 
 - `Overview`: overall runtime, clients, firewall, and recovery status.
-- `Doctor`: system and runtime diagnostics grouped by OK/WARN/FAIL.
+- `Doctor`: system and runtime diagnostics grouped by category, with OK/WARN/FAIL status per check.
 - `Firewall`: managed firewall rule status per tunnel and repair action.
 - `Backup`: download an encrypted backup with a dedicated password.
 - `Restore`: verify an `.afbackup` through a dry-run without writing to `CONFIG_DIR`; actual restore remains CLI-only.
@@ -59,7 +59,9 @@ AmneziaWG/WireGuard does not keep a permanent TCP-like connection, so `active no
 
 If SQLite is enabled, client rows show total recorded traffic. `Maintenance` -> `Traffic` shows aggregate traffic history for today, 7 days, and 30 days across all clients and tunnels. Values are sampled from runtime counters once per minute; the first sample is treated as a baseline.
 
-When SQLite is enabled, client settings also include an optional traffic limit in GiB. Empty means unlimited. When recorded traffic reaches the limit, awg-forge disables the client and the row shows `limit exceeded`. Attempts to enable the client are rejected while the recorded total is still over the limit. Increase or clear the limit, then enable the client again.
+When SQLite is enabled, client creation and client settings include an optional traffic limit. `Unlimited` means no limit; `Limit` accepts MiB, GiB, or TiB. When recorded traffic reaches the limit, awg-forge disables the client and the row shows `limit exceeded`. Attempts to enable the client are rejected while the recorded total is still over the limit. Increase or clear the limit, then enable the client again.
+
+Doctor also warns about clients whose recorded traffic already exceeds their configured limit.
 
 When runtime reports a handshake, awg-forge persists that the client has connected before and stores the latest handshake time in `state.json`. After an interface restart, the client may show `last seen` until a fresh runtime handshake appears.
 

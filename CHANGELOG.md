@@ -16,6 +16,9 @@
 ### Changed
 
 - Added an Aislop project config and CI quality gate that exclude generated Web UI assets and locale dictionaries from Aislop-only noise while keeping source quality warnings visible.
+- Grouped Doctor output by diagnostic category in CLI, Web UI, and support bundles without changing the underlying checks.
+- Added Doctor warnings for clients whose recorded SQLite traffic exceeds their configured traffic limit.
+- Added traffic-limit selection during client creation and MiB/GiB/TiB units in client traffic-limit forms.
 
 ## v0.15.0 - 2026-07-05
 

@@ -19,19 +19,21 @@ import (
 	"github.com/astronaut808/awg-forge/internal/sqldb"
 )
 
-type Result struct {
-	Level   string `json:"level"`
-	Area    string `json:"area"`
-	Message string `json:"message"`
-}
-
 func Run(cfg config.Config, service *app.Service) error {
-	for _, result := range Check(cfg, service) {
-		fmt.Printf("%-4s %s", strings.ToUpper(result.Level), result.Area)
-		if result.Message != "" {
-			fmt.Printf(": %s", result.Message)
+	for groupIndex, group := range GroupResults(Check(cfg, service)) {
+		if groupIndex > 0 {
+			fmt.Println()
 		}
-		fmt.Println()
+		if group.Category != "" {
+			fmt.Println(strings.ToUpper(group.Category))
+		}
+		for _, result := range group.Results {
+			fmt.Printf("%-4s %s", strings.ToUpper(result.Level), result.Area)
+			if result.Message != "" {
+				fmt.Printf(": %s", result.Message)
+			}
+			fmt.Println()
+		}
 	}
 	return nil
 }
@@ -40,9 +42,9 @@ func Check(cfg config.Config, service *app.Service) []Result {
 	c := checker{}
 	state, err := service.Init()
 	if err != nil {
-		c.fail("state", err.Error())
+		c.fail(categorySystem, "state", err.Error())
 	} else {
-		c.ok("state", "initialized")
+		c.ok(categorySystem, "state", "initialized")
 	}
 	c.checkRoot()
 	c.checkPath("/dev/net/tun")
@@ -60,10 +62,11 @@ func Check(cfg config.Config, service *app.Service) []Result {
 	c.checkRPFilter("external interface", cfg.ExternalInterface)
 	c.checkDir(cfg.ConfigDir)
 	c.checkDatabase(cfg)
+	c.checkTrafficLimits(cfg, state)
 	c.checkSessionCookie(cfg)
 	c.checkLegacyTunnelEnv(cfg, state)
 	if !cfg.ApplyConfig {
-		c.warn("apply", "APPLY_CONFIG=false; configs render but tunnels are not applied automatically")
+		c.warn(categorySystem, "apply", "APPLY_CONFIG=false; configs render but tunnels are not applied automatically")
 	}
 	c.checkWarp(cfg, state)
 	for _, tunnel := range state.Tunnels {
@@ -74,17 +77,17 @@ func Check(cfg config.Config, service *app.Service) []Result {
 			c.checkRPFilter("tunnel "+tunnel.Name, tunnel.InterfaceName)
 		}
 		if !config.PortInRanges(tunnel.ListenPort, cfg.PublishedUDPPorts) {
-			c.warn("Docker ports "+tunnel.Name, fmt.Sprintf("listen port %d is outside PUBLISHED_UDP_PORTS=%s", tunnel.ListenPort, cfg.PublishedUDPPorts))
+			c.warn(categoryNetwork, "Docker ports "+tunnel.Name, fmt.Sprintf("listen port %d is outside PUBLISHED_UDP_PORTS=%s", tunnel.ListenPort, cfg.PublishedUDPPorts))
 		}
 		if _, err := render.ServerConfig(state, tunnel); err != nil {
-			c.fail("render "+tunnel.Name, err.Error())
+			c.fail(categoryTunnels, "render "+tunnel.Name, err.Error())
 		} else {
-			c.ok("render "+tunnel.Name, "server config renders")
+			c.ok(categoryTunnels, "render "+tunnel.Name, "server config renders")
 		}
 		if cfg.ApplyConfig {
 			c.checkFirewallRules(cfg, tunnel)
 		} else {
-			c.warn("firewall "+tunnel.Name, "APPLY_CONFIG=false; firewall runtime rules are not expected")
+			c.warn(categoryFirewall, "firewall "+tunnel.Name, "APPLY_CONFIG=false; firewall runtime rules are not expected")
 		}
 		c.checkTunnelRuntime(tunnel)
 	}
@@ -99,21 +102,25 @@ func (c *checker) checkDatabase(cfg config.Config) {
 	defer cancel()
 	status, err := sqldb.Check(ctx, cfg)
 	if err != nil {
-		c.fail("database", err.Error())
+		c.fail(categoryDatabase, "database", err.Error())
 		return
 	}
 	if !status.Exists {
-		c.warn("database", fmt.Sprintf("%s database is enabled but %s does not exist; run awg-forge db migrate", status.Mode, status.Path))
+		c.warn(categoryDatabase, "database", fmt.Sprintf("%s database is enabled but %s does not exist; run awg-forge db migrate", status.Mode, status.Path))
 		return
 	}
-	c.ok("database", fmt.Sprintf("%s schema=%d journal=%s", status.Mode, status.SchemaVersion, status.JournalMode))
+	if status.SchemaVersion < sqldb.CurrentSchemaVersion {
+		c.warn(categoryDatabase, "database", fmt.Sprintf("%s schema=%d is older than expected schema=%d; run awg-forge db migrate", status.Mode, status.SchemaVersion, sqldb.CurrentSchemaVersion))
+		return
+	}
+	c.ok(categoryDatabase, "database", fmt.Sprintf("%s schema=%d journal=%s", status.Mode, status.SchemaVersion, status.JournalMode))
 }
 
 func (c *checker) checkLegacyTunnelEnv(cfg config.Config, state config.State) {
 	if !cfg.LegacyTunnelEnvPresent() || len(state.Tunnels) == 0 {
 		return
 	}
-	c.warn("legacy tunnel env", "state.json is initialized; remove ignored tunnel variables from .env after verifying UI settings: "+strings.Join(cfg.LegacyTunnelEnvVars, ", "))
+	c.warn(categorySystem, "legacy tunnel env", "state.json is initialized; remove ignored tunnel variables from .env after verifying UI settings: "+strings.Join(cfg.LegacyTunnelEnvVars, ", "))
 }
 
 func (c *checker) checkWarp(cfg config.Config, state config.State) {
@@ -125,23 +132,23 @@ func (c *checker) checkWarp(cfg config.Config, state config.State) {
 	}
 	if warpTunnels == 0 {
 		if state.Warp.Configured() {
-			c.ok("warp", "configured but no enabled tunnels use WARP")
+			c.ok(categoryWarp, "warp", "configured but no enabled tunnels use WARP")
 		}
 		return
 	}
 	if !state.Warp.Configured() {
-		c.fail("warp", fmt.Sprintf("%d enabled tunnel(s) require WARP, but WARP config is not imported", warpTunnels))
+		c.fail(categoryWarp, "warp", fmt.Sprintf("%d enabled tunnel(s) require WARP, but WARP config is not imported", warpTunnels))
 		return
 	}
 	interfaceName := state.Warp.RuntimeInterface()
 	if cfg.ApplyConfig {
 		if err := exec.Command("ip", "link", "show", interfaceName).Run(); err != nil {
-			c.fail("warp runtime", interfaceName+" link is missing")
+			c.fail(categoryWarp, "warp runtime", interfaceName+" link is missing")
 		} else {
-			c.ok("warp runtime", interfaceName+" link exists")
+			c.ok(categoryWarp, "warp runtime", interfaceName+" link exists")
 		}
 	}
-	c.ok("warp config", fmt.Sprintf("%s configured for %d enabled tunnel(s)", interfaceName, warpTunnels))
+	c.ok(categoryWarp, "warp config", fmt.Sprintf("%s configured for %d enabled tunnel(s)", interfaceName, warpTunnels))
 	for _, tunnel := range state.Tunnels {
 		if !tunnel.Enabled || tunnel.EgressMode != config.EgressWarp {
 			continue
@@ -155,15 +162,15 @@ func (c *checker) checkWarp(cfg config.Config, state config.State) {
 func (c *checker) checkIPRule(tunnel config.Tunnel) {
 	out, err := exec.Command("ip", "rule", "show").CombinedOutput()
 	if err != nil {
-		c.fail("warp rule "+tunnel.Name, strings.TrimSpace(string(out)))
+		c.fail(categoryWarp, "warp rule "+tunnel.Name, strings.TrimSpace(string(out)))
 		return
 	}
 	needle := "from " + tunnel.IPv4Subnet + " lookup 200"
 	if strings.Contains(string(out), needle) {
-		c.ok("warp rule "+tunnel.Name, needle)
+		c.ok(categoryWarp, "warp rule "+tunnel.Name, needle)
 		return
 	}
-	c.fail("warp rule "+tunnel.Name, "missing policy rule "+needle)
+	c.fail(categoryWarp, "warp rule "+tunnel.Name, "missing policy rule "+needle)
 }
 
 type checker struct {
@@ -172,70 +179,70 @@ type checker struct {
 
 func (c *checker) checkRoot() {
 	if os.Geteuid() == 0 {
-		c.ok("runtime", "running as root")
+		c.ok(categorySystem, "runtime", "running as root")
 	} else {
-		c.warn("runtime", "not running as root; container must have NET_ADMIN and /dev/net/tun")
+		c.warn(categorySystem, "runtime", "not running as root; container must have NET_ADMIN and /dev/net/tun")
 	}
 }
 
 func (c *checker) checkSessionCookie(cfg config.Config) {
 	switch cfg.SessionCookieSecure {
 	case "false":
-		c.warn("session cookie", "SESSION_COOKIE_SECURE=false; use only for trusted HTTP admin access")
+		c.warn(categorySecurity, "session cookie", "SESSION_COOKIE_SECURE=false; use only for trusted HTTP admin access")
 	case "true":
-		c.ok("session cookie", "Secure always enabled")
+		c.ok(categorySecurity, "session cookie", "Secure always enabled")
 	default:
-		c.ok("session cookie", "auto Secure policy")
+		c.ok(categorySecurity, "session cookie", "auto Secure policy")
 	}
 }
 
 func (c *checker) checkPath(path string) {
 	if _, err := os.Stat(path); err != nil {
-		c.fail(path, err.Error())
+		c.fail(categorySystem, path, err.Error())
 	} else {
-		c.ok(path, "exists")
+		c.ok(categorySystem, path, "exists")
 	}
 }
 
 func (c *checker) checkCommand(name string) {
 	if _, err := exec.LookPath(name); err != nil {
-		c.fail(name, "not found in PATH")
+		c.fail(categorySystem, name, "not found in PATH")
 	} else {
-		c.ok(name, "found")
+		c.ok(categorySystem, name, "found")
 	}
 }
 
 func (c *checker) checkIPTables() {
 	out, err := exec.Command("iptables", "-V").CombinedOutput()
 	if err != nil {
-		c.fail("iptables -V", err.Error())
+		c.fail(categoryFirewall, "iptables -V", err.Error())
 		return
 	}
 	if strings.Contains(string(out), "nf_tables") {
-		c.ok("iptables", "uses nf_tables")
+		c.ok(categoryFirewall, "iptables", "uses nf_tables")
 	} else {
-		c.warn("iptables", "does not report nf_tables backend: "+strings.TrimSpace(string(out)))
+		c.warn(categoryFirewall, "iptables", "does not report nf_tables backend: "+strings.TrimSpace(string(out)))
 	}
 }
 
 func (c *checker) checkForwarding() {
 	b, err := os.ReadFile("/proc/sys/net/ipv4/ip_forward")
 	if err != nil {
-		c.fail("IPv4 forwarding", err.Error())
+		c.fail(categoryNetwork, "IPv4 forwarding", err.Error())
 		return
 	}
 	if strings.TrimSpace(string(b)) == "1" {
-		c.ok("IPv4 forwarding", "enabled")
+		c.ok(categoryNetwork, "IPv4 forwarding", "enabled")
 	} else {
-		c.fail("IPv4 forwarding", "net.ipv4.ip_forward is not 1")
+		c.fail(categoryNetwork, "IPv4 forwarding", "net.ipv4.ip_forward is not 1")
 	}
 }
 
 func (c *checker) checkInterface(name string) {
 	if _, err := net.InterfaceByName(name); err != nil {
-		c.fail("external interface", err.Error())
+		c.fail(categoryNetwork, "external interface", err.Error())
 	} else {
-		c.ok("external interface", name+" exists")
+		c.ok(categoryNetwork, "external interface", name+" exists")
 	}
 }
 
@@ -246,19 +253,19 @@ func (c *checker) checkExternalRoute(interfaceName string) {
 		if msg == "" {
 			msg = err.Error()
 		}
-		c.fail("external route", "ip route get 1.1.1.1 failed: "+msg)
+		c.fail(categoryNetwork, "external route", "ip route get 1.1.1.1 failed: "+msg)
 		return
 	}
 	dev := parseRouteDev(string(out))
 	if dev == "" {
-		c.warn("external route", "could not detect egress interface from ip route get 1.1.1.1")
+		c.warn(categoryNetwork, "external route", "could not detect egress interface from ip route get 1.1.1.1")
 		return
 	}
 	if dev != interfaceName {
-		c.fail("external route", fmt.Sprintf("IPv4 egress uses %s, but EXTERNAL_INTERFACE=%s", dev, interfaceName))
+		c.fail(categoryNetwork, "external route", fmt.Sprintf("IPv4 egress uses %s, but EXTERNAL_INTERFACE=%s", dev, interfaceName))
 		return
 	}
-	c.ok("external route", "IPv4 egress uses "+dev)
+	c.ok(categoryNetwork, "external route", "IPv4 egress uses "+dev)
 }
 
 func parseRouteDev(out string) string {
@@ -275,19 +282,19 @@ func (c *checker) checkRPFilter(area, interfaceName string) {
 	path := filepath.Join("/proc/sys/net/ipv4/conf", interfaceName, "rp_filter")
 	b, err := os.ReadFile(path)
 	if err != nil {
-		c.warn("rp_filter "+area, "could not read "+path+": "+err.Error())
+		c.warn(categoryNetwork, "rp_filter "+area, "could not read "+path+": "+err.Error())
 		return
 	}
 	value := strings.TrimSpace(string(b))
 	switch value {
 	case "0":
-		c.ok("rp_filter "+area, "disabled")
+		c.ok(categoryNetwork, "rp_filter "+area, "disabled")
 	case "1":
-		c.warn("rp_filter "+area, "strict mode may drop asymmetric VPN traffic")
+		c.warn(categoryNetwork, "rp_filter "+area, "strict mode may drop asymmetric VPN traffic")
 	case "2":
-		c.ok("rp_filter "+area, "loose mode")
+		c.ok(categoryNetwork, "rp_filter "+area, "loose mode")
 	default:
-		c.warn("rp_filter "+area, "unexpected value "+value)
+		c.warn(categoryNetwork, "rp_filter "+area, "unexpected value "+value)
 	}
 }
 
@@ -296,32 +303,32 @@ func (c *checker) checkPort(tunnel config.Tunnel) {
 	conn, err := net.ListenPacket("udp4", fmt.Sprintf(":%d", port))
 	if err != nil {
 		if awgPortMatches(tunnel.InterfaceName, port) {
-			c.ok("UDP "+tunnel.Name, fmt.Sprintf("listen port %d is already owned by %s", port, tunnel.InterfaceName))
+			c.ok(categoryTunnels, "UDP "+tunnel.Name, fmt.Sprintf("listen port %d is already owned by %s", port, tunnel.InterfaceName))
 			return
 		}
-		c.fail("UDP "+tunnel.Name, err.Error())
+		c.fail(categoryTunnels, "UDP "+tunnel.Name, err.Error())
 		return
 	}
 	_ = conn.Close()
-	c.ok("UDP "+tunnel.Name, fmt.Sprintf("listen port %d available", port))
+	c.ok(categoryTunnels, "UDP "+tunnel.Name, fmt.Sprintf("listen port %d available", port))
 }
 
 func (c *checker) checkUDPListener(tunnel config.Tunnel) {
 	if _, err := exec.LookPath("ss"); err != nil {
-		c.warn("UDP "+tunnel.Name+"/listener", "ss not found; cannot inspect UDP socket owner")
+		c.warn(categoryTunnels, "UDP "+tunnel.Name+"/listener", "ss not found; cannot inspect UDP socket owner")
 		return
 	}
 	out, err := exec.Command("ss", "-H", "-lunp", "sport", "=", ":"+strconv.Itoa(tunnel.ListenPort)).CombinedOutput()
 	if err != nil {
-		c.warn("UDP "+tunnel.Name+"/listener", "ss failed: "+strings.TrimSpace(string(out)))
+		c.warn(categoryTunnels, "UDP "+tunnel.Name+"/listener", "ss failed: "+strings.TrimSpace(string(out)))
 		return
 	}
 	line := firstNonEmptyLine(string(out))
 	if line == "" {
-		c.warn("UDP "+tunnel.Name+"/listener", fmt.Sprintf("no UDP listener reported for %d/udp; tunnel may not be applied", tunnel.ListenPort))
+		c.warn(categoryTunnels, "UDP "+tunnel.Name+"/listener", fmt.Sprintf("no UDP listener reported for %d/udp; tunnel may not be applied", tunnel.ListenPort))
 		return
 	}
-	c.ok("UDP "+tunnel.Name+"/listener", redactProcessLine(line))
+	c.ok(categoryTunnels, "UDP "+tunnel.Name+"/listener", redactProcessLine(line))
 }
 
 func firstNonEmptyLine(out string) string {
@@ -348,14 +355,14 @@ func redactProcessLine(line string) string {
 func (c *checker) checkRuntimeConfig(tunnel config.Tunnel) {
 	path := filepath.Join("/etc/amnezia/amneziawg", tunnel.InterfaceName+".conf")
 	if _, err := os.Stat(path); err != nil {
-		c.fail("runtime config "+tunnel.Name, err.Error())
+		c.fail(categoryTunnels, "runtime config "+tunnel.Name, err.Error())
 		return
 	}
 	if err := exec.Command("awg-quick", "strip", path).Run(); err != nil {
-		c.fail("runtime config "+tunnel.Name, "awg-quick strip failed; check rendered runtime config syntax")
+		c.fail(categoryTunnels, "runtime config "+tunnel.Name, "awg-quick strip failed; check rendered runtime config syntax")
 		return
 	}
-	c.ok("runtime config "+tunnel.Name, "exists and awg-quick strip succeeds")
+	c.ok(categoryTunnels, "runtime config "+tunnel.Name, "exists and awg-quick strip succeeds")
 }
 
 func (c *checker) checkFirewallRules(cfg config.Config, tunnel config.Tunnel) {
@@ -364,13 +371,13 @@ func (c *checker) checkFirewallRules(cfg config.Config, tunnel config.Tunnel) {
 		area := "firewall " + tunnel.Name + "/" + result.Rule
 		switch result.Status {
 		case "ok":
-			c.ok(area, result.Spec)
+			c.ok(categoryFirewall, area, result.Spec)
 		case "duplicate":
-			c.warn(area, fmt.Sprintf("duplicate managed rule count=%d; run awg-forge firewall repair", result.Count))
+			c.warn(categoryFirewall, area, fmt.Sprintf("duplicate managed rule count=%d; run awg-forge firewall repair", result.Count))
 		case "missing":
-			c.fail(area, "missing managed rule; run awg-forge firewall repair")
+			c.fail(categoryFirewall, area, "missing managed rule; run awg-forge firewall repair")
 		default:
-			c.fail(area, result.Message)
+			c.fail(categoryFirewall, area, result.Message)
 		}
 	}
 }
@@ -386,39 +393,39 @@ func awgPortMatches(interfaceName string, port int) bool {
 func (c *checker) checkTunnelRuntime(tunnel config.Tunnel) {
 	area := "runtime " + tunnel.Name
 	if tunnel.LastApplyError != "" {
-		c.fail(area, "last apply error: "+tunnel.LastApplyError)
+		c.fail(categoryTunnels, area, "last apply error: "+tunnel.LastApplyError)
 	}
 	linkExists := false
 	if tunnel.Enabled {
 		if exec.Command("ip", "link", "show", tunnel.InterfaceName).Run() == nil {
 			linkExists = true
-			c.ok(area, tunnel.InterfaceName+" link exists")
+			c.ok(categoryTunnels, area, tunnel.InterfaceName+" link exists")
 		} else {
-			c.fail(area, tunnel.InterfaceName+" link is not up; restart tunnel or check apply logs")
+			c.fail(categoryTunnels, area, tunnel.InterfaceName+" link is not up; restart tunnel or check apply logs")
 		}
 	} else {
-		c.warn(area, "tunnel disabled")
+		c.warn(categoryTunnels, area, "tunnel disabled")
 	}
 	if tunnel.ProtocolProfileID == "awg_2_0" {
-		c.ok("compat "+tunnel.Name, "AWG 2.0 requires compatible AmneziaVPN clients; use .conf import")
+		c.ok(categoryTunnels, "compat "+tunnel.Name, "AWG 2.0 requires compatible AmneziaVPN clients; use .conf import")
 	}
 	show, err := awgShow(tunnel.InterfaceName)
 	if err != nil {
 		if linkExists && isProtocolNotSupported(err.Error()) {
-			c.fail("runtime "+tunnel.Name+"/awg", tunnel.InterfaceName+" link exists, but awg cannot access it: Protocol not supported; restart tunnel or remove stale link")
+			c.fail(categoryTunnels, "runtime "+tunnel.Name+"/awg", tunnel.InterfaceName+" link exists, but awg cannot access it: Protocol not supported; restart tunnel or remove stale link")
 			return
 		}
 		if tunnel.Enabled {
-			c.fail("awg "+tunnel.Name, err.Error())
+			c.fail(categoryTunnels, "awg "+tunnel.Name, err.Error())
 		} else {
-			c.warn("awg "+tunnel.Name, err.Error())
+			c.warn(categoryTunnels, "awg "+tunnel.Name, err.Error())
 		}
 		return
 	}
 	if show.ListenPort == tunnel.ListenPort {
-		c.ok("awg "+tunnel.Name, fmt.Sprintf("runtime listen port %d matches state", show.ListenPort))
+		c.ok(categoryTunnels, "awg "+tunnel.Name, fmt.Sprintf("runtime listen port %d matches state", show.ListenPort))
 	} else {
-		c.fail("awg "+tunnel.Name, fmt.Sprintf("runtime listen port %d does not match state %d", show.ListenPort, tunnel.ListenPort))
+		c.fail(categoryTunnels, "awg "+tunnel.Name, fmt.Sprintf("runtime listen port %d does not match state %d", show.ListenPort, tunnel.ListenPort))
 	}
 	for _, client := range tunnel.Clients {
 		c.checkClientRuntime(tunnel, client, show)
@@ -428,36 +435,36 @@ func (c *checker) checkTunnelRuntime(tunnel config.Tunnel) {
 func (c *checker) checkClientRuntime(tunnel config.Tunnel, client config.Client, show awgInterface) {
 	area := "peer " + tunnel.Name + "/" + client.Name
 	if !client.Enabled {
-		c.warn(area, "client disabled")
+		c.warn(categoryClients, area, "client disabled")
 		return
 	}
 	if config.ClientExpired(client, time.Now().UTC()) {
-		c.warn(area, "client expired")
+		c.warn(categoryClients, area, "client expired")
 		return
 	}
 	if tunnel.ConfigRevision > 0 && client.ConfigRevision < tunnel.ConfigRevision {
-		c.warn(area, "client config is stale; download and import a fresh .conf")
+		c.warn(categoryClients, area, "client config is stale; download and import a fresh .conf")
 	}
 	peer, ok := show.Peers[client.PublicKey]
 	if !ok {
-		c.fail(area, "enabled client is missing from runtime peers; restart tunnel or check render/apply")
+		c.fail(categoryClients, area, "enabled client is missing from runtime peers; restart tunnel or check render/apply")
 		return
 	}
 	if peer.AllowedIPs != "" && !strings.Contains(peer.AllowedIPs, client.IPv4Address+"/32") {
-		c.fail(area, "runtime allowed IPs do not include "+client.IPv4Address+"/32")
+		c.fail(categoryClients, area, "runtime allowed IPs do not include "+client.IPv4Address+"/32")
 	} else {
-		c.ok(area, "runtime peer present")
+		c.ok(categoryClients, area, "runtime peer present")
 	}
 	if peer.LatestHandshake != "" {
 		msg := "latest handshake " + peer.LatestHandshake
 		if peer.Transfer != "" {
 			msg += "; transfer " + peer.Transfer
 		}
-		c.ok(area+" handshake", msg)
+		c.ok(categoryClients, area+" handshake", msg)
 	} else if peer.Transfer != "" && peer.Transfer != "0 B received, 0 B sent" {
-		c.warn(area+" handshake", "no latest handshake reported by awg show, but transfer counters exist: "+peer.Transfer)
+		c.warn(categoryClients, area+" handshake", "no latest handshake reported by awg show, but transfer counters exist: "+peer.Transfer)
 	} else {
-		c.warn(area+" handshake", "no handshake yet; check client import, UDP reachability, and published port "+strconv.Itoa(tunnel.ListenPort)+"/udp")
+		c.warn(categoryClients, area+" handshake", "no handshake yet; check client import, UDP reachability, and published port "+strconv.Itoa(tunnel.ListenPort)+"/udp")
 	}
 }
 
@@ -527,24 +534,24 @@ func parseAWGShow(out string) awgInterface {
 func (c *checker) checkDir(dir string) {
 	info, err := os.Stat(dir)
 	if err != nil {
-		c.fail("config directory", err.Error())
+		c.fail(categorySecurity, "config directory", err.Error())
 		return
 	}
 	if info.Mode().Perm() == 0700 {
-		c.ok("config directory", "permissions 0700")
+		c.ok(categorySecurity, "config directory", "permissions 0700")
 	} else {
-		c.warn("config directory", fmt.Sprintf("permissions are %o, expected 0700", info.Mode().Perm()))
+		c.warn(categorySecurity, "config directory", fmt.Sprintf("permissions are %o, expected 0700", info.Mode().Perm()))
 	}
 }
 
-func (c *checker) ok(area, msg string) {
-	c.results = append(c.results, Result{Level: "ok", Area: area, Message: msg})
+func (c *checker) ok(category, area, msg string) {
+	c.results = append(c.results, Result{Level: "ok", Category: category, Area: area, Message: msg})
 }
 
-func (c *checker) warn(area, msg string) {
-	c.results = append(c.results, Result{Level: "warn", Area: area, Message: msg})
+func (c *checker) warn(category, area, msg string) {
+	c.results = append(c.results, Result{Level: "warn", Category: category, Area: area, Message: msg})
 }
 
-func (c *checker) fail(area, msg string) {
-	c.results = append(c.results, Result{Level: "fail", Area: area, Message: msg})
+func (c *checker) fail(category, area, msg string) {
+	c.results = append(c.results, Result{Level: "fail", Category: category, Area: area, Message: msg})
 }

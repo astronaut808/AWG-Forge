@@ -111,10 +111,10 @@ export function regenerateProtocol(id: string, profile: string) {
   });
 }
 
-export function createClient(tunnelID: string, name: string, expiresAt: string) {
+export function createClient(tunnelID: string, name: string, expiresAt: string, trafficLimitBytes: number | null) {
   return request<{ client: { id: string } }>("/api/clients", {
     method: "POST",
-    body: { tunnel_id: tunnelID, name, expires_at: expiresAt },
+    body: { tunnel_id: tunnelID, name, expires_at: expiresAt, traffic_limit_bytes: trafficLimitBytes },
     idempotencyKey: newIdempotencyKey(),
   });
 }

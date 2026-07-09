@@ -43,6 +43,7 @@ type Modal =
 
 type MaintenanceTab = "overview" | "doctor" | "firewall" | "warp" | "backup" | "restore" | "updates" | "support" | "logs" | "traffic" | "system";
 type QRImportMode = "amneziavpn" | "amneziawg";
+type TrafficLimitUnit = "mib" | "gib" | "tib";
 
 const themeKey = "awg-forge.theme";
 const dashboardFilterKey = "awg-forge.dashboard-filter";
@@ -498,7 +499,7 @@ function ModalContent({ modal, state, notify, close, reload, runAction }: {
   if (modal.kind === "create-tunnel") return <CreateTunnelForm state={state} profile={modal.profile} runAction={runAction} />;
   if (modal.kind === "settings") return <TunnelSettingsForm state={state} tunnel={modal.tunnel} runAction={runAction} />;
   if (modal.kind === "protocol") return <ProtocolForm tunnel={modal.tunnel} runAction={runAction} />;
-  if (modal.kind === "create-client") return <CreateClientForm tunnel={modal.tunnel} runAction={runAction} />;
+  if (modal.kind === "create-client") return <CreateClientForm tunnel={modal.tunnel} trafficLimitsEnabled={state.database.enabled} runAction={runAction} />;
   if (modal.kind === "client-settings") return <ClientSettingsForm client={modal.client} runAction={runAction} />;
   if (modal.kind === "client-config") return <ClientConfigPanel client={modal.client} notify={notify} />;
   return <MaintenanceCenter state={state} notify={notify} close={close} reload={reload} />;
@@ -569,13 +570,14 @@ function ProtocolForm({ tunnel, runAction }: { tunnel: Tunnel; runAction: (label
   </Form>;
 }
 
-function CreateClientForm({ tunnel, runAction }: { tunnel: Tunnel; runAction: (label: string, fn: () => Promise<unknown>, options?: { reload?: boolean; close?: boolean }) => Promise<void> }) {
+function CreateClientForm({ tunnel, trafficLimitsEnabled, runAction }: { tunnel: Tunnel; trafficLimitsEnabled: boolean; runAction: (label: string, fn: () => Promise<unknown>, options?: { reload?: boolean; close?: boolean }) => Promise<void> }) {
   const { m } = useI18n();
   return <Form title={m.forms.createClientTitle} subtitle={`${tunnel.name} · ${tunnel.profile}`} submit={m.common.createClient} onSubmit={(form) => runAction(m.forms.clientCreatedOpenConfig, async () => {
-    await api.createClient(tunnel.id, field(form, "name"), expirationFromForm(form));
+    await api.createClient(tunnel.id, field(form, "name"), expirationFromForm(form), trafficLimitsEnabled ? trafficLimitBytesFromForm(form, m.forms.trafficLimitInvalid) : null);
   })}>
     <label>{m.forms.clientName}<input aria-label={m.forms.clientName} name="name" /></label>
     <ExpirationField />
+    {trafficLimitsEnabled && <TrafficLimitField />}
   </Form>;
 }
 
@@ -587,9 +589,33 @@ function ClientSettingsForm({ client, runAction }: { client: Client; runAction: 
   })}>
     <label>{m.forms.clientName}<input aria-label={m.forms.clientName} name="name" defaultValue={client.name} /></label>
     <ExpirationField current={client.expires_at} keepCurrent />
-    {client.traffic?.enabled && <label>{m.forms.trafficLimit}<input aria-label={m.forms.trafficLimit} name="traffic_limit_gib" type="number" min="0.001" step="0.001" inputMode="decimal" defaultValue={trafficLimitGiBValue(client.traffic.limit_bytes)} placeholder="∞" /><span class="help">{client.traffic.exceeded ? m.forms.trafficLimitExceededHelp : m.forms.trafficLimitHelp}</span></label>}
+    {client.traffic?.enabled && <TrafficLimitField limitBytes={client.traffic.limit_bytes} exceeded={client.traffic.exceeded} />}
     <label class="full">{m.forms.notes}<textarea aria-label={m.forms.notes} name="notes" maxLength={1000} defaultValue={client.notes || ""} /></label>
   </Form>;
+}
+
+function TrafficLimitField({ limitBytes, exceeded = false }: { limitBytes?: number | null; exceeded?: boolean }) {
+  const { m } = useI18n();
+  const initial = trafficLimitInitial(limitBytes);
+  const [mode, setMode] = useState(limitBytes ? "limit" : "unlimited");
+  return <div class="traffic-limit-field full">
+    <span class="field-title">{m.forms.trafficLimit}</span>
+    <div className={classNames("traffic-limit-row", mode === "unlimited" && "compact")}>
+      <select class="traffic-limit-mode" aria-label={m.forms.trafficLimit} name="traffic_limit_mode" value={mode} onInput={(event) => setMode((event.currentTarget as HTMLSelectElement).value)}>
+        <option value="unlimited">{m.forms.trafficLimitUnlimited}</option>
+        <option value="limit">{m.forms.trafficLimitLimited}</option>
+      </select>
+      {mode === "limit" && <>
+        <input class="traffic-limit-value" aria-label={m.forms.trafficLimitValue} name="traffic_limit_value" type="number" min="0.001" step="0.001" inputMode="decimal" defaultValue={initial.value} />
+        <select class="traffic-limit-unit" aria-label={m.forms.trafficLimitUnit} name="traffic_limit_unit" defaultValue={initial.unit}>
+          <option value="mib">MiB</option>
+          <option value="gib">GiB</option>
+          <option value="tib">TiB</option>
+        </select>
+      </>}
+    </div>
+    <span class="help">{exceeded ? m.forms.trafficLimitExceededHelp : m.forms.trafficLimitHelp}</span>
+  </div>;
 }
 
 function MTUField({ value }: { value: number }) {
@@ -1041,10 +1067,42 @@ function PanelTitle({ title, subtitle, children }: { title: string; subtitle: st
   return <div class="stack"><div class="modal-head"><div><h2>{title}</h2><p>{subtitle}</p></div></div>{children}</div>;
 }
 
-function ResultList({ results }: { results: Array<{ level: Level; area: string; message: string }> | null }) {
+type ResultListItem = { level: Level; category?: string; area: string; message: string };
+const doctorCategoryOrder = ["system", "security", "database", "network", "firewall", "tunnels", "clients", "warp"];
+
+function ResultList({ results }: { results: ResultListItem[] | null }) {
   const { m } = useI18n();
   if (!results) return <p>{m.maintenance.noResults}</p>;
+  const groups = groupResults(results);
+  if (groups.length > 1 || groups[0]?.category) {
+    return <div class="result-groups">{groups.map((group) => <section class="result-group" key={group.category || "results"}><h3>{doctorCategoryLabel(group.category, m)}</h3><ResultRows results={group.results} /></section>)}</div>;
+  }
+  return <ResultRows results={results} />;
+}
+
+function ResultRows({ results }: { results: ResultListItem[] }) {
   return <div class="list">{results.map((item) => <div class="row" key={`${item.area}-${item.message}`}><div><strong>{item.area}</strong><p>{item.message}</p></div><Badge tone={toneFromLevel(item.level)}>{item.level}</Badge></div>)}</div>;
+}
+
+function groupResults(results: ResultListItem[]): Array<{ category: string; results: ResultListItem[] }> {
+  const byCategory = new Map<string, ResultListItem[]>();
+  const unknownCategories: string[] = [];
+  for (const item of results) {
+    const category = item.category || "";
+    if (!byCategory.has(category) && !doctorCategoryOrder.includes(category)) {
+      unknownCategories.push(category);
+    }
+    byCategory.set(category, [...(byCategory.get(category) || []), item]);
+  }
+  return [...doctorCategoryOrder, ...unknownCategories]
+    .flatMap((category) => {
+      const group = byCategory.get(category);
+      return group?.length ? [{ category, results: group }] : [];
+    });
+}
+
+function doctorCategoryLabel(category: string, m: Messages): string {
+  return m.maintenance.doctorCategories[category as keyof typeof m.maintenance.doctorCategories] || category || m.maintenance.noResults;
 }
 
 function Empty({ title, text, action }: { title: string; text: string; action?: preact.ComponentChildren }) {
@@ -1106,19 +1164,39 @@ function expirationFromForm(form: HTMLFormElement, current = ""): string {
   return expirationValue(mode);
 }
 
-function trafficLimitGiBValue(value: number | null | undefined): string {
-  if (!value) return "";
-  return String(Number((value / 1024 / 1024 / 1024).toFixed(3)));
+function trafficLimitInitial(value: number | null | undefined): { value: string; unit: TrafficLimitUnit } {
+  if (!value) return { value: "", unit: "gib" };
+  const units: Array<{ unit: TrafficLimitUnit; bytes: number }> = [
+    { unit: "tib", bytes: 1024 * 1024 * 1024 * 1024 },
+    { unit: "gib", bytes: 1024 * 1024 * 1024 },
+    { unit: "mib", bytes: 1024 * 1024 },
+  ];
+  const selected = units.find((item) => value >= item.bytes && value % item.bytes === 0) || units.find((item) => value >= item.bytes) || units[2];
+  return { value: String(Number((value / selected.bytes).toFixed(3))), unit: selected.unit };
 }
 
 function trafficLimitBytesFromForm(form: HTMLFormElement, invalidMessage: string): number | null {
-  const raw = field(form, "traffic_limit_gib").replace(",", ".").trim();
-  if (!raw) return null;
-  const gib = Number(raw);
-  if (!Number.isFinite(gib) || gib <= 0) throw new Error(invalidMessage);
-  const bytes = Math.round(gib * 1024 * 1024 * 1024);
+  if (field(form, "traffic_limit_mode") !== "limit") return null;
+  const raw = field(form, "traffic_limit_value").replace(",", ".").trim();
+  const value = Number(raw);
+  if (!raw || !Number.isFinite(value) || value <= 0) throw new Error(invalidMessage);
+  const multiplier = trafficLimitUnitBytes(field(form, "traffic_limit_unit"));
+  if (multiplier <= 0) throw new Error(invalidMessage);
+  const bytes = Math.round(value * multiplier);
   if (bytes <= 0) throw new Error(invalidMessage);
   return bytes;
+}
+
+function trafficLimitUnitBytes(unit: string): number {
+  switch (unit) {
+    case "mib":
+      return 1024 * 1024;
+    case "tib":
+      return 1024 * 1024 * 1024 * 1024;
+    case "gib":
+      return 1024 * 1024 * 1024;
+  }
+  return 0;
 }
 
 function errorMessage(err: unknown, fallback = "request failed"): string {

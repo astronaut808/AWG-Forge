@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/zlib"
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -330,6 +331,204 @@ func TestUpdateClientTrafficLimitAPI(t *testing.T) {
 	}
 	if len(limits) != 0 {
 		t.Fatalf("limits after clear = %#v, want none", limits)
+	}
+}
+
+func TestCreateClientCanSetTrafficLimit(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Config{
+		ConfigDir:            dir,
+		TunnelName:           "awg0",
+		ServerHost:           "vpn.example.com",
+		ListenPort:           51820,
+		WebUIHost:            "127.0.0.1",
+		WebUIPort:            51821,
+		ExternalInterface:    "eth0",
+		IPv4Subnet:           "10.8.0.0/24",
+		DNS:                  "1.1.1.1",
+		AllowedIPs:           "0.0.0.0/0",
+		ProtocolProfile:      "awg_legacy_1_0",
+		DatabaseMode:         sqldb.ModeSQLite,
+		DatabasePath:         filepath.Join(dir, "awg-forge.db"),
+		DatabaseBusyTimeout:  5 * time.Second,
+		DatabaseQueryTimeout: 2 * time.Second,
+		DatabaseMaxOpenConns: 1,
+		DatabaseMaxIdleConns: 1,
+	}
+	if _, err := sqldb.Migrate(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	svc := app.New(cfg)
+	state, err := svc.Init()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tunnel := state.Tunnels[0]
+	w := &web{cfg: cfg, service: svc, idem: map[string]*idempotencyEntry{}}
+
+	r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/clients", strings.NewReader(`{"tunnel_id":"`+tunnel.ID+`","name":"phone","expires_at":"","traffic_limit_bytes":104857600}`))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Idempotency-Key", "create-with-limit")
+	r.Header.Set("Origin", "http://127.0.0.1")
+	rr := httptest.NewRecorder()
+	w.clientsAPI(rr, r)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status = %d body = %s", rr.Code, rr.Body.String())
+	}
+	limits, err := sqldb.ListClientTrafficLimits(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(limits) != 1 || limits[0].LimitBytes != 104857600 {
+		t.Fatalf("limits = %#v, want one 100 MiB limit", limits)
+	}
+}
+
+func TestCreateClientRejectsTrafficLimitWithoutDatabase(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Config{
+		ConfigDir:         dir,
+		TunnelName:        "awg0",
+		ServerHost:        "vpn.example.com",
+		ListenPort:        51820,
+		WebUIHost:         "127.0.0.1",
+		WebUIPort:         51821,
+		ExternalInterface: "eth0",
+		IPv4Subnet:        "10.8.0.0/24",
+		DNS:               "1.1.1.1",
+		AllowedIPs:        "0.0.0.0/0",
+		ProtocolProfile:   "awg_legacy_1_0",
+		DatabaseMode:      sqldb.ModeOff,
+	}
+	svc := app.New(cfg)
+	state, err := svc.Init()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tunnel := state.Tunnels[0]
+	w := &web{cfg: cfg, service: svc, idem: map[string]*idempotencyEntry{}}
+
+	r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/clients", strings.NewReader(`{"tunnel_id":"`+tunnel.ID+`","name":"phone","expires_at":"","traffic_limit_bytes":104857600}`))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Idempotency-Key", "create-with-limit-no-db")
+	r.Header.Set("Origin", "http://127.0.0.1")
+	rr := httptest.NewRecorder()
+	w.clientsAPI(rr, r)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body = %s", rr.Code, rr.Body.String())
+	}
+	state, err = svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Tunnels[0].Clients) != 0 {
+		t.Fatal("client should not be created when requested traffic limit cannot be stored")
+	}
+}
+
+func TestCreateClientRejectsTrafficLimitWithOldDatabaseSchema(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Config{
+		ConfigDir:            dir,
+		TunnelName:           "awg0",
+		ServerHost:           "vpn.example.com",
+		ListenPort:           51820,
+		WebUIHost:            "127.0.0.1",
+		WebUIPort:            51821,
+		ExternalInterface:    "eth0",
+		IPv4Subnet:           "10.8.0.0/24",
+		DNS:                  "1.1.1.1",
+		AllowedIPs:           "0.0.0.0/0",
+		ProtocolProfile:      "awg_legacy_1_0",
+		DatabaseMode:         sqldb.ModeSQLite,
+		DatabasePath:         filepath.Join(dir, "awg-forge.db"),
+		DatabaseBusyTimeout:  5 * time.Second,
+		DatabaseQueryTimeout: 2 * time.Second,
+		DatabaseMaxOpenConns: 1,
+		DatabaseMaxIdleConns: 1,
+	}
+	if _, err := sqldb.Migrate(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", cfg.DatabasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(context.Background(), "DELETE FROM schema_migrations WHERE version = ?", sqldb.CurrentSchemaVersion); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	svc := app.New(cfg)
+	state, err := svc.Init()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tunnel := state.Tunnels[0]
+	w := &web{cfg: cfg, service: svc, idem: map[string]*idempotencyEntry{}}
+
+	r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/clients", strings.NewReader(`{"tunnel_id":"`+tunnel.ID+`","name":"phone","expires_at":"","traffic_limit_bytes":104857600}`))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Idempotency-Key", "create-with-limit-old-schema")
+	r.Header.Set("Origin", "http://127.0.0.1")
+	rr := httptest.NewRecorder()
+	w.clientsAPI(rr, r)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body = %s", rr.Code, rr.Body.String())
+	}
+	state, err = svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Tunnels[0].Clients) != 0 {
+		t.Fatal("client should not be created when requested traffic limit cannot be stored")
+	}
+}
+
+func TestClientTrafficSummaryEnablesLimitSettingsWithoutHistory(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Config{
+		ConfigDir:            dir,
+		TunnelName:           "awg0",
+		ServerHost:           "vpn.example.com",
+		ListenPort:           51820,
+		WebUIHost:            "127.0.0.1",
+		WebUIPort:            51821,
+		ExternalInterface:    "eth0",
+		IPv4Subnet:           "10.8.0.0/24",
+		DNS:                  "1.1.1.1",
+		AllowedIPs:           "0.0.0.0/0",
+		ProtocolProfile:      "awg_legacy_1_0",
+		DatabaseMode:         sqldb.ModeSQLite,
+		DatabasePath:         filepath.Join(dir, "awg-forge.db"),
+		DatabaseBusyTimeout:  5 * time.Second,
+		DatabaseQueryTimeout: 2 * time.Second,
+		DatabaseMaxOpenConns: 1,
+		DatabaseMaxIdleConns: 1,
+	}
+	if _, err := sqldb.Migrate(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	svc := app.New(cfg)
+	client, err := svc.AddClient("phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	w := &web{cfg: cfg, service: svc}
+	traffic := w.clientTrafficSummary(context.Background(), state)
+	summary := traffic[client.TunnelID][client.ID]
+	if !summary.Enabled {
+		t.Fatal("client traffic summary should be enabled when sqlite is available, even before traffic history exists")
+	}
+	if summary.RxTotal != 0 || summary.TxTotal != 0 || summary.LimitBytes != nil || summary.Exceeded {
+		t.Fatalf("summary = %#v, want zero totals with no limit", summary)
 	}
 }
 
