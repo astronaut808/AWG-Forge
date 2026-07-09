@@ -8,9 +8,9 @@
 docker exec awg-forge awg-forge doctor
 ```
 
-Doctor проверяет:
-
 Вывод Doctor сгруппирован по диагностическим категориям: system, security, database, network, firewall, tunnels, clients и WARP.
+
+Doctor проверяет:
 
 - root/capabilities;
 - `/dev/net/tun`;
