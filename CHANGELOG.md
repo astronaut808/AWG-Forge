@@ -11,6 +11,7 @@
 
 - Hardened Maintenance log polling and tunnel egress mode rendering to cover the UI behavior reported in [#41](https://github.com/astronaut808/AWG-Forge/issues/41).
 - Improved Web UI session-expiry handling so an expired session closes stale modals, clears the cached dashboard state, and returns to login.
+- Blocked Web/API/CLI client re-enable attempts when the recorded traffic limit is still exceeded, avoiding misleading enabled-state results.
 
 ### Changed
 

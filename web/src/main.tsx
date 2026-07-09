@@ -152,7 +152,7 @@ function App() {
       if (options.reload !== false) await load({ quiet: true });
       notify(label);
     } catch (err) {
-      const message = errorMessage(err, m.common.requestFailed);
+      const message = actionErrorMessage(err, m);
       if (message.includes("apply failed")) {
         setModal(null);
         await load({ quiet: true });
@@ -1123,6 +1123,13 @@ function trafficLimitBytesFromForm(form: HTMLFormElement, invalidMessage: string
 
 function errorMessage(err: unknown, fallback = "request failed"): string {
   return err instanceof Error ? err.message : fallback;
+}
+
+function actionErrorMessage(err: unknown, m: Messages): string {
+  if (err instanceof api.APIError && err.status === 409 && err.message.includes("traffic limit exceeded")) {
+    return m.forms.trafficLimitEnableBlocked;
+  }
+  return errorMessage(err, m.common.requestFailed);
 }
 
 function clientStatusText(status: ReturnType<typeof activeLabel> | "expired", m: Messages): string {

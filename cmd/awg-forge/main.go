@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -71,7 +72,7 @@ func run(args []string) error {
 	case "db":
 		return runDB(cfg, args[1:])
 	case "client":
-		return runClient(svc, args[1:])
+		return runClient(cfg, svc, args[1:])
 	case "tunnel":
 		return runTunnel(svc, args[1:])
 	default:
@@ -132,7 +133,7 @@ func runTunnel(svc *app.Service, args []string) error {
 	return errors.New("usage: awg-forge tunnel restart | tunnel create <profile> [name] [port] [subnet]")
 }
 
-func runClient(svc *app.Service, args []string) error {
+func runClient(cfg config.Config, svc *app.Service, args []string) error {
 	if len(args) < 1 {
 		return usage()
 	}
@@ -164,6 +165,34 @@ func runClient(svc *app.Service, args []string) error {
 		if len(args) != 2 {
 			return errors.New("usage: awg-forge client enable <id>")
 		}
+		ctx, cancel := context.WithTimeout(context.Background(), cfg.DatabaseQueryTimeout)
+		defer cancel()
+		exceeded, found, err := cliTrafficLimitExceededForClient(ctx, cfg, args[1])
+		if err != nil {
+			svc.Audit().Log(context.Background(), audit.Event{
+				Level:   "warn",
+				Event:   "client.enabled_state.rejected",
+				Message: "client enabled state request rejected",
+				Fields:  map[string]any{"client_id": args[1], "enabled": true, "reason": "traffic limit check failed"},
+				Error:   audit.Error(err),
+			})
+			return err
+		}
+		if found {
+			svc.Audit().Log(context.Background(), audit.Event{
+				Level:   "warn",
+				Event:   "client.enabled_state.rejected",
+				Message: "client enabled state request rejected",
+				Fields: map[string]any{
+					"client_id":           args[1],
+					"enabled":             true,
+					"reason":              "traffic limit exceeded",
+					"traffic_total_bytes": exceeded.TotalBytes,
+					"traffic_limit_bytes": exceeded.LimitBytes,
+				},
+			})
+			return errors.New("traffic limit exceeded; increase or clear the limit before enabling")
+		}
 		return svc.SetClientEnabled(args[1], true)
 	case "disable":
 		if len(args) != 2 {
@@ -183,6 +212,22 @@ func runClient(svc *app.Service, args []string) error {
 	default:
 		return usage()
 	}
+}
+
+func cliTrafficLimitExceededForClient(ctx context.Context, cfg config.Config, clientID string) (sqldb.ExceededTrafficLimit, bool, error) {
+	exceeded, err := sqldb.ListExceededTrafficLimits(ctx, cfg, time.Now().UTC())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, sqldb.ErrDisabled) {
+			return sqldb.ExceededTrafficLimit{}, false, nil
+		}
+		return sqldb.ExceededTrafficLimit{}, false, err
+	}
+	for i := range exceeded {
+		if exceeded[i].ClientID == clientID {
+			return exceeded[i], true, nil
+		}
+	}
+	return sqldb.ExceededTrafficLimit{}, false, nil
 }
 
 func usage() error {

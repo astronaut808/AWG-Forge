@@ -859,6 +859,25 @@ func (w *web) setClientEnabledAPI(rw http.ResponseWriter, r *http.Request, id st
 		action = "enable-client:"
 	}
 	w.withIdempotency(rw, r, action+id, func() (int, any) {
+		if enabled {
+			ctx, cancel := context.WithTimeout(r.Context(), w.cfg.DatabaseQueryTimeout)
+			defer cancel()
+			exceeded, found, err := trafficLimitExceededForClient(ctx, w.cfg, id)
+			if err != nil {
+				w.audit("warn", "client.enabled_state.rejected", "client enabled state request rejected", map[string]any{"client_id": id, "enabled": enabled, "reason": "traffic limit check failed"}, err)
+				return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
+			}
+			if found {
+				w.audit("warn", "client.enabled_state.rejected", "client enabled state request rejected", map[string]any{
+					"client_id":           id,
+					"enabled":             enabled,
+					"reason":              "traffic limit exceeded",
+					"traffic_total_bytes": exceeded.TotalBytes,
+					"traffic_limit_bytes": exceeded.LimitBytes,
+				}, nil)
+				return http.StatusConflict, errorPayload("traffic limit exceeded; increase or clear the limit before enabling")
+			}
+		}
 		if err := w.service.SetClientEnabled(id, enabled); err != nil {
 			w.audit("warn", "client.enabled_state.rejected", "client enabled state request rejected", map[string]any{"client_id": id, "enabled": enabled}, err)
 			return mutationErrorStatus(err, http.StatusNotFound), errorPayload(err.Error())
@@ -870,6 +889,22 @@ func (w *web) setClientEnabledAPI(rw http.ResponseWriter, r *http.Request, id st
 		}
 		return http.StatusOK, map[string]any{"ok": true}
 	})
+}
+
+func trafficLimitExceededForClient(ctx context.Context, cfg config.Config, clientID string) (sqldb.ExceededTrafficLimit, bool, error) {
+	exceeded, err := sqldb.ListExceededTrafficLimits(ctx, cfg, time.Now().UTC())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, sqldb.ErrDisabled) {
+			return sqldb.ExceededTrafficLimit{}, false, nil
+		}
+		return sqldb.ExceededTrafficLimit{}, false, err
+	}
+	for i := range exceeded {
+		if exceeded[i].ClientID == clientID {
+			return exceeded[i], true, nil
+		}
+	}
+	return sqldb.ExceededTrafficLimit{}, false, nil
 }
 
 func (w *web) deleteClientAPI(rw http.ResponseWriter, r *http.Request, id string) {
