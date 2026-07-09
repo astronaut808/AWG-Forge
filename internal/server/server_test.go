@@ -383,8 +383,17 @@ func TestEnableClientRechecksExceededTrafficLimit(t *testing.T) {
 	r.Header.Set("Origin", "http://127.0.0.1")
 	rr := httptest.NewRecorder()
 	w.clientAPI(rr, r)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d body = %s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("status = %d body = %s, want %d", rr.Code, rr.Body.String(), http.StatusConflict)
+	}
+	var payload struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(payload.Error, "traffic limit exceeded") {
+		t.Fatalf("error = %q, want traffic limit reason", payload.Error)
 	}
 	state, err := svc.State()
 	if err != nil {
