@@ -504,12 +504,20 @@ func runtimeExecCommand(ctx context.Context, name string, args ...string) (*exec
 
 func doctorText(results []doctor.Result) string {
 	var b strings.Builder
-	for _, result := range results {
-		fmt.Fprintf(&b, "%-4s %s", strings.ToUpper(result.Level), result.Area)
-		if result.Message != "" {
-			fmt.Fprintf(&b, ": %s", result.Message)
+	for groupIndex, group := range doctor.GroupResults(results) {
+		if groupIndex > 0 {
+			b.WriteByte('\n')
 		}
-		b.WriteByte('\n')
+		if group.Category != "" {
+			fmt.Fprintln(&b, strings.ToUpper(group.Category))
+		}
+		for _, result := range group.Results {
+			fmt.Fprintf(&b, "%-4s %s", strings.ToUpper(result.Level), result.Area)
+			if result.Message != "" {
+				fmt.Fprintf(&b, ": %s", result.Message)
+			}
+			b.WriteByte('\n')
+		}
 	}
 	return sanitizeText(b.String())
 }

@@ -8,19 +8,26 @@
 docker exec awg-forge awg-forge doctor
 ```
 
+Вывод Doctor сгруппирован по диагностическим категориям: system, security, database, network, firewall, tunnels, clients и WARP.
+
 Doctor проверяет:
 
 - root/capabilities;
 - `/dev/net/tun`;
 - `awg`, `awg-quick`, `amneziawg-go`;
 - `iptables`, `ip`, `nf_tables`;
+- session cookie security policy;
+- optional database mode, schema и journal mode;
+- превышенные client traffic limits, если включен SQLite;
 - IPv4 forwarding;
 - external interface;
 - IPv4 egress route и совпадение с `EXTERNAL_INTERFACE`;
 - `rp_filter` для host/default/external/tunnel interfaces;
 - права config directory;
+- WARP config, runtime link и policy rules для туннелей с WARP;
 - UDP listen ports;
 - UDP listener через `ss`;
+- диапазоны Docker published UDP ports;
 - рендер server configs;
 - runtime config `/etc/amnezia/amneziawg/<interface>.conf`;
 - `awg-quick strip` для runtime config;

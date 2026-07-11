@@ -148,6 +148,7 @@ export type AppState = {
 
 export type DoctorResult = {
   level: Level;
+  category: string;
   area: string;
   message: string;
 };

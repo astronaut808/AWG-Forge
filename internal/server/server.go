@@ -729,9 +729,10 @@ func (w *web) clientsAPI(rw http.ResponseWriter, r *http.Request) {
 	}
 	w.withIdempotency(rw, r, "create-client", func() (int, any) {
 		var req struct {
-			TunnelID  string `json:"tunnel_id"`
-			Name      string `json:"name"`
-			ExpiresAt string `json:"expires_at"`
+			TunnelID          string          `json:"tunnel_id"`
+			Name              string          `json:"name"`
+			ExpiresAt         string          `json:"expires_at"`
+			TrafficLimitBytes json.RawMessage `json:"traffic_limit_bytes"`
 		}
 		if err := readJSON(rw, r, &req); err != nil {
 			w.audit("warn", "client.create.rejected", "client creation request rejected", map[string]any{"reason": "invalid json"}, err)
@@ -742,10 +743,38 @@ func (w *web) clientsAPI(rw http.ResponseWriter, r *http.Request) {
 			w.audit("warn", "client.create.rejected", "client creation request rejected", map[string]any{"tunnel_id": req.TunnelID, "client_name": req.Name, "reason": "invalid expires_at"}, err)
 			return http.StatusBadRequest, errorPayload("invalid expires_at")
 		}
+		var limitBytesValue uint64
+		hasLimit := false
+		if len(req.TrafficLimitBytes) > 0 {
+			var err error
+			limitBytesValue, hasLimit, err = parseTrafficLimitBytes(req.TrafficLimitBytes)
+			if err != nil {
+				w.audit("warn", "client.create.rejected", "client creation request rejected", map[string]any{"tunnel_id": req.TunnelID, "client_name": req.Name, "reason": "invalid limit"}, err)
+				return http.StatusBadRequest, errorPayload("invalid traffic limit")
+			}
+		}
+		if hasLimit {
+			ctx, cancel := context.WithTimeout(r.Context(), w.cfg.DatabaseQueryTimeout)
+			defer cancel()
+			status, err := sqldb.Check(ctx, w.cfg)
+			if err != nil || !status.Enabled || !status.Exists || status.SchemaVersion < sqldb.CurrentSchemaVersion {
+				w.audit("warn", "client.create.rejected", "client creation request rejected", map[string]any{"tunnel_id": req.TunnelID, "client_name": req.Name, "reason": "traffic limit database unavailable"}, err)
+				return http.StatusBadRequest, errorPayload("traffic limit database unavailable")
+			}
+		}
 		client, err := w.service.AddClientToTunnelWithOptions(req.TunnelID, req.Name, app.ClientCreateOptions{ExpiresAt: expiresAt})
 		if err != nil {
 			w.audit("warn", "client.create.rejected", "client creation request rejected", map[string]any{"tunnel_id": req.TunnelID, "client_name": req.Name}, err)
 			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
+		}
+		if hasLimit {
+			ctx, cancel := context.WithTimeout(r.Context(), w.cfg.DatabaseQueryTimeout)
+			defer cancel()
+			if err := sqldb.SetClientTrafficLimit(ctx, w.cfg, client.TunnelID, client.ID, &limitBytesValue); err != nil {
+				w.audit("warn", "client.traffic_limit.rejected", "client traffic limit request rejected", map[string]any{"client_id": client.ID, "reason": "create limit failed"}, err)
+				return http.StatusInternalServerError, errorPayload("traffic limit unavailable")
+			}
+			w.audit("info", "client.traffic_limit.updated", "client traffic limit updated", map[string]any{"client_id": client.ID, "limit_set": true}, nil)
 		}
 		return http.StatusCreated, map[string]any{"client": publicClient(client)}
 	})
@@ -1126,6 +1155,11 @@ func (w *web) clientTrafficSummary(ctx context.Context, state config.State) map[
 	rows, err := sqldb.ListTrafficSummary(ctx, w.cfg, time.Now().UTC())
 	if err != nil {
 		return out
+	}
+	for _, tunnel := range state.Tunnels {
+		for _, client := range tunnel.Clients {
+			out[tunnel.ID][client.ID] = clientTrafficSummary{Enabled: true}
+		}
 	}
 	for _, row := range rows {
 		if _, ok := out[row.TunnelID]; !ok {

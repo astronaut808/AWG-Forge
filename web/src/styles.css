@@ -760,6 +760,29 @@ section.panel.stack {
   grid-column: 1 / -1;
 }
 
+.traffic-limit-field {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 7px;
+}
+
+.traffic-limit-row {
+  display: grid;
+  grid-template-columns: 180px minmax(140px, 240px) 96px;
+  gap: 8px;
+  align-items: center;
+  justify-content: start;
+}
+
+.traffic-limit-row.compact {
+  grid-template-columns: 180px;
+}
+
+.field-title {
+  color: var(--text);
+  font-weight: 650;
+}
+
 input,
 select,
 textarea {
@@ -915,6 +938,22 @@ textarea {
 .list {
   display: grid;
   gap: 6px;
+}
+
+.result-groups {
+  display: grid;
+  gap: 16px;
+}
+
+.result-group {
+  display: grid;
+  gap: 8px;
+}
+
+.result-group h3 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
 }
 
 .notice,
@@ -1266,6 +1305,11 @@ textarea {
 
   .facts,
   .form {
+    grid-template-columns: 1fr;
+  }
+
+  .traffic-limit-row,
+  .traffic-limit-row.compact {
     grid-template-columns: 1fr;
   }
 

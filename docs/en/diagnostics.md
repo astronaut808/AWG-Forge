@@ -8,19 +8,26 @@ Run:
 docker exec awg-forge awg-forge doctor
 ```
 
+Doctor output is grouped by diagnostic category: system, security, database, network, firewall, tunnels, clients, and WARP.
+
 Doctor checks:
 
 - root/capabilities;
 - `/dev/net/tun`;
 - `awg`, `awg-quick`, `amneziawg-go`;
 - `iptables`, `ip`, `nf_tables`;
+- session cookie security policy;
+- optional database mode, schema, and journal mode;
+- exceeded client traffic limits when SQLite is enabled;
 - IPv4 forwarding;
 - external interface;
 - IPv4 egress route and `EXTERNAL_INTERFACE` match;
 - `rp_filter` for host/default/external/tunnel interfaces;
 - config directory permissions;
+- WARP config, runtime link, and policy rules for WARP-enabled tunnels;
 - UDP listen ports;
 - UDP listener inspection through `ss`;
+- Docker published UDP port ranges;
 - rendered server configs;
 - runtime config `/etc/amnezia/amneziawg/<interface>.conf`;
 - `awg-quick strip` for runtime config validation;
