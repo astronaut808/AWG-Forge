@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added Web UI TLS foundation: `off`, `reverse-proxy`, and validated `manual` modes; trusted-proxy CIDRs; graceful HTTP shutdown; Doctor and CLI TLS status/configuration.
 - Added SQLite-backed traffic history collection with daily client aggregates, per-client total traffic in client rows, and aggregate Maintenance traffic totals.
 - Added traffic quotas with SQLite-stored per-client limits, Web UI limit editing, API/state exposure, and automatic client disablement when recorded traffic reaches the configured limit.
 
@@ -15,6 +16,7 @@
 
 ### Changed
 
+- Documented factual diagnostics for UDP reachability, handshake, egress, and WARP routing.
 - Added an Aislop project config and CI quality gate that exclude generated Web UI assets and locale dictionaries from Aislop-only noise while keeping source quality warnings visible.
 - Grouped Doctor output by diagnostic category in CLI, Web UI, and support bundles without changing the underlying checks.
 - Added Doctor warnings for clients whose recorded SQLite traffic exceeds their configured traffic limit.

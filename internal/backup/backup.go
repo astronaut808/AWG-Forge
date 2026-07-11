@@ -22,6 +22,7 @@ import (
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/render"
 	"github.com/astronaut808/awg-forge/internal/warp"
+	"github.com/astronaut808/awg-forge/internal/webtls"
 )
 
 const (
@@ -161,6 +162,9 @@ func createPlainZip(cfg config.Config, state config.State, now time.Time) ([]byt
 	if err := addExistingFile(zw, cfg.ConfigDir, "state.json", &metas); err != nil {
 		return nil, err
 	}
+	if err := addOptionalExistingFile(zw, cfg.ConfigDir, webtls.SettingsRelativePath, &metas); err != nil {
+		return nil, err
+	}
 	tunnelRoot := filepath.Join(cfg.ConfigDir, "tunnels")
 	if err := filepath.WalkDir(tunnelRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -217,6 +221,17 @@ func addExistingFile(zw *zip.Writer, root, rel string, metas *[]FileMeta) error 
 	sum := sha256.Sum256(b)
 	*metas = append(*metas, FileMeta{Path: clean, Size: int64(len(b)), SHA256: hex.EncodeToString(sum[:])})
 	return nil
+}
+
+func addOptionalExistingFile(zw *zip.Writer, root, rel string, metas *[]FileMeta) error {
+	_, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel)))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	return addExistingFile(zw, root, rel, metas)
 }
 
 func addJSON(zw *zip.Writer, name string, v any) error {

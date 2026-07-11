@@ -22,6 +22,7 @@ import (
 	"github.com/astronaut808/awg-forge/internal/sqldb"
 	"github.com/astronaut808/awg-forge/internal/support"
 	"github.com/astronaut808/awg-forge/internal/updates"
+	"github.com/astronaut808/awg-forge/internal/webtls"
 )
 
 func main() {
@@ -42,19 +43,26 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	svc := app.New(cfg)
-
 	switch args[0] {
-	case "init":
-		return runInit(cfg, svc, args[1:])
 	case "serve":
+		tlsRuntime, err := webtls.Load(cfg)
+		if err != nil {
+			return err
+		}
+		svc := app.New(cfg)
 		if _, err := svc.Init(); err != nil {
 			return err
 		}
 		if err := svc.RenderAll(); err != nil {
 			return err
 		}
-		return server.Serve(cfg, svc)
+		return server.Serve(cfg, svc, tlsRuntime)
+	}
+
+	svc := app.New(cfg)
+	switch args[0] {
+	case "init":
+		return runInit(cfg, svc, args[1:])
 	case "render":
 		return svc.RenderAll()
 	case "doctor":
@@ -71,6 +79,8 @@ func run(args []string) error {
 		return runLogs(cfg, args[1:])
 	case "db":
 		return runDB(cfg, args[1:])
+	case "tls":
+		return runTLS(cfg, svc, args[1:])
 	case "client":
 		return runClient(cfg, svc, args[1:])
 	case "tunnel":
@@ -231,7 +241,7 @@ func cliTrafficLimitExceededForClient(ctx context.Context, cfg config.Config, cl
 }
 
 func usage() error {
-	return errors.New("usage: awg-forge init|serve|render|doctor|backup|restore|support-bundle|updates|firewall|logs|db|client|tunnel")
+	return errors.New("usage: awg-forge init|serve|render|doctor|backup|restore|support-bundle|updates|firewall|logs|db|tls|client|tunnel")
 }
 
 func runDB(cfg config.Config, args []string) error {

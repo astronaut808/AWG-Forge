@@ -17,6 +17,12 @@ ssh -L 51821:127.0.0.1:51821 user@server
 
 If the UI is published publicly, a password is required.
 
+## TLS and Reverse Proxies
+
+Built-in Web UI TLS supports `off`, `reverse-proxy`, and `manual`; see [configuration](configuration.md#web-ui-tls). `manual` mode requires TLS 1.3 and rejects invalid certificates, mismatched keys, expired certificates, key symlinks, private keys without mode `0600`, and key directories without mode `0700`.
+
+Reverse-proxy mode requires a Web UI password, `WEBUI_TRUST_PROXY_HEADERS=true`, and direct proxy addresses in `WEBUI_TRUSTED_PROXY_CIDRS`. Untrusted forwarded headers are ignored. Keep TLS termination and the Web UI bind separate: the proxy can expose HTTPS on any port while awg-forge remains on loopback.
+
 ## Sessions
 
 UI sessions expire after 30 minutes.

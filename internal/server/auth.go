@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"time"
@@ -58,15 +59,15 @@ func (w *web) validOrigin(r *http.Request) bool {
 		return true
 	}
 	if origin := r.Header.Get("Origin"); origin != "" {
-		return safeRequestSource(origin, r.Host)
+		return w.safeRequestSource(origin, r)
 	}
 	if ref := r.Header.Get("Referer"); ref != "" {
-		return safeRequestSource(ref, r.Host)
+		return w.safeRequestSource(ref, r)
 	}
-	return requestHostIsLoopback(r.Host)
+	return requestHostIsLoopback(r.Host) && !w.trustedProxyRequest(r)
 }
 
-func safeRequestSource(raw, requestHost string) bool {
+func (w *web) safeRequestSource(raw string, r *http.Request) bool {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return false
@@ -77,7 +78,7 @@ func safeRequestSource(raw, requestHost string) bool {
 	if u.Host == "" {
 		return false
 	}
-	return sameRequestHost(u.Host, requestHost)
+	return u.Scheme == w.effectiveScheme(r) && sameRequestHost(u.Host, r.Host)
 }
 
 func sameRequestHost(a, b string) bool {
@@ -166,7 +167,91 @@ func (w *web) sessionCookieSecure(r *http.Request) bool {
 		if r == nil {
 			return true
 		}
+		if w.effectiveScheme(r) == "https" {
+			return true
+		}
 		return !requestHostIsLoopback(r.Host)
+	}
+}
+
+func (w *web) effectiveScheme(r *http.Request) string {
+	if r != nil && r.TLS != nil {
+		return "https"
+	}
+	if w.trustedProxyRequest(r) {
+		scheme := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")))
+		if scheme == "http" || scheme == "https" {
+			return scheme
+		}
+	}
+	return "http"
+}
+
+func (w *web) clientIP(r *http.Request) string {
+	remote, ok := remoteAddress(r)
+	if !ok {
+		return ""
+	}
+	if !w.trustedProxyRequest(r) {
+		return remote.String()
+	}
+	values := r.Header.Values("X-Forwarded-For")
+	if len(values) == 0 {
+		return remote.String()
+	}
+	parts := strings.Split(strings.Join(values, ","), ",")
+	addresses := make([]netip.Addr, 0, len(parts))
+	for _, part := range parts {
+		address, err := netip.ParseAddr(strings.TrimSpace(part))
+		if err != nil {
+			return remote.String()
+		}
+		addresses = append(addresses, address.Unmap())
+	}
+	for index := len(addresses) - 1; index >= 0; index-- {
+		if !w.trustedProxyAddress(addresses[index]) {
+			return addresses[index].String()
+		}
+	}
+	return remote.String()
+}
+
+func (w *web) trustedProxyRequest(r *http.Request) bool {
+	if r == nil || !w.cfg.WebUITrustProxyHeaders {
+		return false
+	}
+	remote, ok := remoteAddress(r)
+	return ok && w.trustedProxyAddress(remote)
+}
+
+func (w *web) trustedProxyAddress(address netip.Addr) bool {
+	for _, prefix := range w.cfg.WebUITrustedProxyCIDRs {
+		if prefix.Contains(address) {
+			return true
+		}
+	}
+	return false
+}
+
+func remoteAddress(r *http.Request) (netip.Addr, bool) {
+	if r == nil {
+		return netip.Addr{}, false
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = strings.Trim(r.RemoteAddr, "[]")
+	}
+	address, err := netip.ParseAddr(host)
+	if err != nil {
+		return netip.Addr{}, false
+	}
+	return address.Unmap(), true
+}
+
+func (w *web) loginAuditFields(r *http.Request) map[string]any {
+	return map[string]any{
+		"client_ip_hash": w.sign("client-ip:" + w.clientIP(r)),
+		"scheme":         w.effectiveScheme(r),
 	}
 }
 

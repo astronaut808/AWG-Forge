@@ -953,7 +953,7 @@ function trafficTotals(rows: TrafficSummaryRow[]) {
 }
 
 function SystemPanel({ state }: { state: AppState }) {
-  const { m } = useI18n();
+  const { m, locale } = useI18n();
   const clients = state.tunnels.flatMap((tunnel) => tunnel.clients);
   const enabledClients = clients.filter((client) => client.enabled && !client.expired).length;
   const upTunnels = state.tunnels.filter((tunnel) => tunnel.status?.up).length;
@@ -969,6 +969,7 @@ function SystemPanel({ state }: { state: AppState }) {
       <Metric title={m.forms.serverHost} value={state.server_host || "-"} />
       <Metric title={m.maintenance.applyConfig} value={state.apply_enabled ? m.common.enabled : m.common.manual} />
       <Metric title={m.maintenance.database} value={databaseLabel(state.database)} />
+      <Metric title={m.maintenance.tls} value={tlsModeLabel(state.tls, m)} />
       <Metric title={m.dashboard.tunnels} value={`${upTunnels}/${state.tunnels.length} ${m.status.up}`} />
       <Metric title={m.tunnel.clients} value={`${enabledClients}/${clients.length} ${m.common.enabled}`} />
       <Metric title={m.common.profiles} value={String(state.profiles.length)} />
@@ -980,6 +981,20 @@ function SystemPanel({ state }: { state: AppState }) {
       <Metric title="amneziawg-go" value={shortCommit(build?.amneziawg_go_ref)} />
       <Metric title="amneziawg-tools" value={shortCommit(build?.amneziawg_tools_ref)} />
     </div>
+    <div class="list tls-summary">
+      <div class="row">
+        <div>
+          <strong>{m.maintenance.tls}</strong>
+          {state.tls.error ? <p>{m.maintenance.tlsInvalid}: {state.tls.error}</p> : <>
+            {state.tls.mode === "manual" && <>
+              <p>{m.maintenance.tlsSubject}: {state.tls.subject || "-"}</p>
+              <p>{m.maintenance.tlsIssuer}: {state.tls.issuer || "-"} · {m.maintenance.tlsValidUntil}: {formatTLSDate(state.tls.not_after, locale)}</p>
+            </>}
+            <p>{m.maintenance.tlsSettingsSource}: {tlsSettingsSourceLabel(state.tls.source, m)} · {m.maintenance.trustedProxyHeaders}: {state.tls.trusted_proxy_headers ? m.maintenance.trustedProxyEnabled(state.tls.trusted_proxy_cidrs) : m.maintenance.trustedProxyDisabled}</p>
+          </>}
+        </div>
+      </div>
+    </div>
     <pre class="command-block">{`docker exec awg-forge awg-forge doctor
 docker exec awg-forge awg show
 docker compose logs -f`}</pre>
@@ -989,6 +1004,24 @@ docker compose logs -f`}</pre>
 function databaseLabel(database: AppState["database"]): string {
   if (!database?.mode) return "off";
   return database.enabled ? database.mode : "off";
+}
+
+function tlsModeLabel(tls: AppState["tls"], m: Messages): string {
+  if (tls.error) return m.maintenance.tlsInvalid;
+  if (tls.mode === "manual") return m.maintenance.tlsManual;
+  if (tls.mode === "reverse-proxy") return m.maintenance.tlsReverseProxy;
+  return m.maintenance.tlsOff;
+}
+
+function tlsSettingsSourceLabel(source: string | undefined, m: Messages): string {
+  return source === "managed" ? m.maintenance.tlsSettingsFile : m.maintenance.tlsEnvironment;
+}
+
+function formatTLSDate(value: string | undefined, locale: string): string {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return new Intl.DateTimeFormat(locale === "ru" ? "ru-RU" : "en-US", { dateStyle: "medium", timeStyle: "short" }).format(date);
 }
 
 function WarpPanel({ state, action, busyAction }: { state: AppState; action: (key: string, label: string, fn: () => Promise<void>) => Promise<void>; busyAction: string }) {
