@@ -46,6 +46,9 @@ const en = {
     logIn: "Log in",
     loggingIn: "Logging in...",
     loading: "Loading...",
+    secureCookieRejected: "Session was not created: the panel is open over HTTP.",
+    secureCookieHTTPS: "Configure HTTPS with a reverse proxy or manual TLS.",
+    secureCookieHTTP: "For a trusted HTTP network only:",
   },
   dashboard: {
     noProfiles: "No profiles",
@@ -337,6 +340,9 @@ const ru: Messages = {
     logIn: "Войти",
     loggingIn: "Вход...",
     loading: "Загрузка...",
+    secureCookieRejected: "Сессия не создана: панель открыта по HTTP.",
+    secureCookieHTTPS: "Настройте HTTPS через reverse proxy или manual TLS.",
+    secureCookieHTTP: "Только для доверенной HTTP-сети:",
   },
   dashboard: {
     noProfiles: "Нет профилей",

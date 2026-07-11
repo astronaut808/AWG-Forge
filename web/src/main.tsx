@@ -44,6 +44,7 @@ type Modal =
 type MaintenanceTab = "overview" | "doctor" | "firewall" | "warp" | "backup" | "restore" | "updates" | "support" | "logs" | "traffic" | "system";
 type QRImportMode = "amneziavpn" | "amneziawg";
 type TrafficLimitUnit = "mib" | "gib" | "tib";
+type LoadResult = "ok" | "unauthorized" | "failed";
 
 const themeKey = "awg-forge.theme";
 const dashboardFilterKey = "awg-forge.dashboard-filter";
@@ -73,12 +74,13 @@ function App() {
   const authenticatedRef = useRef(false);
   messagesRef.current = m;
 
-  const load = useCallback(async (options: { quiet?: boolean } = {}) => {
+  const load = useCallback(async (options: { quiet?: boolean } = {}): Promise<LoadResult> => {
     try {
       const next = await api.state();
       authenticatedRef.current = true;
       setState(next);
       setAuthChecked(true);
+      return "ok";
     } catch (err) {
       setAuthChecked(true);
       if (err instanceof api.APIError && err.status === 401) {
@@ -87,9 +89,10 @@ function App() {
         setModal(null);
         setState(null);
         if (wasAuthenticated) notify(messagesRef.current.common.sessionExpired);
-        return;
+        return "unauthorized";
       }
       if (!options.quiet) notify(errorMessage(err, messagesRef.current.common.requestFailed));
+      return "failed";
     }
   }, []);
 
@@ -211,7 +214,7 @@ function App() {
       />
       {modal && (
         <Dialog onClose={() => setModal(null)}>
-          <ModalContent modal={modal} state={state} notify={notify} close={() => setModal(null)} reload={() => load({ quiet: true })} runAction={runAction} />
+          <ModalContent modal={modal} state={state} notify={notify} close={() => setModal(null)} reload={async () => { await load({ quiet: true }); }} runAction={runAction} />
         </Dialog>
       )}
       <Toast message={toast} />
@@ -220,10 +223,12 @@ function App() {
   );
 }
 
-function Login({ onLogin, notify, theme, setTheme, locale, setLocale }: { onLogin: () => Promise<void>; notify: (message: string) => void; theme: string; setTheme: (theme: string) => void; locale: Locale; setLocale: (locale: Locale) => void }) {
+function Login({ onLogin, notify, theme, setTheme, locale, setLocale }: { onLogin: () => Promise<LoadResult>; notify: (message: string) => void; theme: string; setTheme: (theme: string) => void; locale: Locale; setLocale: (locale: Locale) => void }) {
   const { m } = useI18n();
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const [secureCookieRejected, setSecureCookieRejected] = useState(false);
+  const documentationURL = `https://github.com/astronaut808/awg-forge/blob/master/docs/${locale}/configuration.md`;
   return (
     <main class="login-shell">
       <div class="login-stack">
@@ -234,9 +239,10 @@ function Login({ onLogin, notify, theme, setTheme, locale, setLocale }: { onLogi
             onSubmit={async (event) => {
               event.preventDefault();
               setBusy(true);
+              setSecureCookieRejected(false);
               try {
                 await api.login(password);
-                await onLogin();
+                if (await onLogin() === "unauthorized") setSecureCookieRejected(true);
               } catch (err) {
                 notify(errorMessage(err, m.common.requestFailed));
               } finally {
@@ -246,6 +252,14 @@ function Login({ onLogin, notify, theme, setTheme, locale, setLocale }: { onLogi
           >
             <label>{m.login.password}<input aria-label={m.login.password} type="password" autocomplete="current-password" value={password} onInput={(event) => setPassword((event.currentTarget as HTMLInputElement).value)} /></label>
             <button class="button primary wide" disabled={busy} type="submit">{busy ? m.login.loggingIn : m.login.logIn}</button>
+            {secureCookieRejected && (
+              <div class="notice login-notice" role="alert">
+                <p>{m.login.secureCookieRejected}</p>
+                <p>{m.login.secureCookieHTTPS}</p>
+                <p>{m.login.secureCookieHTTP} <code>SESSION_COOKIE_SECURE=false</code></p>
+                <a href={documentationURL} target="_blank" rel="noreferrer">{m.common.docs}</a>
+              </div>
+            )}
           </form>
         </section>
         <FooterLinks
