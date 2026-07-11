@@ -17,6 +17,7 @@ Doctor проверяет:
 - `awg`, `awg-quick`, `amneziawg-go`;
 - `iptables`, `ip`, `nf_tables`;
 - session cookie security policy;
+- режим TLS Web UI, валидность manual certificate и trusted proxy configuration;
 - optional database mode, schema и journal mode;
 - превышенные client traffic limits, если включен SQLite;
 - IPv4 forwarding;
@@ -37,6 +38,71 @@ Doctor проверяет:
 - runtime peers;
 - stale client configs;
 - handshakes и transfer counters.
+
+## Диагностика AmneziaWG и WARP
+
+Проверки ниже разделяют три наблюдаемых состояния: входящий UDP-пакет не виден, после прихода пакета нет handshake, после handshake нет egress.
+
+WARP egress применяется на сервере после того, как трафик дошёл до VPS. Он не меняет AmneziaWG endpoint, настроенный на клиенте. Обычный проксируемый DNS record Cloudflare не передаёт произвольный UDP; для AmneziaWG endpoint используй DNS-only запись.
+
+Не добавляй private keys и полные client configs в диагностические отчёты.
+
+### UDP не приходит на сервер
+
+На сервере захвати только порт туннеля во время одной попытки подключения:
+
+```bash
+sudo tcpdump -ni <external-interface> "udp dst port <listen-port>"
+```
+
+Если пакеты не видны на выбранном интерфейсе:
+
+- сравни DNS-ответ endpoint с ожидаемым IP VPS;
+- убедись, что DNS-запись endpoint не проксируется Cloudflare;
+- проверь security group провайдера, если она настроена;
+- проверь порт и endpoint в заново скачанном client `.conf`;
+- повтори проверку из другой сети и зафиксируй результат.
+
+### UDP приходит, но handshake нет
+
+После того как пакеты видны на внешнем интерфейсе, проверь, что сервис их принимает:
+
+```bash
+docker exec awg-forge ss -lunp
+docker inspect awg-forge --format '{{.HostConfig.NetworkMode}}'
+docker port awg-forge
+```
+
+`docker port` применим только для bridge networking. Затем выполни:
+
+```bash
+docker exec awg-forge awg-forge doctor
+docker exec awg-forge awg show <interface>
+```
+
+Не публикуй полный вывод `awg show <interface> dump` без редактирования: он может содержать private key интерфейса и preshared keys. Runtime output полезен для peers, endpoints, handshakes и counters. Источник данных AWG-Forge — выбранный profile, stale-config status и необходимость заново скачать client config после client-facing изменений туннеля. Для AmneziaWG 2.0 используй fallback через `.conf`, если у целевого клиента есть compatibility limitations.
+
+Зафиксируй сеть, время, версию клиента и результат packet capture до изменения настроек.
+
+### Handshake есть, но интернет не работает
+
+Следуй разделу [Нет Интернета Через VPN](#нет-интернета-через-vpn) и сравни counters туннеля с counters managed `FORWARD` и `POSTROUTING`.
+
+Если выбран WARP egress, Doctor также проверяет runtime WARP и policy rules.
+
+### Проблема есть только у части сетей
+
+Проверь один и тот же client, свежий config, endpoint и временной интервал в рабочей и нерабочей сети. Зафиксируй наблюдаемое состояние:
+
+- DNS resolution;
+- UDP до VPS;
+- завершение handshake;
+- последующий сбой egress; или
+- ухудшение после длительной передачи трафика.
+
+### WARP включен, но endpoint недоступен
+
+WARP начинает работать после того, как зашифрованный туннель клиента дошёл до VPS. Сначала проверь путь от клиента до VPS; диагностика WARP имеет смысл после возможного handshake.
 
 ## Support Bundle
 

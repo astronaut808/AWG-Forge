@@ -17,6 +17,7 @@ Doctor checks:
 - `awg`, `awg-quick`, `amneziawg-go`;
 - `iptables`, `ip`, `nf_tables`;
 - session cookie security policy;
+- Web UI TLS mode, manual certificate validity, and trusted proxy configuration;
 - optional database mode, schema, and journal mode;
 - exceeded client traffic limits when SQLite is enabled;
 - IPv4 forwarding;
@@ -37,6 +38,71 @@ Doctor checks:
 - runtime peers;
 - stale client configs;
 - handshakes and transfer counters.
+
+## AmneziaWG and WARP Diagnostics
+
+Use the checks below to distinguish three observable states: no incoming UDP packet, no handshake after a packet arrives, and no egress after a handshake.
+
+WARP egress is applied on the server after traffic reaches the VPS. It does not change the AmneziaWG endpoint configured on the client. Cloudflare's proxied DNS mode does not proxy arbitrary UDP; use a DNS-only record for an AmneziaWG endpoint.
+
+Do not paste private keys or complete client configs into diagnostics reports.
+
+### UDP Does Not Reach the Server
+
+On the server, capture only the tunnel port while reproducing one connection attempt:
+
+```bash
+sudo tcpdump -ni <external-interface> "udp dst port <listen-port>"
+```
+
+If no packets arrive on the selected interface:
+
+- compare the endpoint DNS result with the expected VPS IP;
+- ensure the endpoint DNS record is not Cloudflare-proxied;
+- check the provider security group when one is configured;
+- verify the port and endpoint in a freshly downloaded client `.conf`;
+- repeat from another network and record the result.
+
+### UDP Arrives but There Is No Handshake
+
+After packets are visible on the external interface, confirm that the service receives them:
+
+```bash
+docker exec awg-forge ss -lunp
+docker inspect awg-forge --format '{{.HostConfig.NetworkMode}}'
+docker port awg-forge
+```
+
+`docker port` is relevant only for bridge networking. Then run:
+
+```bash
+docker exec awg-forge awg-forge doctor
+docker exec awg-forge awg show <interface>
+```
+
+Do not publish full `awg show <interface> dump` output without redaction: it can contain the interface private key and preshared keys. Runtime output is useful for peers, endpoints, handshakes, and counters. AWG-Forge is the source for the selected profile, stale-config status, and whether a fresh client config is needed after client-facing tunnel changes. For AmneziaWG 2.0, use the `.conf` import fallback when the target client has compatibility limitations.
+
+Record the network, time, client version, and packet-capture result before changing settings.
+
+### Handshake Exists but Internet Does Not Work
+
+Follow [No Internet Through VPN](#no-internet-through-vpn) and compare the tunnel counters with the managed `FORWARD` and `POSTROUTING` counters.
+
+If WARP egress is selected, Doctor also checks the WARP runtime and policy rules.
+
+### Only Some Networks Fail
+
+Use the same client, fresh config, endpoint, and time window on a working and failing network. Record the observed state:
+
+- DNS resolution;
+- UDP reaching the VPS;
+- handshake completion;
+- a later egress failure; or
+- degradation after sustained traffic.
+
+### WARP Is Enabled but the Endpoint Is Unreachable
+
+WARP begins after the client's encrypted tunnel has reached the VPS. Check the client-to-VPS path first; WARP diagnostics are relevant after a handshake is possible.
 
 ## Support Bundle
 
