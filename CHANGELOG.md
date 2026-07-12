@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.16.0 - 2026-07-12
+
 ### Added
 
 - Added Web UI TLS foundation: `off`, `reverse-proxy`, and validated `manual` modes; trusted-proxy CIDRs; graceful HTTP shutdown; Doctor and CLI TLS status/configuration.
@@ -12,6 +14,7 @@
 
 - Hardened Maintenance log polling and tunnel egress mode rendering to cover the UI behavior reported in [#41](https://github.com/astronaut808/AWG-Forge/issues/41).
 - Improved Web UI session-expiry handling so an expired session closes stale modals, clears the cached dashboard state, and returns to login.
+- Explained failed HTTP logins caused by rejected Secure session cookies and linked to TLS configuration ([#45](https://github.com/astronaut808/AWG-Forge/issues/45)).
 - Blocked Web/API/CLI client re-enable attempts when the recorded traffic limit is still exceeded, avoiding misleading enabled-state results.
 
 ### Changed
