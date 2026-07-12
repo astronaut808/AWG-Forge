@@ -44,6 +44,7 @@ type Modal =
 type MaintenanceTab = "overview" | "doctor" | "firewall" | "warp" | "backup" | "restore" | "updates" | "support" | "logs" | "traffic" | "system";
 type QRImportMode = "amneziavpn" | "amneziawg";
 type TrafficLimitUnit = "mib" | "gib" | "tib";
+type LoadResult = "ok" | "unauthorized" | "failed";
 
 const themeKey = "awg-forge.theme";
 const dashboardFilterKey = "awg-forge.dashboard-filter";
@@ -73,12 +74,13 @@ function App() {
   const authenticatedRef = useRef(false);
   messagesRef.current = m;
 
-  const load = useCallback(async (options: { quiet?: boolean } = {}) => {
+  const load = useCallback(async (options: { quiet?: boolean } = {}): Promise<LoadResult> => {
     try {
       const next = await api.state();
       authenticatedRef.current = true;
       setState(next);
       setAuthChecked(true);
+      return "ok";
     } catch (err) {
       setAuthChecked(true);
       if (err instanceof api.APIError && err.status === 401) {
@@ -87,9 +89,10 @@ function App() {
         setModal(null);
         setState(null);
         if (wasAuthenticated) notify(messagesRef.current.common.sessionExpired);
-        return;
+        return "unauthorized";
       }
       if (!options.quiet) notify(errorMessage(err, messagesRef.current.common.requestFailed));
+      return "failed";
     }
   }, []);
 
@@ -211,7 +214,7 @@ function App() {
       />
       {modal && (
         <Dialog onClose={() => setModal(null)}>
-          <ModalContent modal={modal} state={state} notify={notify} close={() => setModal(null)} reload={() => load({ quiet: true })} runAction={runAction} />
+          <ModalContent modal={modal} state={state} notify={notify} close={() => setModal(null)} reload={async () => { await load({ quiet: true }); }} runAction={runAction} />
         </Dialog>
       )}
       <Toast message={toast} />
@@ -220,10 +223,12 @@ function App() {
   );
 }
 
-function Login({ onLogin, notify, theme, setTheme, locale, setLocale }: { onLogin: () => Promise<void>; notify: (message: string) => void; theme: string; setTheme: (theme: string) => void; locale: Locale; setLocale: (locale: Locale) => void }) {
+function Login({ onLogin, notify, theme, setTheme, locale, setLocale }: { onLogin: () => Promise<LoadResult>; notify: (message: string) => void; theme: string; setTheme: (theme: string) => void; locale: Locale; setLocale: (locale: Locale) => void }) {
   const { m } = useI18n();
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const [secureCookieRejected, setSecureCookieRejected] = useState(false);
+  const documentationURL = `https://github.com/astronaut808/awg-forge/blob/master/docs/${locale}/configuration.md`;
   return (
     <main class="login-shell">
       <div class="login-stack">
@@ -234,9 +239,10 @@ function Login({ onLogin, notify, theme, setTheme, locale, setLocale }: { onLogi
             onSubmit={async (event) => {
               event.preventDefault();
               setBusy(true);
+              setSecureCookieRejected(false);
               try {
                 await api.login(password);
-                await onLogin();
+                if (await onLogin() === "unauthorized") setSecureCookieRejected(true);
               } catch (err) {
                 notify(errorMessage(err, m.common.requestFailed));
               } finally {
@@ -246,6 +252,14 @@ function Login({ onLogin, notify, theme, setTheme, locale, setLocale }: { onLogi
           >
             <label>{m.login.password}<input aria-label={m.login.password} type="password" autocomplete="current-password" value={password} onInput={(event) => setPassword((event.currentTarget as HTMLInputElement).value)} /></label>
             <button class="button primary wide" disabled={busy} type="submit">{busy ? m.login.loggingIn : m.login.logIn}</button>
+            {secureCookieRejected && (
+              <div class="notice login-notice" role="alert">
+                <p>{m.login.secureCookieRejected}</p>
+                <p>{m.login.secureCookieHTTPS}</p>
+                <p>{m.login.secureCookieHTTP} <code>SESSION_COOKIE_SECURE=false</code></p>
+                <a href={documentationURL} target="_blank" rel="noreferrer">{m.common.docs}</a>
+              </div>
+            )}
           </form>
         </section>
         <FooterLinks
@@ -953,7 +967,7 @@ function trafficTotals(rows: TrafficSummaryRow[]) {
 }
 
 function SystemPanel({ state }: { state: AppState }) {
-  const { m } = useI18n();
+  const { m, locale } = useI18n();
   const clients = state.tunnels.flatMap((tunnel) => tunnel.clients);
   const enabledClients = clients.filter((client) => client.enabled && !client.expired).length;
   const upTunnels = state.tunnels.filter((tunnel) => tunnel.status?.up).length;
@@ -969,6 +983,7 @@ function SystemPanel({ state }: { state: AppState }) {
       <Metric title={m.forms.serverHost} value={state.server_host || "-"} />
       <Metric title={m.maintenance.applyConfig} value={state.apply_enabled ? m.common.enabled : m.common.manual} />
       <Metric title={m.maintenance.database} value={databaseLabel(state.database)} />
+      <Metric title={m.maintenance.tls} value={tlsModeLabel(state.tls, m)} />
       <Metric title={m.dashboard.tunnels} value={`${upTunnels}/${state.tunnels.length} ${m.status.up}`} />
       <Metric title={m.tunnel.clients} value={`${enabledClients}/${clients.length} ${m.common.enabled}`} />
       <Metric title={m.common.profiles} value={String(state.profiles.length)} />
@@ -980,6 +995,20 @@ function SystemPanel({ state }: { state: AppState }) {
       <Metric title="amneziawg-go" value={shortCommit(build?.amneziawg_go_ref)} />
       <Metric title="amneziawg-tools" value={shortCommit(build?.amneziawg_tools_ref)} />
     </div>
+    <div class="list tls-summary">
+      <div class="row">
+        <div>
+          <strong>{m.maintenance.tls}</strong>
+          {state.tls.error ? <p>{m.maintenance.tlsInvalid}: {state.tls.error}</p> : <>
+            {state.tls.mode === "manual" && <>
+              <p>{m.maintenance.tlsSubject}: {state.tls.subject || "-"}</p>
+              <p>{m.maintenance.tlsIssuer}: {state.tls.issuer || "-"} · {m.maintenance.tlsValidUntil}: {formatTLSDate(state.tls.not_after, locale)}</p>
+            </>}
+            <p>{m.maintenance.tlsSettingsSource}: {tlsSettingsSourceLabel(state.tls.source, m)} · {m.maintenance.trustedProxyHeaders}: {state.tls.trusted_proxy_headers ? m.maintenance.trustedProxyEnabled(state.tls.trusted_proxy_cidrs) : m.maintenance.trustedProxyDisabled}</p>
+          </>}
+        </div>
+      </div>
+    </div>
     <pre class="command-block">{`docker exec awg-forge awg-forge doctor
 docker exec awg-forge awg show
 docker compose logs -f`}</pre>
@@ -989,6 +1018,24 @@ docker compose logs -f`}</pre>
 function databaseLabel(database: AppState["database"]): string {
   if (!database?.mode) return "off";
   return database.enabled ? database.mode : "off";
+}
+
+function tlsModeLabel(tls: AppState["tls"], m: Messages): string {
+  if (tls.error) return m.maintenance.tlsInvalid;
+  if (tls.mode === "manual") return m.maintenance.tlsManual;
+  if (tls.mode === "reverse-proxy") return m.maintenance.tlsReverseProxy;
+  return m.maintenance.tlsOff;
+}
+
+function tlsSettingsSourceLabel(source: string | undefined, m: Messages): string {
+  return source === "managed" ? m.maintenance.tlsSettingsFile : m.maintenance.tlsEnvironment;
+}
+
+function formatTLSDate(value: string | undefined, locale: string): string {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return new Intl.DateTimeFormat(locale === "ru" ? "ru-RU" : "en-US", { dateStyle: "medium", timeStyle: "short" }).format(date);
 }
 
 function WarpPanel({ state, action, busyAction }: { state: AppState; action: (key: string, label: string, fn: () => Promise<void>) => Promise<void>; busyAction: string }) {

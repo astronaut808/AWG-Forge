@@ -8,6 +8,12 @@ The main example is [.env.example](../../.env.example).
 - `WEBUI_PORT`: Web UI port. Defaults to `51821`.
 - `PASSWORD`: Web UI password. Required for public binds and recommended always.
 - `SESSION_COOKIE_SECURE`: Secure cookie policy for UI sessions. Values: `auto`, `true`, `false`. Defaults to `auto`.
+- `WEBUI_TLS_MODE`: Web UI TLS mode: `off`, `reverse-proxy`, or `manual`. Defaults to `off`.
+- `WEBUI_TLS_CERT_FILE`: absolute certificate-chain PEM path for environment-based `manual` TLS.
+- `WEBUI_TLS_KEY_FILE`: absolute private-key PEM path for environment-based `manual` TLS.
+- `WEBUI_TLS_SERVER_NAME`: optional DNS name or IP that must be present in the manual certificate SAN.
+- `WEBUI_TRUST_PROXY_HEADERS`: permits trusted `X-Forwarded-Proto` and `X-Forwarded-For` handling. Defaults to `false`.
+- `WEBUI_TRUSTED_PROXY_CIDRS`: comma-separated CIDRs allowed to supply forwarded headers. Required when `WEBUI_TRUST_PROXY_HEADERS=true`.
 - `EXTERNAL_INTERFACE`: server egress interface, often `eth0` or `ens3`. In bridge networking this is usually `eth0` inside the container.
 - `APPLY_CONFIG`: when `true`, awg-forge applies runtime tunnel changes with AmneziaWG tools.
 - `PUBLISHED_UDP_PORTS`: published Docker UDP ports/ranges, for example `51820-51840,7443`.
@@ -56,6 +62,92 @@ It is used to sign UI session cookies. In the normal setup, users do not need to
 - `false`: never set `Secure`. This allows login through `http://domain:port`, but is unsafe on the public internet.
 
 If you need plain HTTP Web UI access, use it only on a trusted network or behind separate protection. For production, prefer `WEBUI_HOST=127.0.0.1` with SSH tunneling or HTTPS.
+
+## Web UI TLS
+
+TLS settings are independent from `state.json`. The built-in modes are:
+
+- `off`: current HTTP workflow for loopback or SSH tunneling;
+- `reverse-proxy`: Caddy, Nginx, or another proxy terminates HTTPS;
+- `manual`: awg-forge serves a provided certificate chain and private key.
+
+`acme-domain` and `acme-ip` are not implemented yet.
+
+### Manual TLS
+
+Environment configuration is useful for immutable deployments without CLI configuration:
+
+```env
+WEBUI_TLS_MODE=manual
+WEBUI_TLS_CERT_FILE=/mnt/awg-forge-tls/fullchain.pem
+WEBUI_TLS_KEY_FILE=/mnt/awg-forge-tls/privkey.pem
+WEBUI_TLS_SERVER_NAME=panel.example.com
+```
+
+The private key must be a regular file with mode `0600` in a `0700` directory; symbolic links are rejected. awg-forge verifies PEM parsing, certificate/key matching, certificate validity, and `WEBUI_TLS_SERVER_NAME` against the certificate SAN before listening. It does not fall back to HTTP when manual TLS validation fails.
+
+Alternatively, save a validated manual configuration through the container CLI:
+
+```bash
+docker exec awg-forge awg-forge tls use manual \
+  --cert /mnt/awg-forge-tls/fullchain.pem \
+  --key /mnt/awg-forge-tls/privkey.pem \
+  --server-name panel.example.com
+docker restart awg-forge
+```
+
+CLI-managed settings are stored in `CONFIG_DIR/tls/config.json` with mode `0600`. When this file exists, awg-forge uses it as the complete TLS configuration and ignores TLS mode/file variables in `.env`.
+
+```bash
+docker exec awg-forge awg-forge tls disable
+docker restart awg-forge
+```
+
+Return to validated environment settings with:
+
+```bash
+docker exec awg-forge awg-forge tls use environment
+docker restart awg-forge
+```
+
+`tls use environment` validates the environment before removing the managed override. `tls status` reports configured settings; `Maintenance` -> `System` reports the TLS runtime loaded by the current process.
+
+| Action | Result |
+| --- | --- |
+| Change TLS environment variables | Used when managed settings are absent. |
+| `tls use manual` | Saves managed settings with higher priority. |
+| `tls disable` | Saves managed HTTP mode. |
+| `tls use environment` | Removes managed settings only after environment validation. |
+
+For a manual certificate outside `./data`, add an explicit read-only mount to `docker-compose.yml`:
+
+```yaml
+volumes:
+  - ./data:/etc/awg-forge
+  - /srv/awg-forge/manual-tls:/mnt/awg-forge-tls:ro
+```
+
+The encrypted backup preserves `tls/config.json`. It does not copy certificate or key files supplied through an external mount; retain those files separately.
+
+Check the active mode and safe certificate metadata without printing PEM or key paths:
+
+```bash
+docker exec awg-forge awg-forge tls status
+```
+
+The same safe mode, certificate, and trusted-proxy summary is available in `Maintenance` -> `System` without PEM, private keys, or file paths.
+
+### Reverse Proxy
+
+Keep `WEBUI_HOST=127.0.0.1` where possible and configure HTTPS in the proxy. Reverse-proxy mode requires `PASSWORD`, trusted forwarded headers, and explicit proxy CIDRs:
+
+```env
+WEBUI_TLS_MODE=reverse-proxy
+WEBUI_TRUST_PROXY_HEADERS=true
+WEBUI_TRUSTED_PROXY_CIDRS=127.0.0.1/32,::1/128
+```
+
+The proxy must preserve the request `Host` and send `X-Forwarded-Proto: https`. awg-forge accepts only `http` or `https` from a direct peer in the configured CIDRs; spoofed headers from normal clients are ignored. The resolved scheme controls `Secure` cookies and Origin/Referer validation.
 
 ## EXTERNAL_INTERFACE
 

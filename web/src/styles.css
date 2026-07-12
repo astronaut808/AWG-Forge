@@ -965,6 +965,16 @@ textarea {
   background: color-mix(in srgb, var(--warn), transparent 88%);
 }
 
+.login-notice {
+  display: grid;
+  gap: 6px;
+  line-height: 1.35;
+}
+
+.login-notice p {
+  margin: 0;
+}
+
 .command-block {
   overflow: auto;
   color: var(--text);

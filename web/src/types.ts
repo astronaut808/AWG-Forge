@@ -134,12 +134,26 @@ export type DatabaseSummary = {
   enabled: boolean;
 };
 
+export type TLSSummary = {
+  mode: string;
+  source?: string;
+  valid: boolean;
+  error?: string;
+  subject?: string;
+  issuer?: string;
+  not_before?: string;
+  not_after?: string;
+  trusted_proxy_headers: boolean;
+  trusted_proxy_cidrs: number;
+};
+
 export type AppState = {
   authenticated: boolean;
   apply_enabled: boolean;
   server_host: string;
   warp: WarpSummary;
   database: DatabaseSummary;
+  tls: TLSSummary;
   build: BuildInfo;
   published_udp_ports: number[];
   profiles: Profile[];

@@ -17,6 +17,7 @@ import (
 	"github.com/astronaut808/awg-forge/internal/firewall"
 	"github.com/astronaut808/awg-forge/internal/render"
 	"github.com/astronaut808/awg-forge/internal/sqldb"
+	"github.com/astronaut808/awg-forge/internal/webtls"
 )
 
 func Run(cfg config.Config, service *app.Service) error {
@@ -64,6 +65,7 @@ func Check(cfg config.Config, service *app.Service) []Result {
 	c.checkDatabase(cfg)
 	c.checkTrafficLimits(cfg, state)
 	c.checkSessionCookie(cfg)
+	c.checkTLS(cfg)
 	c.checkLegacyTunnelEnv(cfg, state)
 	if !cfg.ApplyConfig {
 		c.warn(categorySystem, "apply", "APPLY_CONFIG=false; configs render but tunnels are not applied automatically")
@@ -194,6 +196,32 @@ func (c *checker) checkSessionCookie(cfg config.Config) {
 	default:
 		c.ok(categorySecurity, "session cookie", "auto Secure policy")
 	}
+}
+
+func (c *checker) checkTLS(cfg config.Config) {
+	runtime, err := webtls.Load(cfg)
+	if err != nil {
+		c.fail(categorySecurity, "TLS", err.Error())
+		return
+	}
+	status := runtime.Status
+	switch status.Mode {
+	case webtls.ModeOff:
+		if cfg.WebUIHost == "0.0.0.0" || cfg.WebUIHost == "::" {
+			c.warn(categorySecurity, "TLS", "off while Web UI is publicly bound; use HTTPS, a reverse proxy, or a trusted private network")
+		} else {
+			c.ok(categorySecurity, "TLS", "off; loopback/SSH workflow")
+		}
+	case webtls.ModeReverseProxy:
+		c.ok(categorySecurity, "TLS", "reverse-proxy termination selected")
+	case webtls.ModeManual:
+		c.ok(categorySecurity, "TLS", "manual certificate valid until "+status.NotAfter.Format(time.RFC3339))
+	}
+	if cfg.WebUITrustProxyHeaders {
+		c.ok(categorySecurity, "trusted proxy headers", fmt.Sprintf("enabled for %d CIDR entries", len(cfg.WebUITrustedProxyCIDRs)))
+		return
+	}
+	c.ok(categorySecurity, "trusted proxy headers", "disabled")
 }
 
 func (c *checker) checkPath(path string) {

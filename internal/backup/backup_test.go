@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/astronaut808/awg-forge/internal/app"
 	"github.com/astronaut808/awg-forge/internal/config"
+	"github.com/astronaut808/awg-forge/internal/webtls"
 )
 
 const testPassword = "correct horse battery staple"
@@ -48,6 +50,54 @@ func TestBackupRestoreRoundTripEncrypted(t *testing.T) {
 	}
 	assertMode(t, restoreCfg.ConfigDir, 0700)
 	assertMode(t, filepath.Join(restoreCfg.ConfigDir, "state.json"), 0600)
+}
+
+func TestBackupIncludesTLSSettings(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.Password = "secret"
+	cfg.WebUITrustProxyHeaders = true
+	cfg.WebUITrustedProxyCIDRs = []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}
+	svc := app.New(cfg)
+	if _, err := svc.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := webtls.Save(cfg, webtls.Settings{Mode: webtls.ModeReverseProxy}); err != nil {
+		t.Fatal(err)
+	}
+	archive, err := Create(context.Background(), cfg, svc, testPassword, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := decrypt(archive.Data, testPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := zip.NewReader(bytes.NewReader(plain), int64(len(plain)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range reader.File {
+		if file.Name == webtls.SettingsRelativePath {
+			restoreCfg := cfg
+			restoreCfg.ConfigDir = t.TempDir()
+			restoreCfg.Password = "secret"
+			restoreCfg.WebUITrustProxyHeaders = true
+			restoreCfg.WebUITrustedProxyCIDRs = []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}
+			if err := Restore(context.Background(), restoreCfg, testPassword, writeTempArchive(t, archive.Data)); err != nil {
+				t.Fatal(err)
+			}
+			runtime, err := webtls.Load(restoreCfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			status := runtime.Status
+			if status.Mode != webtls.ModeReverseProxy {
+				t.Fatalf("restored TLS mode = %q, want %q", status.Mode, webtls.ModeReverseProxy)
+			}
+			return
+		}
+	}
+	t.Fatalf("backup does not contain %s", webtls.SettingsRelativePath)
 }
 
 func TestRestoreReplacesMountedDirectoryContents(t *testing.T) {

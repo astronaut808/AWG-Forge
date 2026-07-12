@@ -17,6 +17,12 @@ ssh -L 51821:127.0.0.1:51821 user@server
 
 Если UI публикуется наружу, пароль обязателен.
 
+## TLS и reverse proxy
+
+Встроенный TLS Web UI поддерживает `off`, `reverse-proxy` и `manual`; подробности есть в [конфигурации](configuration.md#tls-для-web-ui). Режим `manual` требует TLS 1.3 и отклоняет невалидные certificates, несовпадающие keys, истёкшие certificates, symlink для key, private key без прав `0600` и каталог key без прав `0700`.
+
+Для reverse-proxy обязательны пароль Web UI, `WEBUI_TRUST_PROXY_HEADERS=true` и прямые адреса proxy в `WEBUI_TRUSTED_PROXY_CIDRS`. Untrusted forwarded headers игнорируются. TLS termination и bind Web UI независимы: proxy может публиковать HTTPS на любом порту, пока awg-forge остаётся на loopback.
+
 ## Sessions
 
 UI sessions истекают через 30 минут.

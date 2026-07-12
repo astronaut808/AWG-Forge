@@ -11,12 +11,13 @@ import (
 	"image/color"
 	"image/png"
 	"io"
-	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/astronaut808/awg-forge/internal/app"
@@ -28,6 +29,7 @@ import (
 	"github.com/astronaut808/awg-forge/internal/sqldb"
 	"github.com/astronaut808/awg-forge/internal/support"
 	"github.com/astronaut808/awg-forge/internal/updates"
+	"github.com/astronaut808/awg-forge/internal/webtls"
 	"github.com/boombuler/barcode/qr"
 )
 
@@ -38,6 +40,8 @@ type web struct {
 	cfg      config.Config
 	service  *app.Service
 	sessions []byte
+	shutdown context.Context
+	tls      webtls.Status
 	limits   map[string][]time.Time
 	idem     map[string]*idempotencyEntry
 	mu       sync.Mutex
@@ -48,6 +52,11 @@ const maxJSONBodyBytes = 1 << 20
 const clientQRTargetSize = 1024
 const clientQRQuietZoneModules = 4
 const clientQRMinModulePixels = 4
+const webReadHeaderTimeout = 10 * time.Second
+const webReadTimeout = 30 * time.Second
+const webWriteTimeout = 30 * time.Second
+const webIdleTimeout = 60 * time.Second
+const webShutdownTimeout = 15 * time.Second
 
 type idempotencyEntry struct {
 	status    int
@@ -56,14 +65,73 @@ type idempotencyEntry struct {
 	ready     chan struct{}
 }
 
-func Serve(cfg config.Config, service *app.Service) error {
+func Serve(cfg config.Config, service *app.Service, tlsRuntime webtls.Runtime) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return ServeContext(ctx, cfg, service, tlsRuntime)
+}
+
+func ServeContext(ctx context.Context, cfg config.Config, service *app.Service, tlsRuntime webtls.Runtime) error {
 	secret, err := service.SessionSecret()
 	if err != nil {
 		return err
 	}
-	go enforceExpiredClients(service)
-	go collectTrafficHistory(cfg, service)
-	w := &web{cfg: cfg, service: service, sessions: []byte(secret), limits: map[string][]time.Time{}, idem: map[string]*idempotencyEntry{}}
+	serverContext, stopServer := context.WithCancel(context.Background())
+	defer stopServer()
+	w := newWeb(serverContext, cfg, service, secret, tlsRuntime.Status)
+	server := newHTTPServer(fmt.Sprintf("%s:%d", cfg.WebUIHost, cfg.WebUIPort), newHandler(w))
+
+	go enforceExpiredClients(ctx, service)
+	go collectTrafficHistory(ctx, cfg, service)
+
+	errCh := make(chan error, 1)
+	go func() {
+		if tlsRuntime.TLSConfig != nil {
+			server.TLSConfig = tlsRuntime.TLSConfig
+			fmt.Printf("awg-forge web UI listening on https://%s\n", server.Addr)
+			errCh <- server.ListenAndServeTLS("", "")
+			return
+		}
+		fmt.Printf("awg-forge web UI listening on http://%s\n", server.Addr)
+		errCh <- server.ListenAndServe()
+	}()
+
+	select {
+	case err := <-errCh:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-ctx.Done():
+		stopServer()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), webShutdownTimeout)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			return err
+		}
+		if err := <-errCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
+	}
+}
+
+func newWeb(shutdown context.Context, cfg config.Config, service *app.Service, secret string, tlsStatus webtls.Status) *web {
+	return &web{cfg: cfg, service: service, sessions: []byte(secret), shutdown: shutdown, tls: tlsStatus, limits: map[string][]time.Time{}, idem: map[string]*idempotencyEntry{}}
+}
+
+func newHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: webReadHeaderTimeout,
+		ReadTimeout:       webReadTimeout,
+		WriteTimeout:      webWriteTimeout,
+		IdleTimeout:       webIdleTimeout,
+	}
+}
+
+func newHandler(w *web) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/static/", w.securityHandler(http.FileServer(http.FS(staticFiles))))
 	mux.HandleFunc("/", w.security(w.index))
@@ -86,22 +154,23 @@ func Serve(cfg config.Config, service *app.Service) error {
 	mux.HandleFunc("/api/clients", w.security(w.requireAuth(w.clientsAPI)))
 	mux.HandleFunc("/api/clients/", w.security(w.requireAuth(w.clientAPI)))
 	mux.HandleFunc("/clients/config/", w.security(w.requireAuth(w.clientConfig)))
-
-	addr := fmt.Sprintf("%s:%d", cfg.WebUIHost, cfg.WebUIPort)
-	fmt.Printf("awg-forge web UI listening on http://%s\n", addr)
-	// Built-in HTTP is intentional for localhost/LAN/reverse-proxy deployments; TLS termination is deployment-specific.
-	return http.ListenAndServe(addr, mux) // nosemgrep: go.lang.security.audit.net.use-tls.use-tls
+	return mux
 }
 
-func enforceExpiredClients(service *app.Service) {
+func enforceExpiredClients(ctx context.Context, service *app.Service) {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
-	for range ticker.C {
-		_ = service.EnforceExpiredClients()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			_ = service.EnforceExpiredClients()
+		}
 	}
 }
 
-func collectTrafficHistory(cfg config.Config, service *app.Service) {
+func collectTrafficHistory(ctx context.Context, cfg config.Config, service *app.Service) {
 	if cfg.DatabaseMode != sqldb.ModeSQLite || !cfg.ApplyConfig {
 		return
 	}
@@ -109,7 +178,11 @@ func collectTrafficHistory(cfg config.Config, service *app.Service) {
 	defer ticker.Stop()
 	for {
 		collectTrafficHistoryOnce(cfg, service)
-		<-ticker.C
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
 	}
 }
 
@@ -212,23 +285,23 @@ func (w *web) loginAPI(rw http.ResponseWriter, r *http.Request) {
 	}
 	if w.cfg.Password == "" {
 		w.setSession(rw, r)
-		w.audit("info", "login.succeeded", "login succeeded without password", nil, nil)
+		w.audit("info", "login.succeeded", "login succeeded without password", w.loginAuditFields(r), nil)
 		writeJSON(rw, http.StatusOK, map[string]any{"ok": true})
 		return
 	}
-	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+	ip := w.clientIP(r)
 	if !w.allowLogin(ip) {
-		w.audit("warn", "login.rate_limited", "login rate limited", nil, nil)
+		w.audit("warn", "login.rate_limited", "login rate limited", w.loginAuditFields(r), nil)
 		writeError(rw, http.StatusTooManyRequests, "too many login attempts")
 		return
 	}
 	if subtleCompare(req.Password, w.cfg.Password) {
 		w.setSession(rw, r)
-		w.audit("info", "login.succeeded", "login succeeded", nil, nil)
+		w.audit("info", "login.succeeded", "login succeeded", w.loginAuditFields(r), nil)
 		writeJSON(rw, http.StatusOK, map[string]any{"ok": true})
 		return
 	}
-	w.audit("warn", "login.failed", "invalid password", nil, nil)
+	w.audit("warn", "login.failed", "invalid password", w.loginAuditFields(r), nil)
 	writeError(rw, http.StatusUnauthorized, "invalid password")
 }
 
@@ -265,6 +338,8 @@ func (w *web) eventsAPI(rw http.ResponseWriter, r *http.Request) {
 		writeError(rw, http.StatusInternalServerError, "streaming unsupported")
 		return
 	}
+	// SSE is long-lived; retain the server-wide write timeout for ordinary responses.
+	_ = http.NewResponseController(rw).SetWriteDeadline(time.Time{})
 
 	noStore(rw)
 	rw.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
@@ -295,9 +370,15 @@ func (w *web) eventsAPI(rw http.ResponseWriter, r *http.Request) {
 
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
+	var shutdown <-chan struct{}
+	if w.shutdown != nil {
+		shutdown = w.shutdown.Done()
+	}
 	for {
 		select {
 		case <-r.Context().Done():
+			return
+		case <-shutdown:
 			return
 		case <-ticker.C:
 			if !writeStateEvent() {
@@ -1133,6 +1214,7 @@ func (w *web) publicState(ctx context.Context, state config.State) map[string]an
 		"server_host":         state.ServerHost,
 		"warp":                w.service.WarpSummary(state),
 		"database":            publicDatabase(w.cfg),
+		"tls":                 publicTLS(w.tls, w.cfg),
 		"build":               buildinfo.Current(),
 		"published_udp_ports": w.cfg.PublishedUDPPorts,
 		"profiles": []map[string]any{
@@ -1247,6 +1329,26 @@ func publicDatabase(cfg config.Config) map[string]any {
 		"mode":    mode,
 		"enabled": mode != sqldb.ModeOff,
 	}
+}
+
+func publicTLS(status webtls.Status, cfg config.Config) map[string]any {
+	if status.Mode == "" {
+		status.Mode = webtls.ModeOff
+	}
+	result := map[string]any{
+		"mode":                  status.Mode,
+		"source":                status.Source,
+		"valid":                 true,
+		"trusted_proxy_headers": cfg.WebUITrustProxyHeaders,
+		"trusted_proxy_cidrs":   len(cfg.WebUITrustedProxyCIDRs),
+	}
+	if status.Mode == webtls.ModeManual {
+		result["subject"] = status.Subject
+		result["issuer"] = status.Issuer
+		result["not_before"] = status.NotBefore
+		result["not_after"] = status.NotAfter
+	}
+	return result
 }
 
 func (w *web) audit(level, event, message string, fields map[string]any, err error) {

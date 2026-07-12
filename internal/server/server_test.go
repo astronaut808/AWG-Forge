@@ -4,15 +4,26 @@ import (
 	"bytes"
 	"compress/zlib"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"database/sql"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"encoding/pem"
+	"errors"
 	"image/png"
 	"io"
+	"math/big"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -27,6 +38,7 @@ import (
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/firewall"
 	"github.com/astronaut808/awg-forge/internal/sqldb"
+	"github.com/astronaut808/awg-forge/internal/webtls"
 )
 
 func TestValidOriginAllowsMissingOriginAndRefererForLoopback(t *testing.T) {
@@ -186,6 +198,180 @@ func TestSessionCookieSecureCanBeForcedForLoopback(t *testing.T) {
 	if !cookies[0].Secure {
 		t.Fatal("SESSION_COOKIE_SECURE=true must force Secure cookies")
 	}
+}
+
+func TestTrustedProxyHeadersApplyOnlyToTrustedRemoteAddress(t *testing.T) {
+	w := &web{cfg: config.Config{
+		WebUITrustProxyHeaders: true,
+		WebUITrustedProxyCIDRs: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32"), netip.MustParsePrefix("10.0.0.0/8")},
+	}}
+	r := httptest.NewRequest(http.MethodPost, "http://admin.example.com/api/login", nil)
+	r.RemoteAddr = "127.0.0.1:12345"
+	r.Host = "admin.example.com"
+	r.Header.Set("X-Forwarded-Proto", "https")
+	r.Header.Set("X-Forwarded-For", "198.51.100.24, 10.1.2.3")
+	r.Header.Set("Origin", "https://admin.example.com")
+	if !w.validOrigin(r) {
+		t.Fatal("trusted HTTPS proxy origin should be accepted")
+	}
+	if w.effectiveScheme(r) != "https" {
+		t.Fatalf("effective scheme = %q, want https", w.effectiveScheme(r))
+	}
+	if got := w.clientIP(r); got != "198.51.100.24" {
+		t.Fatalf("client IP = %q, want first untrusted address", got)
+	}
+	rr := httptest.NewRecorder()
+	w.setSession(rr, r)
+	if !rr.Result().Cookies()[0].Secure {
+		t.Fatal("trusted HTTPS proxy must set a Secure session cookie")
+	}
+}
+
+func TestSpoofedForwardedHeadersAreIgnored(t *testing.T) {
+	w := &web{cfg: config.Config{
+		WebUITrustProxyHeaders: true,
+		WebUITrustedProxyCIDRs: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")},
+	}}
+	r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:51821/api/login", nil)
+	r.RemoteAddr = "198.51.100.10:12345"
+	r.Header.Set("X-Forwarded-Proto", "https")
+	r.Header.Set("X-Forwarded-For", "203.0.113.9")
+	if w.effectiveScheme(r) != "http" {
+		t.Fatal("untrusted forwarded scheme must be ignored")
+	}
+	if got := w.clientIP(r); got != "198.51.100.10" {
+		t.Fatalf("client IP = %q, want direct remote address", got)
+	}
+	rr := httptest.NewRecorder()
+	w.setSession(rr, r)
+	if rr.Result().Cookies()[0].Secure {
+		t.Fatal("spoofed forwarded scheme must not change loopback HTTP cookie policy")
+	}
+}
+
+func TestMissingOriginIsRejectedFromTrustedProxy(t *testing.T) {
+	w := &web{cfg: config.Config{
+		WebUITrustProxyHeaders: true,
+		WebUITrustedProxyCIDRs: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")},
+	}}
+	r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:51821/api/login", nil)
+	r.RemoteAddr = "127.0.0.1:12345"
+	if w.validOrigin(r) {
+		t.Fatal("trusted proxy requests without Origin or Referer must be rejected")
+	}
+}
+
+func TestHTTPServerUsesBoundedTimeouts(t *testing.T) {
+	server := newHTTPServer("127.0.0.1:0", http.NewServeMux())
+	if server.ReadHeaderTimeout != webReadHeaderTimeout || server.ReadTimeout != webReadTimeout || server.WriteTimeout != webWriteTimeout || server.IdleTimeout != webIdleTimeout {
+		t.Fatalf("unexpected server timeouts: %#v", server)
+	}
+}
+
+func TestManualTLSServerHandshake(t *testing.T) {
+	certPath, keyPath := writeManualTLSCertificate(t, "panel.example.com")
+	cfg := config.Config{
+		ConfigDir:          t.TempDir(),
+		WebUITLSMode:       string(webtls.ModeManual),
+		WebUITLSCertFile:   certPath,
+		WebUITLSKeyFile:    keyPath,
+		WebUITLSServerName: "panel.example.com",
+	}
+	tlsRuntime, err := webtls.Load(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tlsConfig := tlsRuntime.TLSConfig
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := newHTTPServer(listener.Addr().String(), http.HandlerFunc(func(rw http.ResponseWriter, _ *http.Request) {
+		rw.WriteHeader(http.StatusNoContent)
+	}))
+	server.TLSConfig = tlsConfig
+	errCh := make(chan error, 1)
+	go func() { errCh <- server.ServeTLS(listener, "", "") }()
+
+	certPEM, err := os.ReadFile(certPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(certPEM) {
+		t.Fatal("test certificate was not added to root pool")
+	}
+	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots, ServerName: "panel.example.com"}}}
+	response, err := client.Get("https://" + listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", response.StatusCode, http.StatusNoContent)
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-errCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
+		t.Fatal(err)
+	}
+}
+
+func TestPublicTLSDoesNotExposeCertificatePaths(t *testing.T) {
+	cfg := config.Config{
+		WebUITLSMode: string(webtls.ModeManual),
+	}
+	summary := publicTLS(webtls.Status{Mode: webtls.ModeManual, Subject: "CN=panel.example.com", Issuer: "CN=issuer"}, cfg)
+	encoded, err := json.Marshal(summary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "/private/") {
+		t.Fatalf("TLS summary exposes a certificate path: %s", encoded)
+	}
+}
+
+func writeManualTLSCertificate(t *testing.T, dnsName string) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: dnsName},
+		DNSNames:              []string{dnsName},
+		NotBefore:             time.Now().Add(-time.Minute),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPath := filepath.Join(dir, "cert.pem")
+	keyPath := filepath.Join(dir, "key.pem")
+	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return certPath, keyPath
 }
 
 func TestConfigFilenameUsesSanitizedClientName(t *testing.T) {
