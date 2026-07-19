@@ -53,6 +53,8 @@ export type ClientTraffic = {
   rx_total: number;
   tx_total: number;
   limit_bytes: number | null;
+  limit_period: "" | "lifetime" | "rolling_30d";
+  limit_usage_bytes: number;
   exceeded: boolean;
 };
 

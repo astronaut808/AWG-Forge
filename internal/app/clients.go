@@ -13,7 +13,9 @@ import (
 )
 
 type ClientCreateOptions struct {
-	ExpiresAt time.Time
+	ExpiresAt       time.Time
+	Persist         func(config.Client) error
+	RollbackPersist func(config.Client) error
 }
 
 type ClientSettingsUpdate struct {
@@ -40,6 +42,9 @@ func (s *Service) AddClientToTunnel(tunnelID, name string) (config.Client, error
 func (s *Service) AddClientToTunnelWithOptions(tunnelID, name string, opts ClientCreateOptions) (config.Client, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if opts.Persist != nil && opts.RollbackPersist == nil {
+		return config.Client{}, errors.New("client persistence requires a rollback")
+	}
 	if !clientNameRE.MatchString(name) {
 		return config.Client{}, errors.New("client name must be 1-64 chars and contain only letters, numbers, spaces, dots, underscores, or dashes")
 	}
@@ -75,18 +80,32 @@ func (s *Service) AddClientToTunnelWithOptions(tunnelID, name string, opts Clien
 		ExpiresAt:      opts.ExpiresAt.UTC(),
 		CreatedAt:      now, UpdatedAt: now,
 	}
+	if opts.Persist != nil {
+		if err := opts.Persist(client); err != nil {
+			return config.Client{}, err
+		}
+	}
+	rollbackPersist := func(err error) error {
+		if opts.RollbackPersist == nil {
+			return err
+		}
+		if rollbackErr := opts.RollbackPersist(client); rollbackErr != nil {
+			return errors.Join(err, fmt.Errorf("client persistence rollback failed: %w", rollbackErr))
+		}
+		return err
+	}
 	state.Tunnels[idx].Clients = append(state.Tunnels[idx].Clients, client)
 	state.Tunnels[idx].UpdatedAt = now
 	state.UpdatedAt = now
 	if err := s.store.Save(state); err != nil {
-		return config.Client{}, err
+		return config.Client{}, rollbackPersist(err)
 	}
 	if err := s.renderTunnelLocked(state.Tunnels[idx].ID, true); err != nil {
 		if rollbackErr := s.rollbackRenderedState(previousState, state.Tunnels[idx].ID); rollbackErr != nil {
-			return config.Client{}, errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
+			return config.Client{}, rollbackPersist(errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr)))
 		}
 		s.log("error", "client.create.failed", "client creation failed", clientAuditFields(state.Tunnels[idx], client), err)
-		return config.Client{}, err
+		return config.Client{}, rollbackPersist(err)
 	}
 	s.log("info", "client.created", "client created", clientAuditFields(state.Tunnels[idx], client), nil)
 	return client, nil
@@ -145,12 +164,59 @@ func (s *Service) SetClientEnabled(id string, enabled bool) error {
 type trafficLimitDisable struct {
 	TotalBytes uint64
 	LimitBytes uint64
+	Period     string
 }
 
-func (s *Service) DisableClientForTrafficLimit(id string, totalBytes, limitBytes uint64) error {
+func (s *Service) DisableClientForTrafficLimit(id string, totalBytes, limitBytes uint64, period string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.setClientEnabledLocked(id, false, &trafficLimitDisable{TotalBytes: totalBytes, LimitBytes: limitBytes})
+	enabled, err := s.clientEnabledLocked(id)
+	if err != nil || !enabled {
+		return false, err
+	}
+	if err := s.setClientEnabledLocked(id, false, &trafficLimitDisable{TotalBytes: totalBytes, LimitBytes: limitBytes, Period: period}); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *Service) EnableClientForTrafficLimitRelease(id, period string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state, err := s.initLocked()
+	if err != nil {
+		return false, err
+	}
+	for _, tunnel := range state.Tunnels {
+		for _, client := range tunnel.Clients {
+			if client.ID != id {
+				continue
+			}
+			if client.Enabled || config.ClientExpired(client, time.Now().UTC()) {
+				return false, nil
+			}
+			if err := s.setClientEnabledLocked(id, true, &trafficLimitDisable{Period: period}); err != nil {
+				return false, err
+			}
+			return true, nil
+		}
+	}
+	return false, errors.New("client not found")
+}
+
+func (s *Service) clientEnabledLocked(id string) (bool, error) {
+	state, err := s.initLocked()
+	if err != nil {
+		return false, err
+	}
+	for _, tunnel := range state.Tunnels {
+		for _, client := range tunnel.Clients {
+			if client.ID == id {
+				return client.Enabled, nil
+			}
+		}
+	}
+	return false, errors.New("client not found")
 }
 
 func (s *Service) setClientEnabledLocked(id string, enabled bool, trafficLimit *trafficLimitDisable) error {
@@ -191,10 +257,16 @@ func (s *Service) setClientEnabledLocked(id string, enabled bool, trafficLimit *
 				}
 				fields := clientAuditFields(state.Tunnels[ti], state.Tunnels[ti].Clients[ci])
 				if trafficLimit != nil {
-					event = "client.traffic_limit.exceeded"
-					message = "client disabled after traffic limit exceeded"
-					fields["traffic_total_bytes"] = trafficLimit.TotalBytes
-					fields["traffic_limit_bytes"] = trafficLimit.LimitBytes
+					if enabled {
+						event = "client.traffic_limit.released"
+						message = "client enabled after traffic limit release"
+					} else {
+						event = "client.traffic_limit.exceeded"
+						message = "client disabled after traffic limit exceeded"
+						fields["traffic_total_bytes"] = trafficLimit.TotalBytes
+						fields["traffic_limit_bytes"] = trafficLimit.LimitBytes
+					}
+					fields["traffic_limit_period"] = trafficLimit.Period
 				}
 				s.log("info", event, message, fields, nil)
 				return nil

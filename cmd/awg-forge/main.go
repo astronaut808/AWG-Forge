@@ -194,21 +194,49 @@ func runClient(cfg config.Config, svc *app.Service, args []string) error {
 				Event:   "client.enabled_state.rejected",
 				Message: "client enabled state request rejected",
 				Fields: map[string]any{
-					"client_id":           args[1],
-					"enabled":             true,
-					"reason":              "traffic limit exceeded",
-					"traffic_total_bytes": exceeded.TotalBytes,
-					"traffic_limit_bytes": exceeded.LimitBytes,
+					"client_id":            args[1],
+					"enabled":              true,
+					"reason":               "traffic limit exceeded",
+					"traffic_total_bytes":  exceeded.TotalBytes,
+					"traffic_limit_bytes":  exceeded.LimitBytes,
+					"traffic_limit_period": string(exceeded.Period),
 				},
 			})
 			return errors.New("traffic limit exceeded; increase or clear the limit before enabling")
 		}
-		return svc.SetClientEnabled(args[1], true)
+		if err := svc.SetClientEnabled(args[1], true); err != nil {
+			return err
+		}
+		if err := sqldb.ClearClientTrafficLimitBlock(ctx, cfg, args[1]); err != nil && !errors.Is(err, sqldb.ErrDisabled) && !errors.Is(err, sql.ErrNoRows) {
+			svc.Audit().Log(context.Background(), audit.Event{
+				Level:   "warn",
+				Event:   "client.traffic_limit_release_marker.clear_failed",
+				Message: "client traffic limit release marker clear failed",
+				Fields:  map[string]any{"client_id": args[1], "enabled": true},
+				Error:   audit.Error(err),
+			})
+		}
+		return nil
 	case "disable":
 		if len(args) != 2 {
 			return errors.New("usage: awg-forge client disable <id>")
 		}
-		return svc.SetClientEnabled(args[1], false)
+		ctx, cancel := context.WithTimeout(context.Background(), cfg.DatabaseQueryTimeout)
+		defer cancel()
+		if err := sqldb.ClearClientTrafficLimitBlock(ctx, cfg, args[1]); err != nil && !errors.Is(err, sqldb.ErrDisabled) && !errors.Is(err, sql.ErrNoRows) {
+			svc.Audit().Log(context.Background(), audit.Event{
+				Level:   "warn",
+				Event:   "client.enabled_state.rejected",
+				Message: "client enabled state request rejected",
+				Fields:  map[string]any{"client_id": args[1], "enabled": false},
+				Error:   audit.Error(err),
+			})
+			return fmt.Errorf("traffic limit marker unavailable; retry before disabling: %w", err)
+		}
+		if err := svc.SetClientEnabled(args[1], false); err != nil {
+			return err
+		}
+		return nil
 	case "config":
 		if len(args) != 2 {
 			return errors.New("usage: awg-forge client config <id>")

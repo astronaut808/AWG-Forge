@@ -12,5 +12,8 @@
     "preact": "^10.26.9",
     "typescript": "^5.8.3",
     "vite": "^6.3.5"
+  },
+  "overrides": {
+    "adm-zip": "0.6.0"
   }
 }

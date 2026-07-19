@@ -498,7 +498,7 @@ func TestUpdateClientTrafficLimitAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(limits) != 1 || limits[0].LimitBytes != 53687091200 {
+	if len(limits) != 1 || limits[0].LimitBytes != 53687091200 || limits[0].Period != sqldb.TrafficLimitPeriodLifetime {
 		t.Fatalf("limits = %#v, want one 50 GiB limit", limits)
 	}
 
@@ -552,7 +552,7 @@ func TestCreateClientCanSetTrafficLimit(t *testing.T) {
 	tunnel := state.Tunnels[0]
 	w := &web{cfg: cfg, service: svc, idem: map[string]*idempotencyEntry{}}
 
-	r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/clients", strings.NewReader(`{"tunnel_id":"`+tunnel.ID+`","name":"phone","expires_at":"","traffic_limit_bytes":104857600}`))
+	r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/clients", strings.NewReader(`{"tunnel_id":"`+tunnel.ID+`","name":"phone","expires_at":"","traffic_limit_bytes":104857600,"traffic_limit_period":"rolling_30d"}`))
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("Idempotency-Key", "create-with-limit")
 	r.Header.Set("Origin", "http://127.0.0.1")
@@ -565,8 +565,35 @@ func TestCreateClientCanSetTrafficLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(limits) != 1 || limits[0].LimitBytes != 104857600 {
+	if len(limits) != 1 || limits[0].LimitBytes != 104857600 || limits[0].Period != sqldb.TrafficLimitPeriodRolling30Days {
 		t.Fatalf("limits = %#v, want one 100 MiB limit", limits)
+	}
+}
+
+func TestParseTrafficLimitPeriod(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		value string
+		want  sqldb.TrafficLimitPeriod
+		valid bool
+	}{
+		{name: "default", want: sqldb.TrafficLimitPeriodLifetime, valid: true},
+		{name: "lifetime", value: "lifetime", want: sqldb.TrafficLimitPeriodLifetime, valid: true},
+		{name: "rolling 30 days", value: "rolling_30d", want: sqldb.TrafficLimitPeriodRolling30Days, valid: true},
+		{name: "invalid", value: "weekly"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseTrafficLimitPeriod(tt.value)
+			if tt.valid && err != nil {
+				t.Fatal(err)
+			}
+			if !tt.valid && err == nil {
+				t.Fatal("expected invalid period error")
+			}
+			if tt.valid && got != tt.want {
+				t.Fatalf("period = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -786,6 +813,165 @@ func TestEnableClientRechecksExceededTrafficLimit(t *testing.T) {
 	}
 	if state.Tunnels[0].Clients[0].Enabled {
 		t.Fatal("client should remain disabled when re-enabled over traffic limit")
+	}
+}
+
+func TestTrafficLimitAutoReleasesQuotaBlockedClient(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Config{
+		ConfigDir:            dir,
+		TunnelName:           "awg0",
+		ServerHost:           "vpn.example.com",
+		ListenPort:           51820,
+		WebUIHost:            "127.0.0.1",
+		WebUIPort:            51821,
+		ExternalInterface:    "eth0",
+		IPv4Subnet:           "10.8.0.0/24",
+		DNS:                  "1.1.1.1",
+		AllowedIPs:           "0.0.0.0/0",
+		ProtocolProfile:      "awg_legacy_1_0",
+		DatabaseMode:         sqldb.ModeSQLite,
+		DatabasePath:         filepath.Join(dir, "awg-forge.db"),
+		DatabaseBusyTimeout:  5 * time.Second,
+		DatabaseQueryTimeout: 2 * time.Second,
+		DatabaseMaxOpenConns: 1,
+		DatabaseMaxIdleConns: 1,
+	}
+	if _, err := sqldb.Migrate(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	svc := app.New(cfg)
+	client, err := svc.AddClient("phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := sqldb.RecordTrafficSamples(context.Background(), cfg, []sqldb.TrafficSample{
+		{SampledAt: now.Add(-time.Minute), TunnelID: client.TunnelID, ClientID: client.ID, Present: true},
+		{SampledAt: now, TunnelID: client.TunnelID, ClientID: client.ID, RxBytes: 6000, Present: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	limit := uint64(5000)
+	if err := sqldb.SetClientTrafficLimitWithPeriod(context.Background(), cfg, client.TunnelID, client.ID, &limit, sqldb.TrafficLimitPeriodRolling30Days); err != nil {
+		t.Fatal(err)
+	}
+	enforceTrafficLimits(context.Background(), cfg, svc)
+	state, err := svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Tunnels[0].Clients[0].Enabled {
+		t.Fatal("quota-exceeded client should be disabled")
+	}
+	blocks, err := sqldb.ListTrafficLimitBlocks(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocks) != 1 || blocks[0].ClientID != client.ID {
+		t.Fatalf("blocks = %#v, want client block", blocks)
+	}
+
+	limit = 7000
+	if err := sqldb.SetClientTrafficLimitWithPeriod(context.Background(), cfg, client.TunnelID, client.ID, &limit, sqldb.TrafficLimitPeriodRolling30Days); err != nil {
+		t.Fatal(err)
+	}
+	enforceTrafficLimits(context.Background(), cfg, svc)
+	state, err = svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.Tunnels[0].Clients[0].Enabled {
+		t.Fatal("quota-blocked client should be re-enabled after usage falls below the limit")
+	}
+	blocks, err = sqldb.ListTrafficLimitBlocks(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocks) != 0 {
+		t.Fatalf("blocks after release = %#v, want none", blocks)
+	}
+
+	limit = 5000
+	if err := sqldb.SetClientTrafficLimitWithPeriod(context.Background(), cfg, client.TunnelID, client.ID, &limit, sqldb.TrafficLimitPeriodRolling30Days); err != nil {
+		t.Fatal(err)
+	}
+	enforceTrafficLimits(context.Background(), cfg, svc)
+	w := &web{cfg: cfg, service: svc, idem: map[string]*idempotencyEntry{}}
+	r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/clients/"+client.ID+"/disable", nil)
+	r.Header.Set("Idempotency-Key", "manual-disable-after-quota")
+	r.Header.Set("Origin", "http://127.0.0.1")
+	rr := httptest.NewRecorder()
+	w.clientAPI(rr, r)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("manual disable status = %d body = %s", rr.Code, rr.Body.String())
+	}
+	limit = 7000
+	if err := sqldb.SetClientTrafficLimitWithPeriod(context.Background(), cfg, client.TunnelID, client.ID, &limit, sqldb.TrafficLimitPeriodRolling30Days); err != nil {
+		t.Fatal(err)
+	}
+	enforceTrafficLimits(context.Background(), cfg, svc)
+	state, err = svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Tunnels[0].Clients[0].Enabled {
+		t.Fatal("manually disabled client must not be auto-enabled after quota release")
+	}
+}
+
+func TestManualDisableKeepsClientEnabledWhenQuotaBlockCannotBeCleared(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Config{
+		ConfigDir:            dir,
+		TunnelName:           "awg0",
+		ServerHost:           "vpn.example.com",
+		ListenPort:           51820,
+		WebUIHost:            "127.0.0.1",
+		WebUIPort:            51821,
+		ExternalInterface:    "eth0",
+		IPv4Subnet:           "10.8.0.0/24",
+		DNS:                  "1.1.1.1",
+		AllowedIPs:           "0.0.0.0/0",
+		ProtocolProfile:      "awg_legacy_1_0",
+		DatabaseMode:         sqldb.ModeSQLite,
+		DatabasePath:         filepath.Join(dir, "awg-forge.db"),
+		DatabaseBusyTimeout:  5 * time.Second,
+		DatabaseQueryTimeout: 2 * time.Second,
+		DatabaseMaxOpenConns: 1,
+		DatabaseMaxIdleConns: 1,
+	}
+	if _, err := sqldb.Migrate(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	svc := app.New(cfg)
+	client, err := svc.AddClient("phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sqldb.MarkClientTrafficLimitBlocked(context.Background(), cfg, client.TunnelID, client.ID, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	brokenCfg := cfg
+	brokenCfg.DatabasePath = filepath.Join(t.TempDir(), "not-a-database")
+	if err := os.Mkdir(brokenCfg.DatabasePath, 0700); err != nil {
+		t.Fatal(err)
+	}
+	w := &web{cfg: brokenCfg, service: svc, idem: map[string]*idempotencyEntry{}}
+	r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/clients/"+client.ID+"/disable", nil)
+	r.Header.Set("Idempotency-Key", "disable-with-unavailable-db")
+	r.Header.Set("Origin", "http://127.0.0.1")
+	rr := httptest.NewRecorder()
+	w.clientAPI(rr, r)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d body = %s, want %d", rr.Code, rr.Body.String(), http.StatusServiceUnavailable)
+	}
+	state, err := svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.Tunnels[0].Clients[0].Enabled {
+		t.Fatal("client must remain enabled when its quota block cannot be cleared")
 	}
 }
 

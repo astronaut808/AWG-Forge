@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -66,5 +67,43 @@ func TestRunClientEnableRejectsExceededTrafficLimit(t *testing.T) {
 	}
 	if state.Tunnels[0].Clients[0].Enabled {
 		t.Fatal("client should remain disabled when CLI enable is over traffic limit")
+	}
+}
+
+func TestRunClientDisableKeepsClientEnabledWhenQuotaBlockCannotBeCleared(t *testing.T) {
+	cfg := config.Config{
+		ConfigDir:            t.TempDir(),
+		TunnelName:           "awg0",
+		ServerHost:           "vpn.example.com",
+		ListenPort:           51820,
+		WebUIHost:            "127.0.0.1",
+		WebUIPort:            51821,
+		ExternalInterface:    "eth0",
+		IPv4Subnet:           "10.8.0.0/24",
+		DNS:                  "1.1.1.1",
+		AllowedIPs:           "0.0.0.0/0",
+		ProtocolProfile:      "awg_legacy_1_0",
+		DatabaseMode:         sqldb.ModeSQLite,
+		DatabaseQueryTimeout: time.Second,
+	}
+	cfg.DatabasePath = filepath.Join(t.TempDir(), "not-a-database")
+	if err := os.Mkdir(cfg.DatabasePath, 0700); err != nil {
+		t.Fatal(err)
+	}
+	svc := app.New(cfg)
+	client, err := svc.AddClient("phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = runClient(cfg, svc, []string{"disable", client.ID})
+	if err == nil || !strings.Contains(err.Error(), "traffic limit marker unavailable") {
+		t.Fatalf("error = %v, want traffic limit marker failure", err)
+	}
+	state, err := svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.Tunnels[0].Clients[0].Enabled {
+		t.Fatal("client must remain enabled when its quota block cannot be cleared")
 	}
 }

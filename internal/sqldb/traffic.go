@@ -21,23 +21,33 @@ type TrafficSample struct {
 }
 
 type TrafficSummaryRow struct {
-	TunnelID   string  `json:"tunnel_id"`
-	ClientID   string  `json:"client_id"`
-	RxTotal    uint64  `json:"rx_total"`
-	TxTotal    uint64  `json:"tx_total"`
-	RxToday    uint64  `json:"rx_today"`
-	TxToday    uint64  `json:"tx_today"`
-	Rx7d       uint64  `json:"rx_7d"`
-	Tx7d       uint64  `json:"tx_7d"`
-	Rx30d      uint64  `json:"rx_30d"`
-	Tx30d      uint64  `json:"tx_30d"`
-	LimitBytes *uint64 `json:"limit_bytes"`
+	TunnelID        string             `json:"tunnel_id"`
+	ClientID        string             `json:"client_id"`
+	RxTotal         uint64             `json:"rx_total"`
+	TxTotal         uint64             `json:"tx_total"`
+	RxToday         uint64             `json:"rx_today"`
+	TxToday         uint64             `json:"tx_today"`
+	Rx7d            uint64             `json:"rx_7d"`
+	Tx7d            uint64             `json:"tx_7d"`
+	Rx30d           uint64             `json:"rx_30d"`
+	Tx30d           uint64             `json:"tx_30d"`
+	LimitBytes      *uint64            `json:"limit_bytes"`
+	LimitPeriod     TrafficLimitPeriod `json:"limit_period"`
+	LimitUsageBytes uint64             `json:"limit_usage_bytes"`
 }
+
+type TrafficLimitPeriod string
+
+const (
+	TrafficLimitPeriodLifetime      TrafficLimitPeriod = "lifetime"
+	TrafficLimitPeriodRolling30Days TrafficLimitPeriod = "rolling_30d"
+)
 
 type ClientTrafficLimit struct {
 	TunnelID   string
 	ClientID   string
 	LimitBytes uint64
+	Period     TrafficLimitPeriod
 }
 
 type ExceededTrafficLimit struct {
@@ -45,7 +55,15 @@ type ExceededTrafficLimit struct {
 	ClientID   string
 	LimitBytes uint64
 	TotalBytes uint64
+	Period     TrafficLimitPeriod
 	ExceededAt time.Time
+}
+
+type TrafficLimitBlock struct {
+	TunnelID  string
+	ClientID  string
+	Period    TrafficLimitPeriod
+	BlockedAt time.Time
 }
 
 func RecordTrafficSamples(ctx context.Context, cfg config.Config, samples []TrafficSample) error {
@@ -70,12 +88,16 @@ func ListTrafficSummary(ctx context.Context, cfg config.Config, now time.Time) (
 }
 
 func SetClientTrafficLimit(ctx context.Context, cfg config.Config, tunnelID, clientID string, limitBytes *uint64) error {
+	return SetClientTrafficLimitWithPeriod(ctx, cfg, tunnelID, clientID, limitBytes, TrafficLimitPeriodLifetime)
+}
+
+func SetClientTrafficLimitWithPeriod(ctx context.Context, cfg config.Config, tunnelID, clientID string, limitBytes *uint64, period TrafficLimitPeriod) error {
 	db, err := OpenExisting(ctx, cfg)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = db.Close() }()
-	return db.SetClientTrafficLimit(ctx, tunnelID, clientID, limitBytes)
+	return db.SetClientTrafficLimitWithPeriod(ctx, tunnelID, clientID, limitBytes, period)
 }
 
 func ListClientTrafficLimits(ctx context.Context, cfg config.Config) ([]ClientTrafficLimit, error) {
@@ -103,6 +125,33 @@ func DeleteClientTrafficLimit(ctx context.Context, cfg config.Config, clientID s
 	}
 	defer func() { _ = db.Close() }()
 	return db.DeleteClientTrafficLimit(ctx, clientID)
+}
+
+func MarkClientTrafficLimitBlocked(ctx context.Context, cfg config.Config, tunnelID, clientID string, blockedAt time.Time) error {
+	db, err := OpenExisting(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = db.Close() }()
+	return db.MarkClientTrafficLimitBlocked(ctx, tunnelID, clientID, blockedAt)
+}
+
+func ClearClientTrafficLimitBlock(ctx context.Context, cfg config.Config, clientID string) error {
+	db, err := OpenExisting(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = db.Close() }()
+	return db.ClearClientTrafficLimitBlock(ctx, clientID)
+}
+
+func ListTrafficLimitBlocks(ctx context.Context, cfg config.Config) ([]TrafficLimitBlock, error) {
+	db, err := OpenExisting(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = db.Close() }()
+	return db.ListTrafficLimitBlocks(ctx)
 }
 
 func (db *DB) RecordTrafficSamples(ctx context.Context, samples []TrafficSample) error {
@@ -241,19 +290,25 @@ ORDER BY tunnel_id, client_id`, dayToday, dayToday, day7d, day7d, day30d, day30d
 	if err != nil {
 		return nil, err
 	}
-	byClient := make(map[string]uint64, len(limits))
+	byClient := make(map[string]ClientTrafficLimit, len(limits))
 	for _, limit := range limits {
-		byClient[limit.TunnelID+"\x00"+limit.ClientID] = limit.LimitBytes
+		byClient[limit.TunnelID+"\x00"+limit.ClientID] = limit
 	}
 	for i := range out {
 		if limit, ok := byClient[out[i].TunnelID+"\x00"+out[i].ClientID]; ok {
-			out[i].LimitBytes = uint64Ptr(limit)
+			out[i].LimitBytes = uint64Ptr(limit.LimitBytes)
+			out[i].LimitPeriod = limit.Period
+			out[i].LimitUsageBytes = trafficLimitUsage(limit.Period, out[i].RxTotal, out[i].TxTotal, out[i].Rx30d, out[i].Tx30d)
 		}
 	}
 	return out, nil
 }
 
 func (db *DB) SetClientTrafficLimit(ctx context.Context, tunnelID, clientID string, limitBytes *uint64) error {
+	return db.SetClientTrafficLimitWithPeriod(ctx, tunnelID, clientID, limitBytes, TrafficLimitPeriodLifetime)
+}
+
+func (db *DB) SetClientTrafficLimitWithPeriod(ctx context.Context, tunnelID, clientID string, limitBytes *uint64, period TrafficLimitPeriod) error {
 	if limitBytes == nil {
 		_, err := db.sql.ExecContext(ctx, "DELETE FROM client_traffic_limits WHERE tunnel_id = ? AND client_id = ?", tunnelID, clientID)
 		return err
@@ -265,15 +320,20 @@ func (db *DB) SetClientTrafficLimit(ctx context.Context, tunnelID, clientID stri
 	if err != nil {
 		return err
 	}
+	if !validTrafficLimitPeriod(period) {
+		return errors.New("invalid traffic limit period")
+	}
 	_, err = db.sql.ExecContext(ctx, `
-INSERT INTO client_traffic_limits (tunnel_id, client_id, limit_bytes, updated_at)
-VALUES (?, ?, ?, ?)
+INSERT INTO client_traffic_limits (tunnel_id, client_id, limit_bytes, period, updated_at)
+VALUES (?, ?, ?, ?, ?)
 ON CONFLICT(tunnel_id, client_id) DO UPDATE SET
     limit_bytes = excluded.limit_bytes,
+    period = excluded.period,
     updated_at = excluded.updated_at`,
 		tunnelID,
 		clientID,
 		value,
+		period,
 		formatTime(time.Now().UTC()),
 	)
 	return err
@@ -284,9 +344,55 @@ func (db *DB) DeleteClientTrafficLimit(ctx context.Context, clientID string) err
 	return err
 }
 
+func (db *DB) MarkClientTrafficLimitBlocked(ctx context.Context, tunnelID, clientID string, blockedAt time.Time) error {
+	if blockedAt.IsZero() {
+		blockedAt = time.Now().UTC()
+	}
+	_, err := db.sql.ExecContext(ctx, `
+UPDATE client_traffic_limits
+SET quota_blocked_at = ?, updated_at = ?
+WHERE tunnel_id = ? AND client_id = ?`, formatTime(blockedAt), formatTime(time.Now().UTC()), tunnelID, clientID)
+	return err
+}
+
+func (db *DB) ClearClientTrafficLimitBlock(ctx context.Context, clientID string) error {
+	_, err := db.sql.ExecContext(ctx, `
+UPDATE client_traffic_limits
+SET quota_blocked_at = ''
+WHERE client_id = ?`, clientID)
+	return err
+}
+
+func (db *DB) ListTrafficLimitBlocks(ctx context.Context) ([]TrafficLimitBlock, error) {
+	rows, err := db.sql.QueryContext(ctx, `
+SELECT tunnel_id, client_id, period, quota_blocked_at
+FROM client_traffic_limits
+WHERE quota_blocked_at <> ''
+ORDER BY tunnel_id, client_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []TrafficLimitBlock
+	for rows.Next() {
+		var row TrafficLimitBlock
+		var blockedAt string
+		if err := rows.Scan(&row.TunnelID, &row.ClientID, &row.Period, &blockedAt); err != nil {
+			return nil, err
+		}
+		parsed, err := time.Parse(time.RFC3339Nano, blockedAt)
+		if err != nil {
+			return nil, err
+		}
+		row.BlockedAt = parsed.UTC()
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
 func (db *DB) ListClientTrafficLimits(ctx context.Context) ([]ClientTrafficLimit, error) {
 	rows, err := db.sql.QueryContext(ctx, `
-SELECT tunnel_id, client_id, limit_bytes
+	SELECT tunnel_id, client_id, limit_bytes, period
 FROM client_traffic_limits
 ORDER BY tunnel_id, client_id`)
 	if err != nil {
@@ -297,10 +403,10 @@ ORDER BY tunnel_id, client_id`)
 	for rows.Next() {
 		var row ClientTrafficLimit
 		var limit int64
-		if err := rows.Scan(&row.TunnelID, &row.ClientID, &limit); err != nil {
+		if err := rows.Scan(&row.TunnelID, &row.ClientID, &limit, &row.Period); err != nil {
 			return nil, err
 		}
-		if limit > 0 {
+		if limit > 0 && validTrafficLimitPeriod(row.Period) {
 			row.LimitBytes = uint64(limit)
 			out = append(out, row)
 		}
@@ -312,18 +418,22 @@ func (db *DB) ListExceededTrafficLimits(ctx context.Context, now time.Time) ([]E
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
+	day30d := now.UTC().AddDate(0, 0, -29).Format("2006-01-02")
 	rows, err := db.sql.QueryContext(ctx, `
 SELECT
     limits.tunnel_id,
     limits.client_id,
     limits.limit_bytes,
+    limits.period,
     COALESCE(SUM(daily.rx_bytes + daily.tx_bytes), 0) AS total_bytes
 FROM client_traffic_limits AS limits
 LEFT JOIN client_traffic_daily AS daily
-    ON daily.tunnel_id = limits.tunnel_id AND daily.client_id = limits.client_id
-GROUP BY limits.tunnel_id, limits.client_id, limits.limit_bytes
+    ON daily.tunnel_id = limits.tunnel_id
+    AND daily.client_id = limits.client_id
+    AND (limits.period = 'lifetime' OR daily.day >= ?)
+GROUP BY limits.tunnel_id, limits.client_id, limits.limit_bytes, limits.period
 HAVING total_bytes >= limits.limit_bytes
-ORDER BY limits.tunnel_id, limits.client_id`)
+ORDER BY limits.tunnel_id, limits.client_id`, day30d)
 	if err != nil {
 		return nil, err
 	}
@@ -332,10 +442,10 @@ ORDER BY limits.tunnel_id, limits.client_id`)
 	for rows.Next() {
 		var row ExceededTrafficLimit
 		var limit, total int64
-		if err := rows.Scan(&row.TunnelID, &row.ClientID, &limit, &total); err != nil {
+		if err := rows.Scan(&row.TunnelID, &row.ClientID, &limit, &row.Period, &total); err != nil {
 			return nil, err
 		}
-		if limit <= 0 || total < limit {
+		if limit <= 0 || total < limit || !validTrafficLimitPeriod(row.Period) {
 			continue
 		}
 		row.LimitBytes = uint64(limit)
@@ -344,6 +454,17 @@ ORDER BY limits.tunnel_id, limits.client_id`)
 		out = append(out, row)
 	}
 	return out, rows.Err()
+}
+
+func trafficLimitUsage(period TrafficLimitPeriod, rxTotal, txTotal, rx30d, tx30d uint64) uint64 {
+	if period == TrafficLimitPeriodRolling30Days {
+		return rx30d + tx30d
+	}
+	return rxTotal + txTotal
+}
+
+func validTrafficLimitPeriod(period TrafficLimitPeriod) bool {
+	return period == TrafficLimitPeriodLifetime || period == TrafficLimitPeriodRolling30Days
 }
 
 func formatTime(value time.Time) string {

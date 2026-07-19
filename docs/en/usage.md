@@ -59,7 +59,7 @@ AmneziaWG/WireGuard does not keep a permanent TCP-like connection, so `active no
 
 If SQLite is enabled, client rows show total recorded traffic. `Maintenance` -> `Traffic` shows aggregate traffic history for today, 7 days, and 30 days across all clients and tunnels. Values are sampled from runtime counters once per minute; the first sample is treated as a baseline.
 
-When SQLite is enabled, client creation and client settings include an optional traffic limit. `Unlimited` means no limit; `Limit` accepts MiB, GiB, or TiB. When recorded traffic reaches the limit, awg-forge disables the client and the row shows `limit exceeded`. Attempts to enable the client are rejected while the recorded total is still over the limit. Increase or clear the limit, then enable the client again.
+When SQLite is enabled, client creation and client settings include an optional traffic limit. `Unlimited` means no limit; `Limit` accepts MiB, GiB, or TiB. Choose `Lifetime` for all recorded traffic or `Rolling 30 days (UTC)` for a sliding quota. Existing limits are lifetime limits. When recorded traffic reaches the active limit, awg-forge disables the client and the row shows `limit exceeded`. Attempts to enable the client are rejected while the active period is over its limit. The 30-day window advances as UTC-day aggregates age out. A client disabled by that quota is re-enabled automatically when its rolling usage drops below the limit; a manually disabled client is never auto-enabled.
 
 Doctor also warns about clients whose recorded traffic already exceeds their configured limit.
 

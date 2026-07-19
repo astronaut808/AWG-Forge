@@ -20,7 +20,7 @@ const (
 	ModeSQLite   = "sqlite"
 	ModePostgres = "postgres"
 
-	CurrentSchemaVersion = 2
+	CurrentSchemaVersion = 4
 )
 
 var (
