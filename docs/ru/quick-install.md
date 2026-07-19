@@ -95,13 +95,13 @@ reinstall-backup-YYYYMMDD-HHMMSS/
 sudo docker exec awg-forge awg-forge doctor
 curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
 chmod +x install.sh
-sudo ./install.sh upgrade
+sudo AWG_FORGE_HOME=/opt/awg-forge ./install.sh upgrade
 sudo docker exec awg-forge awg-forge doctor
 ```
 
 Первая команда показывает состояние до обновления, последняя проверяет его после. Перед каждым upgrade скачивай актуальный `install.sh`: в нём находятся проверки совместимости и migrations для текущей версии. Скрипт скачивает целевой image, останавливает текущий контейнер, сохраняет backup `.env` и `data/`, применяет SQLite migrations до старта нового контейнера, затем проверяет, что контейнер запущен, и выполняет `db status`. Он также выводит Doctor. Если SQLite выключен, скрипт спрашивает, нужно ли его включить; ответ по умолчанию — `No`. Если SQLite включен, но файл базы отсутствует, потребуется явное подтверждение создания новой пустой базы. При ошибке migration, запуска контейнера или `db status` восстанавливаются backup и предыдущий image.
 
-Для другого каталога установки укажи его в `AWG_FORGE_HOME`: `sudo AWG_FORGE_HOME=/srv/awg-forge ./install.sh upgrade`. Если `./install.sh` находит существующую managed-инсталляцию, он также предлагает этот путь обновления в меню действий. Для custom Compose, `CONFIG_DIR` или database path вне `./data` нужен manual upgrade, чтобы operator сделал backup правильных volume.
+Для другого каталога установки укажи его в `AWG_FORGE_HOME`: `sudo AWG_FORGE_HOME=/srv/awg-forge ./install.sh upgrade`. Если `./install.sh` запущен из каталога существующей managed-инсталляции, он также предлагает этот путь обновления в меню действий. Для custom Compose, `CONFIG_DIR` или database path вне `./data` нужен manual upgrade, чтобы operator сделал backup правильных volume.
 
 ## Старые tunnel-переменные в `.env`
 

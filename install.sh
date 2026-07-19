@@ -833,7 +833,7 @@ upgrade_main() {
 
   local previous_image backup_dir recreated=false
   previous_image="$(docker inspect --format '{{.Image}}' "$APP_NAME")"
-  backup_dir="upgrade-backup-$(date -u +%Y%m%d-%H%M%S)"
+  backup_dir="$(mktemp -d "upgrade-backup-$(date -u +%Y%m%d-%H%M%S).XXXXXX")"
 
   muted "Pulling the target image..."
   if ! $compose pull awg-forge; then

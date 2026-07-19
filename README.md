@@ -41,10 +41,10 @@ sudo ./install.sh
 ```bash
 curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
 chmod +x install.sh
-sudo ./install.sh upgrade
+sudo AWG_FORGE_HOME=/opt/awg-forge ./install.sh upgrade
 ```
 
-Для установки не в `/opt/awg-forge` укажи её каталог: `sudo AWG_FORGE_HOME=/srv/awg-forge ./install.sh upgrade`. Обычный запуск `sudo ./install.sh` также обнаружит managed-инсталляцию и предложит `Upgrade` в меню.
+Для установки не в `/opt/awg-forge` укажи её каталог: `sudo AWG_FORGE_HOME=/srv/awg-forge ./install.sh upgrade`. Обычный запуск из каталога managed-инсталляции также обнаружит её и предложит `Upgrade` в меню.
 
 По умолчанию Web UI слушает `127.0.0.1:51821`. Открывай его через SSH tunnel:
 

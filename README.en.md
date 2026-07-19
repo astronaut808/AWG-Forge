@@ -41,10 +41,10 @@ Update a managed installation. Download the current `install.sh` before every up
 ```bash
 curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
 chmod +x install.sh
-sudo ./install.sh upgrade
+sudo AWG_FORGE_HOME=/opt/awg-forge ./install.sh upgrade
 ```
 
-For an installation outside `/opt/awg-forge`, set its directory: `sudo AWG_FORGE_HOME=/srv/awg-forge ./install.sh upgrade`. A regular `sudo ./install.sh` also detects a managed installation and offers `Upgrade` in its menu.
+For an installation outside `/opt/awg-forge`, set its directory: `sudo AWG_FORGE_HOME=/srv/awg-forge ./install.sh upgrade`. A regular run from the managed installation directory also detects it and offers `Upgrade` in its menu.
 
 By default the Web UI listens on `127.0.0.1:51821`. Open it through an SSH tunnel:
 

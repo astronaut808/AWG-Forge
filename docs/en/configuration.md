@@ -284,7 +284,7 @@ docker exec awg-forge awg-forge logs --event tunnel.apply.failed
 
 The application default for a missing `DATABASE_MODE` is `off`, which keeps existing installations file-based and does not create a database. Fresh installs created by the current installer use `DATABASE_MODE=sqlite`; existing installations remain unchanged unless SQLite is explicitly enabled during `install.sh upgrade`.
 
-`DATABASE_MODE=sqlite` enables the local SQLite foundation for operational history such as audit search, login attempts, health history, TLS events, and traffic usage. It keeps JSONL as the reliable local audit trail. It does not move `state.json`, private keys, WARP tokens, raw configs, QR payloads, or import links into the database.
+`DATABASE_MODE=sqlite` enables local operational history for indexed audit events and traffic usage. It keeps JSONL as the reliable local audit trail. The schema reserves tables for login, health, and TLS history, but those records are not collected yet. It does not move `state.json`, private keys, WARP tokens, raw configs, QR payloads, or import links into the database.
 
 Initialize or upgrade the local schema:
 

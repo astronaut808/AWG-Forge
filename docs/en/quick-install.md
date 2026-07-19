@@ -95,13 +95,13 @@ For a managed installation using the standard `.env`, `docker-compose.yml`, and 
 sudo docker exec awg-forge awg-forge doctor
 curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
 chmod +x install.sh
-sudo ./install.sh upgrade
+sudo AWG_FORGE_HOME=/opt/awg-forge ./install.sh upgrade
 sudo docker exec awg-forge awg-forge doctor
 ```
 
 The first command shows the pre-upgrade state; the last checks it afterwards. Download the current `install.sh` before every upgrade: it contains the compatibility checks and migrations for the current version. The script pulls the target image, stops the current container, backs up `.env` and `data/`, applies SQLite migrations before the new container starts, then checks that the container is running and verifies `db status`. It also prints Doctor output for review. If SQLite is currently off, it asks whether to enable it; the default is `No`. If SQLite is enabled but its database file is missing, it requires confirmation before creating a new empty database. A failed migration, failed container start, or failed database status check restores the backup and the previous image.
 
-Set `AWG_FORGE_HOME` for another installation directory: `sudo AWG_FORGE_HOME=/srv/awg-forge ./install.sh upgrade`. When `./install.sh` finds an existing managed installation, it also offers this upgrade path in its action menu. Custom Compose files, `CONFIG_DIR`, or database paths outside `./data` require a manual upgrade so the operator can back up the correct volumes.
+Set `AWG_FORGE_HOME` for another installation directory: `sudo AWG_FORGE_HOME=/srv/awg-forge ./install.sh upgrade`. When `./install.sh` runs from an existing managed installation directory, it also offers this upgrade path in its action menu. Custom Compose files, `CONFIG_DIR`, or database paths outside `./data` require a manual upgrade so the operator can back up the correct volumes.
 
 ## Old Tunnel Variables In `.env`
 
