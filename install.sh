@@ -7,6 +7,7 @@ INSTALL_DIR_DEFAULT="/opt/awg-forge"
 ENV_FILE=".env"
 COMPOSE_FILE="docker-compose.yml"
 DATA_DIR="data"
+INSTALL_ACTION="fresh"
 
 bold() { printf '\033[1m%s\033[0m\n' "$*"; }
 muted() { printf '\033[2m%s\033[0m\n' "$*"; }
@@ -355,13 +356,15 @@ handle_existing_install() {
   printf '\n'
   printf '1) Reconfigure existing install, keep data and backup .env\n'
   printf '2) Full reinstall, backup and remove old data/config first\n'
-  printf '3) Abort\n'
+  printf '3) Upgrade image, keep data and run required database migrations\n'
+  printf '4) Abort\n'
   local choice
   choice="$(prompt "Choose action" "1")"
   case "$choice" in
-    1) ok "continuing with existing data" ;;
-    2) full_reinstall "$compose" ;;
-    3) exit 0 ;;
+    1) INSTALL_ACTION="reconfigure"; ok "continuing with existing data" ;;
+    2) full_reinstall "$compose"; INSTALL_ACTION="fresh" ;;
+    3) INSTALL_ACTION="upgrade" ;;
+    4) exit 0 ;;
     *) warn "unknown choice"; handle_existing_install "$compose" ;;
   esac
 }
@@ -474,32 +477,102 @@ backup_existing_env() {
   warn "$ENV_FILE already exists; backup saved to $backup"
 }
 
+set_env_value() {
+  local key="$1"
+  local value="$2"
+  local tmp
+  [[ "$key" =~ ^[A-Z0-9_]+$ ]] || return 1
+  [[ "$value" != *$'\n'* ]] || return 1
+  if [[ ! -e "$ENV_FILE" ]]; then
+    : >"$ENV_FILE"
+  fi
+  tmp="$(mktemp "${ENV_FILE}.tmp.XXXXXX")"
+  awk -v key="$key" -v value="$value" '
+    $0 ~ "^" key "=" {
+      if (!found) print key "=" value
+      found = 1
+      next
+    }
+    { print }
+    END { if (!found) print key "=" value }
+  ' "$ENV_FILE" >"$tmp"
+  mv "$tmp" "$ENV_FILE"
+}
+
+ensure_env_value() {
+  local key="$1"
+  local value="$2"
+  if ! grep -qE "^${key}=" "$ENV_FILE" 2>/dev/null; then
+    set_env_value "$key" "$value"
+  fi
+}
+
 write_env() {
   local webui_host="$1"
   local webui_port="$2"
   local password="$3"
   local session_secret="$4"
   local external_interface="$5"
+  local mode="${6:-fresh}"
 
-  cat >"$ENV_FILE" <<EOF
-WEBUI_HOST=$webui_host
-WEBUI_PORT=$webui_port
-PASSWORD=$password
-SESSION_SECRET=$session_secret
-SESSION_COOKIE_SECURE=auto
-WEBUI_TLS_MODE=off
-WEBUI_TRUST_PROXY_HEADERS=false
-WEBUI_TRUSTED_PROXY_CIDRS=
-EXTERNAL_INTERFACE=$external_interface
-APPLY_CONFIG=true
-PUBLISHED_UDP_PORTS=
-AUDIT_LOG_ENABLED=true
-AUDIT_LOG_PATH=/etc/awg-forge/audit.log
-AUDIT_LOG_MAX_SIZE=5242880
-AUDIT_LOG_MAX_FILES=3
-EOF
+  if [[ "$mode" == "fresh" ]]; then
+    : >"$ENV_FILE"
+  else
+    touch "$ENV_FILE"
+  fi
+  set_env_value WEBUI_HOST "$webui_host"
+  set_env_value WEBUI_PORT "$webui_port"
+  set_env_value EXTERNAL_INTERFACE "$external_interface"
+  if [[ "$mode" == "fresh" ]]; then
+    set_env_value PASSWORD "$password"
+    set_env_value SESSION_SECRET "$session_secret"
+  else
+    ensure_env_value PASSWORD "$password"
+    ensure_env_value SESSION_SECRET "$session_secret"
+  fi
+  ensure_env_value SESSION_COOKIE_SECURE auto
+  ensure_env_value WEBUI_TLS_MODE off
+  ensure_env_value WEBUI_TRUST_PROXY_HEADERS false
+  ensure_env_value WEBUI_TRUSTED_PROXY_CIDRS ""
+  ensure_env_value APPLY_CONFIG true
+  ensure_env_value PUBLISHED_UDP_PORTS ""
+  ensure_env_value AUDIT_LOG_ENABLED true
+  ensure_env_value AUDIT_LOG_PATH /etc/awg-forge/audit.log
+  ensure_env_value AUDIT_LOG_MAX_SIZE 5242880
+  ensure_env_value AUDIT_LOG_MAX_FILES 3
+  if [[ "$mode" == "fresh" ]]; then
+    set_env_value DATABASE_MODE sqlite
+    set_env_value DATABASE_PATH /etc/awg-forge/awg-forge.db
+    set_env_value DATABASE_DSN ""
+    set_env_value DATABASE_RETENTION_DAYS 90
+    set_env_value DATABASE_BUSY_TIMEOUT 5s
+    set_env_value DATABASE_QUERY_TIMEOUT 2s
+    set_env_value DATABASE_MAX_OPEN_CONNS 1
+    set_env_value DATABASE_MAX_IDLE_CONNS 1
+  else
+    ensure_env_value DATABASE_MODE off
+    ensure_env_value DATABASE_PATH /etc/awg-forge/awg-forge.db
+    ensure_env_value DATABASE_DSN ""
+    ensure_env_value DATABASE_RETENTION_DAYS 90
+    ensure_env_value DATABASE_BUSY_TIMEOUT 5s
+    ensure_env_value DATABASE_QUERY_TIMEOUT 2s
+    ensure_env_value DATABASE_MAX_OPEN_CONNS 1
+    ensure_env_value DATABASE_MAX_IDLE_CONNS 1
+  fi
   chmod 600 "$ENV_FILE" || true
-  ok "created $ENV_FILE"
+  ok "updated $ENV_FILE"
+}
+
+migrate_sqlite() {
+  local compose="$1"
+  if [[ "$(env_value DATABASE_MODE)" != "sqlite" ]]; then
+    return 0
+  fi
+  muted "Applying SQLite migrations..."
+  if ! $compose run --rm --no-deps awg-forge db migrate; then
+    return 1
+  fi
+  ok "SQLite migrations applied"
 }
 
 initialize_state() {
@@ -571,8 +644,10 @@ print_next_steps() {
   printf '\n'
   printf 'Profile:      %s\n' "$profile_text"
   printf 'Web UI bind:  %s:%s\n' "$webui_host" "$webui_port"
-  printf 'Password:     %s\n' "$password"
-  printf 'Password file: %s\n' "$ENV_FILE"
+  if [[ -n "$password" ]]; then
+    printf 'Password:     %s\n' "$password"
+    printf 'Password file: %s\n' "$ENV_FILE"
+  fi
   printf '\n'
   if [[ "$webui_host" == "127.0.0.1" || "$webui_host" == "localhost" || "$webui_host" == "::1" ]]; then
     bold "Access through SSH tunnel"
@@ -589,7 +664,227 @@ print_next_steps() {
   printf 'docker exec %s awg-forge doctor\n' "$APP_NAME"
 }
 
+upgrade_install_is_managed() {
+  [[ -f "$ENV_FILE" && -f "$COMPOSE_FILE" && -d "$DATA_DIR" ]] || return 1
+  grep -Eq '^[[:space:]]*env_file:[[:space:]]*\.env[[:space:]]*$' "$COMPOSE_FILE" || return 1
+  grep -Eq '^[[:space:]]*-[[:space:]]*\./data:/etc/awg-forge([[:space:]]|$)' "$COMPOSE_FILE" || return 1
+  local config_dir database_path
+  config_dir="$(env_value CONFIG_DIR)"
+  database_path="$(env_value DATABASE_PATH)"
+  [[ -z "$config_dir" || "$config_dir" == "/etc/awg-forge" ]] || return 1
+  [[ -z "$database_path" || "$database_path" == "/etc/awg-forge/awg-forge.db" ]] || return 1
+}
+
+upgrade_backup() {
+  local backup_dir="$1"
+  mkdir -p "$backup_dir"
+  cp -a "$ENV_FILE" "$backup_dir/$ENV_FILE"
+  cp -a "$DATA_DIR" "$backup_dir/$DATA_DIR"
+  chmod 700 "$backup_dir" || true
+  ok "upgrade backup saved to $backup_dir"
+}
+
+restore_upgrade_backup() {
+  local backup_dir="$1"
+  [[ -f "$backup_dir/$ENV_FILE" && -d "$backup_dir/$DATA_DIR" ]] || return 1
+  rm -rf "$DATA_DIR"
+  cp -a "$backup_dir/$DATA_DIR" "$DATA_DIR"
+  cp -a "$backup_dir/$ENV_FILE" "$ENV_FILE"
+  chmod 600 "$ENV_FILE" || true
+}
+
+enable_sqlite_env() {
+  set_env_value DATABASE_MODE sqlite
+  ensure_env_value DATABASE_PATH /etc/awg-forge/awg-forge.db
+  ensure_env_value DATABASE_DSN ""
+  ensure_env_value DATABASE_RETENTION_DAYS 90
+  ensure_env_value DATABASE_BUSY_TIMEOUT 5s
+  ensure_env_value DATABASE_QUERY_TIMEOUT 2s
+  ensure_env_value DATABASE_MAX_OPEN_CONNS 1
+  ensure_env_value DATABASE_MAX_IDLE_CONNS 1
+  chmod 600 "$ENV_FILE" || true
+}
+
+upgrade_verify() {
+  local database_mode="$1"
+  local doctor_log running
+  running="$(docker inspect --format '{{.State.Running}}' "$APP_NAME" 2>/dev/null || true)"
+  if [[ "$running" != "true" ]]; then
+    fail "new container is not running"
+    return 1
+  fi
+  if [[ "$database_mode" == "sqlite" ]]; then
+    if ! docker exec "$APP_NAME" awg-forge db status; then
+      fail "SQLite status check failed"
+      return 1
+    fi
+  fi
+  doctor_log="$(mktemp)"
+  if ! docker exec "$APP_NAME" awg-forge doctor >"$doctor_log" 2>&1; then
+    cat "$doctor_log" || true
+    rm -f "$doctor_log"
+    warn "Doctor could not complete; inspect its output before relying on the updated service"
+    return 0
+  fi
+  cat "$doctor_log"
+  if doctor_has_failures "$doctor_log"; then
+    warn "Doctor reports existing or runtime issues; inspect its output"
+  fi
+  rm -f "$doctor_log"
+}
+
+upgrade_rollback() {
+  local compose="$1"
+  local backup_dir="$2"
+  local previous_image="$3"
+  local recreated="$4"
+  local override
+
+  warn "upgrade failed; restoring the previous installation"
+  if [[ "$recreated" == "true" ]]; then
+    $compose down --remove-orphans || true
+  fi
+  if ! restore_upgrade_backup "$backup_dir"; then
+    fail "could not restore $backup_dir automatically"
+    return 1
+  fi
+  if [[ "$recreated" == "true" ]]; then
+    override="$(mktemp)"
+    cat >"$override" <<EOF
+services:
+  awg-forge:
+    image: $previous_image
+EOF
+    if ! $compose -f "$COMPOSE_FILE" -f "$override" up -d --force-recreate awg-forge; then
+      rm -f "$override"
+      fail "could not restart the previous image $previous_image"
+      return 1
+    fi
+    rm -f "$override"
+  elif ! $compose start awg-forge; then
+    fail "could not restart the previous container"
+    return 1
+  fi
+  warn "previous installation restored from $backup_dir"
+}
+
+upgrade_main() {
+  bold "awg-forge upgrade"
+  if [[ "$(uname -s)" != "Linux" ]]; then
+    fail "install.sh is intended for Linux servers"
+    return 1
+  fi
+  if ! have docker || ! docker info >/dev/null 2>&1; then
+    fail "Docker daemon is not reachable by the current user"
+    return 1
+  fi
+  local compose
+  if ! compose="$(compose_cmd)"; then
+    fail "docker compose is not available"
+    return 1
+  fi
+  require_tty
+  prepare_workdir
+  if ! upgrade_install_is_managed; then
+    fail "upgrade supports the managed .env + docker-compose.yml + ./data layout only"
+    printf 'Use a manual upgrade for custom Compose files, CONFIG_DIR, or DATABASE_PATH.\n' >&2
+    return 1
+  fi
+  if ! $compose config -q; then
+    fail "$COMPOSE_FILE is not valid"
+    return 1
+  fi
+  if ! docker inspect "$APP_NAME" >/dev/null 2>&1; then
+    fail "container $APP_NAME was not found; refusing an upgrade without rollback context"
+    return 1
+  fi
+
+  local database_mode enable_sqlite=false create_missing_sqlite=false
+  database_mode="$(env_value DATABASE_MODE)"
+  database_mode="${database_mode:-off}"
+  case "$database_mode" in
+    off)
+      printf '\n'
+      muted "SQLite is disabled. It enables traffic history, quotas, and indexed operational history."
+      if confirm "Enable SQLite during this upgrade?" "n"; then
+        enable_sqlite=true
+        database_mode="sqlite"
+      fi
+      ;;
+    sqlite)
+      if [[ ! -f "$DATA_DIR/awg-forge.db" ]]; then
+        warn "SQLite is enabled but $DATA_DIR/awg-forge.db is missing"
+        if ! confirm "Create a new empty SQLite database during this upgrade?" "n"; then
+          warn "upgrade cancelled before the running installation was changed"
+          return 1
+        fi
+        create_missing_sqlite=true
+      fi
+      ;;
+    postgres)
+      fail "DATABASE_MODE=postgres is not supported by the upgrade path"
+      return 1
+      ;;
+    *)
+      fail "unsupported DATABASE_MODE=$database_mode"
+      return 1
+      ;;
+  esac
+
+  local previous_image backup_dir recreated=false
+  previous_image="$(docker inspect --format '{{.Image}}' "$APP_NAME")"
+  backup_dir="upgrade-backup-$(date -u +%Y%m%d-%H%M%S)"
+
+  muted "Pulling the target image..."
+  if ! $compose pull awg-forge; then
+    fail "could not pull the target image; the running installation was not changed"
+    return 1
+  fi
+  if ! $compose stop awg-forge; then
+    fail "could not stop the current container"
+    return 1
+  fi
+  if ! upgrade_backup "$backup_dir"; then
+    $compose start awg-forge || true
+    fail "could not create an upgrade backup"
+    return 1
+  fi
+  if $enable_sqlite || $create_missing_sqlite; then
+    enable_sqlite_env
+  fi
+  if [[ "$database_mode" == "sqlite" ]] && ! migrate_sqlite "$compose"; then
+    upgrade_rollback "$compose" "$backup_dir" "$previous_image" "$recreated" || true
+    return 1
+  fi
+
+  recreated=true
+  if ! $compose up -d --force-recreate awg-forge; then
+    upgrade_rollback "$compose" "$backup_dir" "$previous_image" "$recreated" || true
+    return 1
+  fi
+  if ! upgrade_verify "$database_mode"; then
+    upgrade_rollback "$compose" "$backup_dir" "$previous_image" "$recreated" || true
+    return 1
+  fi
+  ok "upgrade completed"
+  if [[ "$database_mode" == "sqlite" ]]; then
+    ok "SQLite is enabled and migrated"
+  fi
+}
+
 main() {
+  if [[ "${1:-}" == "upgrade" ]]; then
+    if (( $# != 1 )); then
+      fail "usage: install.sh upgrade"
+      exit 1
+    fi
+    upgrade_main
+    return
+  fi
+  if (( $# != 0 )); then
+    fail "usage: install.sh [upgrade]"
+    exit 1
+  fi
   bold "awg-forge quick installer"
   muted "Recommended mode: Docker host networking, Web UI bound to 127.0.0.1, access through SSH tunnel."
   printf '\n'
@@ -632,6 +927,10 @@ main() {
   fi
 
   handle_existing_install "$compose"
+  if [[ "$INSTALL_ACTION" == "upgrade" ]]; then
+    upgrade_main
+    return
+  fi
   cleanup_stale_interfaces
 
   local existing_state=false
@@ -655,17 +954,21 @@ main() {
   else
     ok "existing state.json found; tunnel settings will be kept"
   fi
-  external_interface="$(prompt "External interface" "$default_interface")"
+  local existing_external_interface existing_webui_host existing_webui_port
+  existing_external_interface="$(env_value EXTERNAL_INTERFACE)"
+  existing_webui_host="$(env_value WEBUI_HOST)"
+  existing_webui_port="$(env_value WEBUI_PORT)"
+  external_interface="$(prompt "External interface" "${existing_external_interface:-$default_interface}")"
 
-  webui_host="$(prompt "Web UI bind host" "127.0.0.1")"
+  webui_host="$(prompt "Web UI bind host" "${existing_webui_host:-127.0.0.1}")"
   if [[ "$webui_host" == "0.0.0.0" || "$webui_host" == "::" ]]; then
     warn "Binding Web UI publicly is risky. Use a firewall, VPN, or reverse proxy."
     confirm "Continue with public Web UI bind?" "n" || exit 1
   fi
-  webui_port="$(prompt "Web UI TCP port" "51821")"
+  webui_port="$(prompt "Web UI TCP port" "${existing_webui_port:-51821}")"
   while ! validate_port "$webui_port"; do
     warn "Port must be 1..65535"
-    webui_port="$(prompt "Web UI TCP port" "51821")"
+    webui_port="$(prompt "Web UI TCP port" "${existing_webui_port:-51821}")"
   done
   if port_in_use_tcp "$webui_port"; then
     warn "TCP port $webui_port appears to be in use"
@@ -706,20 +1009,31 @@ main() {
 
   printf '\n'
   bold "Security"
-  local password session_secret
-  password="$(random_hex 12)"
-  session_secret="$(random_hex 32)"
-  ok "admin password generated"
-  ok "session secret generated"
+  local password session_secret password_generated=false
+  password="$(env_value PASSWORD)"
+  session_secret="$(env_value SESSION_SECRET)"
+  if [[ -z "$password" ]]; then
+    password="$(random_hex 12)"
+    password_generated=true
+    ok "admin password generated"
+  else
+    ok "existing admin password kept"
+  fi
+  if [[ -z "$session_secret" ]]; then
+    session_secret="$(random_hex 32)"
+    ok "session secret generated"
+  else
+    ok "existing session secret kept"
+  fi
 
   printf '\n'
   bold "Files"
   if [[ -f "$ENV_FILE" ]]; then
-    warn "$ENV_FILE already exists and will be replaced after backup"
-    confirm "Continue and replace $ENV_FILE?" "n" || exit 1
+    warn "$ENV_FILE already exists; changed runtime values will be backed up and updated"
+    confirm "Continue and update $ENV_FILE?" "n" || exit 1
   fi
   backup_existing_env
-  write_env "$webui_host" "$webui_port" "$password" "$session_secret" "$external_interface"
+  write_env "$webui_host" "$webui_port" "$password" "$session_secret" "$external_interface" "$INSTALL_ACTION"
   mkdir -p "$DATA_DIR"
   chmod 700 "$DATA_DIR" || true
   ok "created $DATA_DIR/"
@@ -737,6 +1051,8 @@ main() {
     initialize_state "$server_host" "$tunnel_name" "$listen_port" "$external_interface" "$ipv4_subnet" "$dns" "$allowed_ips" "$keepalive" "$mtu" "$profile"
   fi
 
+  migrate_sqlite "$compose"
+
   printf '\n'
   bold "Start Docker"
   $compose up -d --force-recreate
@@ -749,7 +1065,11 @@ main() {
       cat /tmp/awg-forge-install-doctor.log
       if ! doctor_has_failures /tmp/awg-forge-install-doctor.log; then
         ok "doctor completed"
-        print_next_steps "$server_host" "$webui_host" "$webui_port" "$password" "$profile" "$compose"
+        if $password_generated; then
+          print_next_steps "$server_host" "$webui_host" "$webui_port" "$password" "$profile" "$compose"
+        else
+          print_next_steps "$server_host" "$webui_host" "$webui_port" "" "$profile" "$compose"
+        fi
         return
       fi
       warn "doctor still reports failures; retrying"
@@ -765,7 +1085,11 @@ main() {
     warn "doctor reported issues; inspect output above and run: docker exec $APP_NAME awg-forge doctor"
   fi
 
-  print_next_steps "$server_host" "$webui_host" "$webui_port" "$password" "$profile" "$compose"
+  if $password_generated; then
+    print_next_steps "$server_host" "$webui_host" "$webui_port" "$password" "$profile" "$compose"
+  else
+    print_next_steps "$server_host" "$webui_host" "$webui_port" "" "$profile" "$compose"
+  fi
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

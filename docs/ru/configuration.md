@@ -21,7 +21,7 @@
 - `AUDIT_LOG_PATH`: путь к audit log. По умолчанию `/etc/awg-forge/audit.log`.
 - `AUDIT_LOG_MAX_SIZE`: размер файла до ротации. По умолчанию `5242880`.
 - `AUDIT_LOG_MAX_FILES`: сколько rotated-файлов хранить. По умолчанию `3`.
-- `DATABASE_MODE`: optional operational database mode. Значения: `off`, `sqlite`, `postgres`. По умолчанию `off`; `postgres` зарезервирован для будущей поддержки.
+- `DATABASE_MODE`: режим operational database. Значения: `off`, `sqlite`, `postgres`. Дефолт приложения — `off`, чистая установка использует `sqlite`; `postgres` зарезервирован для будущей поддержки.
 - `DATABASE_PATH`: путь к SQLite database. По умолчанию `/etc/awg-forge/awg-forge.db`.
 - `DATABASE_RETENTION_DAYS`: default retention window для operational data. По умолчанию `90`.
 - `DATABASE_BUSY_TIMEOUT`: SQLite busy timeout. По умолчанию `5s`.
@@ -282,7 +282,7 @@ docker exec awg-forge awg-forge logs --event tunnel.apply.failed
 
 ## Operational Database
 
-`DATABASE_MODE=off` используется по умолчанию. В этом режиме существующие установки остаются file-based, и база не создается.
+Если `DATABASE_MODE` отсутствует, дефолт приложения — `off`: существующая установка остается file-based, и база не создается. Чистая установка текущим installer использует `DATABASE_MODE=sqlite`; существующая установка не меняется, пока SQLite явно не включен через `install.sh upgrade`.
 
 `DATABASE_MODE=sqlite` включает локальный SQLite foundation для operational history: audit search, login attempts, health history, TLS events и traffic usage. JSONL остается надежным локальным audit trail. Он не переносит `state.json`, private keys, WARP tokens, raw configs, QR payloads или import links в базу.
 

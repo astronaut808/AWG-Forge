@@ -5,10 +5,13 @@
 ### Added
 
 - Added optional per-client rolling 30-day traffic quotas with UTC-day aggregation and safe automatic re-enable only for clients previously disabled by that quota, while preserving existing lifetime traffic limits.
+- Added `install.sh upgrade` for managed installations: backup, optional SQLite activation, schema migration before the new container starts, post-update checks, and rollback on migration or startup failure.
 
 ### Changed
 
 - Updated the pinned `amneziawg-go` build reference to `c1e9bb3758e7` for the upstream Outline SDK module-path migration.
+- Fresh installer and `.env.example` now enable SQLite by default; existing installations remain unchanged unless SQLite is explicitly enabled during upgrade.
+- Reconfigure now preserves existing operational `.env` settings such as SQLite, TLS, and trusted-proxy configuration.
 
 ## v0.16.0 - 2026-07-12
 
