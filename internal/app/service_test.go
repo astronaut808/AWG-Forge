@@ -2,12 +2,14 @@ package app_test
 
 import (
 	"encoding/base64"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/astronaut808/awg-forge/internal/app"
 	"github.com/astronaut808/awg-forge/internal/config"
@@ -722,8 +724,12 @@ func TestDisableClientForTrafficLimitDoesNotMarkConfigStale(t *testing.T) {
 	}
 	revision := state.Tunnels[0].ConfigRevision
 
-	if err := svc.DisableClientForTrafficLimit(client.ID, 6000, 5000); err != nil {
+	disabled, err := svc.DisableClientForTrafficLimit(client.ID, 6000, 5000, "lifetime")
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !disabled {
+		t.Fatal("traffic limit should disable an enabled client")
 	}
 	state, err = svc.State()
 	if err != nil {
@@ -737,6 +743,68 @@ func TestDisableClientForTrafficLimitDoesNotMarkConfigStale(t *testing.T) {
 	}
 	if state.Tunnels[0].Clients[0].ConfigRevision != revision {
 		t.Fatal("traffic limit enforcement should not mark client config stale")
+	}
+}
+
+func TestClientCreatePersistenceFailureLeavesStateUnchanged(t *testing.T) {
+	svc := app.New(testConfig(t))
+	state, err := svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tunnelID := state.Tunnels[0].ID
+	persistCalls := 0
+	_, err = svc.AddClientToTunnelWithOptions(tunnelID, "phone", app.ClientCreateOptions{
+		Persist: func(client config.Client) error {
+			persistCalls++
+			if client.ID == "" || client.TunnelID != tunnelID {
+				t.Fatalf("unexpected client passed to persistence: %#v", client)
+			}
+			return errors.New("database unavailable")
+		},
+		RollbackPersist: func(config.Client) error { return nil },
+	})
+	if err == nil || !strings.Contains(err.Error(), "database unavailable") {
+		t.Fatalf("error = %v, want persistence failure", err)
+	}
+	if persistCalls != 1 {
+		t.Fatalf("persistence calls = %d, want 1", persistCalls)
+	}
+	state, err = svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Tunnels[0].Clients) != 0 {
+		t.Fatalf("clients = %#v, want no client after persistence failure", state.Tunnels[0].Clients)
+	}
+}
+
+func TestTrafficLimitReleaseDoesNotEnableExpiredClient(t *testing.T) {
+	svc := app.New(testConfig(t))
+	state, err := svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := svc.AddClientToTunnelWithOptions(state.Tunnels[0].ID, "phone", app.ClientCreateOptions{ExpiresAt: time.Now().UTC().Add(-time.Minute)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.SetClientEnabled(client.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	released, err := svc.EnableClientForTrafficLimitRelease(client.ID, "rolling_30d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if released {
+		t.Fatal("expired client must not be re-enabled by a traffic limit release")
+	}
+	state, err = svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Tunnels[0].Clients[0].Enabled {
+		t.Fatal("expired client must remain disabled")
 	}
 }
 

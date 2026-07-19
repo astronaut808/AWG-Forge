@@ -111,10 +111,10 @@ export function regenerateProtocol(id: string, profile: string) {
   });
 }
 
-export function createClient(tunnelID: string, name: string, expiresAt: string, trafficLimitBytes: number | null) {
+export function createClient(tunnelID: string, name: string, expiresAt: string, trafficLimitBytes: number | null, trafficLimitPeriod = "lifetime") {
   return request<{ client: { id: string } }>("/api/clients", {
     method: "POST",
-    body: { tunnel_id: tunnelID, name, expires_at: expiresAt, traffic_limit_bytes: trafficLimitBytes },
+    body: { tunnel_id: tunnelID, name, expires_at: expiresAt, traffic_limit_bytes: trafficLimitBytes, traffic_limit_period: trafficLimitBytes ? trafficLimitPeriod : "" },
     idempotencyKey: newIdempotencyKey(),
   });
 }
@@ -127,10 +127,10 @@ export function updateClient(id: string, body: { name: string; notes: string; ex
   });
 }
 
-export function updateClientTrafficLimit(id: string, limitBytes: number | null) {
+export function updateClientTrafficLimit(id: string, limitBytes: number | null, limitPeriod = "lifetime") {
   return request(`/api/clients/${encodeURIComponent(id)}/traffic-limit`, {
     method: "PATCH",
-    body: { limit_bytes: limitBytes },
+    body: { limit_bytes: limitBytes, limit_period: limitBytes ? limitPeriod : "" },
     idempotencyKey: newIdempotencyKey(),
   });
 }

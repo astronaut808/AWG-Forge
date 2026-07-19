@@ -139,6 +139,9 @@ func TestCheckTrafficLimitsWarnsForEnabledExceededClient(t *testing.T) {
 	if !strings.Contains(result.Message, "enabled client is over traffic limit") {
 		t.Fatalf("message = %q, want enabled over-limit warning", result.Message)
 	}
+	if !strings.Contains(result.Message, "period=lifetime") {
+		t.Fatalf("message = %q, want lifetime period", result.Message)
+	}
 }
 
 func TestCheckTrafficLimitsWarnsForDisabledExceededClient(t *testing.T) {

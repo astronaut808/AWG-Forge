@@ -528,6 +528,7 @@ section.panel.stack {
   padding: 18px;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
   gap: 14px;
 }
 
@@ -631,6 +632,12 @@ section.panel.stack {
   border-top: 1px dashed var(--border);
   display: grid;
   gap: 6px;
+}
+
+.client-list-toggle {
+  justify-self: start;
+  min-height: 32px;
+  margin-top: 4px;
 }
 
 .row {
@@ -768,7 +775,7 @@ section.panel.stack {
 
 .traffic-limit-row {
   display: grid;
-  grid-template-columns: 180px minmax(140px, 240px) 96px;
+  grid-template-columns: 180px minmax(140px, 240px) 96px 180px;
   gap: 8px;
   align-items: center;
   justify-content: start;

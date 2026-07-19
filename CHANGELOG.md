@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- Added optional per-client rolling 30-day traffic quotas with UTC-day aggregation and safe automatic re-enable only for clients previously disabled by that quota, while preserving existing lifetime traffic limits.
+
+### Changed
+
+- Updated the pinned `amneziawg-go` build reference to `c1e9bb3758e7` for the upstream Outline SDK module-path migration.
+
 ## v0.16.0 - 2026-07-12
 
 ### Added

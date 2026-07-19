@@ -44,6 +44,7 @@ type Modal =
 type MaintenanceTab = "overview" | "doctor" | "firewall" | "warp" | "backup" | "restore" | "updates" | "support" | "logs" | "traffic" | "system";
 type QRImportMode = "amneziavpn" | "amneziawg";
 type TrafficLimitUnit = "mib" | "gib" | "tib";
+type TrafficLimitPeriod = "lifetime" | "rolling_30d";
 type LoadResult = "ok" | "unauthorized" | "failed";
 
 const themeKey = "awg-forge.theme";
@@ -415,7 +416,12 @@ function TunnelCard(props: {
 }) {
   const { m } = useI18n();
   const { tunnel } = props;
+  const [clientsExpanded, setClientsExpanded] = useState(false);
   const stale = Number(tunnel.status?.stale_clients || 0);
+  const visibleClientCount = 3;
+  const hiddenClientCount = Math.max(0, tunnel.clients.length - visibleClientCount);
+  const visibleClients = clientsExpanded ? tunnel.clients : tunnel.clients.slice(0, visibleClientCount);
+  const clientListID = `clients-${tunnel.id}`;
   return (
     <article class="tunnel-card panel">
       <div class="tunnel-head">
@@ -446,7 +452,7 @@ function TunnelCard(props: {
       </div>
       <section class="clients">
         <div class="list-head"><h4>{m.tunnel.clients}</h4><span>{tunnel.clients.length ? m.tunnel.clientTotal(tunnel.clients.length) : m.tunnel.noClientsYet}</span></div>
-        {tunnel.clients.length === 0 ? <div class="empty compact">{m.tunnel.createFirstClient}</div> : tunnel.clients.map((client) => (
+        {tunnel.clients.length === 0 ? <div class="empty compact">{m.tunnel.createFirstClient}</div> : <div id={clientListID}>{visibleClients.map((client) => (
           <ClientRow
             key={client.id}
             client={client}
@@ -455,7 +461,8 @@ function TunnelCard(props: {
             onToggle={() => props.onClientToggle(client)}
             onDelete={() => props.onClientDelete(client)}
           />
-        ))}
+        ))}</div>}
+        {hiddenClientCount > 0 && <button class="button client-list-toggle" type="button" aria-expanded={clientsExpanded} aria-controls={clientListID} onClick={() => setClientsExpanded((expanded) => !expanded)}>{clientsExpanded ? m.tunnel.collapseClients : m.tunnel.showMoreClients(hiddenClientCount)}</button>}
       </section>
     </article>
   );
@@ -484,8 +491,11 @@ function ClientRow({ client, onConfig, onSettings, onToggle, onDelete }: { clien
           {client.runtime?.present ? <> · {m.tunnel.received} {formatBytes(client.runtime.rx_bytes)} · {m.tunnel.sent} {formatBytes(client.runtime.tx_bytes)}</> : null}
           {client.expires_at ? <> · {m.tunnel.expires} {dateOnly(client.expires_at, locale)}</> : null}
         </p>
-        {client.traffic?.enabled && <p>{m.tunnel.totalTraffic} {formatBytes(client.traffic.rx_total + client.traffic.tx_total)} / {client.traffic.limit_bytes ? formatBytes(client.traffic.limit_bytes) : "∞"}</p>}
-        {client.traffic?.exceeded && <p class="note">{m.forms.trafficLimitExceededHelp}</p>}
+        {client.traffic?.enabled && client.traffic.limit_bytes && client.traffic.limit_period === "rolling_30d" ? <>
+          <p>{m.tunnel.totalTraffic} {formatBytes(client.traffic.rx_total + client.traffic.tx_total)}</p>
+          <p>{m.forms.trafficLimitRolling30Days} {formatBytes(client.traffic.limit_usage_bytes)} / {formatBytes(client.traffic.limit_bytes)}</p>
+        </> : client.traffic?.enabled && <p>{m.tunnel.totalTraffic} {formatBytes(client.traffic.rx_total + client.traffic.tx_total)} / {client.traffic.limit_bytes ? formatBytes(client.traffic.limit_bytes) : "∞"}</p>}
+        {client.traffic?.exceeded && <p class="note">{client.traffic.limit_period === "rolling_30d" ? m.forms.trafficLimitRolling30DaysExceededHelp : m.forms.trafficLimitExceededHelp}</p>}
         {client.notes && <p class="note">{client.notes}</p>}
       </div>
       <div class="actions">
@@ -587,7 +597,8 @@ function ProtocolForm({ tunnel, runAction }: { tunnel: Tunnel; runAction: (label
 function CreateClientForm({ tunnel, trafficLimitsEnabled, runAction }: { tunnel: Tunnel; trafficLimitsEnabled: boolean; runAction: (label: string, fn: () => Promise<unknown>, options?: { reload?: boolean; close?: boolean }) => Promise<void> }) {
   const { m } = useI18n();
   return <Form title={m.forms.createClientTitle} subtitle={`${tunnel.name} · ${tunnel.profile}`} submit={m.common.createClient} onSubmit={(form) => runAction(m.forms.clientCreatedOpenConfig, async () => {
-    await api.createClient(tunnel.id, field(form, "name"), expirationFromForm(form), trafficLimitsEnabled ? trafficLimitBytesFromForm(form, m.forms.trafficLimitInvalid) : null);
+    const trafficLimit = trafficLimitsEnabled ? trafficLimitFromForm(form, m.forms.trafficLimitInvalid) : { bytes: null, period: "lifetime" as TrafficLimitPeriod };
+    await api.createClient(tunnel.id, field(form, "name"), expirationFromForm(form), trafficLimit.bytes, trafficLimit.period);
   })}>
     <label>{m.forms.clientName}<input aria-label={m.forms.clientName} name="name" /></label>
     <ExpirationField />
@@ -599,19 +610,23 @@ function ClientSettingsForm({ client, runAction }: { client: Client; runAction: 
   const { m } = useI18n();
   return <Form title={m.forms.clientSettingsTitle} subtitle={`${client.name} · ${client.address}`} submit={m.common.save} onSubmit={(form) => runAction(m.forms.clientSaved, async () => {
     await api.updateClient(client.id, { name: field(form, "name"), notes: field(form, "notes"), expires_at: expirationFromForm(form, client.expires_at) });
-    if (client.traffic?.enabled) await api.updateClientTrafficLimit(client.id, trafficLimitBytesFromForm(form, m.forms.trafficLimitInvalid));
+    if (client.traffic?.enabled) {
+      const trafficLimit = trafficLimitFromForm(form, m.forms.trafficLimitInvalid);
+      await api.updateClientTrafficLimit(client.id, trafficLimit.bytes, trafficLimit.period);
+    }
   })}>
     <label>{m.forms.clientName}<input aria-label={m.forms.clientName} name="name" defaultValue={client.name} /></label>
     <ExpirationField current={client.expires_at} keepCurrent />
-    {client.traffic?.enabled && <TrafficLimitField limitBytes={client.traffic.limit_bytes} exceeded={client.traffic.exceeded} />}
+    {client.traffic?.enabled && <TrafficLimitField limitBytes={client.traffic.limit_bytes} limitPeriod={client.traffic.limit_period} exceeded={client.traffic.exceeded} />}
     <label class="full">{m.forms.notes}<textarea aria-label={m.forms.notes} name="notes" maxLength={1000} defaultValue={client.notes || ""} /></label>
   </Form>;
 }
 
-function TrafficLimitField({ limitBytes, exceeded = false }: { limitBytes?: number | null; exceeded?: boolean }) {
+function TrafficLimitField({ limitBytes, limitPeriod = "lifetime", exceeded = false }: { limitBytes?: number | null; limitPeriod?: "" | TrafficLimitPeriod; exceeded?: boolean }) {
   const { m } = useI18n();
   const initial = trafficLimitInitial(limitBytes);
   const [mode, setMode] = useState(limitBytes ? "limit" : "unlimited");
+  const [period, setPeriod] = useState<TrafficLimitPeriod>(limitPeriod || "lifetime");
   return <div class="traffic-limit-field full">
     <span class="field-title">{m.forms.trafficLimit}</span>
     <div className={classNames("traffic-limit-row", mode === "unlimited" && "compact")}>
@@ -626,9 +641,13 @@ function TrafficLimitField({ limitBytes, exceeded = false }: { limitBytes?: numb
           <option value="gib">GiB</option>
           <option value="tib">TiB</option>
         </select>
+        <select class="traffic-limit-period" aria-label={m.forms.trafficLimitPeriod} name="traffic_limit_period" value={period} onInput={(event) => setPeriod((event.currentTarget as HTMLSelectElement).value as TrafficLimitPeriod)}>
+          <option value="lifetime">{m.forms.trafficLimitLifetime}</option>
+          <option value="rolling_30d">{m.forms.trafficLimitRolling30Days}</option>
+        </select>
       </>}
     </div>
-    <span class="help">{exceeded ? m.forms.trafficLimitExceededHelp : m.forms.trafficLimitHelp}</span>
+    <span class="help">{exceeded ? period === "rolling_30d" ? m.forms.trafficLimitRolling30DaysExceededHelp : m.forms.trafficLimitExceededHelp : period === "rolling_30d" && mode === "limit" ? m.forms.trafficLimitRolling30DaysHelp : m.forms.trafficLimitHelp}</span>
   </div>;
 }
 
@@ -1222,8 +1241,8 @@ function trafficLimitInitial(value: number | null | undefined): { value: string;
   return { value: String(Number((value / selected.bytes).toFixed(3))), unit: selected.unit };
 }
 
-function trafficLimitBytesFromForm(form: HTMLFormElement, invalidMessage: string): number | null {
-  if (field(form, "traffic_limit_mode") !== "limit") return null;
+function trafficLimitFromForm(form: HTMLFormElement, invalidMessage: string): { bytes: number | null; period: TrafficLimitPeriod } {
+  if (field(form, "traffic_limit_mode") !== "limit") return { bytes: null, period: "lifetime" };
   const raw = field(form, "traffic_limit_value").replace(",", ".").trim();
   const value = Number(raw);
   if (!raw || !Number.isFinite(value) || value <= 0) throw new Error(invalidMessage);
@@ -1231,7 +1250,9 @@ function trafficLimitBytesFromForm(form: HTMLFormElement, invalidMessage: string
   if (multiplier <= 0) throw new Error(invalidMessage);
   const bytes = Math.round(value * multiplier);
   if (bytes <= 0) throw new Error(invalidMessage);
-  return bytes;
+  const period = field(form, "traffic_limit_period") as TrafficLimitPeriod;
+  if (period !== "lifetime" && period !== "rolling_30d") throw new Error(invalidMessage);
+  return { bytes, period };
 }
 
 function trafficLimitUnitBytes(unit: string): number {

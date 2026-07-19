@@ -32,7 +32,7 @@ func (c *checker) checkTrafficLimits(cfg config.Config, state config.State) {
 	for _, item := range exceeded {
 		tunnelName, clientName, enabled := trafficLimitClientLabel(clients, item)
 		area := "traffic limit " + tunnelName + "/" + clientName
-		detail := fmt.Sprintf("total=%d bytes limit=%d bytes", item.TotalBytes, item.LimitBytes)
+		detail := fmt.Sprintf("period=%s usage=%d bytes limit=%d bytes", item.Period, item.TotalBytes, item.LimitBytes)
 		if enabled {
 			c.warn(categoryClients, area, "enabled client is over traffic limit; enforcement should disable it; "+detail)
 			continue

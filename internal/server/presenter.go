@@ -7,6 +7,7 @@ import (
 	"github.com/astronaut808/awg-forge/internal/app"
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/firewall"
+	"github.com/astronaut808/awg-forge/internal/sqldb"
 )
 
 func profileMeta(id, tab, label string, available bool, state config.State) map[string]any {
@@ -154,11 +155,13 @@ func publicClientForTunnel(tunnel config.Tunnel, client config.Client, runtime a
 			"tx_bytes":         runtime.TxBytes,
 		},
 		"traffic": map[string]any{
-			"enabled":     traffic.Enabled,
-			"rx_total":    traffic.RxTotal,
-			"tx_total":    traffic.TxTotal,
-			"limit_bytes": trafficLimitValue(traffic.LimitBytes),
-			"exceeded":    traffic.Exceeded,
+			"enabled":           traffic.Enabled,
+			"rx_total":          traffic.RxTotal,
+			"tx_total":          traffic.TxTotal,
+			"limit_bytes":       trafficLimitValue(traffic.LimitBytes),
+			"limit_period":      string(traffic.LimitPeriod),
+			"limit_usage_bytes": traffic.LimitUsageBytes,
+			"exceeded":          traffic.Exceeded,
 		},
 		"created_at": client.CreatedAt,
 		"updated_at": client.UpdatedAt,
@@ -166,11 +169,13 @@ func publicClientForTunnel(tunnel config.Tunnel, client config.Client, runtime a
 }
 
 type clientTrafficSummary struct {
-	Enabled    bool
-	RxTotal    uint64
-	TxTotal    uint64
-	LimitBytes *uint64
-	Exceeded   bool
+	Enabled         bool
+	RxTotal         uint64
+	TxTotal         uint64
+	LimitBytes      *uint64
+	LimitPeriod     sqldb.TrafficLimitPeriod
+	LimitUsageBytes uint64
+	Exceeded        bool
 }
 
 func trafficLimitValue(limit *uint64) any {
