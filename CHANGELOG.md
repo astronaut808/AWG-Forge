@@ -9,6 +9,7 @@
 
 ### Changed
 
+- Updated the Go runtime to `1.26.5` and refreshed the SQLite driver dependency graph.
 - Updated the pinned `amneziawg-go` build reference to `c1e9bb3758e7` for the upstream Outline SDK module-path migration.
 - Fresh installer and `.env.example` now enable SQLite by default; existing installations remain unchanged unless SQLite is explicitly enabled during upgrade.
 - Reconfigure now preserves existing operational `.env` settings such as SQLite, TLS, and trusted-proxy configuration.
