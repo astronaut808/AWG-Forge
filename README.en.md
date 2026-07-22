@@ -34,7 +34,17 @@ chmod +x install.sh
 sudo ./install.sh
 ```
 
-The installer checks Docker before creating files, creates `/opt/awg-forge`, generates `.env`, password, and `SESSION_SECRET`, creates the first tunnel in `state.json`, starts Docker Compose, and prints the SSH tunnel command. New installs default to AmneziaWG 2.0 for the first tunnel.
+The installer checks Docker before creating files, creates `/opt/awg-forge`, generates `.env`, password, and `SESSION_SECRET`, enables SQLite, creates the first tunnel in `state.json`, applies the initial SQLite migration, starts Docker Compose, and prints the SSH tunnel command. New installs default to AmneziaWG 2.0 for the first tunnel.
+
+Update a managed installation. Download the current `install.sh` before every upgrade: it contains the compatibility checks and migrations for the current version.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
+chmod +x install.sh
+sudo AWG_FORGE_HOME=/opt/awg-forge ./install.sh upgrade
+```
+
+For an installation outside `/opt/awg-forge`, set its directory: `sudo AWG_FORGE_HOME=/srv/awg-forge ./install.sh upgrade`. A regular run from the managed installation directory also detects it and offers `Upgrade` in its menu.
 
 By default the Web UI listens on `127.0.0.1:51821`. Open it through an SSH tunnel:
 
@@ -55,6 +65,7 @@ git clone https://github.com/astronaut808/awg-forge.git
 cd awg-forge
 cp .env.example .env
 mkdir -p data
+docker compose run --rm --no-deps awg-forge db migrate
 docker compose up -d
 ```
 

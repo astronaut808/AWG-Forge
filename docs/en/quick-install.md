@@ -49,6 +49,7 @@ If the repository is already cloned, you can run the local file:
 - defaults the first tunnel profile to AmneziaWG 2.0 when you press Enter;
 - generates `PASSWORD` and `SESSION_SECRET`;
 - creates runtime `.env` with `0600` permissions;
+- enables SQLite and applies its initial schema before the service starts;
 - creates `data/` with `0700` permissions;
 - before starting the service, runs a one-shot `docker run ... init` command that creates `data/state.json` with the first tunnel;
 - creates `docker-compose.yml` if it does not exist;
@@ -70,10 +71,11 @@ If the working directory already contains `.env`, `data/`, or `docker-compose.ym
 ```text
 1) Reconfigure existing install, keep data and backup .env
 2) Full reinstall, backup and remove old data/config first
-3) Abort
+3) Upgrade image, keep data and run required database migrations
+4) Abort
 ```
 
-`Reconfigure` keeps `data/`, backs up the old `.env`, and recreates the container with the new runtime environment. Existing tunnels remain in `data/state.json` and are not rebuilt from `.env`.
+`Reconfigure` keeps `data/`, backs up the old `.env`, updates only the runtime values selected by the installer, and recreates the container. Existing operational settings such as SQLite, TLS, and trusted-proxy configuration remain unchanged. Existing tunnels remain in `data/state.json` and are not rebuilt from `.env`.
 
 `Full reinstall` first saves the current files into a directory like:
 
@@ -84,6 +86,22 @@ reinstall-backup-YYYYMMDD-HHMMSS/
 It then stops the container, removes managed firewall rules, AWG runtime interfaces, `.env`, `data/`, and `docker-compose.yml`, and continues as a fresh install.
 
 Important: after a full reinstall, old client configs no longer match the server because state, keys, and tunnel parameters are recreated. Issue fresh `.conf` files to clients.
+
+## Upgrade
+
+For a managed installation using the standard `.env`, `docker-compose.yml`, and `./data` layout, update with:
+
+```bash
+sudo docker exec awg-forge awg-forge doctor
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
+chmod +x install.sh
+sudo AWG_FORGE_HOME=/opt/awg-forge ./install.sh upgrade
+sudo docker exec awg-forge awg-forge doctor
+```
+
+The first command shows the pre-upgrade state; the last checks it afterwards. Download the current `install.sh` before every upgrade: it contains the compatibility checks and migrations for the current version. The script pulls the target image, stops the current container, backs up `.env` and `data/`, applies SQLite migrations before the new container starts, then checks that the container is running and verifies `db status`. It also prints Doctor output for review. If SQLite is currently off, it asks whether to enable it; the default is `No`. If SQLite is enabled but its database file is missing, it requires confirmation before creating a new empty database. A failed migration, failed container start, or failed database status check restores the backup and the previous image.
+
+Set `AWG_FORGE_HOME` for another installation directory: `sudo AWG_FORGE_HOME=/srv/awg-forge ./install.sh upgrade`. When `./install.sh` runs from an existing managed installation directory, it also offers this upgrade path in its action menu. Custom Compose files, `CONFIG_DIR`, or database paths outside `./data` require a manual upgrade so the operator can back up the correct volumes.
 
 ## Old Tunnel Variables In `.env`
 

@@ -19,6 +19,7 @@ sudo ./install.sh
 ```bash
 cp .env.example .env
 mkdir -p data
+docker compose run --rm --no-deps awg-forge db migrate
 docker compose up -d
 ```
 
@@ -43,6 +44,7 @@ Bridge networking тоже может работать, но UDP-порты до
 ```bash
 cp .env.example .env
 mkdir -p data
+docker compose -f docker-compose.bridge.yml run --rm --no-deps awg-forge db migrate
 docker compose -f docker-compose.bridge.yml up -d
 ```
 

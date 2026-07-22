@@ -49,6 +49,7 @@ sudo AWG_FORGE_HOME=/srv/awg-forge ./install.sh
 - по умолчанию выбирает AmneziaWG 2.0, если просто нажать Enter на вопросе профиля;
 - генерирует `PASSWORD` и `SESSION_SECRET`;
 - создает runtime `.env` с правами `0600`;
+- включает SQLite и применяет его начальную схему до старта сервиса;
 - создает `data/` с правами `0700`;
 - до запуска сервиса выполняет одноразовый `docker run ... init`, который создает `data/state.json` с первым туннелем;
 - создает `docker-compose.yml`, если его еще нет;
@@ -70,10 +71,11 @@ sudo AWG_FORGE_HOME=/srv/awg-forge ./install.sh
 ```text
 1) Reconfigure existing install, keep data and backup .env
 2) Full reinstall, backup and remove old data/config first
-3) Abort
+3) Upgrade image, keep data and run required database migrations
+4) Abort
 ```
 
-`Reconfigure` оставляет `data/` на месте, делает backup старого `.env` и пересоздает контейнер с новыми runtime-переменными. Существующие туннели остаются в `data/state.json` и не пересоздаются из `.env`.
+`Reconfigure` оставляет `data/` на месте, делает backup старого `.env`, обновляет только выбранные runtime-значения и пересоздает контейнер. Существующие настройки SQLite, TLS и trusted proxy остаются без изменений. Существующие туннели остаются в `data/state.json` и не пересоздаются из `.env`.
 
 `Full reinstall` сначала сохраняет текущие файлы в директорию вида:
 
@@ -84,6 +86,22 @@ reinstall-backup-YYYYMMDD-HHMMSS/
 Потом останавливает контейнер, удаляет managed firewall rules, AWG runtime-интерфейсы, `.env`, `data/` и `docker-compose.yml`, после чего запускает установку как с чистого состояния.
 
 Важно: после full reinstall старые клиентские конфиги больше не подходят, потому что состояние, ключи и параметры туннеля создаются заново. Клиентам нужно выдать свежие `.conf`.
+
+## Обновление
+
+Для managed installation со стандартными `.env`, `docker-compose.yml` и `./data` используй:
+
+```bash
+sudo docker exec awg-forge awg-forge doctor
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
+chmod +x install.sh
+sudo AWG_FORGE_HOME=/opt/awg-forge ./install.sh upgrade
+sudo docker exec awg-forge awg-forge doctor
+```
+
+Первая команда показывает состояние до обновления, последняя проверяет его после. Перед каждым upgrade скачивай актуальный `install.sh`: в нём находятся проверки совместимости и migrations для текущей версии. Скрипт скачивает целевой image, останавливает текущий контейнер, сохраняет backup `.env` и `data/`, применяет SQLite migrations до старта нового контейнера, затем проверяет, что контейнер запущен, и выполняет `db status`. Он также выводит Doctor. Если SQLite выключен, скрипт спрашивает, нужно ли его включить; ответ по умолчанию — `No`. Если SQLite включен, но файл базы отсутствует, потребуется явное подтверждение создания новой пустой базы. При ошибке migration, запуска контейнера или `db status` восстанавливаются backup и предыдущий image.
+
+Для другого каталога установки укажи его в `AWG_FORGE_HOME`: `sudo AWG_FORGE_HOME=/srv/awg-forge ./install.sh upgrade`. Если `./install.sh` запущен из каталога существующей managed-инсталляции, он также предлагает этот путь обновления в меню действий. Для custom Compose, `CONFIG_DIR` или database path вне `./data` нужен manual upgrade, чтобы operator сделал backup правильных volume.
 
 ## Старые tunnel-переменные в `.env`
 

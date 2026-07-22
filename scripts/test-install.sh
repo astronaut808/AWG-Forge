@@ -31,6 +31,18 @@ handle_existing_install ""
 
 printf 'OK   existing install still reaches the action selection\n'
 
+prompt() {
+  printf '3'
+}
+INSTALL_ACTION=fresh
+handle_existing_install ""
+if [[ "$INSTALL_ACTION" != "upgrade" ]]; then
+  printf 'FAIL existing install did not select upgrade\n' >&2
+  exit 1
+fi
+
+printf 'OK   existing install offers the safe upgrade path\n'
+
 rm -f "$ENV_FILE"
 mkdir -p "$DATA_DIR"
 write_env "127.0.0.1" "51821" "password" "secret" "eth0"
@@ -44,6 +56,39 @@ if [[ -e "$DATA_DIR/bootstrap.env" ]]; then
 fi
 
 printf 'OK   runtime env is split from explicit state init\n'
+
+if ! grep -qx 'DATABASE_MODE=sqlite' "$ENV_FILE"; then
+  printf 'FAIL fresh install does not enable SQLite by default\n' >&2
+  exit 1
+fi
+
+printf 'OK   fresh install enables SQLite by default\n'
+
+cat >"$ENV_FILE" <<'EOF'
+WEBUI_HOST=127.0.0.1
+WEBUI_PORT=51821
+PASSWORD=existing-password
+SESSION_SECRET=existing-secret
+EXTERNAL_INTERFACE=eth0
+DATABASE_MODE=sqlite
+WEBUI_TLS_MODE=manual
+WEBUI_TLS_CERT_FILE=/etc/awg-forge/tls/cert.pem
+EOF
+write_env "127.0.0.1" "51900" "existing-password" "existing-secret" "ens3" reconfigure
+if ! grep -qx 'DATABASE_MODE=sqlite' "$ENV_FILE" || ! grep -qx 'WEBUI_TLS_MODE=manual' "$ENV_FILE" || ! grep -qx 'WEBUI_TLS_CERT_FILE=/etc/awg-forge/tls/cert.pem' "$ENV_FILE"; then
+  printf 'FAIL reconfigure did not preserve existing operational settings\n' >&2
+  exit 1
+fi
+if ! grep -qx 'WEBUI_PORT=51900' "$ENV_FILE" || ! grep -qx 'EXTERNAL_INTERFACE=ens3' "$ENV_FILE"; then
+  printf 'FAIL reconfigure did not update selected runtime settings\n' >&2
+  exit 1
+fi
+if ! grep -qx 'PASSWORD=existing-password' "$ENV_FILE" || ! grep -qx 'SESSION_SECRET=existing-secret' "$ENV_FILE"; then
+  printf 'FAIL reconfigure changed existing credentials\n' >&2
+  exit 1
+fi
+
+printf 'OK   reconfigure preserves operational settings\n'
 
 if grep -Eq '^[[:space:]]*(TUNNEL_NAME|LISTEN_PORT|IPV4_SUBNET|DNS|ALLOWED_IPS|PERSISTENT_KEEPALIVE|MTU|PROTOCOL_PROFILE)=' "$repo_root/Dockerfile"; then
   printf 'FAIL Docker image ENV contains tunnel init variables\n' >&2

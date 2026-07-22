@@ -34,7 +34,17 @@ chmod +x install.sh
 sudo ./install.sh
 ```
 
-Скрипт проверит Docker до создания файлов, создаст `/opt/awg-forge`, сгенерирует `.env`, пароль и `SESSION_SECRET`, создаст первый туннель в `state.json`, запустит Docker Compose и покажет команду для SSH tunnel. По умолчанию первый туннель создается на AmneziaWG 2.0.
+Скрипт проверит Docker до создания файлов, создаст `/opt/awg-forge`, сгенерирует `.env`, пароль и `SESSION_SECRET`, включит SQLite, создаст первый туннель в `state.json`, применит начальную миграцию SQLite, запустит Docker Compose и покажет команду для SSH tunnel. По умолчанию первый туннель создается на AmneziaWG 2.0.
+
+Обновление managed installation. Перед каждым обновлением скачивай актуальный `install.sh`: в нём находятся проверки совместимости и migrations для текущей версии.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
+chmod +x install.sh
+sudo AWG_FORGE_HOME=/opt/awg-forge ./install.sh upgrade
+```
+
+Для установки не в `/opt/awg-forge` укажи её каталог: `sudo AWG_FORGE_HOME=/srv/awg-forge ./install.sh upgrade`. Обычный запуск из каталога managed-инсталляции также обнаружит её и предложит `Upgrade` в меню.
 
 По умолчанию Web UI слушает `127.0.0.1:51821`. Открывай его через SSH tunnel:
 
@@ -55,6 +65,7 @@ git clone https://github.com/astronaut808/awg-forge.git
 cd awg-forge
 cp .env.example .env
 mkdir -p data
+docker compose run --rm --no-deps awg-forge db migrate
 docker compose up -d
 ```
 

@@ -9,6 +9,7 @@ test:
 test-shell:
 	bash -n install.sh uninstall.sh scripts/*.sh
 	bash scripts/test-install.sh
+	bash scripts/test-upgrade.sh
 	bash scripts/test-uninstall.sh
 
 vet:
