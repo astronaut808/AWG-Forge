@@ -2,7 +2,7 @@
 
 ## Требования
 
-- Go `1.26.4`;
+- Go `1.26.5`;
 - Node.js `24.x` и npm для сборки Web UI;
 - Deno `2.x` для lint frontend source;
 - `golangci-lint` `2.x` для Go linting;
