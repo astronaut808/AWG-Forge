@@ -59,9 +59,10 @@ docker compose -f docker-compose.bridge.yml up -d
 
 ```env
 PUBLISHED_UDP_PORTS=51820-51840
+TUNNEL_UDP_PORT_RANGE=51820-51840
 ```
 
-Так UI и `doctor` смогут предупреждать, если туннель создан на неопубликованном UDP-порту.
+Автоматический выбор использует только пересечение `TUNNEL_UDP_PORT_RANGE` и `PUBLISHED_UDP_PORTS`. Пример сохраняет прежний опубликованный диапазон для обратной совместимости.
 
 ## Проверка запуска
 

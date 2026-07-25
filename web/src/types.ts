@@ -10,6 +10,13 @@ export type Profile = {
   suggested_subnet: string;
 };
 
+export type TunnelSuggestion = {
+  name: string;
+  port: number;
+  subnet: string;
+  udp_port_range: string;
+};
+
 export type ProtocolParam = {
   key: string;
   value: string;

@@ -41,6 +41,7 @@ type Config struct {
 	ProtocolProfile        string
 	ApplyConfig            bool
 	PublishedUDPPorts      string
+	TunnelUDPPortRange     string
 	AuditLogEnabled        bool
 	AuditLogPath           string
 	AuditLogMaxSize        int64
@@ -82,6 +83,7 @@ func FromEnv() (Config, error) {
 		ProtocolProfile:        getenv("PROTOCOL_PROFILE", "awg_2_0"),
 		ApplyConfig:            getenvBool("APPLY_CONFIG", false),
 		PublishedUDPPorts:      os.Getenv("PUBLISHED_UDP_PORTS"),
+		TunnelUDPPortRange:     os.Getenv("TUNNEL_UDP_PORT_RANGE"),
 		AuditLogEnabled:        getenvBool("AUDIT_LOG_ENABLED", true),
 		AuditLogPath:           getenv("AUDIT_LOG_PATH", filepath.Join(configDir, "audit.log")),
 		AuditLogMaxSize:        getenvInt64("AUDIT_LOG_MAX_SIZE", 5*1024*1024),

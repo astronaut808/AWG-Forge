@@ -45,7 +45,7 @@ If the repository is already cloned, you can run the local file:
 - offers to remove old AWG-like runtime interfaces, such as `awg0`, `awg0-1`, `awg15`, or `awg20`;
 - detects the external interface with `ip route get 1.1.1.1`;
 - on fresh installs, suggests the first tunnel endpoint host from the detected source IP, while allowing a custom domain;
-- on fresh installs, asks for the protocol profile first, then tunnel UDP port, Web UI host/port, subnet, DNS, and MTU;
+- on fresh installs, asks for the protocol profile first, then offers automatic free UDP port selection from `30000-49999` or manual input;
 - defaults the first tunnel profile to AmneziaWG 2.0 when you press Enter;
 - generates `PASSWORD` and `SESSION_SECRET`;
 - creates runtime `.env` with `0600` permissions;

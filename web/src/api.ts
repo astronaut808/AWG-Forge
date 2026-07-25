@@ -5,6 +5,7 @@ import type {
   FirewallReport,
   RestoreReport,
   TrafficSummary,
+  TunnelSuggestion,
   UpdatesReport,
   WarpSummary,
 } from "./types";
@@ -68,8 +69,12 @@ export function state(): Promise<AppState> {
   return request("/api/state");
 }
 
-export function createTunnel(body: { profile: string; name: string; port: number; subnet: string; egress_mode: string }) {
+export function createTunnel(body: { profile: string; name: string; port: number; automatic_port?: boolean; subnet: string; egress_mode: string }) {
   return request("/api/tunnels", { method: "POST", body, idempotencyKey: newIdempotencyKey() });
+}
+
+export function tunnelSuggestion(profile: string): Promise<{ suggestion: TunnelSuggestion }> {
+  return request(`/api/tunnels/suggestion?profile=${encodeURIComponent(profile)}`);
 }
 
 export function updateTunnel(id: string, body: Record<string, unknown>) {

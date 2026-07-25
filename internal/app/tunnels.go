@@ -23,17 +23,19 @@ type tunnelSpec struct {
 }
 
 type TunnelSuggestion struct {
-	Name       string
-	ListenPort int
-	IPv4Subnet string
+	Name         string
+	ListenPort   int
+	IPv4Subnet   string
+	UDPPortRange string
 }
 
 type TunnelCreateOptions struct {
-	ProfileID  string
-	Name       string
-	Subnet     string
-	Port       int
-	EgressMode string
+	ProfileID     string
+	Name          string
+	Subnet        string
+	Port          int
+	AutomaticPort bool
+	EgressMode    string
 }
 
 func defaultTunnelSpec(profileID, name string, port int, subnet string) tunnelSpec {
@@ -63,6 +65,29 @@ func SuggestedNextTunnelSpec(profileID string, state config.State) TunnelSuggest
 		ListenPort: nextFreeTunnelPort(basePort, state.Tunnels),
 		IPv4Subnet: nextFreeTunnelSubnet(baseSubnet, state.Tunnels),
 	}
+}
+
+func (s *Service) SuggestTunnel(profileID string) (TunnelSuggestion, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if profileID == "" {
+		profileID = s.cfg.ProtocolProfile
+	}
+	if _, ok := protocol.ByID(profileID); !ok {
+		return TunnelSuggestion{}, errors.New("unknown protocol profile")
+	}
+	state, err := s.initLocked()
+	if err != nil {
+		return TunnelSuggestion{}, err
+	}
+	suggestion := SuggestedNextTunnelSpec(profileID, state)
+	port, portRange, err := selectAutomaticUDPPort(s.cfg, state.Tunnels, cryptoRandomIndex, s.automaticUDPPortAvailable)
+	if err != nil {
+		return TunnelSuggestion{}, err
+	}
+	suggestion.ListenPort = port
+	suggestion.UDPPortRange = portRange
+	return suggestion, nil
 }
 
 func nextFreeTunnelName(base string, tunnels []config.Tunnel) string {
@@ -162,10 +187,11 @@ func SuggestedTunnelSpec(profileID string) (name string, port int, subnet string
 
 func (s *Service) CreateTunnel(profileID, name, subnet string, port int) (config.Tunnel, error) {
 	return s.CreateTunnelWithOptions(context.Background(), TunnelCreateOptions{
-		ProfileID: profileID,
-		Name:      name,
-		Subnet:    subnet,
-		Port:      port,
+		ProfileID:     profileID,
+		Name:          name,
+		Subnet:        subnet,
+		Port:          port,
+		AutomaticPort: port == 0,
 	})
 }
 
@@ -188,7 +214,7 @@ func (s *Service) CreateTunnelWithOptions(ctx context.Context, options TunnelCre
 			}
 		}
 	}
-	return s.createTunnel(options.ProfileID, options.Name, options.Subnet, options.Port, egressMode)
+	return s.createTunnel(options.ProfileID, options.Name, options.Subnet, options.Port, options.AutomaticPort || options.Port == 0, egressMode)
 }
 
 func (s *Service) warpRegistrationNeeded() (bool, error) {
@@ -201,7 +227,7 @@ func (s *Service) warpRegistrationNeeded() (bool, error) {
 	return !state.Warp.Configured(), nil
 }
 
-func (s *Service) createTunnel(profileID, name, subnet string, port int, egressMode string) (config.Tunnel, error) {
+func (s *Service) createTunnel(profileID, name, subnet string, port int, automaticPort bool, egressMode string) (config.Tunnel, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if profileID == "" {
@@ -215,8 +241,22 @@ func (s *Service) createTunnel(profileID, name, subnet string, port int, egressM
 	if name == "" {
 		name = suggestion.Name
 	}
-	if port == 0 {
-		port = suggestion.ListenPort
+	if automaticPort && port == 0 {
+		port, _, err = selectAutomaticUDPPort(s.cfg, state.Tunnels, cryptoRandomIndex, s.automaticUDPPortAvailable)
+		if err != nil {
+			return config.Tunnel{}, err
+		}
+	} else if automaticPort {
+		eligible, rangeSpec, rangeErr := automaticUDPPortEligible(s.cfg, port)
+		if rangeErr != nil {
+			return config.Tunnel{}, rangeErr
+		}
+		if !eligible {
+			return config.Tunnel{}, fmt.Errorf("UDP port %d is outside the automatic range %s", port, rangeSpec)
+		}
+		if !s.automaticUDPPortAvailable(port) {
+			return config.Tunnel{}, errors.New("suggested UDP port is no longer available; request another suggestion")
+		}
 	}
 	if subnet == "" {
 		subnet = suggestion.IPv4Subnet

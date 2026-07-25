@@ -59,9 +59,10 @@ Set:
 
 ```env
 PUBLISHED_UDP_PORTS=51820-51840
+TUNNEL_UDP_PORT_RANGE=51820-51840
 ```
 
-This lets the UI and `doctor` warn when a tunnel uses an unpublished UDP port.
+Automatic selection uses only the overlap between `TUNNEL_UDP_PORT_RANGE` and `PUBLISHED_UDP_PORTS`. The example keeps the existing published range for backward compatibility.
 
 ## Startup Check
 

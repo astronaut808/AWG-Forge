@@ -1,6 +1,7 @@
 package app_test
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"os"
@@ -544,7 +545,9 @@ func TestSuggestedNextTunnelSpecSkipsUsedValuesAcrossProfiles(t *testing.T) {
 }
 
 func TestCreateTunnelUsesFreeDefaults(t *testing.T) {
-	svc := app.New(testConfig(t))
+	cfg := testConfig(t)
+	cfg.TunnelUDPPortRange = "30000"
+	svc := app.New(cfg)
 	if _, err := svc.Init(); err != nil {
 		t.Fatal(err)
 	}
@@ -553,8 +556,34 @@ func TestCreateTunnelUsesFreeDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if tunnel.Name != "awg0-2" || tunnel.ListenPort != 51821 || tunnel.IPv4Subnet != "10.8.1.0/24" {
+	if tunnel.Name != "awg0-2" || tunnel.ListenPort != 30000 || tunnel.IPv4Subnet != "10.8.1.0/24" {
 		t.Fatalf("unexpected tunnel defaults: name=%s port=%d subnet=%s", tunnel.Name, tunnel.ListenPort, tunnel.IPv4Subnet)
+	}
+}
+
+func TestCreateTunnelDistinguishesAutomaticAndManualPorts(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.TunnelUDPPortRange = "30000-30010"
+	svc := app.New(cfg)
+	if _, err := svc.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.CreateTunnelWithOptions(context.Background(), app.TunnelCreateOptions{
+		ProfileID:     "awg_1_5",
+		Name:          "auto-outside-range",
+		Subnet:        "10.15.0.0/24",
+		Port:          51821,
+		AutomaticPort: true,
+	}); err == nil {
+		t.Fatal("expected automatic port outside the configured range to fail")
+	}
+	if _, err := svc.CreateTunnelWithOptions(context.Background(), app.TunnelCreateOptions{
+		ProfileID: "awg_1_5",
+		Name:      "manual-port",
+		Subnet:    "10.15.0.0/24",
+		Port:      51821,
+	}); err != nil {
+		t.Fatalf("manual port should remain supported: %v", err)
 	}
 }
 
