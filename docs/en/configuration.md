@@ -17,6 +17,7 @@ The main example is [.env.example](../../.env.example).
 - `EXTERNAL_INTERFACE`: server egress interface, often `eth0` or `ens3`. In bridge networking this is usually `eth0` inside the container.
 - `APPLY_CONFIG`: when `true`, awg-forge applies runtime tunnel changes with AmneziaWG tools.
 - `PUBLISHED_UDP_PORTS`: published Docker UDP ports/ranges, for example `51820-51840,7443`.
+- `TUNNEL_UDP_PORT_RANGE`: range used for automatic tunnel port selection. Defaults to `30000-49999`. In bridge mode, automatic selection is limited to the overlap with `PUBLISHED_UDP_PORTS`.
 - `AUDIT_LOG_ENABLED`: enables the safe audit log. Defaults to `true`.
 - `AUDIT_LOG_PATH`: audit log path. Defaults to `/etc/awg-forge/audit.log`.
 - `AUDIT_LOG_MAX_SIZE`: file size before rotation. Defaults to `5242880`.
@@ -35,7 +36,7 @@ New installs keep runtime settings in `.env` and tunnel settings in `state.json`
 
 During a fresh install, `install.sh` runs a one-shot `awg-forge init` container before starting the service. That command creates `data/state.json` with the selected first tunnel. After that, `docker compose up -d` starts from ready state, and tunnel settings are managed from the Web UI/API and persisted in `state.json`.
 
-The installer asks for the protocol profile before tunnel defaults, so profile-specific defaults stay aligned. Pressing Enter on the profile question selects AWG 2.0:
+The installer asks for the protocol profile before tunnel defaults, so profile-specific defaults stay aligned. Pressing Enter on the profile question selects AWG 2.0. The installer selects a free UDP port from `30000-49999` by default; the profile ports below remain the defaults for manual selection:
 
 | Profile | Tunnel name | Port | Subnet |
 | --- | --- | --- | --- |
@@ -43,7 +44,7 @@ The installer asks for the protocol profile before tunnel defaults, so profile-s
 | `awg_1_5` | `awg15` | `51825` | `10.15.0.0/24` |
 | `awg_2_0` | `awg20` | `51830` | `10.20.0.0/24` |
 
-When creating more tunnels in the Web UI, awg-forge suggests free names, ports, and subnets across all profiles. Backend validation still rejects manual conflicts.
+When creating more tunnels in the Web UI, automatic port selection uses a free port from the effective range. Ports below `1024` and common infrastructure ports are excluded from automatic selection. The selected port is stored normally in `state.json`; it is not rotated after creation. Manual selection remains available, and backend validation rejects conflicts.
 
 If you upgrade from an older awg-forge version and `.env` still contains `SERVER_HOST`, `LISTEN_PORT`, `IPV4_SUBNET`, `DNS`, `ALLOWED_IPS`, `PERSISTENT_KEEPALIVE`, `MTU`, or `PROTOCOL_PROFILE`, those values are ignored after `state.json` exists. Verify tunnel settings in the UI, then remove old tunnel variables from `.env` to avoid confusion.
 

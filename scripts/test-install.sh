@@ -64,6 +64,26 @@ fi
 
 printf 'OK   fresh install enables SQLite by default\n'
 
+if ! grep -qx 'TUNNEL_UDP_PORT_RANGE=30000-49999' "$ENV_FILE"; then
+  printf 'FAIL fresh install does not configure the automatic UDP port range\n' >&2
+  exit 1
+fi
+
+printf 'OK   fresh install configures the automatic UDP port range\n'
+
+random_u32() {
+  printf '1'
+}
+port_in_use_udp() {
+  [[ "$1" == "30001" ]]
+}
+if [[ "$(random_available_udp_port "30000-30002")" != "30002" ]]; then
+  printf 'FAIL automatic UDP port selection did not skip an occupied port\n' >&2
+  exit 1
+fi
+
+printf 'OK   automatic UDP port selection skips occupied ports\n'
+
 cat >"$ENV_FILE" <<'EOF'
 WEBUI_HOST=127.0.0.1
 WEBUI_PORT=51821

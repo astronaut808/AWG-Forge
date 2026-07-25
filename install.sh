@@ -8,6 +8,7 @@ ENV_FILE=".env"
 COMPOSE_FILE="docker-compose.yml"
 DATA_DIR="data"
 INSTALL_ACTION="fresh"
+DEFAULT_TUNNEL_UDP_PORT_RANGE="30000-49999"
 
 bold() { printf '\033[1m%s\033[0m\n' "$*"; }
 muted() { printf '\033[2m%s\033[0m\n' "$*"; }
@@ -168,6 +169,36 @@ port_in_use_udp() {
     ss -H -lun "sport = :$port" 2>/dev/null | grep -q .
     return
   fi
+  return 1
+}
+
+random_u32() {
+  od -An -N4 -tu4 /dev/urandom | tr -d ' \n'
+}
+
+random_available_udp_port() {
+  local range="${1:-$DEFAULT_TUNNEL_UDP_PORT_RANGE}"
+  local first="${range%-*}"
+  local last="${range#*-}"
+  if ! validate_port "$first" || ! validate_port "$last" || (( first > last )); then
+    return 1
+  fi
+  local count=$((last - first + 1))
+  local start=$(( $(random_u32) % count ))
+  local offset candidate
+  for ((offset = 0; offset < count; offset++)); do
+    candidate=$((first + (start + offset) % count))
+    if (( candidate < 1024 )); then
+      continue
+    fi
+    case "$candidate" in
+      53|123|443|500|3478|4500|5349) continue ;;
+    esac
+    if ! port_in_use_udp "$candidate"; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
   return 1
 }
 
@@ -536,6 +567,9 @@ write_env() {
   ensure_env_value WEBUI_TRUSTED_PROXY_CIDRS ""
   ensure_env_value APPLY_CONFIG true
   ensure_env_value PUBLISHED_UDP_PORTS ""
+  if [[ "$mode" == "fresh" ]]; then
+    set_env_value TUNNEL_UDP_PORT_RANGE "$DEFAULT_TUNNEL_UDP_PORT_RANGE"
+  fi
   ensure_env_value AUDIT_LOG_ENABLED true
   ensure_env_value AUDIT_LOG_PATH /etc/awg-forge/audit.log
   ensure_env_value AUDIT_LOG_MAX_SIZE 5242880
@@ -992,13 +1026,29 @@ main() {
     printf '\n'
     bold "Tunnel defaults"
     tunnel_name="$(prompt "Tunnel name / interface" "$(profile_default_name "$profile")")"
-    listen_port="$(prompt "AmneziaWG UDP listen port" "$(profile_default_port "$profile")")"
-    while ! validate_port "$listen_port"; do
-      warn "Port must be 1..65535"
-      listen_port="$(prompt "AmneziaWG UDP listen port" "$(profile_default_port "$profile")")"
+    printf '1) Choose a free UDP port automatically (%s)\n' "$DEFAULT_TUNNEL_UDP_PORT_RANGE"
+    printf '2) Enter a UDP port manually\n'
+    local port_choice
+    port_choice="$(prompt "UDP port selection" "1")"
+    while [[ "$port_choice" != "1" && "$port_choice" != "2" ]]; do
+      warn "Choose 1 or 2"
+      port_choice="$(prompt "UDP port selection" "1")"
     done
-    if port_in_use_udp "$listen_port"; then
-      warn "UDP port $listen_port appears to be in use"
+    if [[ "$port_choice" == "1" ]]; then
+      if ! listen_port="$(random_available_udp_port "$DEFAULT_TUNNEL_UDP_PORT_RANGE")"; then
+        fail "no free UDP port is available in $DEFAULT_TUNNEL_UDP_PORT_RANGE"
+        exit 1
+      fi
+      ok "selected UDP port $listen_port"
+    else
+      listen_port="$(prompt "AmneziaWG UDP listen port" "$(profile_default_port "$profile")")"
+      while ! validate_port "$listen_port"; do
+        warn "Port must be 1..65535"
+        listen_port="$(prompt "AmneziaWG UDP listen port" "$(profile_default_port "$profile")")"
+      done
+      if port_in_use_udp "$listen_port"; then
+        warn "UDP port $listen_port appears to be in use"
+      fi
     fi
     ipv4_subnet="$(prompt "IPv4 subnet" "$(profile_default_subnet "$profile")")"
     dns="$(prompt "DNS" "1.1.1.1")"

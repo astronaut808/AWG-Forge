@@ -46,6 +46,7 @@ type QRImportMode = "amneziavpn" | "amneziawg";
 type TrafficLimitUnit = "mib" | "gib" | "tib";
 type TrafficLimitPeriod = "lifetime" | "rolling_30d";
 type LoadResult = "ok" | "unauthorized" | "failed";
+type PortSelectionMode = "automatic" | "manual";
 
 const themeKey = "awg-forge.theme";
 const dashboardFilterKey = "awg-forge.dashboard-filter";
@@ -533,11 +534,51 @@ function CreateTunnelForm({ state, profile, runAction }: { state: AppState; prof
   const { m } = useI18n();
   const profiles = state.profiles.length ? state.profiles : [profile];
   const [profileID, setProfileID] = useState(profile.id);
+  const [portMode, setPortMode] = useState<PortSelectionMode>("automatic");
+  const [suggestedPort, setSuggestedPort] = useState(0);
+  const [suggestedRange, setSuggestedRange] = useState("");
+  const [suggestionError, setSuggestionError] = useState("");
+  const [suggestionRequest, setSuggestionRequest] = useState(0);
   const selected = profiles.find((item) => item.id === profileID) || profiles[0] || profile;
-  return <Form title={m.forms.createTunnelTitle} subtitle={m.forms.createTunnelSubtitle} submit={m.common.createTunnel} onSubmit={(form) => runAction(m.forms.tunnelCreated, () => api.createTunnel({ profile: field(form, "profile"), name: field(form, "name"), port: Number(field(form, "port")), subnet: field(form, "subnet"), egress_mode: field(form, "egress_mode") }))}>
+
+  useEffect(() => {
+    let active = true;
+    setSuggestedPort(0);
+    setSuggestionError("");
+    api.tunnelSuggestion(selected.id).then(({ suggestion }) => {
+      if (!active) return;
+      setSuggestedPort(suggestion.port);
+      setSuggestedRange(suggestion.udp_port_range);
+    }).catch(() => {
+      if (!active) return;
+      setSuggestionError(m.forms.portSuggestionFailed);
+    });
+    return () => {
+      active = false;
+    };
+  }, [selected.id, suggestionRequest, m.forms.portSuggestionFailed]);
+
+  return <Form title={m.forms.createTunnelTitle} subtitle={m.forms.createTunnelSubtitle} submit={m.common.createTunnel} onSubmit={(form) => {
+    const port = portMode === "automatic" ? suggestedPort : Number(field(form, "port"));
+    return runAction(m.forms.tunnelCreated, () => port
+      ? api.createTunnel({ profile: field(form, "profile"), name: field(form, "name"), port, automatic_port: portMode === "automatic", subnet: field(form, "subnet"), egress_mode: field(form, "egress_mode") })
+      : Promise.reject(new Error(m.forms.portSuggestionFailed)));
+  }}>
     <label>{m.forms.protocol}<select aria-label={m.forms.protocol} name="profile" value={selected.id} onInput={(event) => setProfileID((event.currentTarget as HTMLSelectElement).value)}>{profiles.map((item) => <option key={item.id} value={item.id}>{profileTitle(item.id)}</option>)}</select></label>
     <label>{m.forms.nameInterface}<input key={`${selected.id}-name`} aria-label={m.forms.nameInterface} name="name" defaultValue={selected.suggested_name || "awg0"} /></label>
-    <label>{m.forms.listenPort}<input key={`${selected.id}-port`} aria-label={m.forms.listenPort} name="port" inputMode="numeric" defaultValue={selected.suggested_port || 51820} /></label>
+    <div class="port-selection-field">
+      <span class="field-title">{m.forms.portSelection}</span>
+      <div class="segmented compact">
+        <button className={portMode === "automatic" ? "active" : ""} type="button" aria-pressed={portMode === "automatic"} onClick={() => setPortMode("automatic")}>{m.forms.automaticPort}</button>
+        <button className={portMode === "manual" ? "active" : ""} type="button" aria-pressed={portMode === "manual"} onClick={() => setPortMode("manual")}>{m.forms.manualPort}</button>
+      </div>
+      {portMode === "automatic" ? <div class="port-suggestion-row">
+        <input aria-label={m.forms.listenPort} value={suggestedPort || ""} readOnly />
+        <button class="button icon-button" type="button" title={m.forms.refreshPort} aria-label={m.forms.refreshPort} onClick={() => setSuggestionRequest((value) => value + 1)}>↻</button>
+      </div> : <input key={`${selected.id}-manual-port`} aria-label={m.forms.listenPort} name="port" inputMode="numeric" defaultValue={selected.suggested_port || 51820} />}
+      {portMode === "automatic" && suggestedRange && !suggestionError && <small>{m.forms.automaticPortRange(suggestedRange)}</small>}
+      {portMode === "automatic" && suggestionError && <small class="field-error">{suggestionError}</small>}
+    </div>
     <label>{m.forms.ipv4Subnet}<input key={`${selected.id}-subnet`} aria-label={m.forms.ipv4Subnet} name="subnet" defaultValue={selected.suggested_subnet || "10.8.0.0/24"} /></label>
     <label>{m.forms.egress}<select aria-label={m.forms.egress} name="egress_mode" defaultValue="wan"><option value="wan">{m.forms.serverWAN}</option><option value="warp">{m.forms.cloudflareWARP}</option></select></label>
     {!state.warp?.configured && <small class="form-note">{m.forms.warpAutoRegister}</small>}

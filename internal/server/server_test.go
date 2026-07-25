@@ -454,6 +454,69 @@ func TestTrafficSummaryAPIDisabledDatabase(t *testing.T) {
 	}
 }
 
+func TestTunnelSuggestionAPI(t *testing.T) {
+	cfg := config.Config{
+		ConfigDir:          t.TempDir(),
+		ServerHost:         "vpn.example.com",
+		ListenPort:         51820,
+		ExternalInterface:  "eth0",
+		IPv4Subnet:         "10.8.0.0/24",
+		DNS:                "1.1.1.1",
+		AllowedIPs:         "0.0.0.0/0",
+		ProtocolProfile:    "awg_legacy_1_0",
+		TunnelUDPPortRange: "30000",
+	}
+	w := &web{service: app.New(cfg)}
+	r := httptest.NewRequest(http.MethodGet, "/api/tunnels/suggestion?profile=awg_2_0", nil)
+	rr := httptest.NewRecorder()
+
+	w.tunnelSuggestionAPI(rr, r)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rr.Code, rr.Body.String())
+	}
+	var payload struct {
+		Suggestion struct {
+			Name         string `json:"name"`
+			Port         int    `json:"port"`
+			Subnet       string `json:"subnet"`
+			UDPPortRange string `json:"udp_port_range"`
+		} `json:"suggestion"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Suggestion.Name != "awg20" || payload.Suggestion.Port != 30000 || payload.Suggestion.Subnet != "10.20.0.0/24" || payload.Suggestion.UDPPortRange != "30000" {
+		t.Fatalf("unexpected suggestion: %#v", payload.Suggestion)
+	}
+	if got := rr.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+}
+
+func TestTunnelSuggestionAPIRejectsUnknownProfile(t *testing.T) {
+	cfg := config.Config{
+		ConfigDir:          t.TempDir(),
+		ServerHost:         "vpn.example.com",
+		ListenPort:         51820,
+		ExternalInterface:  "eth0",
+		IPv4Subnet:         "10.8.0.0/24",
+		DNS:                "1.1.1.1",
+		AllowedIPs:         "0.0.0.0/0",
+		ProtocolProfile:    "awg_legacy_1_0",
+		TunnelUDPPortRange: "30000",
+	}
+	w := &web{service: app.New(cfg)}
+	r := httptest.NewRequest(http.MethodGet, "/api/tunnels/suggestion?profile=unknown", nil)
+	rr := httptest.NewRecorder()
+
+	w.tunnelSuggestionAPI(rr, r)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rr.Code)
+	}
+}
+
 func TestUpdateClientTrafficLimitAPI(t *testing.T) {
 	dir := t.TempDir()
 	cfg := config.Config{

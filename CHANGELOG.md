@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added safe automatic UDP port selection for new tunnels, with a configurable `30000-49999` default range, bridge-mode intersection with published ports, and preserved manual selection.
 - Added optional per-client rolling 30-day traffic quotas with UTC-day aggregation and safe automatic re-enable only for clients previously disabled by that quota, while preserving existing lifetime traffic limits.
 - Added `install.sh upgrade` for managed installations: backup, optional SQLite activation, schema migration before the new container starts, post-update checks, and rollback on migration or startup failure.
 

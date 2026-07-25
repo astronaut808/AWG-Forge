@@ -149,6 +149,7 @@ func newHandler(w *web) http.Handler {
 	mux.HandleFunc("/api/restore/verify", w.security(w.requireAuth(w.restoreVerifyAPI)))
 	mux.HandleFunc("/api/warp", w.security(w.requireAuth(w.warpAPI)))
 	mux.HandleFunc("/api/warp/", w.security(w.requireAuth(w.warpAPI)))
+	mux.HandleFunc("/api/tunnels/suggestion", w.security(w.requireAuth(w.tunnelSuggestionAPI)))
 	mux.HandleFunc("/api/tunnels", w.security(w.requireAuth(w.tunnelsAPI)))
 	mux.HandleFunc("/api/tunnels/", w.security(w.requireAuth(w.tunnelAPI)))
 	mux.HandleFunc("/api/clients", w.security(w.requireAuth(w.clientsAPI)))
@@ -694,6 +695,7 @@ func (w *web) tunnelsAPI(rw http.ResponseWriter, r *http.Request) {
 			Name       string `json:"name"`
 			EgressMode string `json:"egress_mode"`
 			Port       int    `json:"port"`
+			AutoPort   bool   `json:"automatic_port"`
 			Subnet     string `json:"subnet"`
 		}
 		if err := readJSON(rw, r, &req); err != nil {
@@ -701,17 +703,39 @@ func (w *web) tunnelsAPI(rw http.ResponseWriter, r *http.Request) {
 			return http.StatusBadRequest, errorPayload("invalid json")
 		}
 		tunnel, err := w.service.CreateTunnelWithOptions(r.Context(), app.TunnelCreateOptions{
-			ProfileID:  req.Profile,
-			Name:       req.Name,
-			EgressMode: req.EgressMode,
-			Subnet:     req.Subnet,
-			Port:       req.Port,
+			ProfileID:     req.Profile,
+			Name:          req.Name,
+			EgressMode:    req.EgressMode,
+			Subnet:        req.Subnet,
+			Port:          req.Port,
+			AutomaticPort: req.AutoPort,
 		})
 		if err != nil {
-			w.audit("warn", "tunnel.create.rejected", "tunnel creation request rejected", map[string]any{"profile": req.Profile, "name": req.Name, "egress": req.EgressMode, "port": req.Port, "subnet": req.Subnet}, err)
+			w.audit("warn", "tunnel.create.rejected", "tunnel creation request rejected", map[string]any{"profile": req.Profile, "name": req.Name, "egress": req.EgressMode, "port": req.Port, "automatic_port": req.AutoPort, "subnet": req.Subnet}, err)
 			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
 		}
 		return http.StatusCreated, map[string]any{"tunnel": publicTunnel(tunnel, app.TunnelStatus{})}
+	})
+}
+
+func (w *web) tunnelSuggestionAPI(rw http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(rw, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	suggestion, err := w.service.SuggestTunnel(r.URL.Query().Get("profile"))
+	if err != nil {
+		writeError(rw, http.StatusBadRequest, err.Error())
+		return
+	}
+	noStore(rw)
+	writeJSON(rw, http.StatusOK, map[string]any{
+		"suggestion": map[string]any{
+			"name":           suggestion.Name,
+			"port":           suggestion.ListenPort,
+			"subnet":         suggestion.IPv4Subnet,
+			"udp_port_range": suggestion.UDPPortRange,
+		},
 	})
 }
 

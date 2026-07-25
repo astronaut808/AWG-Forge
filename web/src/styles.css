@@ -767,6 +767,33 @@ section.panel.stack {
   grid-column: 1 / -1;
 }
 
+.port-selection-field {
+  display: grid;
+  gap: 7px;
+}
+
+.port-suggestion-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 220px) 40px;
+  gap: 8px;
+}
+
+.port-suggestion-row .icon-button {
+  width: 40px;
+  min-width: 40px;
+  padding: 0;
+  font-size: 20px;
+}
+
+.port-selection-field small {
+  color: var(--muted);
+  font-weight: 650;
+}
+
+.port-selection-field .field-error {
+  color: var(--danger);
+}
+
 .traffic-limit-field {
   grid-column: 1 / -1;
   display: grid;
