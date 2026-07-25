@@ -756,7 +756,8 @@ section.panel.stack {
   grid-template-columns: 1fr;
 }
 
-.form label {
+.form label,
+.form-field {
   display: grid;
   gap: 7px;
   color: var(--text);
@@ -767,30 +768,33 @@ section.panel.stack {
   grid-column: 1 / -1;
 }
 
-.port-selection-field {
-  display: grid;
-  gap: 7px;
+.port-input-wrap {
+  position: relative;
+  display: block;
 }
 
-.port-suggestion-row {
-  display: grid;
-  grid-template-columns: minmax(120px, 220px) 40px;
-  gap: 8px;
+.port-input-wrap input {
+  padding-right: 48px;
 }
 
-.port-suggestion-row .icon-button {
+.port-refresh {
+  position: absolute;
+  top: 0;
+  right: 0;
   width: 40px;
   min-width: 40px;
+  height: 36px;
+  min-height: 36px;
   padding: 0;
+  border-radius: 0 var(--radius) var(--radius) 0;
   font-size: 20px;
 }
 
-.port-selection-field small {
-  color: var(--muted);
-  font-weight: 650;
+.port-mode-note {
+  min-height: 1.35em;
 }
 
-.port-selection-field .field-error {
+.port-mode-note.field-error {
   color: var(--danger);
 }
 

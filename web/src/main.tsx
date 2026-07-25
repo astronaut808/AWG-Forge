@@ -549,9 +549,9 @@ function CreateTunnelForm({ state, profile, runAction }: { state: AppState; prof
       if (!active) return;
       setSuggestedPort(suggestion.port);
       setSuggestedRange(suggestion.udp_port_range);
-    }).catch(() => {
+    }).catch((error: unknown) => {
       if (!active) return;
-      setSuggestionError(m.forms.portSuggestionFailed);
+      setSuggestionError(error instanceof Error && error.message ? error.message : m.forms.portSuggestionFailed);
     });
     return () => {
       active = false;
@@ -566,19 +566,14 @@ function CreateTunnelForm({ state, profile, runAction }: { state: AppState; prof
   }}>
     <label>{m.forms.protocol}<select aria-label={m.forms.protocol} name="profile" value={selected.id} onInput={(event) => setProfileID((event.currentTarget as HTMLSelectElement).value)}>{profiles.map((item) => <option key={item.id} value={item.id}>{profileTitle(item.id)}</option>)}</select></label>
     <label>{m.forms.nameInterface}<input key={`${selected.id}-name`} aria-label={m.forms.nameInterface} name="name" defaultValue={selected.suggested_name || "awg0"} /></label>
-    <div class="port-selection-field">
-      <span class="field-title">{m.forms.portSelection}</span>
-      <div class="segmented compact">
-        <button className={portMode === "automatic" ? "active" : ""} type="button" aria-pressed={portMode === "automatic"} onClick={() => setPortMode("automatic")}>{m.forms.automaticPort}</button>
-        <button className={portMode === "manual" ? "active" : ""} type="button" aria-pressed={portMode === "manual"} onClick={() => setPortMode("manual")}>{m.forms.manualPort}</button>
-      </div>
-      {portMode === "automatic" ? <div class="port-suggestion-row">
+    <label>{m.forms.portSelection}<select aria-label={m.forms.portSelection} value={portMode} onInput={(event) => setPortMode((event.currentTarget as HTMLSelectElement).value as PortSelectionMode)}><option value="automatic">{m.forms.automaticPort}</option><option value="manual">{m.forms.manualPort}</option></select></label>
+    <div class="form-field"><span class="field-title">{m.forms.listenPort}</span><span class="port-input-wrap">
+      {portMode === "automatic" ? <>
         <input aria-label={m.forms.listenPort} value={suggestedPort || ""} readOnly />
-        <button class="button icon-button" type="button" title={m.forms.refreshPort} aria-label={m.forms.refreshPort} onClick={() => setSuggestionRequest((value) => value + 1)}>↻</button>
-      </div> : <input key={`${selected.id}-manual-port`} aria-label={m.forms.listenPort} name="port" inputMode="numeric" defaultValue={selected.suggested_port || 51820} />}
-      {portMode === "automatic" && suggestedRange && !suggestionError && <small>{m.forms.automaticPortRange(suggestedRange)}</small>}
-      {portMode === "automatic" && suggestionError && <small class="field-error">{suggestionError}</small>}
-    </div>
+        <button class="button port-refresh" type="button" title={m.forms.refreshPort} aria-label={m.forms.refreshPort} onClick={() => setSuggestionRequest((value) => value + 1)}>↻</button>
+      </> : <input key={`${selected.id}-manual-port`} aria-label={m.forms.listenPort} name="port" inputMode="numeric" defaultValue={selected.suggested_port || 51820} />}
+    </span></div>
+    <small className={`form-note port-mode-note${suggestionError && portMode === "automatic" ? " field-error" : ""}`} aria-live="polite">{portMode === "automatic" ? (suggestionError || (suggestedRange ? m.forms.automaticPortRange(suggestedRange) : "")) : m.forms.manualPortHint}</small>
     <label>{m.forms.ipv4Subnet}<input key={`${selected.id}-subnet`} aria-label={m.forms.ipv4Subnet} name="subnet" defaultValue={selected.suggested_subnet || "10.8.0.0/24"} /></label>
     <label>{m.forms.egress}<select aria-label={m.forms.egress} name="egress_mode" defaultValue="wan"><option value="wan">{m.forms.serverWAN}</option><option value="warp">{m.forms.cloudflareWARP}</option></select></label>
     {!state.warp?.configured && <small class="form-note">{m.forms.warpAutoRegister}</small>}
