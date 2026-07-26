@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"regexp"
 	"strings"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/astronaut808/awg-forge/internal/audit"
 	"github.com/astronaut808/awg-forge/internal/config"
+	"github.com/astronaut808/awg-forge/internal/observability"
 	"github.com/astronaut808/awg-forge/internal/protocol"
 	"github.com/astronaut808/awg-forge/internal/render"
 	"github.com/astronaut808/awg-forge/internal/storage"
@@ -33,10 +35,11 @@ var serverHostRE = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0
 var transferRE = regexp.MustCompile(`^transfer:\s+(.+?) received,\s+(.+?) sent$`)
 
 type Service struct {
-	mu    sync.Mutex
-	cfg   config.Config
-	store storage.Store
-	audit audit.Logger
+	mu      sync.Mutex
+	cfg     config.Config
+	store   storage.Store
+	audit   audit.Logger
+	runtime *observability.Logger
 }
 
 type TunnelStatus struct {
@@ -112,25 +115,82 @@ func (e *ApplyError) Unwrap() error {
 }
 
 func New(cfg config.Config) *Service {
-	return &Service{cfg: cfg, store: storage.New(cfg.ConfigDir), audit: audit.New(cfg)}
+	return NewWithRuntimeLog(cfg, observability.New(cfg.LogLevel))
+}
+
+func NewWithRuntimeLog(cfg config.Config, runtimeLog *observability.Logger) *Service {
+	return &Service{cfg: cfg, store: storage.New(cfg.ConfigDir), audit: audit.New(cfg), runtime: runtimeLog}
 }
 
 func (s *Service) Audit() audit.Logger {
 	return s.audit
 }
 
+func (s *Service) RuntimeLog() *observability.Logger {
+	return s.runtime
+}
+
 func (s *Service) log(level, event, message string, fields map[string]any, err error) {
-	if s.audit == nil {
+	if s.audit != nil {
+		entry := audit.Event{
+			Level:   level,
+			Event:   event,
+			Message: message,
+			Fields:  fields,
+			Error:   audit.Error(err),
+		}
+		s.audit.Log(context.Background(), entry)
+	}
+	if s.runtime == nil {
 		return
 	}
-	entry := audit.Event{
-		Level:   level,
-		Event:   event,
-		Message: message,
-		Fields:  fields,
-		Error:   audit.Error(err),
+	component := event
+	if index := strings.IndexByte(component, '.'); index > 0 {
+		component = component[:index]
 	}
-	s.audit.Log(context.Background(), entry)
+	runtimeLevel := slog.LevelInfo
+	switch level {
+	case "error":
+		runtimeLevel = slog.LevelError
+	case "warn":
+		runtimeLevel = slog.LevelWarn
+	}
+	if runtimeDebugEvent(event) {
+		runtimeLevel = slog.LevelDebug
+	}
+	s.runtime.Log(context.Background(), runtimeLevel, component, event, message, runtimeFields(fields), err)
+}
+
+func runtimeDebugEvent(event string) bool {
+	return strings.HasSuffix(event, ".downloaded") || strings.HasSuffix(event, ".viewed") || event == "client.import_key.generated"
+}
+
+func runtimeFields(fields map[string]any) map[string]any {
+	if len(fields) == 0 {
+		return nil
+	}
+	allowed := map[string]struct{}{
+		"automatic_port": {}, "client_enabled": {}, "client_id": {}, "client_revision": {},
+		"duration_ms": {}, "egress": {}, "enabled": {}, "interface": {}, "limit_set": {}, "port": {},
+		"profile": {}, "revision": {}, "traffic_limit_bytes": {}, "traffic_limit_period": {},
+		"traffic_total_bytes": {}, "tunnel_id": {}, "unregistered": {},
+	}
+	result := make(map[string]any)
+	for key, value := range fields {
+		if _, ok := allowed[key]; ok {
+			result[key] = value
+		}
+	}
+	return result
+}
+
+func withDuration(fields map[string]any, started time.Time) map[string]any {
+	result := make(map[string]any, len(fields)+1)
+	for key, value := range fields {
+		result[key] = value
+	}
+	result["duration_ms"] = time.Since(started).Milliseconds()
+	return result
 }
 
 func (s *Service) State() (config.State, error) {
@@ -182,12 +242,13 @@ func (s *Service) renderTunnelLocked(tunnelID string, failOnApply bool) error {
 }
 
 func (s *Service) renderTunnelFromState(state config.State, tunnelID string, failOnApply bool) error {
+	started := time.Now()
 	idx, ok := tunnelIndexByID(state, tunnelID)
 	if !ok {
 		return errors.New("tunnel not found")
 	}
 	if err := s.writeRenderedTunnelFiles(state, tunnelID); err != nil {
-		s.log("error", "tunnel.render.failed", "rendered config write failed", tunnelAuditFields(state.Tunnels[idx]), err)
+		s.log("error", "tunnel.render.failed", "rendered config write failed", withDuration(tunnelAuditFields(state.Tunnels[idx]), started), err)
 		return err
 	}
 	now := time.Now().UTC()
@@ -202,10 +263,10 @@ func (s *Service) renderTunnelFromState(state config.State, tunnelID string, fai
 				return errors.Join(fmt.Errorf("apply failed: %w", err), fmt.Errorf("save state failed: %w", saveErr))
 			}
 			if failOnApply {
-				s.log("error", "tunnel.apply.failed", "runtime apply failed", tunnelAuditFields(state.Tunnels[idx]), err)
+				s.log("error", "tunnel.apply.failed", "runtime apply failed", withDuration(tunnelAuditFields(state.Tunnels[idx]), started), err)
 				return &ApplyError{Err: err}
 			}
-			s.log("warn", "tunnel.apply.failed", "runtime apply failed but state was saved", tunnelAuditFields(state.Tunnels[idx]), err)
+			s.log("warn", "tunnel.apply.failed", "runtime apply failed but state was saved", withDuration(tunnelAuditFields(state.Tunnels[idx]), started), err)
 			return nil
 		}
 		if err := s.reconcileWarpRuntime(state); err != nil {
@@ -216,19 +277,19 @@ func (s *Service) renderTunnelFromState(state config.State, tunnelID string, fai
 				return errors.Join(fmt.Errorf("WARP apply failed: %w", err), fmt.Errorf("save state failed: %w", saveErr))
 			}
 			if failOnApply {
-				s.log("error", "warp.apply.failed", "WARP runtime apply failed", tunnelAuditFields(state.Tunnels[idx]), err)
+				s.log("error", "warp.apply.failed", "WARP runtime apply failed", withDuration(tunnelAuditFields(state.Tunnels[idx]), started), err)
 				return &ApplyError{Err: err}
 			}
-			s.log("warn", "warp.apply.failed", "WARP runtime apply failed but state was saved", tunnelAuditFields(state.Tunnels[idx]), err)
+			s.log("warn", "warp.apply.failed", "WARP runtime apply failed but state was saved", withDuration(tunnelAuditFields(state.Tunnels[idx]), started), err)
 			return nil
 		}
 		state.Tunnels[idx].LastApplyAt = now
-		s.log("info", "tunnel.apply.succeeded", "runtime tunnel applied", tunnelAuditFields(state.Tunnels[idx]), nil)
+		s.log("info", "tunnel.apply.succeeded", "runtime tunnel applied", withDuration(tunnelAuditFields(state.Tunnels[idx]), started), nil)
 	}
 	state.Tunnels[idx].UpdatedAt = now
 	state.UpdatedAt = now
 	if err := s.store.Save(state); err != nil {
-		s.log("error", "state.save.failed", "state save failed after render", tunnelAuditFields(state.Tunnels[idx]), err)
+		s.log("error", "state.save.failed", "state save failed after render", withDuration(tunnelAuditFields(state.Tunnels[idx]), started), err)
 		return err
 	}
 	return nil

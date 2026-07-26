@@ -84,6 +84,18 @@ fi
 
 printf 'OK   automatic UDP port selection skips occupied ports\n'
 
+write_compose_if_missing
+if ! grep -A4 '^    logging:$' "$COMPOSE_FILE" | grep -qx '      driver: local'; then
+  printf 'FAIL fresh managed Compose does not use bounded local logging\n' >&2
+  exit 1
+fi
+if ! grep -A4 '^    logging:$' "$COMPOSE_FILE" | grep -qx '        max-size: "10m"'; then
+  printf 'FAIL fresh managed Compose does not set a log size limit\n' >&2
+  exit 1
+fi
+
+printf 'OK   fresh managed Compose uses bounded runtime logging\n'
+
 cat >"$ENV_FILE" <<'EOF'
 WEBUI_HOST=127.0.0.1
 WEBUI_PORT=51821

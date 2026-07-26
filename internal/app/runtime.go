@@ -235,8 +235,8 @@ func (s *Service) apply(tunnel config.Tunnel) error {
 	}
 	cmd := exec.Command("awg", "syncconf", tunnel.InterfaceName, "/dev/stdin")
 	cmd.Stdin = strings.NewReader(string(stripped))
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("awg syncconf failed: %s", strings.TrimSpace(string(out)))
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("awg syncconf failed: %w", err)
 	}
 	return s.ensureFirewallRules(tunnel)
 }
@@ -342,9 +342,9 @@ func deleteAllIPTablesRules(rule iptablesRule) error {
 		args := append([]string{}, iptablesTableArgs(rule.table)...)
 		args = append(args, "-D")
 		args = append(args, rule.args...)
-		out, err := exec.Command("iptables", args...).CombinedOutput()
+		err := exec.Command("iptables", args...).Run()
 		if err != nil {
-			return fmt.Errorf("iptables %s failed: %s", strings.Join(args, " "), strings.TrimSpace(string(out)))
+			return fmt.Errorf("iptables %s failed: %w", strings.Join(args, " "), err)
 		}
 	}
 	return fmt.Errorf("iptables duplicate cleanup limit reached for %s", strings.Join(rule.args, " "))
@@ -382,13 +382,9 @@ type runtimePeer struct {
 }
 
 func runtimeAWGShow(interfaceName string) (runtimeInterface, error) {
-	out, err := exec.Command("awg", "show", interfaceName).CombinedOutput()
+	out, err := exec.Command("awg", "show", interfaceName).Output()
 	if err != nil {
-		msg := strings.TrimSpace(string(out))
-		if msg == "" {
-			msg = err.Error()
-		}
-		return runtimeInterface{}, fmt.Errorf("awg show %s failed: %s", interfaceName, msg)
+		return runtimeInterface{}, fmt.Errorf("awg show %s failed: %w", interfaceName, err)
 	}
 	return parseRuntimeAWGShow(string(out)), nil
 }
@@ -575,9 +571,9 @@ func hasFilterRule(chain string, args ...string) bool {
 }
 
 func runAWGQuick(args ...string) error {
-	out, err := exec.Command("awg-quick", args...).CombinedOutput()
+	err := exec.Command("awg-quick", args...).Run()
 	if err != nil {
-		return fmt.Errorf("awg-quick %s failed: %s", strings.Join(args, " "), strings.TrimSpace(string(out)))
+		return fmt.Errorf("awg-quick %s failed: %w", strings.Join(args, " "), err)
 	}
 	return nil
 }

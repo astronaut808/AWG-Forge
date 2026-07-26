@@ -466,6 +466,11 @@ services:
       - SYS_MODULE
     devices:
       - /dev/net/tun:/dev/net/tun
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
 YAML
   ok "created $COMPOSE_FILE"
@@ -574,6 +579,7 @@ write_env() {
   ensure_env_value AUDIT_LOG_PATH /etc/awg-forge/audit.log
   ensure_env_value AUDIT_LOG_MAX_SIZE 5242880
   ensure_env_value AUDIT_LOG_MAX_FILES 3
+  ensure_env_value LOG_LEVEL info
   if [[ "$mode" == "fresh" ]]; then
     set_env_value DATABASE_MODE sqlite
     set_env_value DATABASE_PATH /etc/awg-forge/awg-forge.db
