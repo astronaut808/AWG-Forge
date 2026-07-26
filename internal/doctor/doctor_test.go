@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -159,6 +160,32 @@ func TestCheckTrafficLimitsWarnsForDisabledExceededClient(t *testing.T) {
 	}
 	if !strings.Contains(result.Message, "increase or clear the limit before enabling") {
 		t.Fatalf("message = %q, want enable guidance", result.Message)
+	}
+}
+
+func TestCheckDatabaseStaleSchemaExplainsMigrationAndSkipsDependentChecks(t *testing.T) {
+	cfg, state := trafficLimitDoctorFixture(t, true)
+	db, err := sql.Open("sqlite", cfg.DatabasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	if _, err := db.Exec("DELETE FROM schema_migrations WHERE version > 2"); err != nil {
+		t.Fatal(err)
+	}
+
+	var c checker
+	if c.checkDatabase(cfg) {
+		c.checkTrafficLimits(cfg, state)
+	}
+	if len(c.results) != 1 {
+		t.Fatalf("results = %#v, want one database warning", c.results)
+	}
+	if !strings.Contains(c.results[0].Message, "docker exec awg-forge awg-forge db migrate") {
+		t.Fatalf("message = %q, want Docker migration command", c.results[0].Message)
+	}
+	if !strings.Contains(c.results[0].Message, "or `awg-forge db migrate` for a local binary") {
+		t.Fatalf("message = %q, want local migration command", c.results[0].Message)
 	}
 }
 

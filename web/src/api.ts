@@ -6,7 +6,6 @@ import type {
   RestoreReport,
   TrafficSummary,
   TunnelSuggestion,
-  UpdatesReport,
   WarpSummary,
 } from "./types";
 
@@ -85,9 +84,10 @@ export function updateTunnel(id: string, body: Record<string, unknown>) {
   });
 }
 
-export function deleteTunnel(id: string) {
+export function deleteTunnel(id: string, confirmationName = "") {
   return request(`/api/tunnels/${encodeURIComponent(id)}/delete`, {
     method: "DELETE",
+    body: { confirmation_name: confirmationName },
     idempotencyKey: newIdempotencyKey(),
   });
 }
@@ -181,10 +181,6 @@ export function doctor(): Promise<{ results: DoctorResult[] }> {
 
 export function firewallRepair(): Promise<{ firewall: FirewallReport }> {
   return request("/api/firewall/repair", { method: "POST", body: {}, idempotencyKey: newIdempotencyKey() });
-}
-
-export function updates(): Promise<{ updates: UpdatesReport }> {
-  return request("/api/updates");
 }
 
 export function auditLog(): Promise<{ events: AuditEvent[] }> {

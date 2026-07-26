@@ -25,19 +25,17 @@ Tunnel actions:
 - `Settings`: tunnel settings, including optional per-tunnel `Server host` endpoint override.
 - `Protocol`: protocol params and regenerate.
 - `Restart`: restart a tunnel.
-- `Delete`: delete a tunnel or client.
+- `Delete`: delete a tunnel or client. Deleting a tunnel with a client that connected before requires typing the tunnel name.
 
 Maintenance actions are available through the `Maintenance` button:
 
-- `Overview`: overall runtime, clients, firewall, and recovery status.
-- `Doctor`: system and runtime diagnostics grouped by category, with OK/WARN/FAIL status per check.
-- `Firewall`: managed firewall rule status per tunnel and repair action.
-- `Backup`: download an encrypted backup with a dedicated password.
-- `Restore`: verify an `.afbackup` through a dry-run without writing to `CONFIG_DIR`; actual restore remains CLI-only.
-- `Updates`: check whether bundled AmneziaWG upstream refs are behind.
-- `Support`: download a support bundle without secrets.
-- `Logs`: inspect recent safe audit events. The panel auto-refreshes while Maintenance is open and shows newest events first.
-- `System`: current mode, server host, tunnels, profiles, and useful commands.
+- `Overview`: active tunnels and enabled clients. It also shows manual mode when runtime configuration apply is off.
+- `Doctor`: system and runtime diagnostics grouped by category, with OK/WARN/FAIL status per check. Firewall repair appears here only when Doctor finds a repairable managed-rule issue.
+- `WARP`: register, import, restart, or remove the optional WARP egress configuration.
+- `Backup & restore`: download an encrypted backup and verify an `.afbackup` in dry-run mode. Actual restore remains CLI-only.
+- `Traffic`: aggregate traffic history when SQLite is enabled.
+- `Audit log`: inspect recent safe audit events. The panel auto-refreshes while the Audit log tab is open and shows newest events first.
+- `Support`: download a support bundle without secrets and view the safe runtime, database, TLS, and version summary.
 
 ## Stale Configs
 
@@ -112,7 +110,6 @@ docker exec awg-forge awg-forge tunnel create awg_1_5 awg15 51825 10.15.0.0/24
 ## Local CLI
 
 ```bash
-awg-forge init
 awg-forge init --server-host vpn.example.com --external-interface eth0 --profile awg_2_0 --tunnel-name awg20 --listen-port 51830 --ipv4-subnet 10.20.0.0/24
 awg-forge serve
 awg-forge render

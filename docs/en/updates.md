@@ -50,9 +50,3 @@ Then build and test:
 ```bash
 make docker-build
 ```
-
-## Web UI
-
-The `Updates` button performs the same read-only upstream ref check.
-
-It does not modify the running system, download new binaries, or restart tunnels.

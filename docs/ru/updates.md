@@ -25,13 +25,13 @@ awg-forge не обновляет AmneziaWG tools внутри running container
 
 Такой подход дает воспроизводимые сборки и снижает риск внезапно сломать рабочие VPN-туннели.
 
-## Проверка Обновлений Локально
+## Проверка обновлений локально
 
 ```bash
 make updates-local
 ```
 
-## Проверка Обновлений В Docker
+## Проверка обновлений в Docker
 
 ```bash
 make updates-docker
@@ -50,9 +50,3 @@ make update-amneziawg-refs
 ```bash
 make docker-build
 ```
-
-## Web UI
-
-Кнопка `Updates` делает read-only проверку upstream refs.
-
-Она не меняет running system, не скачивает новые binaries и не перезапускает туннели.

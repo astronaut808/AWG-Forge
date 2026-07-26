@@ -22,7 +22,7 @@ Self-hosted AmneziaWG control panel for Docker: Go backend, embedded Web UI, and
 - Egress: `Server WAN` or Cloudflare WARP per tunnel.
 - Clients: create, download `.conf`, AmneziaWG QR, AmneziaVPN QR, `vpn://` key, enable/disable, expiration, delete.
 - Diagnostics: Doctor, firewall repair, client status, last seen, received/sent counters.
-- Maintenance Center: WARP, backup, restore verify, support bundle, live audit logs, updates, system info.
+- Maintenance Center: Doctor with contextual firewall repair, WARP, backup/restore verification, traffic, audit log, and support diagnostics.
 
 ## Quick Start
 
@@ -65,9 +65,18 @@ git clone https://github.com/astronaut808/awg-forge.git
 cd awg-forge
 cp .env.example .env
 mkdir -p data
+docker compose run --rm --no-deps awg-forge init \
+  --server-host vpn.example.com \
+  --external-interface eth0 \
+  --profile awg_2_0 \
+  --tunnel-name awg20 \
+  --listen-port 51830 \
+  --ipv4-subnet 10.20.0.0/24
 docker compose run --rm --no-deps awg-forge db migrate
 docker compose up -d
 ```
+
+Replace the example host, interface, port, and subnet before running `init`. They create the first persistent tunnel in `data/state.json`; changing legacy tunnel variables in `.env` afterwards does not update it.
 
 Docker host networking is the recommended production mode. It lets tunnels created in the UI use different UDP ports without editing Docker port mappings.
 
@@ -121,7 +130,7 @@ cd /opt/awg-forge
 sudo ./uninstall.sh --dry-run --yes
 ```
 
-Backup/restore, firewall repair, support bundle, logs, and update checks are available from `Maintenance Center` and CLI.
+Backup/restore, firewall repair, support bundle, and audit log are available from `Maintenance Center` and CLI. Upstream-ref checks are available through the CLI command `awg-forge updates`.
 
 ## Documentation
 

@@ -62,8 +62,9 @@ func Check(cfg config.Config, service *app.Service) []Result {
 	c.checkRPFilter("default", "default")
 	c.checkRPFilter("external interface", cfg.ExternalInterface)
 	c.checkDir(cfg.ConfigDir)
-	c.checkDatabase(cfg)
-	c.checkTrafficLimits(cfg, state)
+	if c.checkDatabase(cfg) {
+		c.checkTrafficLimits(cfg, state)
+	}
 	c.checkSessionCookie(cfg)
 	c.checkTLS(cfg)
 	c.checkLegacyTunnelEnv(cfg, state)
@@ -96,26 +97,31 @@ func Check(cfg config.Config, service *app.Service) []Result {
 	return c.results
 }
 
-func (c *checker) checkDatabase(cfg config.Config) {
+func (c *checker) checkDatabase(cfg config.Config) bool {
 	if cfg.DatabaseMode == "" || cfg.DatabaseMode == sqldb.ModeOff {
-		return
+		return false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.DatabaseQueryTimeout)
 	defer cancel()
 	status, err := sqldb.Check(ctx, cfg)
 	if err != nil {
 		c.fail(categoryDatabase, "database", err.Error())
-		return
+		return false
 	}
 	if !status.Exists {
-		c.warn(categoryDatabase, "database", fmt.Sprintf("%s database is enabled but %s does not exist; run awg-forge db migrate", status.Mode, status.Path))
-		return
+		c.warn(categoryDatabase, "database", fmt.Sprintf("%s database is enabled but %s does not exist; %s", status.Mode, status.Path, databaseMigrateInstruction()))
+		return false
 	}
 	if status.SchemaVersion < sqldb.CurrentSchemaVersion {
-		c.warn(categoryDatabase, "database", fmt.Sprintf("%s schema=%d is older than expected schema=%d; run awg-forge db migrate", status.Mode, status.SchemaVersion, sqldb.CurrentSchemaVersion))
-		return
+		c.warn(categoryDatabase, "database", fmt.Sprintf("%s schema=%d is older than expected schema=%d; %s", status.Mode, status.SchemaVersion, sqldb.CurrentSchemaVersion, databaseMigrateInstruction()))
+		return false
 	}
 	c.ok(categoryDatabase, "database", fmt.Sprintf("%s schema=%d journal=%s", status.Mode, status.SchemaVersion, status.JournalMode))
+	return true
+}
+
+func databaseMigrateInstruction() string {
+	return "run `docker exec awg-forge awg-forge db migrate` for Docker, or `awg-forge db migrate` for a local binary"
 }
 
 func (c *checker) checkLegacyTunnelEnv(cfg config.Config, state config.State) {

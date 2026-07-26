@@ -38,6 +38,7 @@ import (
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/firewall"
 	"github.com/astronaut808/awg-forge/internal/sqldb"
+	"github.com/astronaut808/awg-forge/internal/storage"
 	"github.com/astronaut808/awg-forge/internal/webtls"
 )
 
@@ -2179,7 +2180,7 @@ func TestDeleteTunnelApplyFailureReturnsServerError(t *testing.T) {
 	svc = app.New(cfg)
 	w := &web{service: svc, idem: map[string]*idempotencyEntry{}}
 
-	r := httptest.NewRequest(http.MethodDelete, "http://127.0.0.1/api/tunnels/"+tunnel.ID+"/delete", nil)
+	r := httptest.NewRequest(http.MethodDelete, "http://127.0.0.1/api/tunnels/"+tunnel.ID+"/delete", strings.NewReader(`{}`))
 	r.Header.Set("Idempotency-Key", "delete-apply-fails")
 	r.Header.Set("Origin", "http://127.0.0.1")
 	rr := httptest.NewRecorder()
@@ -2194,5 +2195,104 @@ func TestDeleteTunnelApplyFailureReturnsServerError(t *testing.T) {
 	}
 	if got := len(state.Tunnels); got != 2 {
 		t.Fatalf("tunnels = %d, want rolled back 2", got)
+	}
+}
+
+func TestDeleteTunnelAllowsLegacyEmptyBodyWhenConfirmationIsNotRequired(t *testing.T) {
+	cfg := config.Config{
+		ConfigDir:           t.TempDir(),
+		TunnelName:          "awg0",
+		ServerHost:          "vpn.example.com",
+		ListenPort:          51820,
+		WebUIHost:           "127.0.0.1",
+		WebUIPort:           51821,
+		ExternalInterface:   "eth0",
+		IPv4Subnet:          "10.8.0.0/24",
+		DNS:                 "1.1.1.1",
+		AllowedIPs:          "0.0.0.0/0",
+		PersistentKeepalive: 0,
+		MTU:                 0,
+		ProtocolProfile:     "awg_legacy_1_0",
+	}
+	svc := app.New(cfg)
+	tunnel, err := svc.CreateTunnel("awg_1_5", "awg15", "10.15.0.0/24", 51825)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := &web{service: svc, idem: map[string]*idempotencyEntry{}}
+	r := httptest.NewRequest(http.MethodDelete, "http://127.0.0.1/api/tunnels/"+tunnel.ID+"/delete", nil)
+	r.Header.Set("Idempotency-Key", "legacy-empty-delete")
+	r.Header.Set("Origin", "http://127.0.0.1")
+	rr := httptest.NewRecorder()
+	w.deleteTunnelAPI(rr, r, tunnel.ID)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+}
+
+func TestDeleteTunnelAPIRequiresExactNameAfterClientConnects(t *testing.T) {
+	cfg := config.Config{
+		ConfigDir:           t.TempDir(),
+		TunnelName:          "awg0",
+		ServerHost:          "vpn.example.com",
+		ListenPort:          51820,
+		WebUIHost:           "127.0.0.1",
+		WebUIPort:           51821,
+		ExternalInterface:   "eth0",
+		IPv4Subnet:          "10.8.0.0/24",
+		DNS:                 "1.1.1.1",
+		AllowedIPs:          "0.0.0.0/0",
+		PersistentKeepalive: 0,
+		MTU:                 0,
+		ProtocolProfile:     "awg_legacy_1_0",
+	}
+	svc := app.New(cfg)
+	tunnel, err := svc.CreateTunnel("awg_1_5", "awg15", "10.15.0.0/24", 51825)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AddClientToTunnel(tunnel.ID, "phone"); err != nil {
+		t.Fatal(err)
+	}
+	store := storage.New(cfg.ConfigDir)
+	state, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for ti := range state.Tunnels {
+		if state.Tunnels[ti].ID == tunnel.ID {
+			state.Tunnels[ti].Clients[0].EverConnected = true
+		}
+	}
+	if err := store.Save(state); err != nil {
+		t.Fatal(err)
+	}
+	w := &web{service: app.New(cfg), idem: map[string]*idempotencyEntry{}}
+
+	for _, body := range []io.Reader{nil, strings.NewReader(`{"confirmation_name":"wrong-name"}`)} {
+		r := httptest.NewRequest(http.MethodDelete, "http://127.0.0.1/api/tunnels/"+tunnel.ID+"/delete", body)
+		r.Header.Set("Idempotency-Key", strconv.FormatInt(time.Now().UnixNano(), 10))
+		r.Header.Set("Origin", "http://127.0.0.1")
+		rr := httptest.NewRecorder()
+		w.deleteTunnelAPI(rr, r, tunnel.ID)
+		if rr.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want %d; body = %s", rr.Code, http.StatusBadRequest, rr.Body.String())
+		}
+	}
+	state, err = w.service.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Tunnels) != 2 {
+		t.Fatalf("tunnels after rejected API deletions = %d, want 2", len(state.Tunnels))
+	}
+
+	r := httptest.NewRequest(http.MethodDelete, "http://127.0.0.1/api/tunnels/"+tunnel.ID+"/delete", strings.NewReader(`{"confirmation_name":"awg15"}`))
+	r.Header.Set("Idempotency-Key", "confirmed-delete")
+	r.Header.Set("Origin", "http://127.0.0.1")
+	rr := httptest.NewRecorder()
+	w.deleteTunnelAPI(rr, r, tunnel.ID)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", rr.Code, http.StatusOK, rr.Body.String())
 	}
 }
