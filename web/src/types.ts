@@ -189,18 +189,6 @@ export type FirewallReport = {
   results: FirewallRuleResult[];
 };
 
-export type UpdateComponent = {
-  name: string;
-  current_ref: string;
-  latest_ref: string;
-  status: string;
-  url: string;
-};
-
-export type UpdatesReport = {
-  components: UpdateComponent[];
-};
-
 export type AuditEvent = {
   time: string;
   level: string;

@@ -198,7 +198,7 @@ docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge
 
 `restore verify` decrypts and validates the backup, renders server and client configs in memory, and prints a redacted summary. It does not write to the config directory, create a pre-restore backup, restart tunnels, or change runtime state.
 
-In the UI, open `Maintenance` -> `Restore` to upload an `.afbackup` file and run the same verification as a dry-run. Actual restore remains CLI-only.
+In the UI, open `Maintenance` -> `Backup & restore` to upload an `.afbackup` file and run the same verification as a dry-run. Actual restore remains CLI-only.
 
 Before replacing the current config directory, restore keeps an encrypted pre-restore backup in `backups/` inside the restored config directory.
 
@@ -244,7 +244,7 @@ Repair removes duplicates only for these managed rules and adds missing rules. I
 
 When `APPLY_CONFIG=false`, `firewall check/repair` does not change anything and reports a warning.
 
-In the UI, use `Maintenance` -> `Firewall` -> `Repair firewall`. When `APPLY_CONFIG=false`, the button is visually unavailable and explains why; when `APPLY_CONFIG=true`, the action requires confirmation.
+In the UI, run `Maintenance` -> `Doctor`. When Doctor reports a repairable managed-firewall issue and `APPLY_CONFIG=true`, it offers `Repair firewall` in the diagnostic result.
 
 ## Client Status In UI
 

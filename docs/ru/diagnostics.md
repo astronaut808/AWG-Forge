@@ -198,7 +198,7 @@ docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge
 
 `restore verify` расшифровывает и валидирует backup, рендерит server и client configs в памяти и выводит summary без секретов. Он не пишет в config directory, не создает pre-restore backup, не перезапускает tunnels и не меняет runtime state.
 
-В UI открой `Maintenance` -> `Restore`, загрузи `.afbackup` и запусти такую же проверку в dry-run режиме. Настоящий restore остается CLI-only.
+В UI открой `Maintenance` -> `Backup и restore`, загрузи `.afbackup` и запусти такую же проверку в dry-run режиме. Настоящий restore остается CLI-only.
 
 Перед заменой текущего config directory restore сохраняет encrypted pre-restore backup в `backups/` внутри восстановленного config directory.
 
@@ -244,9 +244,9 @@ Repair удаляет дубли только этих managed rules и доба
 
 Если `APPLY_CONFIG=false`, `firewall check/repair` ничего не меняет и показывает предупреждение.
 
-В UI эта операция доступна через `Maintenance` -> `Firewall` -> `Repair firewall`. Если `APPLY_CONFIG=false`, кнопка визуально недоступна и показывает причину; если `APPLY_CONFIG=true`, действие требует подтверждения.
+В UI запусти `Maintenance` -> `Doctor`. Если Doctor показывает проблему с managed firewall rules и `APPLY_CONFIG=true`, в результатах появится `Восстановить firewall rules`.
 
-## Статусы Клиентов В UI
+## Статусы клиентов в UI
 
 Список клиентов показывает базовый runtime status без отдельного окна диагностики:
 
@@ -267,7 +267,7 @@ curl -4 https://ifconfig.co
 
 Ответ должен показать внешний IP сервера.
 
-## Нет Интернета Через VPN
+## Нет интернета через VPN
 
 Проверь внешний интерфейс:
 
@@ -322,7 +322,7 @@ docker exec awg-forge iptables -t nat -L POSTROUTING -v -n
 
 не растут для нужного tunnel subnet/interface, значит трафик не дошел до forwarding/NAT слоя. Проверь `awg show <interface>`, stale link, свежий client config и правильный protocol profile.
 
-## UI Недоступен
+## UI недоступен
 
 Проверь:
 
@@ -331,7 +331,7 @@ docker exec awg-forge iptables -t nat -L POSTROUTING -v -n
 - `WEBUI_PORT=51821`;
 - `docker compose logs -f`.
 
-## TUN Недоступен
+## TUN недоступен
 
 Проверь, что на host существует:
 
@@ -356,7 +356,7 @@ iptables -V
 
 В выводе должно быть `nf_tables`.
 
-## Port Already In Use
+## Порт уже используется
 
 Если UDP port занят:
 

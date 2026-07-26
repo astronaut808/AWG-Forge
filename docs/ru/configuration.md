@@ -111,7 +111,7 @@ docker exec awg-forge awg-forge tls use environment
 docker restart awg-forge
 ```
 
-`tls use environment` сначала проверяет environment, а затем удаляет managed override. `tls status` показывает configured settings; `Maintenance` -> `System` показывает TLS runtime текущего процесса.
+`tls use environment` сначала проверяет environment, а затем удаляет managed override. `tls status` показывает configured settings; `Maintenance` -> `Support` показывает TLS runtime текущего процесса.
 
 | Действие | Результат |
 | --- | --- |
@@ -136,7 +136,7 @@ Encrypted backup сохраняет `tls/config.json`. Certificate и key из �
 docker exec awg-forge awg-forge tls status
 ```
 
-Та же безопасная сводка режима, certificate и trusted proxy доступна в `Maintenance` -> `System` без PEM, private keys и file paths.
+Та же безопасная сводка режима, certificate и trusted proxy доступна в `Maintenance` -> `Support` без PEM, private keys и file paths.
 
 ### Reverse Proxy
 
@@ -260,7 +260,7 @@ Audit log хранит историю безопасных operational events: l
 
 Он нужен для разбора случаев “вчера работало, потом поменяли настройки, теперь handshake есть, но интернета нет”.
 
-В Web UI вкладка `Maintenance` -> `Logs` автообновляется, пока окно Maintenance открыто, и показывает новые события сверху.
+В Web UI вкладка `Maintenance` -> `Аудит` автообновляется, пока окно Maintenance открыто, и показывает новые события сверху.
 
 Audit log не должен содержать:
 
@@ -308,7 +308,7 @@ docker exec awg-forge awg-forge db retention apply
 
 SQLite использует локальный файл внутри `CONFIG_DIR`, WAL mode, включенные foreign keys и права `0600`. Не размещай эту базу на network filesystem.
 
-Когда SQLite включен и миграции применены, audit events пишутся и в существующий JSONL audit log, и в `audit_events`. `Maintenance` -> `Logs` и `awg-forge logs` объединяют события из SQLite и JSONL, а если SQLite недоступен, читают JSONL. Это не дает проблемам SQLite mirror скрыть события, которые попали в `audit.log`.
+Когда SQLite включен и миграции применены, audit events пишутся и в существующий JSONL audit log, и в `audit_events`. `Maintenance` -> `Аудит` и `awg-forge logs` объединяют события из SQLite и JSONL, а если SQLite недоступен, читают JSONL. Это не дает проблемам SQLite mirror скрыть события, которые попали в `audit.log`.
 
 Когда SQLite включен, миграции применены и `APPLY_CONFIG=true`, awg-forge раз в минуту снимает runtime transfer counters и хранит дневные aggregates трафика по клиентам. Первый sample задает baseline и не считается переданным трафиком. Строки клиентов показывают общий записанный трафик, а `Maintenance` -> `Traffic` показывает aggregate totals за сегодня, 7 дней и 30 дней по всем клиентам и туннелям.
 

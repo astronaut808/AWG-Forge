@@ -25,19 +25,17 @@
 - `Settings`: настройки туннеля, включая переопределение `Server host` для отдельного туннеля.
 - `Protocol`: параметры протокола и перегенерация.
 - `Restart`: перезапустить туннель.
-- `Delete`: удалить туннель или клиента.
+- `Delete`: удалить туннель или клиента. Для удаления туннеля с ранее подключавшимся клиентом нужно ввести имя туннеля.
 
 Действия обслуживания доступны через кнопку `Maintenance`:
 
-- `Overview`: общий статус runtime, клиентов, firewall и восстановления.
-- `Doctor`: системная и runtime-диагностика по категориям, со статусом OK/WARN/FAIL у каждой проверки.
-- `Firewall`: статус managed firewall rules по туннелям и восстановление правил awg-forge.
-- `Backup`: скачать зашифрованный backup с отдельным паролем.
-- `Restore`: проверить `.afbackup` в dry-run режиме без записи в `CONFIG_DIR`; настоящий restore остается CLI-only.
-- `Updates`: проверка, есть ли новые upstream refs у используемых AmneziaWG tools.
-- `Support`: скачать support bundle без секретов.
-- `Logs`: посмотреть последние безопасные события аудита. Панель автообновляется, пока открыт Maintenance, и показывает новые события сверху.
-- `System`: текущий режим, server host, туннели, профили и полезные команды.
+- `Overview`: активные туннели и включенные клиенты. При отключенном применении runtime-конфигурации также показывает ручной режим.
+- `Doctor`: системная и runtime-диагностика по категориям, со статусом OK/WARN/FAIL у каждой проверки. Восстановление firewall rules появляется здесь только при найденной проблеме с managed rules.
+- `WARP`: регистрация, импорт, перезапуск или удаление необязательной WARP-конфигурации для egress.
+- `Backup и restore`: скачать зашифрованный backup и проверить `.afbackup` в dry-run режиме. Настоящий restore остается CLI-only.
+- `Traffic`: общая история трафика, когда включен SQLite.
+- `Audit log`: последние безопасные события аудита. Панель автообновляется, пока открыт Maintenance, и показывает новые события сверху.
+- `Support`: скачать support bundle без секретов и посмотреть безопасную сводку runtime, БД, TLS и версии.
 
 ## Устаревшие конфиги
 
@@ -84,7 +82,7 @@ Doctor может предупреждать о клиентах, у котор�
 
 В режиме `serve` awg-forge периодически применяет истекшие сроки и перерендеривает затронутые туннели. Обычно это занимает до одной минуты после фактического истечения.
 
-## CLI В Docker
+## CLI в Docker
 
 ```bash
 docker exec awg-forge awg-forge doctor
@@ -112,7 +110,6 @@ docker exec awg-forge awg-forge tunnel create awg_1_5 awg15 51825 10.15.0.0/24
 ## Локальный CLI
 
 ```bash
-awg-forge init
 awg-forge init --server-host vpn.example.com --external-interface eth0 --profile awg_2_0 --tunnel-name awg20 --listen-port 51830 --ipv4-subnet 10.20.0.0/24
 awg-forge serve
 awg-forge render

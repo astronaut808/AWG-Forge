@@ -994,6 +994,17 @@ textarea {
   font-size: 14px;
 }
 
+.maintenance-section,
+.maintenance-action {
+  padding-top: 18px;
+  border-top: 1px dashed var(--border);
+}
+
+.maintenance-section:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
 .notice,
 .command-block {
   padding: 14px;

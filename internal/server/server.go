@@ -825,8 +825,15 @@ func (w *web) deleteTunnelAPI(rw http.ResponseWriter, r *http.Request, id string
 		return
 	}
 	w.withIdempotency(rw, r, "delete-tunnel:"+id, func() (int, any) {
-		if err := w.service.DeleteTunnel(id); err != nil {
-			w.audit("warn", "tunnel.delete.rejected", "tunnel delete request rejected", map[string]any{"tunnel_id": id}, err)
+		var req struct {
+			ConfirmationName string `json:"confirmation_name"`
+		}
+		if err := readJSON(rw, r, &req); err != nil && !errors.Is(err, io.EOF) {
+			w.audit("warn", "tunnel.delete.rejected", "tunnel delete request rejected", map[string]any{"tunnel_id": id, "reason": "invalid json"}, err)
+			return http.StatusBadRequest, errorPayload("invalid json")
+		}
+		if err := w.service.DeleteTunnelWithConfirmation(id, req.ConfirmationName); err != nil {
+			w.audit("warn", "tunnel.delete.rejected", "tunnel delete request rejected", map[string]any{"tunnel_id": id, "confirmation_provided": req.ConfirmationName != ""}, err)
 			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
 		}
 		return http.StatusOK, map[string]any{"ok": true}

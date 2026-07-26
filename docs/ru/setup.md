@@ -19,9 +19,18 @@ sudo ./install.sh
 ```bash
 cp .env.example .env
 mkdir -p data
+docker compose run --rm --no-deps awg-forge init \
+  --server-host vpn.example.com \
+  --external-interface eth0 \
+  --profile awg_2_0 \
+  --tunnel-name awg20 \
+  --listen-port 51830 \
+  --ipv4-subnet 10.20.0.0/24
 docker compose run --rm --no-deps awg-forge db migrate
 docker compose up -d
 ```
+
+Перед `init` замени пример host, интерфейса, порта и подсети. Команда создаёт первый постоянный туннель в `data/state.json`; изменение legacy tunnel-переменных в `.env` после этого его не обновит.
 
 По умолчанию Web UI слушает `127.0.0.1:51821`. Для доступа используй SSH tunnel:
 
@@ -44,9 +53,18 @@ Bridge networking тоже может работать, но UDP-порты до
 ```bash
 cp .env.example .env
 mkdir -p data
+docker compose -f docker-compose.bridge.yml run --rm --no-deps awg-forge init \
+  --server-host vpn.example.com \
+  --external-interface eth0 \
+  --profile awg_2_0 \
+  --tunnel-name awg20 \
+  --listen-port 51830 \
+  --ipv4-subnet 10.20.0.0/24
 docker compose -f docker-compose.bridge.yml run --rm --no-deps awg-forge db migrate
 docker compose -f docker-compose.bridge.yml up -d
 ```
+
+Для bridge networking выбери `--listen-port` из опубликованного UDP-диапазона.
 
 Пример `docker-compose.bridge.yml` публикует:
 

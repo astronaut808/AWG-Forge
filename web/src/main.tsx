@@ -15,7 +15,6 @@ import type {
   TrafficSummary,
   TrafficSummaryRow,
   Tunnel,
-  UpdatesReport,
 } from "./types";
 import {
   activeLabel,
@@ -39,9 +38,10 @@ type Modal =
   | { kind: "create-client"; tunnel: Tunnel }
   | { kind: "client-settings"; tunnel: Tunnel; client: Client }
   | { kind: "client-config"; client: Client }
+  | { kind: "delete-tunnel"; tunnel: Tunnel }
   | { kind: "maintenance" };
 
-type MaintenanceTab = "overview" | "doctor" | "firewall" | "warp" | "backup" | "restore" | "updates" | "support" | "logs" | "traffic" | "system";
+type MaintenanceTab = "overview" | "doctor" | "warp" | "backup" | "support" | "logs" | "traffic";
 type QRImportMode = "amneziavpn" | "amneziawg";
 type TrafficLimitUnit = "mib" | "gib" | "tib";
 type TrafficLimitPeriod = "lifetime" | "rolling_30d";
@@ -189,7 +189,13 @@ function App() {
       onSettings={() => setModal({ kind: "settings", tunnel })}
       onProtocol={() => setModal({ kind: "protocol", tunnel })}
       onRestart={() => runAction(m.actions.tunnelRestarted, () => api.restartTunnel(tunnel.id))}
-      onDelete={() => confirm(m.actions.deleteTunnelConfirm(tunnel.name)) && runAction(m.actions.tunnelDeleted, () => api.deleteTunnel(tunnel.id))}
+      onDelete={() => {
+        if (tunnel.clients.some((client) => client.ever_connected)) {
+          setModal({ kind: "delete-tunnel", tunnel });
+          return;
+        }
+        if (confirm(m.actions.deleteTunnelConfirm(tunnel.name))) void runAction(m.actions.tunnelDeleted, () => api.deleteTunnel(tunnel.id));
+      }}
       onClientConfig={(client) => setModal({ kind: "client-config", client })}
       onClientSettings={(client) => setModal({ kind: "client-settings", tunnel, client })}
       onClientToggle={(client) => {
@@ -527,7 +533,34 @@ function ModalContent({ modal, state, notify, close, reload, runAction }: {
   if (modal.kind === "create-client") return <CreateClientForm tunnel={modal.tunnel} trafficLimitsEnabled={state.database.enabled} runAction={runAction} />;
   if (modal.kind === "client-settings") return <ClientSettingsForm client={modal.client} runAction={runAction} />;
   if (modal.kind === "client-config") return <ClientConfigPanel client={modal.client} notify={notify} />;
+  if (modal.kind === "delete-tunnel") return <DeleteTunnelConfirmation tunnel={modal.tunnel} close={close} runAction={runAction} />;
   return <MaintenanceCenter state={state} notify={notify} close={close} reload={reload} />;
+}
+
+function DeleteTunnelConfirmation({ tunnel, close, runAction }: { tunnel: Tunnel; close: () => void; runAction: (label: string, fn: () => Promise<unknown>) => Promise<void> }) {
+  const { m } = useI18n();
+  const [confirmation, setConfirmation] = useState("");
+  const [busy, setBusy] = useState(false);
+  const confirmationRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    confirmationRef.current?.focus();
+  }, []);
+  return <PanelTitle title={m.actions.deleteTunnelTitle} subtitle={tunnel.name}>
+    <form class="form single" onSubmit={async (event) => {
+      event.preventDefault();
+      if (confirmation !== tunnel.name) return;
+      setBusy(true);
+      try {
+        await runAction(m.actions.tunnelDeleted, () => api.deleteTunnel(tunnel.id, confirmation));
+      } finally {
+        setBusy(false);
+      }
+    }}>
+      <p class="note">{m.actions.deleteTunnelConnectedWarning}</p>
+      <label>{m.actions.deleteTunnelTypeName(tunnel.name)}<input ref={confirmationRef} aria-label={m.actions.deleteTunnelNameLabel} value={confirmation} onInput={(event) => setConfirmation((event.currentTarget as HTMLInputElement).value)} /></label>
+      <div class="form-actions"><button class="button" type="button" onClick={close}>{m.common.close}</button><button class="button danger" disabled={busy || confirmation !== tunnel.name} type="submit"><ButtonContent busy={busy}>{m.common.delete}</ButtonContent></button></div>
+    </form>
+  </PanelTitle>;
 }
 
 function CreateTunnelForm({ state, profile, runAction }: { state: AppState; profile: Profile; runAction: (label: string, fn: () => Promise<unknown>) => Promise<void> }) {
@@ -868,7 +901,6 @@ function MaintenanceCenter({ state, notify, reload }: { state: AppState; notify:
   const [tab, setTab] = useState<MaintenanceTab>("overview");
   const [doctorResults, setDoctorResults] = useState<DoctorResult[] | null>(null);
   const [firewall, setFirewall] = useState<FirewallReport | null>(null);
-  const [updateReport, setUpdateReport] = useState<UpdatesReport | null>(null);
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [traffic, setTraffic] = useState<TrafficSummary | null>(null);
   const [restore, setRestore] = useState<RestoreReport | null>(null);
@@ -931,20 +963,32 @@ function MaintenanceCenter({ state, notify, reload }: { state: AppState; notify:
     }
   }
 
+  const repairableFirewallIssue = state.apply_enabled && Boolean(doctorResults?.some((result) => result.category === "firewall" && result.level !== "ok"));
+
   return <PanelTitle title={m.maintenance.title} subtitle={m.maintenance.subtitle}>
-    <nav class="subtabs">{(["overview", "doctor", "firewall", "warp", "backup", "restore", "updates", "support", "logs", "traffic", "system"] as MaintenanceTab[]).map((item) => <button key={item} className={classNames("button", tab === item && "active")} type="button" onClick={() => setTab(item)}>{m.maintenance.tabs[item]}</button>)}</nav>
-    {tab === "overview" && <div class="metric-grid"><Metric title={m.dashboard.tunnels} value={String(state.tunnels.length)} /><Metric title="WARP" value={state.warp.configured ? `${state.warp.enabled_tunnel_count} ${m.common.enabled}` : m.maintenance.notConfigured} /><Metric title={m.maintenance.applyConfig} value={state.apply_enabled ? m.common.enabled : m.common.manual} /><Metric title={m.common.profiles} value={String(state.profiles.length)} /></div>}
-    {tab === "doctor" && <div class="stack"><button class="button primary" disabled={Boolean(busyAction)} type="button" onClick={() => action("doctor", m.maintenance.doctorCompleted, async () => setDoctorResults((await api.doctor()).results))}><ButtonContent busy={busyAction === "doctor"}>{m.maintenance.runDoctor}</ButtonContent></button><ResultList results={doctorResults} /></div>}
-    {tab === "firewall" && <div class="stack"><button class="button primary" disabled={!state.apply_enabled || Boolean(busyAction)} type="button" onClick={() => action("firewall", m.maintenance.firewallRepaired, async () => setFirewall((await api.firewallRepair()).firewall))}><ButtonContent busy={busyAction === "firewall"}>{m.maintenance.repairFirewall}</ButtonContent></button>{firewall ? <ResultList results={firewall.results.map((item) => ({ level: item.status === "ok" ? "ok" : item.status === "duplicate" ? "warn" : "fail", area: `${item.tunnel}/${item.name}`, message: item.message || item.rule }))} /> : <p>{m.maintenance.firewallNote}</p>}</div>}
+    <nav class="subtabs">{(["overview", "doctor", "warp", "backup", "traffic", "logs", "support"] as MaintenanceTab[]).map((item) => <button key={item} className={classNames("button", tab === item && "active")} type="button" onClick={() => setTab(item)}>{m.maintenance.tabs[item]}</button>)}</nav>
+    {tab === "overview" && <MaintenanceOverview state={state} />}
+    {tab === "doctor" && <div class="stack"><button class="button primary" disabled={Boolean(busyAction)} type="button" onClick={() => action("doctor", m.maintenance.doctorCompleted, async () => { const report = await api.doctor(); setDoctorResults(report.results); setFirewall(null); })}><ButtonContent busy={busyAction === "doctor"}>{m.maintenance.runDoctor}</ButtonContent></button><ResultList results={doctorResults} />{repairableFirewallIssue && <section class="stack maintenance-action"><div><h3>{m.maintenance.firewall}</h3><p class="note">{m.maintenance.firewallNote}</p></div><button class="button primary" disabled={Boolean(busyAction)} type="button" onClick={() => action("firewall", m.maintenance.firewallRepaired, async () => setFirewall((await api.firewallRepair()).firewall))}><ButtonContent busy={busyAction === "firewall"}>{m.maintenance.repairFirewall}</ButtonContent></button>{firewall && <ResultList results={firewall.results.map((item) => ({ level: item.status === "ok" ? "ok" : item.status === "duplicate" ? "warn" : "fail", area: `${item.tunnel}/${item.name}`, message: item.message || item.rule }))} />}</section>}</div>}
     {tab === "warp" && <WarpPanel state={state} action={action} busyAction={busyAction} />}
-    {tab === "backup" && <BackupPanel notify={notify} />}
-    {tab === "restore" && <RestorePanel report={restore} setReport={setRestore} notify={notify} />}
-    {tab === "updates" && <div class="stack"><button class="button primary" disabled={Boolean(busyAction)} type="button" onClick={() => action("updates", m.maintenance.updatesChecked, async () => setUpdateReport((await api.updates()).updates))}><ButtonContent busy={busyAction === "updates"}>{m.maintenance.checkUpdates}</ButtonContent></button>{updateReport && <ResultList results={updateReport.components.map((item) => ({ level: item.status === "current" ? "ok" : "warn", area: item.name, message: `${item.current_ref} → ${item.latest_ref}` }))} />}</div>}
-    {tab === "support" && <div class="stack"><p>{m.maintenance.supportText}</p><button class="button primary" disabled={Boolean(busyAction)} type="button" onClick={() => action("support", m.maintenance.supportDownloadStarted, async () => { const res = await fetch("/api/support-bundle"); if (!res.ok) throw new Error(m.maintenance.supportDownloadFailed); await downloadResponse(res, "awg-forge-support.zip"); })}><ButtonContent busy={busyAction === "support"}>{m.maintenance.downloadSupport}</ButtonContent></button></div>}
+    {tab === "backup" && <BackupRestorePanel report={restore} setReport={setRestore} notify={notify} />}
+    {tab === "support" && <SupportPanel state={state} action={action} busyAction={busyAction} />}
     {tab === "logs" && <div class="stack"><p class="note">{m.maintenance.auditAutoRefresh}</p><div class="list">{events.length === 0 ? <div class="empty compact">{m.maintenance.noAuditEvents}</div> : events.map((event) => <div class="row" key={`${event.time}-${event.event}`}><strong>{event.event}</strong><p>{event.time} · {event.level} · {event.message}{event.error ? ` · ${event.error}` : ""}</p></div>)}</div></div>}
     {tab === "traffic" && <TrafficPanel state={state} traffic={traffic} reload={async () => setTraffic(await api.trafficSummary())} />}
-    {tab === "system" && <SystemPanel state={state} />}
   </PanelTitle>;
+}
+
+function MaintenanceOverview({ state }: { state: AppState }) {
+  const { m } = useI18n();
+  const clients = state.tunnels.flatMap((tunnel) => tunnel.clients);
+  const enabledClients = clients.filter((client) => client.enabled && !client.expired).length;
+  const upTunnels = state.tunnels.filter((tunnel) => tunnel.status?.up).length;
+
+  return <div class="metric-grid">
+    <Metric title={m.dashboard.tunnels} value={`${upTunnels}/${state.tunnels.length} ${m.status.up}`} />
+    <Metric title={m.tunnel.clients} value={`${enabledClients}/${clients.length} ${m.common.enabled}`} />
+    {!state.apply_enabled && <Metric title={m.maintenance.applyConfig} value={m.common.manual} />}
+    {state.warp.enabled_tunnel_count > 0 && <Metric title="WARP" value={m.warp.tunnelCount(state.warp.enabled_tunnel_count)} />}
+  </div>;
 }
 
 function TrafficPanel({ state, traffic, reload }: { state: AppState; traffic: TrafficSummary | null; reload: () => Promise<void> }) {
@@ -1021,34 +1065,24 @@ function trafficTotals(rows: TrafficSummaryRow[]) {
   }), { rxTotal: 0, txTotal: 0, rxToday: 0, txToday: 0, rx7d: 0, tx7d: 0, rx30d: 0, tx30d: 0 });
 }
 
-function SystemPanel({ state }: { state: AppState }) {
+function SupportPanel({ state, action, busyAction }: { state: AppState; action: (key: string, label: string, fn: () => Promise<void>) => Promise<void>; busyAction: string }) {
   const { m, locale } = useI18n();
-  const clients = state.tunnels.flatMap((tunnel) => tunnel.clients);
-  const enabledClients = clients.filter((client) => client.enabled && !client.expired).length;
-  const upTunnels = state.tunnels.filter((tunnel) => tunnel.status?.up).length;
   const ports = state.published_udp_ports.length ? state.published_udp_ports.join(", ") : m.maintenance.hostNetworkingDynamic;
   const build = state.build;
 
   return <div class="stack">
     <div>
-      <h3>{m.maintenance.system}</h3>
-      <p class="note">{m.maintenance.systemText}</p>
+      <h3>{m.maintenance.tabs.support}</h3>
+      <p class="note">{m.maintenance.supportText}</p>
     </div>
+    <button class="button primary" disabled={Boolean(busyAction)} type="button" onClick={() => action("support", m.maintenance.supportDownloadStarted, async () => { const res = await fetch("/api/support-bundle"); if (!res.ok) throw new Error(m.maintenance.supportDownloadFailed); await downloadResponse(res, "awg-forge-support.zip"); })}><ButtonContent busy={busyAction === "support"}>{m.maintenance.downloadSupport}</ButtonContent></button>
     <div class="metric-grid">
       <Metric title={m.forms.serverHost} value={state.server_host || "-"} />
       <Metric title={m.maintenance.applyConfig} value={state.apply_enabled ? m.common.enabled : m.common.manual} />
       <Metric title={m.maintenance.database} value={databaseLabel(state.database)} />
       <Metric title={m.maintenance.tls} value={tlsModeLabel(state.tls, m)} />
-      <Metric title={m.dashboard.tunnels} value={`${upTunnels}/${state.tunnels.length} ${m.status.up}`} />
-      <Metric title={m.tunnel.clients} value={`${enabledClients}/${clients.length} ${m.common.enabled}`} />
-      <Metric title={m.common.profiles} value={String(state.profiles.length)} />
       <Metric title={m.maintenance.publishedUDP} value={ports} />
-      <Metric title="WARP" value={state.warp.configured ? m.warp.tunnelCount(state.warp.enabled_tunnel_count) : m.maintenance.notConfigured} />
       <Metric title={m.maintenance.version} value={build?.version || "dev"} />
-      <Metric title={m.maintenance.commit} value={shortCommit(build?.commit)} />
-      <Metric title={m.maintenance.updateMode} value={build?.amneziawg_update_mode || "-"} />
-      <Metric title="amneziawg-go" value={shortCommit(build?.amneziawg_go_ref)} />
-      <Metric title="amneziawg-tools" value={shortCommit(build?.amneziawg_tools_ref)} />
     </div>
     <div class="list tls-summary">
       <div class="row">
@@ -1118,6 +1152,14 @@ function BackupPanel({ notify }: { notify: (message: string) => void }) {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   return <form class="form single" onSubmit={async (event) => { event.preventDefault(); setBusy(true); try { const res = await api.backup(password); await downloadResponse(res, "awg-forge-backup.afbackup"); notify(m.backup.downloadStarted); } catch (err) { notify(errorMessage(err, m.common.requestFailed)); } finally { setBusy(false); } }}><label>{m.backup.password}<input aria-label={m.backup.password} type="password" value={password} onInput={(event) => setPassword((event.currentTarget as HTMLInputElement).value)} /></label><button class="button primary" disabled={busy} type="submit"><ButtonContent busy={busy}>{m.backup.create}</ButtonContent></button></form>;
+}
+
+function BackupRestorePanel({ report, setReport, notify }: { report: RestoreReport | null; setReport: (report: RestoreReport | null) => void; notify: (message: string) => void }) {
+  const { m } = useI18n();
+  return <div class="stack maintenance-sections">
+    <section class="stack maintenance-section"><div><h3>{m.maintenance.backup}</h3><p class="note">{m.maintenance.backupText}</p></div><BackupPanel notify={notify} /></section>
+    <section class="stack maintenance-section"><div><h3>{m.maintenance.restore}</h3><p class="note">{m.maintenance.restoreText}</p></div><RestorePanel report={report} setReport={setReport} notify={notify} /></section>
+  </div>;
 }
 
 function RestorePanel({ report, setReport, notify }: { report: RestoreReport | null; setReport: (report: RestoreReport | null) => void; notify: (message: string) => void }) {
@@ -1245,12 +1287,6 @@ function versionLabel(version: string): string {
   const trimmed = version.trim();
   if (!trimmed || trimmed === "dev") return "dev";
   return trimmed.startsWith("v") ? trimmed : `v${trimmed}`;
-}
-
-function shortCommit(value = ""): string {
-  const trimmed = value.trim();
-  if (!trimmed || trimmed === "unknown") return "-";
-  return trimmed.length > 12 ? trimmed.slice(0, 12) : trimmed;
 }
 
 function mtuValue(form: HTMLFormElement): number {

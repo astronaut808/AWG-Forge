@@ -633,6 +633,52 @@ func TestDeleteTunnelCreatesStateBackup(t *testing.T) {
 	}
 }
 
+func TestDeleteTunnelRequiresConfirmationAfterClientConnects(t *testing.T) {
+	cfg := testConfig(t)
+	svc := app.New(cfg)
+	if _, err := svc.CreateTunnel("awg_1_5", "awg15", "10.15.0.0/24", 51825); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AddClientToTunnel("awg15", "phone"); err != nil {
+		t.Fatal(err)
+	}
+	store := storage.New(cfg.ConfigDir)
+	state, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tunnelID := ""
+	for ti := range state.Tunnels {
+		if state.Tunnels[ti].Name == "awg15" {
+			state.Tunnels[ti].Clients[0].EverConnected = true
+			tunnelID = state.Tunnels[ti].ID
+		}
+	}
+	if tunnelID == "" {
+		t.Fatal("missing awg15 tunnel")
+	}
+	if err := store.Save(state); err != nil {
+		t.Fatal(err)
+	}
+	svc = app.New(cfg)
+	if err := svc.DeleteTunnel(tunnelID); err == nil || !strings.Contains(err.Error(), `type tunnel name "awg15"`) {
+		t.Fatalf("delete without confirmation error = %v", err)
+	}
+	if err := svc.DeleteTunnelWithConfirmation(tunnelID, "wrong-name"); err == nil || !strings.Contains(err.Error(), `type tunnel name "awg15"`) {
+		t.Fatalf("delete with wrong confirmation error = %v", err)
+	}
+	state, err = svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Tunnels) != 2 {
+		t.Fatalf("tunnels after rejected deletion = %d, want 2", len(state.Tunnels))
+	}
+	if err := svc.DeleteTunnelWithConfirmation(tunnelID, "awg15"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestTunnelSettingsChangeMarksClientConfigStaleUntilDownloaded(t *testing.T) {
 	svc := app.New(testConfig(t))
 	client, err := svc.AddClient("phone")

@@ -19,9 +19,18 @@ Manual setup:
 ```bash
 cp .env.example .env
 mkdir -p data
+docker compose run --rm --no-deps awg-forge init \
+  --server-host vpn.example.com \
+  --external-interface eth0 \
+  --profile awg_2_0 \
+  --tunnel-name awg20 \
+  --listen-port 51830 \
+  --ipv4-subnet 10.20.0.0/24
 docker compose run --rm --no-deps awg-forge db migrate
 docker compose up -d
 ```
+
+Replace the example host, interface, port, and subnet before running `init`. This creates the first persistent tunnel in `data/state.json`; changing legacy tunnel variables in `.env` afterwards does not update it.
 
 By default the Web UI listens on `127.0.0.1:51821`. Access it through an SSH tunnel:
 
@@ -44,9 +53,18 @@ Bridge networking can work, but UDP ports must be published before the container
 ```bash
 cp .env.example .env
 mkdir -p data
+docker compose -f docker-compose.bridge.yml run --rm --no-deps awg-forge init \
+  --server-host vpn.example.com \
+  --external-interface eth0 \
+  --profile awg_2_0 \
+  --tunnel-name awg20 \
+  --listen-port 51830 \
+  --ipv4-subnet 10.20.0.0/24
 docker compose -f docker-compose.bridge.yml run --rm --no-deps awg-forge db migrate
 docker compose -f docker-compose.bridge.yml up -d
 ```
+
+For bridge networking, choose a `--listen-port` from the published UDP range.
 
 The bridge example publishes:
 

@@ -529,6 +529,10 @@ func valueOr(value, fallback string) string {
 }
 
 func (s *Service) DeleteTunnel(tunnelID string) error {
+	return s.DeleteTunnelWithConfirmation(tunnelID, "")
+}
+
+func (s *Service) DeleteTunnelWithConfirmation(tunnelID, confirmationName string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	state, err := s.initLocked()
@@ -547,6 +551,9 @@ func (s *Service) DeleteTunnel(tunnelID string) error {
 		return err
 	}
 	tunnel := state.Tunnels[idx]
+	if tunnelHasEverConnectedClient(tunnel) && confirmationName != tunnel.Name {
+		return fmt.Errorf("type tunnel name %q to confirm deletion", tunnel.Name)
+	}
 	if _, err := s.store.BackupState(state, "delete-"+tunnel.InterfaceName); err != nil {
 		return err
 	}
@@ -587,6 +594,15 @@ func (s *Service) DeleteTunnel(tunnelID string) error {
 	}
 	s.log("info", "tunnel.deleted", "tunnel deleted", tunnelAuditFields(tunnel), nil)
 	return nil
+}
+
+func tunnelHasEverConnectedClient(tunnel config.Tunnel) bool {
+	for _, client := range tunnel.Clients {
+		if client.EverConnected {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) newTunnel(spec tunnelSpec) (config.Tunnel, error) {
