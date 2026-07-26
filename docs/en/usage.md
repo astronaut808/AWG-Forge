@@ -34,7 +34,7 @@ Maintenance actions are available through the `Maintenance` button:
 - `WARP`: register, import, restart, or remove the optional WARP egress configuration.
 - `Backup & restore`: download an encrypted backup and verify an `.afbackup` in dry-run mode. Actual restore remains CLI-only.
 - `Traffic`: aggregate traffic history when SQLite is enabled.
-- `Audit log`: inspect recent safe audit events. The panel auto-refreshes while Maintenance is open and shows newest events first.
+- `Audit log`: inspect recent safe audit events. The panel auto-refreshes while the Audit log tab is open and shows newest events first.
 - `Support`: download a support bundle without secrets and view the safe runtime, database, TLS, and version summary.
 
 ## Stale Configs
