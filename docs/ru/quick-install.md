@@ -5,12 +5,12 @@
 Перед запуском установи [Docker Engine с официальной документации](https://docs.docker.com/engine/install/). Если Docker или Docker Compose отсутствуют, скрипт завершится до создания `/opt/awg-forge` и любых файлов проекта.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/v0.16.0/install.sh -o install.sh
 chmod +x install.sh
 sudo ./install.sh
 ```
 
-Для интерактивной установки рекомендуется сначала скачать файл. В некоторых окружениях `curl | sudo bash` prompt может выглядеть зависшим из-за особенностей TTY/sudo: тело скрипта и ответы пользователя идут через разные input streams.
+Так установщик зафиксирован на текущем стабильном release. `master` предназначен для разработки и тестирования, а не production-установки. Для интерактивной установки рекомендуется сначала скачать файл. В некоторых окружениях `curl | sudo bash` prompt может выглядеть зависшим из-за особенностей TTY/sudo: тело скрипта и ответы пользователя идут через разные input streams.
 
 Для проверки не-релизного образа можно передать `IMAGE`:
 
@@ -27,7 +27,7 @@ sudo IMAGE=ghcr.io/astronaut808/awg-forge:test ./install.sh
 Можно указать свой путь:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/v0.16.0/install.sh -o install.sh
 chmod +x install.sh
 sudo AWG_FORGE_HOME=/srv/awg-forge ./install.sh
 ```
@@ -93,13 +93,13 @@ reinstall-backup-YYYYMMDD-HHMMSS/
 
 ```bash
 sudo docker exec awg-forge awg-forge doctor
-curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/v0.16.0/install.sh -o install.sh
 chmod +x install.sh
 sudo AWG_FORGE_HOME=/opt/awg-forge ./install.sh upgrade
 sudo docker exec awg-forge awg-forge doctor
 ```
 
-Первая команда показывает состояние до обновления, последняя проверяет его после. Перед каждым upgrade скачивай актуальный `install.sh`: в нём находятся проверки совместимости и migrations для текущей версии. Скрипт скачивает целевой image, останавливает текущий контейнер, сохраняет backup `.env` и `data/`, применяет SQLite migrations до старта нового контейнера, затем проверяет, что контейнер запущен, и выполняет `db status`. Он также выводит Doctor. Если SQLite выключен, скрипт спрашивает, нужно ли его включить; ответ по умолчанию — `No`. Если SQLite включен, но файл базы отсутствует, потребуется явное подтверждение создания новой пустой базы. При ошибке migration, запуска контейнера или `db status` восстанавливаются backup и предыдущий image.
+Первая команда показывает состояние до обновления, последняя проверяет его после. Используй установщик из актуального release, чтобы его проверки совместимости и migrations соответствовали этой версии. Скрипт скачивает целевой image, останавливает текущий контейнер, сохраняет backup `.env` и `data/`, применяет SQLite migrations до старта нового контейнера, затем проверяет, что контейнер запущен, и выполняет `db status`. Он также выводит Doctor. Если SQLite выключен, скрипт спрашивает, нужно ли его включить; ответ по умолчанию — `No`. Если SQLite включен, но файл базы отсутствует, потребуется явное подтверждение создания новой пустой базы. При ошибке migration, запуска контейнера или `db status` восстанавливаются backup и предыдущий image.
 
 Для другого каталога установки укажи его в `AWG_FORGE_HOME`: `sudo AWG_FORGE_HOME=/srv/awg-forge ./install.sh upgrade`. Если `./install.sh` запущен из каталога существующей managed-инсталляции, он также предлагает этот путь обновления в меню действий. Для custom Compose, `CONFIG_DIR` или database path вне `./data` нужен manual upgrade, чтобы operator сделал backup правильных volume.
 

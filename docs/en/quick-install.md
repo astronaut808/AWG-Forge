@@ -5,12 +5,12 @@
 Install [Docker Engine from the official documentation](https://docs.docker.com/engine/install/) first. If Docker or Docker Compose is unavailable, the installer exits before creating `/opt/awg-forge` or any project files.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/v0.16.0/install.sh -o install.sh
 chmod +x install.sh
 sudo ./install.sh
 ```
 
-Downloading the script first is recommended for interactive installs. In some `curl | sudo bash` TTY/sudo environments the prompt can appear stuck because the script body and interactive answers use different input streams.
+This pins the installer to the current stable release. `master` is for development and testing, not production installs. Downloading the script first is recommended for interactive installs. In some `curl | sudo bash` TTY/sudo environments the prompt can appear stuck because the script body and interactive answers use different input streams.
 
 To test a non-release image, pass `IMAGE`:
 
@@ -27,7 +27,7 @@ By default, it installs into:
 You can choose a custom path:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/v0.16.0/install.sh -o install.sh
 chmod +x install.sh
 sudo AWG_FORGE_HOME=/srv/awg-forge ./install.sh
 ```
@@ -93,13 +93,13 @@ For a managed installation using the standard `.env`, `docker-compose.yml`, and 
 
 ```bash
 sudo docker exec awg-forge awg-forge doctor
-curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/v0.16.0/install.sh -o install.sh
 chmod +x install.sh
 sudo AWG_FORGE_HOME=/opt/awg-forge ./install.sh upgrade
 sudo docker exec awg-forge awg-forge doctor
 ```
 
-The first command shows the pre-upgrade state; the last checks it afterwards. Download the current `install.sh` before every upgrade: it contains the compatibility checks and migrations for the current version. The script pulls the target image, stops the current container, backs up `.env` and `data/`, applies SQLite migrations before the new container starts, then checks that the container is running and verifies `db status`. It also prints Doctor output for review. If SQLite is currently off, it asks whether to enable it; the default is `No`. If SQLite is enabled but its database file is missing, it requires confirmation before creating a new empty database. A failed migration, failed container start, or failed database status check restores the backup and the previous image.
+The first command shows the pre-upgrade state; the last checks it afterwards. Use the installer from the current release so its compatibility checks and migrations match that release. The script pulls the target image, stops the current container, backs up `.env` and `data/`, applies SQLite migrations before the new container starts, then checks that the container is running and verifies `db status`. It also prints Doctor output for review. If SQLite is currently off, it asks whether to enable it; the default is `No`. If SQLite is enabled but its database file is missing, it requires confirmation before creating a new empty database. A failed migration, failed container start, or failed database status check restores the backup and the previous image.
 
 Set `AWG_FORGE_HOME` for another installation directory: `sudo AWG_FORGE_HOME=/srv/awg-forge ./install.sh upgrade`. When `./install.sh` runs from an existing managed installation directory, it also offers this upgrade path in its action menu. Custom Compose files, `CONFIG_DIR`, or database paths outside `./data` require a manual upgrade so the operator can back up the correct volumes.
 
