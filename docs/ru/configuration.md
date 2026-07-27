@@ -22,6 +22,7 @@
 - `AUDIT_LOG_PATH`: путь к audit log. По умолчанию `/etc/awg-forge/audit.log`.
 - `AUDIT_LOG_MAX_SIZE`: размер файла до ротации. По умолчанию `5242880`.
 - `AUDIT_LOG_MAX_FILES`: сколько rotated-файлов хранить. По умолчанию `3`.
+- `LOG_LEVEL`: уровень runtime-логов: `debug`, `info`, `warn` или `error`. По умолчанию `info`.
 - `DATABASE_MODE`: режим operational database. Значения: `off`, `sqlite`, `postgres`. Дефолт приложения — `off`, чистая установка использует `sqlite`; `postgres` зарезервирован для будущей поддержки.
 - `DATABASE_PATH`: путь к SQLite database. По умолчанию `/etc/awg-forge/awg-forge.db`.
 - `DATABASE_RETENTION_DAYS`: default retention window для operational data. По умолчанию `90`.
@@ -280,6 +281,20 @@ docker exec awg-forge awg-forge logs --tail 200
 docker exec awg-forge awg-forge logs --level error
 docker exec awg-forge awg-forge logs --event tunnel.apply.failed
 ```
+
+## Runtime-логи
+
+Runtime-логи в формате JSON пишутся в stderr контейнера и читаются через Docker. Они предназначены для lifecycle сервиса, ошибок runtime apply, операций WARP/firewall, ошибок traffic history и HTTP-ошибок. Это отдельный поток, не заменяющий постоянный audit trail.
+
+```bash
+docker compose logs -f awg-forge
+docker compose logs --tail 200 awg-forge
+docker compose logs --no-log-prefix awg-forge | jq 'select(.level == "ERROR")'
+```
+
+Включай `LOG_LEVEL=debug` только на время диагностики, затем верни `info` и пересоздай контейнер. Debug добавляет operational context, но использует те же правила редактирования секретов. Runtime-логи не содержат паролей, session cookies, private keys, preshared keys, полных конфигов, QR payload, тел запросов и query strings.
+
+Новые managed Compose-файлы используют Docker logging driver `local`: размер `10m`, хранится три файла. В custom Compose-инсталляции политика logging driver остаётся за оператором.
 
 ## Operational Database
 

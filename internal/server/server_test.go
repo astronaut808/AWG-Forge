@@ -37,10 +37,67 @@ import (
 	"github.com/astronaut808/awg-forge/internal/backup"
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/firewall"
+	"github.com/astronaut808/awg-forge/internal/observability"
 	"github.com/astronaut808/awg-forge/internal/sqldb"
 	"github.com/astronaut808/awg-forge/internal/storage"
 	"github.com/astronaut808/awg-forge/internal/webtls"
 )
+
+func TestRequestLogAddsCorrelationWithoutLeakingRequestData(t *testing.T) {
+	var output bytes.Buffer
+	cfg := config.Config{ConfigDir: t.TempDir(), AuditLogEnabled: false}
+	svc := app.NewWithRuntimeLog(cfg, observability.NewWithWriter("debug", &output))
+	w := &web{service: svc}
+	handler := w.requestLog(http.HandlerFunc(func(rw http.ResponseWriter, _ *http.Request) {
+		writeJSON(rw, http.StatusOK, map[string]any{"ok": true})
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "http://example.test/api/state?password=do-not-log", nil)
+	req.AddCookie(&http.Cookie{Name: "session", Value: "do-not-log", HttpOnly: true, Secure: true})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+
+	if response.Header().Get("X-Request-ID") == "" {
+		t.Fatal("missing X-Request-ID")
+	}
+	line := output.String()
+	if strings.Contains(line, "do-not-log") || strings.Contains(line, "?password") {
+		t.Fatalf("request log leaked request data: %s", line)
+	}
+	if !strings.Contains(line, `"route":"/api/state"`) || !strings.Contains(line, `"status":200`) {
+		t.Fatalf("unexpected request log: %s", line)
+	}
+}
+
+func TestRequestLogUsesNormalizedUnknownRoute(t *testing.T) {
+	var output bytes.Buffer
+	cfg := config.Config{ConfigDir: t.TempDir(), AuditLogEnabled: false}
+	svc := app.NewWithRuntimeLog(cfg, observability.NewWithWriter("debug", &output))
+	w := &web{service: svc}
+	handler := w.requestLog(http.HandlerFunc(func(rw http.ResponseWriter, _ *http.Request) {
+		writeError(rw, http.StatusNotFound, "not found")
+	}))
+
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "http://example.test/private/do-not-log", nil))
+	if strings.Contains(output.String(), "do-not-log") || !strings.Contains(output.String(), `"route":"/unknown"`) {
+		t.Fatalf("unexpected unknown-route log: %s", output.String())
+	}
+}
+
+func TestRequestLogEmitsServerErrorAtInfoLevel(t *testing.T) {
+	var output bytes.Buffer
+	cfg := config.Config{ConfigDir: t.TempDir(), AuditLogEnabled: false}
+	svc := app.NewWithRuntimeLog(cfg, observability.NewWithWriter("info", &output))
+	w := &web{service: svc}
+	handler := w.requestLog(http.HandlerFunc(func(rw http.ResponseWriter, _ *http.Request) {
+		writeError(rw, http.StatusInternalServerError, "internal error")
+	}))
+
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "http://example.test/api/state", nil))
+	if !strings.Contains(output.String(), `"level":"ERROR"`) || !strings.Contains(output.String(), `"status":500`) {
+		t.Fatalf("expected error request log: %s", output.String())
+	}
+}
 
 func TestValidOriginAllowsMissingOriginAndRefererForLoopback(t *testing.T) {
 	w := &web{}

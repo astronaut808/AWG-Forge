@@ -180,9 +180,9 @@ type IPTablesRunner struct{}
 
 func (IPTablesRunner) Count(rule Rule) (int, error) {
 	args := append(tableArgs(rule.Table), "-S", rule.Chain)
-	out, err := exec.Command("iptables", args...).CombinedOutput()
+	out, err := exec.Command("iptables", args...).Output()
 	if err != nil {
-		return 0, fmt.Errorf("iptables %s failed: %s", strings.Join(args, " "), strings.TrimSpace(string(out)))
+		return 0, fmt.Errorf("iptables %s failed: %w", strings.Join(args, " "), err)
 	}
 	want := "-A " + rule.Chain + " " + strings.Join(rule.Args, " ")
 	count := 0
@@ -197,9 +197,9 @@ func (IPTablesRunner) Count(rule Rule) (int, error) {
 func (IPTablesRunner) Delete(rule Rule) error {
 	args := append(tableArgs(rule.Table), "-D", rule.Chain)
 	args = append(args, rule.Args...)
-	out, err := exec.Command("iptables", args...).CombinedOutput()
+	err := exec.Command("iptables", args...).Run()
 	if err != nil {
-		return fmt.Errorf("iptables %s failed: %s", strings.Join(args, " "), strings.TrimSpace(string(out)))
+		return fmt.Errorf("iptables %s failed: %w", strings.Join(args, " "), err)
 	}
 	return nil
 }
@@ -214,9 +214,9 @@ func (IPTablesRunner) Insert(rule Rule) error {
 		args = append(args, "1")
 	}
 	args = append(args, rule.Args...)
-	out, err := exec.Command("iptables", args...).CombinedOutput()
+	err := exec.Command("iptables", args...).Run()
 	if err != nil {
-		return fmt.Errorf("iptables %s failed: %s", strings.Join(args, " "), strings.TrimSpace(string(out)))
+		return fmt.Errorf("iptables %s failed: %w", strings.Join(args, " "), err)
 	}
 	return nil
 }

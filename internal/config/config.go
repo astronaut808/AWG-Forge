@@ -46,6 +46,7 @@ type Config struct {
 	AuditLogPath           string
 	AuditLogMaxSize        int64
 	AuditLogMaxFiles       int
+	LogLevel               string
 	DatabaseMode           string
 	DatabasePath           string
 	DatabaseDSN            string
@@ -88,6 +89,7 @@ func FromEnv() (Config, error) {
 		AuditLogPath:           getenv("AUDIT_LOG_PATH", filepath.Join(configDir, "audit.log")),
 		AuditLogMaxSize:        getenvInt64("AUDIT_LOG_MAX_SIZE", 5*1024*1024),
 		AuditLogMaxFiles:       getenvInt("AUDIT_LOG_MAX_FILES", 3),
+		LogLevel:               strings.ToLower(strings.TrimSpace(getenv("LOG_LEVEL", "info"))),
 		DatabaseMode:           getenv("DATABASE_MODE", "off"),
 		DatabasePath:           getenv("DATABASE_PATH", filepath.Join(configDir, "awg-forge.db")),
 		DatabaseDSN:            os.Getenv("DATABASE_DSN"),
@@ -107,6 +109,11 @@ func FromEnv() (Config, error) {
 	case "auto", "true", "false":
 	default:
 		return Config{}, errors.New("SESSION_COOKIE_SECURE must be auto, true, or false")
+	}
+	switch cfg.LogLevel {
+	case "debug", "info", "warn", "error":
+	default:
+		return Config{}, errors.New("LOG_LEVEL must be debug, info, warn, or error")
 	}
 	if err := configureWebTLS(&cfg); err != nil {
 		return Config{}, err

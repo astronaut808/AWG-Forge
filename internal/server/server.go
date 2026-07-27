@@ -11,6 +11,8 @@ import (
 	"image/color"
 	"image/png"
 	"io"
+	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -83,17 +85,26 @@ func ServeContext(ctx context.Context, cfg config.Config, service *app.Service, 
 
 	go enforceExpiredClients(ctx, service)
 	go collectTrafficHistory(ctx, cfg, service)
+	service.RuntimeLog().Info(context.Background(), "server", "server.workers.started", "runtime workers started", map[string]any{
+		"expiration_enforcement": true,
+		"traffic_history":        cfg.DatabaseMode == sqldb.ModeSQLite && cfg.ApplyConfig,
+	})
 
 	errCh := make(chan error, 1)
 	go func() {
-		if tlsRuntime.TLSConfig != nil {
-			server.TLSConfig = tlsRuntime.TLSConfig
-			fmt.Printf("awg-forge web UI listening on https://%s\n", server.Addr)
-			errCh <- server.ListenAndServeTLS("", "")
+		listener, err := net.Listen("tcp", server.Addr)
+		if err != nil {
+			errCh <- err
 			return
 		}
-		fmt.Printf("awg-forge web UI listening on http://%s\n", server.Addr)
-		errCh <- server.ListenAndServe()
+		if tlsRuntime.TLSConfig != nil {
+			server.TLSConfig = tlsRuntime.TLSConfig
+			service.RuntimeLog().Info(context.Background(), "server", "server.started", "web server started", map[string]any{"address": server.Addr, "tls_mode": tlsRuntime.Status.Mode})
+			errCh <- server.ServeTLS(listener, "", "")
+			return
+		}
+		service.RuntimeLog().Info(context.Background(), "server", "server.started", "web server started", map[string]any{"address": server.Addr, "tls_mode": webtls.ModeOff})
+		errCh <- server.Serve(listener)
 	}()
 
 	select {
@@ -104,6 +115,7 @@ func ServeContext(ctx context.Context, cfg config.Config, service *app.Service, 
 		return err
 	case <-ctx.Done():
 		stopServer()
+		service.RuntimeLog().Info(context.Background(), "server", "server.shutdown.started", "web server shutdown started", nil)
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), webShutdownTimeout)
 		defer cancel()
 		if err := server.Shutdown(shutdownCtx); err != nil {
@@ -112,6 +124,7 @@ func ServeContext(ctx context.Context, cfg config.Config, service *app.Service, 
 		if err := <-errCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return err
 		}
+		service.RuntimeLog().Info(context.Background(), "server", "server.stopped", "web server stopped", nil)
 		return nil
 	}
 }
@@ -155,7 +168,7 @@ func newHandler(w *web) http.Handler {
 	mux.HandleFunc("/api/clients", w.security(w.requireAuth(w.clientsAPI)))
 	mux.HandleFunc("/api/clients/", w.security(w.requireAuth(w.clientAPI)))
 	mux.HandleFunc("/clients/config/", w.security(w.requireAuth(w.clientConfig)))
-	return mux
+	return w.requestLog(mux)
 }
 
 func enforceExpiredClients(ctx context.Context, service *app.Service) {
@@ -215,12 +228,7 @@ func collectTrafficHistoryOnce(cfg config.Config, service *app.Service) {
 		}
 	}
 	if err := sqldb.RecordTrafficSamples(ctx, cfg, samples); err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, sqldb.ErrDisabled) {
-		service.Audit().Log(context.Background(), audit.Event{
-			Level:   "warn",
-			Event:   "traffic_history.record_failed",
-			Message: "traffic history sample write failed",
-			Error:   audit.Error(err),
-		})
+		logBackgroundWarning(service, "traffic_history.record_failed", "traffic history sample write failed", nil, err)
 		return
 	}
 	enforceTrafficLimits(ctx, cfg, service)
@@ -232,58 +240,36 @@ func enforceTrafficLimits(ctx context.Context, cfg config.Config, service *app.S
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, sqldb.ErrDisabled) {
 			return
 		}
-		service.Audit().Log(context.Background(), audit.Event{
-			Level:   "warn",
-			Event:   "traffic_limit.check_failed",
-			Message: "traffic limit check failed",
-			Error:   audit.Error(err),
-		})
+		logBackgroundWarning(service, "traffic_limit.check_failed", "traffic limit check failed", nil, err)
 		return
 	}
 	for _, item := range exceeded {
 		disabled, err := service.DisableClientForTrafficLimit(item.ClientID, item.TotalBytes, item.LimitBytes, string(item.Period))
 		if err != nil {
-			service.Audit().Log(context.Background(), audit.Event{
-				Level:   "warn",
-				Event:   "traffic_limit.enforce_failed",
-				Message: "traffic limit enforcement failed",
-				Fields: map[string]any{
-					"tunnel_id":            item.TunnelID,
-					"client_id":            item.ClientID,
-					"traffic_total_bytes":  item.TotalBytes,
-					"traffic_limit_bytes":  item.LimitBytes,
-					"traffic_limit_period": string(item.Period),
-				},
-				Error: audit.Error(err),
-			})
+			logBackgroundWarning(service, "traffic_limit.enforce_failed", "traffic limit enforcement failed", map[string]any{
+				"tunnel_id":            item.TunnelID,
+				"client_id":            item.ClientID,
+				"traffic_total_bytes":  item.TotalBytes,
+				"traffic_limit_bytes":  item.LimitBytes,
+				"traffic_limit_period": string(item.Period),
+			}, err)
 			continue
 		}
 		if !disabled {
 			continue
 		}
 		if err := sqldb.MarkClientTrafficLimitBlocked(ctx, cfg, item.TunnelID, item.ClientID, time.Now().UTC()); err != nil {
-			service.Audit().Log(context.Background(), audit.Event{
-				Level:   "warn",
-				Event:   "traffic_limit.block_mark_failed",
-				Message: "traffic limit block marker write failed",
-				Fields: map[string]any{
-					"tunnel_id": item.TunnelID,
-					"client_id": item.ClientID,
-				},
-				Error: audit.Error(err),
-			})
+			logBackgroundWarning(service, "traffic_limit.block_mark_failed", "traffic limit block marker write failed", map[string]any{
+				"tunnel_id": item.TunnelID,
+				"client_id": item.ClientID,
+			}, err)
 		}
 	}
 
 	blocks, err := sqldb.ListTrafficLimitBlocks(ctx, cfg)
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, sqldb.ErrDisabled) {
-			service.Audit().Log(context.Background(), audit.Event{
-				Level:   "warn",
-				Event:   "traffic_limit.release_check_failed",
-				Message: "traffic limit release check failed",
-				Error:   audit.Error(err),
-			})
+			logBackgroundWarning(service, "traffic_limit.release_check_failed", "traffic limit release check failed", nil, err)
 		}
 		return
 	}
@@ -297,25 +283,18 @@ func enforceTrafficLimits(ctx context.Context, cfg config.Config, service *app.S
 		}
 		_, err := service.EnableClientForTrafficLimitRelease(block.ClientID, string(block.Period))
 		if err != nil {
-			service.Audit().Log(context.Background(), audit.Event{
-				Level:   "warn",
-				Event:   "traffic_limit.release_failed",
-				Message: "traffic limit client release failed",
-				Fields:  map[string]any{"tunnel_id": block.TunnelID, "client_id": block.ClientID},
-				Error:   audit.Error(err),
-			})
+			logBackgroundWarning(service, "traffic_limit.release_failed", "traffic limit client release failed", map[string]any{"tunnel_id": block.TunnelID, "client_id": block.ClientID}, err)
 			continue
 		}
 		if err := sqldb.ClearClientTrafficLimitBlock(ctx, cfg, block.ClientID); err != nil {
-			service.Audit().Log(context.Background(), audit.Event{
-				Level:   "warn",
-				Event:   "traffic_limit.release_mark_clear_failed",
-				Message: "traffic limit release marker clear failed",
-				Fields:  map[string]any{"tunnel_id": block.TunnelID, "client_id": block.ClientID},
-				Error:   audit.Error(err),
-			})
+			logBackgroundWarning(service, "traffic_limit.release_mark_clear_failed", "traffic limit release marker clear failed", map[string]any{"tunnel_id": block.TunnelID, "client_id": block.ClientID}, err)
 		}
 	}
+}
+
+func logBackgroundWarning(service *app.Service, event, message string, fields map[string]any, err error) {
+	service.Audit().Log(context.Background(), audit.Event{Level: "warn", Event: event, Message: message, Fields: fields, Error: audit.Error(err)})
+	service.RuntimeLog().Warn(context.Background(), "traffic", event, message, runtimeAuditFields(fields), err)
 }
 
 func (w *web) index(rw http.ResponseWriter, r *http.Request) {
@@ -1516,6 +1495,39 @@ func (w *web) audit(level, event, message string, fields map[string]any, err err
 		Fields:  fields,
 		Error:   audit.Error(err),
 	})
+	component := event
+	if index := strings.IndexByte(component, '.'); index > 0 {
+		component = component[:index]
+	}
+	runtimeLevel := slog.LevelInfo
+	switch level {
+	case "error":
+		runtimeLevel = slog.LevelError
+	case "warn":
+		runtimeLevel = slog.LevelWarn
+	}
+	if strings.HasSuffix(event, ".viewed") {
+		runtimeLevel = slog.LevelDebug
+	}
+	w.service.RuntimeLog().Log(context.Background(), runtimeLevel, component, event, message, runtimeAuditFields(fields), err)
+}
+
+func runtimeAuditFields(fields map[string]any) map[string]any {
+	if len(fields) == 0 {
+		return nil
+	}
+	allowed := map[string]struct{}{
+		"automatic_port": {}, "client_id": {}, "clients": {}, "components": {}, "enabled": {},
+		"egress": {}, "fail": {}, "limit_set": {}, "ok": {}, "port": {}, "profile": {},
+		"results": {}, "traffic_limit_period": {}, "tunnel_id": {}, "tunnels": {}, "warn": {},
+	}
+	result := make(map[string]any)
+	for key, value := range fields {
+		if _, ok := allowed[key]; ok {
+			result[key] = value
+		}
+	}
+	return result
 }
 
 func doctorSummaryFields(results []doctor.Result) map[string]any {

@@ -33,6 +33,21 @@ func TestSessionCookieSecureModeValidation(t *testing.T) {
 	}
 }
 
+func TestLogLevelValidation(t *testing.T) {
+	t.Run("accepts debug", func(t *testing.T) {
+		t.Setenv("LOG_LEVEL", "debug")
+		if _, err := config.FromEnv(); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("rejects unknown level", func(t *testing.T) {
+		t.Setenv("LOG_LEVEL", "verbose")
+		if _, err := config.FromEnv(); err == nil {
+			t.Fatal("expected LOG_LEVEL validation error")
+		}
+	})
+}
+
 func TestTLSModeAndTrustedProxyValidation(t *testing.T) {
 	t.Run("rejects unknown TLS mode", func(t *testing.T) {
 		t.Setenv("WEBUI_TLS_MODE", "acme-domain")
@@ -109,6 +124,9 @@ func TestDatabaseConfigDefaults(t *testing.T) {
 	}
 	if cfg.DatabaseMode != "off" {
 		t.Fatalf("DatabaseMode = %q, want off", cfg.DatabaseMode)
+	}
+	if cfg.LogLevel != "info" {
+		t.Fatalf("LogLevel = %q, want info", cfg.LogLevel)
 	}
 	if cfg.DatabasePath != filepath.Join(dir, "awg-forge.db") {
 		t.Fatalf("DatabasePath = %q", cfg.DatabasePath)

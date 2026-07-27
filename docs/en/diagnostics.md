@@ -160,6 +160,15 @@ docker exec awg-forge awg-forge logs --json
 
 The audit log lives at `CONFIG_DIR/audit.log`, defaults to `/etc/awg-forge/audit.log`, uses `0600`, and rotates locally.
 
+For current service failures, inspect runtime JSON logs separately:
+
+```bash
+docker compose logs --tail 200 awg-forge
+docker compose logs --no-log-prefix awg-forge | jq 'select(.level == "ERROR" or .level == "WARN")'
+```
+
+Do not publish raw container logs. They are redacted, but may still expose operational metadata such as tunnel identifiers and interface names.
+
 When troubleshooting “connected but no internet”, useful events include:
 
 - `tunnel.settings.updated`;

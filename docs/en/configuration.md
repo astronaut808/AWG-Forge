@@ -22,6 +22,7 @@ The main example is [.env.example](../../.env.example).
 - `AUDIT_LOG_PATH`: audit log path. Defaults to `/etc/awg-forge/audit.log`.
 - `AUDIT_LOG_MAX_SIZE`: file size before rotation. Defaults to `5242880`.
 - `AUDIT_LOG_MAX_FILES`: number of rotated files to keep. Defaults to `3`.
+- `LOG_LEVEL`: runtime log level: `debug`, `info`, `warn`, or `error`. Defaults to `info`.
 - `DATABASE_MODE`: operational database mode. Values: `off`, `sqlite`, `postgres`. The application default is `off`; fresh installs use `sqlite`; `postgres` is reserved for future support.
 - `DATABASE_PATH`: SQLite database path. Defaults to `/etc/awg-forge/awg-forge.db`.
 - `DATABASE_RETENTION_DAYS`: default operational data retention window. Defaults to `90`.
@@ -260,7 +261,7 @@ The audit log stores safe operational events: login success/failure, client crea
 
 It is meant for cases like “it worked yesterday, then settings changed, now handshakes exist but internet does not work”.
 
-In the Web UI, `Maintenance` -> `Audit log` auto-refreshes while the Maintenance window is open and displays newest events first.
+In the Web UI, `Maintenance` -> `Audit log` auto-refreshes while that tab is open and displays newest events first.
 
 The audit log must not contain:
 
@@ -280,6 +281,20 @@ docker exec awg-forge awg-forge logs --tail 200
 docker exec awg-forge awg-forge logs --level error
 docker exec awg-forge awg-forge logs --event tunnel.apply.failed
 ```
+
+## Runtime Logs
+
+Runtime logs are structured JSON written to the container stderr and read with Docker. They are for service lifecycle, runtime apply failures, WARP/firewall operations, traffic-history failures, and HTTP errors. They are separate from the persistent audit trail.
+
+```bash
+docker compose logs -f awg-forge
+docker compose logs --tail 200 awg-forge
+docker compose logs --no-log-prefix awg-forge | jq 'select(.level == "ERROR")'
+```
+
+Use `LOG_LEVEL=debug` only while investigating a problem, then return it to `info` and recreate the container. Debug adds operational context but uses the same secret redaction rules. Runtime logs never contain passwords, session cookies, private keys, preshared keys, full configs, QR payloads, request bodies, or query strings.
+
+New managed Compose files use Docker's `local` log driver with a `10m` size and three retained files. Custom Compose deployments keep their own logging-driver policy.
 
 ## Operational Database
 

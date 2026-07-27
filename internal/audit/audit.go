@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/astronaut808/awg-forge/internal/config"
+	"github.com/astronaut808/awg-forge/internal/redact"
 	"github.com/astronaut808/awg-forge/internal/sqldb"
 )
 
@@ -178,11 +179,7 @@ func Sanitize(event Event) Event {
 		event.Fields = nil
 		return event
 	}
-	clean := make(map[string]any, len(event.Fields))
-	for key, value := range event.Fields {
-		clean[key] = scrubValue(key, value)
-	}
-	event.Fields = clean
+	event.Fields = redact.Fields(event.Fields)
 	return event
 }
 
@@ -203,7 +200,7 @@ func Error(err error) string {
 	if err == nil {
 		return ""
 	}
-	return scrubString(err.Error())
+	return redact.String(err.Error())
 }
 
 func ReadFile(path string, opts ReadOptions) ([]Event, error) {
@@ -379,59 +376,6 @@ func normalizeLevel(level string) string {
 	}
 }
 
-func scrubValue(key string, value any) any {
-	if isSensitiveKey(key) {
-		return "<redacted>"
-	}
-	switch v := value.(type) {
-	case string:
-		return scrubString(v)
-	case error:
-		return scrubString(v.Error())
-	case map[string]any:
-		out := make(map[string]any, len(v))
-		for nestedKey, nestedValue := range v {
-			out[nestedKey] = scrubValue(nestedKey, nestedValue)
-		}
-		return out
-	case []string:
-		out := make([]string, len(v))
-		for i, item := range v {
-			out[i] = scrubString(item)
-		}
-		return out
-	case []any:
-		out := make([]any, len(v))
-		for i, item := range v {
-			out[i] = scrubValue(key, item)
-		}
-		return out
-	default:
-		return value
-	}
-}
-
-func isSensitiveKey(key string) bool {
-	key = strings.ToLower(key)
-	sensitive := []string{
-		"private", "preshared", "password", "secret", "session", "token",
-		"config", "conf", "key", "import", "backup_password", "ciphertext",
-	}
-	for _, needle := range sensitive {
-		if strings.Contains(key, needle) {
-			return true
-		}
-	}
-	return false
-}
-
 func scrubString(value string) string {
-	value = strings.TrimSpace(value)
-	if len(value) > 500 {
-		value = value[:500] + "..."
-	}
-	if strings.HasPrefix(value, "vpn://") {
-		return "<redacted>"
-	}
-	return value
+	return redact.String(value)
 }

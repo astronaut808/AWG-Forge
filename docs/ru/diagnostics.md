@@ -160,6 +160,15 @@ docker exec awg-forge awg-forge logs --json
 
 Audit log хранится в `CONFIG_DIR/audit.log`, по умолчанию `/etc/awg-forge/audit.log`, с правами `0600` и ротацией.
 
+Текущие сбои сервиса отдельно проверяй по runtime JSON-логам:
+
+```bash
+docker compose logs --tail 200 awg-forge
+docker compose logs --no-log-prefix awg-forge | jq 'select(.level == "ERROR" or .level == "WARN")'
+```
+
+Не публикуй raw container logs. Секреты в них редактируются, но могут оставаться operational metadata, например tunnel identifiers и interface names.
+
 Если нужно расследовать “подключение есть, но интернета нет”, полезно смотреть:
 
 - `tunnel.settings.updated`;
