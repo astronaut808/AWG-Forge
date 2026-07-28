@@ -11,6 +11,7 @@
 
 ### Changed
 
+- Scoped managed forwarding to each tunnel subnet and selected egress, added tagged rule ownership, and added safe migration from legacy broad forwarding rules during apply and uninstall.
 - Streamlined Maintenance Center around operator tasks: contextual firewall repair in Doctor, combined backup/restore, CLI-only upstream update checks, and safe runtime metadata in Support.
 - Improved Doctor database migration guidance for Docker and skipped traffic-limit diagnostics until a required migration completes.
 - Require an exact tunnel-name confirmation before deleting a tunnel that has clients with a recorded connection.
@@ -18,6 +19,7 @@
 - Updated the pinned `amneziawg-go` build reference to `c1e9bb3758e7` for the upstream Outline SDK module-path migration.
 - Fresh installer and `.env.example` now enable SQLite by default; existing installations remain unchanged unless SQLite is explicitly enabled during upgrade.
 - Reconfigure now preserves existing operational `.env` settings such as SQLite, TLS, and trusted-proxy configuration.
+- Hardened `uninstall.sh` for non-interactive use: it safely parses nested tunnel state, supports `curl | bash`, and keeps local data unless `--purge` is explicitly requested.
 
 ## v0.16.0 - 2026-07-12
 

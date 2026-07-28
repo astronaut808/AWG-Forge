@@ -266,8 +266,8 @@ func (s *Service) createTunnel(profileID, name, subnet string, port int, automat
 		return config.Tunnel{}, err
 	}
 	subnet = normalizedSubnet
-	if !tunnelNameRE.MatchString(name) {
-		return config.Tunnel{}, errors.New("tunnel name must start with a letter and contain only letters, numbers, dots, underscores, or dashes")
+	if err := validateTunnelInterfaceName(name); err != nil {
+		return config.Tunnel{}, err
 	}
 	if port < 1 || port > 65535 {
 		return config.Tunnel{}, errors.New("listen port must be between 1 and 65535")
@@ -385,7 +385,32 @@ func (s *Service) updateTunnelSettings(tunnelID string, update TunnelSettingsUpd
 		if old.InterfaceName != settings.Name {
 			_ = exec.Command("awg-quick", "down", old.InterfaceName).Run()
 		}
-		_ = s.cleanupFirewallRules(old)
+		oldRuntimePath, err := runtimeConfigPath(old.InterfaceName)
+		if err != nil {
+			return config.Tunnel{}, err
+		}
+		if err := s.migrateLegacyFirewallRules(old, oldRuntimePath); err != nil {
+			deleteRendered := []string{}
+			if old.InterfaceName != settings.Name {
+				deleteRendered = append(deleteRendered, settings.Name)
+			}
+			if rollbackErr := s.rollbackRuntimeState(previousState, old.ID, deleteRendered...); rollbackErr != nil {
+				return config.Tunnel{}, errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
+			}
+			s.log("error", "tunnel.settings.failed", "legacy firewall migration failed during tunnel settings update", tunnelAuditFields(old), err)
+			return config.Tunnel{}, err
+		}
+		if err := s.cleanupFirewallRules(old); err != nil {
+			deleteRendered := []string{}
+			if old.InterfaceName != settings.Name {
+				deleteRendered = append(deleteRendered, settings.Name)
+			}
+			if rollbackErr := s.rollbackRuntimeState(previousState, old.ID, deleteRendered...); rollbackErr != nil {
+				return config.Tunnel{}, errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
+			}
+			s.log("error", "tunnel.settings.failed", "tunnel settings firewall cleanup failed", tunnelAuditFields(old), err)
+			return config.Tunnel{}, err
+		}
 	}
 	if old.InterfaceName != settings.Name {
 		_ = s.store.DeleteRenderedTunnel(old.InterfaceName)
@@ -464,8 +489,8 @@ func validateEgressMode(mode string) error {
 }
 
 func validateResolvedTunnelSettings(settings resolvedTunnelSettings) error {
-	if !tunnelNameRE.MatchString(settings.Name) {
-		return errors.New("tunnel name must start with a letter and contain only letters, numbers, dots, underscores, or dashes")
+	if err := validateTunnelInterfaceName(settings.Name); err != nil {
+		return err
 	}
 	if err := validateServerHost(settings.ServerHost); err != nil {
 		return err
@@ -554,6 +579,13 @@ func (s *Service) DeleteTunnelWithConfirmation(tunnelID, confirmationName string
 	if tunnelHasEverConnectedClient(tunnel) && confirmationName != tunnel.Name {
 		return fmt.Errorf("type tunnel name %q to confirm deletion", tunnel.Name)
 	}
+	runtimePath := ""
+	if s.cfg.ApplyConfig {
+		runtimePath, err = runtimeConfigPath(tunnel.InterfaceName)
+		if err != nil {
+			return err
+		}
+	}
 	if _, err := s.store.BackupState(state, "delete-"+tunnel.InterfaceName); err != nil {
 		return err
 	}
@@ -563,6 +595,14 @@ func (s *Service) DeleteTunnelWithConfirmation(tunnelID, confirmationName string
 		return err
 	}
 	if s.cfg.ApplyConfig {
+		if err := s.migrateLegacyFirewallRules(tunnel, runtimePath); err != nil {
+			applyErr := &ApplyError{Err: err}
+			if rollbackErr := s.rollbackRuntimeState(previousState, tunnel.ID); rollbackErr != nil {
+				return errors.Join(applyErr, fmt.Errorf("rollback failed: %w", rollbackErr))
+			}
+			s.log("error", "tunnel.delete.failed", "legacy firewall migration failed during tunnel delete", tunnelAuditFields(tunnel), err)
+			return applyErr
+		}
 		if err := exec.Command("awg-quick", "down", tunnel.InterfaceName).Run(); err != nil {
 			if rollbackErr := s.rollbackRuntimeState(previousState, tunnel.ID); rollbackErr != nil {
 				return errors.Join(&ApplyError{Err: err}, fmt.Errorf("rollback failed: %w", rollbackErr))

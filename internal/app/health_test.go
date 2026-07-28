@@ -1,8 +1,13 @@
 package app
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/astronaut808/awg-forge/internal/config"
 )
 
 func TestParseRuntimeAWGShowTransferCounters(t *testing.T) {
@@ -66,6 +71,51 @@ func TestByteDeltaDoesNotUnderflow(t *testing.T) {
 	}
 	if got := byteDelta(7, 10); got != 3 {
 		t.Fatalf("delta = %d, want 3", got)
+	}
+}
+
+func TestRuntimeConfigHasLegacyFirewallRules(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "awg20.conf")
+	tunnel := config.Tunnel{InterfaceName: "awg20"}
+	if err := os.WriteFile(path, []byte("PostUp = iptables -C FORWARD -i awg20 -j ACCEPT; iptables -C FORWARD -o awg20 -j ACCEPT\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := runtimeConfigHasLegacyFirewallRules(path, tunnel)
+	if err != nil || !legacy {
+		t.Fatalf("legacy = %v, err = %v; want true, nil", legacy, err)
+	}
+	legacy, err = runtimeConfigHasLegacyFirewallRules(filepath.Join(t.TempDir(), "missing.conf"), tunnel)
+	if err != nil || legacy {
+		t.Fatalf("missing config legacy = %v, err = %v; want false, nil", legacy, err)
+	}
+}
+
+func TestRuntimeConfigPathRejectsUnsafeInterfaceNames(t *testing.T) {
+	for _, name := range []string{"../escape", "awg/escape", `awg\\escape`, "awg..escape", "\x00awg"} {
+		if _, err := runtimeConfigPath(name); err == nil {
+			t.Fatalf("runtime config path accepted unsafe interface name %q", name)
+		}
+	}
+	path, err := runtimeConfigPath("awg20")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != "/etc/amnezia/amneziawg/awg20.conf" {
+		t.Fatalf("runtime config path = %q", path)
+	}
+}
+
+func TestWithoutLegacyFirewallDirectivesPreservesOtherHooks(t *testing.T) {
+	tunnel := config.Tunnel{InterfaceName: "awg20"}
+	contents := "PostUp = echo custom\nPostUp = iptables -C FORWARD -i awg20 -j ACCEPT; iptables -C FORWARD -o awg20 -j ACCEPT\nPostDown = while iptables -C FORWARD -i awg20 -j ACCEPT; do :; done\nPostDown = echo custom\n"
+	got := withoutLegacyFirewallDirectives(contents, tunnel)
+	if strings.Contains(got, "iptables -C FORWARD") {
+		t.Fatalf("legacy firewall directives remain:\n%s", got)
+	}
+	for _, want := range []string{"PostUp = echo custom", "PostDown = echo custom"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("custom hook missing %q:\n%s", want, got)
+		}
 	}
 }
 

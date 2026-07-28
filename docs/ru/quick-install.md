@@ -143,36 +143,32 @@ docker exec awg-forge awg-forge doctor
 
 ## Удаление
 
-Если нужно удалить awg-forge, сначала запускай uninstall, пока `data/state.json` еще на месте. Так скрипт сможет удалить точные managed firewall rules для каждого туннеля.
+Если нужно удалить awg-forge, сначала запускай uninstall, пока `data/state.json` еще на месте. Так скрипт сможет удалить точные managed tunnel-интерфейсы, firewall rules (текущие tagged scoped rules и legacy untagged rules) и policy routes WARP, если они используются.
+
+Перед удалением всегда запускай актуальный `uninstall.sh` из `master`: в нем есть cleanup-логика для текущих и старых установок.
 
 ```bash
-cd /opt/awg-forge
-sudo ./uninstall.sh
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/uninstall.sh | sudo bash
 ```
 
 Удалить контейнер, runtime-интерфейсы, firewall rules и локальные файлы установки:
 
 ```bash
-cd /opt/awg-forge
-sudo ./uninstall.sh --purge
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/uninstall.sh | sudo bash -s -- --purge
 ```
 
 Проверить действия без остановки контейнера и изменения системы:
 
 ```bash
-sudo ./uninstall.sh --dry-run --yes
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/uninstall.sh | sudo bash -s -- --dry-run --yes
 ```
 
 По умолчанию скрипт удаляет только интерфейсы и firewall rules, которые может точно связать с туннелями из `data/state.json`. Если state уже потерян, неизвестные интерфейсы `awg*` остаются на хосте, чтобы случайно не удалить чужой AmneziaWG-туннель.
 
+`--yes` подтверждает очистку runtime без вопросов и сохраняет `data/`, `.env` и `docker-compose.yml`. Добавляй `--purge`, только когда эти локальные файлы установки тоже нужно удалить.
+
 После ручной проверки такие интерфейсы можно удалить явно:
 
 ```bash
-sudo ./uninstall.sh --remove-orphans
-```
-
-Для установки через `curl` без клонирования репозитория:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/uninstall.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/uninstall.sh | sudo bash -s -- --remove-orphans
 ```

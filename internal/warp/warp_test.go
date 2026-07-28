@@ -85,12 +85,14 @@ func TestRenderConfigIncludesPolicyRoutes(t *testing.T) {
 		"Table = 200",
 		"ip route replace 10.20.0.0/24 dev awg20 table 200",
 		"ip rule add from 10.20.0.0/24 lookup 200",
-		"iptables -t nat -C POSTROUTING -s 10.20.0.0/24 -o %i -j MASQUERADE",
 		"Endpoint = engage.cloudflareclient.com:2408",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("rendered config missing %q:\n%s", want, rendered)
 		}
+	}
+	if strings.Contains(rendered, "iptables") {
+		t.Fatalf("WARP runtime config must not manage firewall rules:\n%s", rendered)
 	}
 }
 

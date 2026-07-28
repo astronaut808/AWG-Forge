@@ -132,11 +132,12 @@ func (s *Service) TunnelHealthByID(tunnelID string, sampleSeconds int) (TunnelHe
 		InterfaceName: tunnel.InterfaceName,
 		SampleSeconds: sampleSeconds,
 	}
-	if !hasNATRule(tunnel.IPv4Subnet, s.egressInterfaceForTunnel(tunnel)) {
-		health.Warnings = append(health.Warnings, "possible NAT issue: missing MASQUERADE for "+tunnel.IPv4Subnet+" on "+s.egressInterfaceForTunnel(tunnel))
-	}
-	if !hasFilterRule("FORWARD", "-i", tunnel.InterfaceName, "-j", "ACCEPT") || !hasFilterRule("FORWARD", "-o", tunnel.InterfaceName, "-j", "ACCEPT") {
-		health.Warnings = append(health.Warnings, "possible forwarding issue: missing FORWARD accept rules for "+tunnel.InterfaceName)
+	firewallReport := firewall.Check(s.cfg, config.State{Tunnels: []config.Tunnel{tunnel}}, firewall.IPTablesRunner{})
+	for _, result := range firewallReport.Results {
+		if result.Status == "ok" {
+			continue
+		}
+		health.Warnings = append(health.Warnings, "firewall "+result.Rule+": "+result.Status)
 	}
 	now := time.Now().UTC()
 	for _, client := range tunnel.Clients {
@@ -219,7 +220,13 @@ func (s *Service) FirewallRepair() (firewall.Report, error) {
 
 func (s *Service) apply(tunnel config.Tunnel) error {
 	serverPath := filepath.Join(s.cfg.ConfigDir, "tunnels", tunnel.InterfaceName, "server.conf")
-	runtimePath := filepath.Join("/etc/amnezia/amneziawg", tunnel.InterfaceName+".conf")
+	runtimePath, err := runtimeConfigPath(tunnel.InterfaceName)
+	if err != nil {
+		return err
+	}
+	if err := s.migrateLegacyFirewallRules(tunnel, runtimePath); err != nil {
+		return err
+	}
 	if err := copyRuntimeConfig(serverPath, runtimePath); err != nil {
 		return err
 	}
@@ -244,6 +251,9 @@ func (s *Service) apply(tunnel config.Tunnel) error {
 func (s *Service) reconcileWarpRuntime(state config.State) error {
 	routes := warp.RoutesForState(state)
 	interfaceName := state.Warp.RuntimeInterface()
+	if err := validateTunnelInterfaceName(interfaceName); err != nil {
+		return fmt.Errorf("invalid WARP interface name: %w", err)
+	}
 	if len(routes) == 0 {
 		_ = exec.Command("awg-quick", "down", interfaceName).Run()
 		return nil
@@ -255,11 +265,13 @@ func (s *Service) reconcileWarpRuntime(state config.State) error {
 	if err != nil {
 		return err
 	}
-	runtimeDir := "/etc/amnezia/amneziawg"
-	if err := os.MkdirAll(runtimeDir, 0700); err != nil {
+	if err := os.MkdirAll(runtimeConfigDir, 0700); err != nil {
 		return err
 	}
-	runtimePath := filepath.Join(runtimeDir, interfaceName+".conf")
+	runtimePath, err := runtimeConfigPath(interfaceName)
+	if err != nil {
+		return err
+	}
 	if err := os.WriteFile(runtimePath, []byte(conf), 0600); err != nil {
 		return err
 	}
@@ -276,13 +288,6 @@ func (s *Service) ensureFirewallRules(tunnel config.Tunnel) error {
 		s.log("error", "firewall.repair.failed", "managed firewall repair failed during apply", firewallReportFields(report), err)
 	}
 	return err
-}
-
-func (s *Service) egressInterfaceForTunnel(tunnel config.Tunnel) string {
-	if tunnel.EgressMode == config.EgressWarp {
-		return "warp0"
-	}
-	return s.cfg.ExternalInterface
 }
 
 func firewallReportFields(report firewall.Report) map[string]any {
@@ -310,65 +315,7 @@ func firewallReportFields(report firewall.Report) map[string]any {
 }
 
 func (s *Service) cleanupFirewallRules(tunnel config.Tunnel) error {
-	rules := []iptablesRule{
-		{table: "nat", args: []string{"POSTROUTING", "-s", tunnel.IPv4Subnet, "-o", s.cfg.ExternalInterface, "-j", "MASQUERADE"}},
-		{table: "nat", args: []string{"POSTROUTING", "-s", tunnel.IPv4Subnet, "-o", "warp0", "-j", "MASQUERADE"}},
-		{args: []string{"INPUT", "-p", "udp", "-m", "udp", "--dport", strconv.Itoa(tunnel.ListenPort), "-j", "ACCEPT"}},
-		{args: []string{"FORWARD", "-i", tunnel.InterfaceName, "-j", "ACCEPT"}},
-		{args: []string{"FORWARD", "-o", tunnel.InterfaceName, "-j", "ACCEPT"}},
-	}
-	var errs []string
-	for _, rule := range rules {
-		if err := deleteAllIPTablesRules(rule); err != nil {
-			errs = append(errs, err.Error())
-		}
-	}
-	if len(errs) > 0 {
-		return errors.New(strings.Join(errs, "; "))
-	}
-	return nil
-}
-
-type iptablesRule struct {
-	table string
-	args  []string
-}
-
-func deleteAllIPTablesRules(rule iptablesRule) error {
-	for i := 0; i < 64; i++ {
-		if !iptablesRuleExists(rule) {
-			return nil
-		}
-		args := append([]string{}, iptablesTableArgs(rule.table)...)
-		args = append(args, "-D")
-		args = append(args, rule.args...)
-		err := exec.Command("iptables", args...).Run()
-		if err != nil {
-			return fmt.Errorf("iptables %s failed: %w", strings.Join(args, " "), err)
-		}
-	}
-	return fmt.Errorf("iptables duplicate cleanup limit reached for %s", strings.Join(rule.args, " "))
-}
-
-func iptablesRuleExists(rule iptablesRule) bool {
-	if err := iptablesCheck(rule); err != nil {
-		return false
-	}
-	return true
-}
-
-func iptablesCheck(rule iptablesRule) error {
-	args := append([]string{}, iptablesTableArgs(rule.table)...)
-	args = append(args, "-C")
-	args = append(args, rule.args...)
-	return exec.Command("iptables", args...).Run()
-}
-
-func iptablesTableArgs(table string) []string {
-	if table == "" {
-		return nil
-	}
-	return []string{"-t", table}
+	return firewall.RemoveRulesForTunnel(s.cfg, tunnel, firewall.IPTablesRunner{})
 }
 
 type runtimeInterface struct {
@@ -561,21 +508,71 @@ func byteDelta(before, after uint64) uint64 {
 	return after - before
 }
 
-func hasNATRule(subnet, externalInterface string) bool {
-	return exec.Command("iptables", "-t", "nat", "-C", "POSTROUTING", "-s", subnet, "-o", externalInterface, "-j", "MASQUERADE").Run() == nil
-}
-
-func hasFilterRule(chain string, args ...string) bool {
-	cmdArgs := append([]string{"-C", chain}, args...)
-	return exec.Command("iptables", cmdArgs...).Run() == nil
-}
-
 func runAWGQuick(args ...string) error {
 	err := exec.Command("awg-quick", args...).Run()
 	if err != nil {
 		return fmt.Errorf("awg-quick %s failed: %w", strings.Join(args, " "), err)
 	}
 	return nil
+}
+
+func runtimeConfigHasLegacyFirewallRules(path string, tunnel config.Tunnel) (bool, error) {
+	contents, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	text := string(contents)
+	return strings.Contains(text, "iptables -C FORWARD -i "+tunnel.InterfaceName+" -j ACCEPT") &&
+		strings.Contains(text, "iptables -C FORWARD -o "+tunnel.InterfaceName+" -j ACCEPT"), nil
+}
+
+func (s *Service) migrateLegacyFirewallRules(tunnel config.Tunnel, runtimePath string) error {
+	legacyConfig, err := runtimeConfigHasLegacyFirewallRules(runtimePath, tunnel)
+	if err != nil {
+		return err
+	}
+	legacyRules, err := firewall.LegacyRulesPresent(s.cfg, tunnel, firewall.IPTablesRunner{})
+	if err != nil {
+		return err
+	}
+	if !legacyConfig && !legacyRules {
+		return nil
+	}
+	report, err := firewall.MigrateLegacyRules(s.cfg, tunnel, firewall.IPTablesRunner{})
+	if err != nil {
+		s.log("error", "firewall.legacy_migration.failed", "legacy tunnel firewall migration failed", firewallReportFields(report), err)
+		return err
+	}
+	if legacyConfig {
+		contents, err := os.ReadFile(runtimePath)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(runtimePath, []byte(withoutLegacyFirewallDirectives(string(contents), tunnel)), 0600); err != nil {
+			return err
+		}
+	}
+	fields := tunnelAuditFields(tunnel)
+	fields["legacy_runtime_config"] = legacyConfig
+	fields["legacy_host_rules"] = legacyRules
+	s.log("info", "firewall.legacy_rules.migrated", "legacy tunnel firewall rules migrated", fields, nil)
+	return nil
+}
+
+func withoutLegacyFirewallDirectives(contents string, tunnel config.Tunnel) string {
+	lines := strings.Split(contents, "\n")
+	filtered := lines[:0]
+	for _, line := range lines {
+		if (strings.HasPrefix(line, "PostUp = ") && strings.Contains(line, "iptables -C FORWARD -i "+tunnel.InterfaceName+" -j ACCEPT")) ||
+			(strings.HasPrefix(line, "PostDown = ") && strings.Contains(line, "while iptables -C FORWARD -i "+tunnel.InterfaceName+" -j ACCEPT")) {
+			continue
+		}
+		filtered = append(filtered, line)
+	}
+	return strings.Join(filtered, "\n")
 }
 
 func copyRuntimeConfig(src, dst string) error {

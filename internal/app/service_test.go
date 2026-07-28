@@ -97,6 +97,39 @@ func TestFreshInitDefaultsToAWG20(t *testing.T) {
 	}
 }
 
+func TestInitRejectsUnsafeLoadedInterfaceNames(t *testing.T) {
+	for _, name := range []string{"../escape", "awg/escape", `awg\\escape`, "awg..escape"} {
+		t.Run(name, func(t *testing.T) {
+			cfg := testConfig(t)
+			state := config.State{
+				SchemaVersion: config.CurrentStateSchemaVersion,
+				Warp:          config.Warp{InterfaceName: "warp0"},
+				Tunnels:       []config.Tunnel{{InterfaceName: name}},
+			}
+			if err := storage.New(cfg.ConfigDir).Save(state); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := app.New(cfg).Init(); err == nil || !strings.Contains(err.Error(), "invalid tunnel interface name") {
+				t.Fatalf("Init error = %v, want unsafe interface name rejection", err)
+			}
+		})
+	}
+}
+
+func TestInitRejectsUnsafeLoadedWARPInterfaceName(t *testing.T) {
+	cfg := testConfig(t)
+	state := config.State{
+		SchemaVersion: config.CurrentStateSchemaVersion,
+		Warp:          config.Warp{InterfaceName: "../warp"},
+	}
+	if err := storage.New(cfg.ConfigDir).Save(state); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.New(cfg).Init(); err == nil || !strings.Contains(err.Error(), "invalid WARP interface name") {
+		t.Fatalf("Init error = %v, want unsafe WARP interface name rejection", err)
+	}
+}
+
 func TestInitWithOptionsCreatesFirstTunnel(t *testing.T) {
 	cfg := config.Config{
 		ConfigDir:         t.TempDir(),

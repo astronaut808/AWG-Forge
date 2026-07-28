@@ -110,14 +110,7 @@ docker exec awg-forge awg-forge doctor
 
 ## Uninstall
 
-Uninstall an installed instance:
-
-```bash
-cd /opt/awg-forge
-sudo ./uninstall.sh
-```
-
-Without cloning the repository:
+Always run the current `uninstall.sh` from `master`. It contains cleanup logic for current and legacy rule formats.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/uninstall.sh | sudo bash
@@ -126,8 +119,7 @@ curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/unins
 Preview the uninstall plan:
 
 ```bash
-cd /opt/awg-forge
-sudo ./uninstall.sh --dry-run --yes
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/uninstall.sh | sudo bash -s -- --dry-run --yes
 ```
 
 Backup/restore, firewall repair, support bundle, and audit log are available from `Maintenance Center` and CLI. Upstream-ref checks are available through the CLI command `awg-forge updates`.

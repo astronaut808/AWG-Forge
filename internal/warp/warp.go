@@ -133,12 +133,10 @@ func RenderConfig(w config.Warp, routes []TunnelRoute) (string, error) {
 			fmt.Sprintf("ip route replace %s dev %s table %s", route.Subnet, route.InterfaceName, RoutingTable),
 			fmt.Sprintf("ip rule del from %s lookup %s 2>/dev/null || true", route.Subnet, RoutingTable),
 			fmt.Sprintf("ip rule add from %s lookup %s", route.Subnet, RoutingTable),
-			fmt.Sprintf("iptables -t nat -C POSTROUTING -s %s -o %%i -j MASQUERADE || iptables -t nat -I POSTROUTING 1 -s %s -o %%i -j MASQUERADE", route.Subnet, route.Subnet),
 		)
 		postDown = append(postDown,
 			fmt.Sprintf("ip rule del from %s lookup %s 2>/dev/null || true", route.Subnet, RoutingTable),
 			fmt.Sprintf("ip route del %s dev %s table %s 2>/dev/null || true", route.Subnet, route.InterfaceName, RoutingTable),
-			fmt.Sprintf("while iptables -t nat -C POSTROUTING -s %s -o %%i -j MASQUERADE; do iptables -t nat -D POSTROUTING -s %s -o %%i -j MASQUERADE; done", route.Subnet, route.Subnet),
 		)
 	}
 

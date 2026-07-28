@@ -112,14 +112,7 @@ docker exec awg-forge awg-forge doctor
 
 ## Удаление
 
-Удаление установленного экземпляра:
-
-```bash
-cd /opt/awg-forge
-sudo ./uninstall.sh
-```
-
-Без клонирования репозитория:
+Всегда запускай актуальный `uninstall.sh` из `master`: он содержит cleanup-логику для текущих и старых версий правил.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/uninstall.sh | sudo bash
@@ -128,8 +121,7 @@ curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/unins
 Dry-run перед удалением:
 
 ```bash
-cd /opt/awg-forge
-sudo ./uninstall.sh --dry-run --yes
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/uninstall.sh | sudo bash -s -- --dry-run --yes
 ```
 
 Backup/restore, firewall repair, support bundle и audit log доступны в `Maintenance Center` и CLI. Проверка upstream refs доступна через CLI `awg-forge updates`.
