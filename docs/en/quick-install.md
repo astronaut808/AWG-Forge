@@ -165,6 +165,8 @@ curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/unins
 
 By default, the script removes only interfaces and firewall rules that can be matched to tunnels in `data/state.json`. If state is already missing, unknown `awg*` interfaces are preserved to avoid deleting an unrelated AmneziaWG tunnel.
 
+`--yes` confirms the runtime cleanup without prompts and keeps `data/`, `.env`, and `docker-compose.yml`. Add `--purge` only when those local installation files must also be removed.
+
 After reviewing those interfaces, remove them explicitly:
 
 ```bash

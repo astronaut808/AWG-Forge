@@ -251,7 +251,7 @@ Repair делает только ожидаемые awg-forge rules для enabl
 
 У каждого текущего managed rule есть comment `awg-forge-<tunnel-id>-...`. Repair удаляет дубли только этих tagged rules и добавляет отсутствующие; чужие firewall rules не трогает. Disabled tunnels не получают новые rules.
 
-При первом apply после обновления AWG-Forge определяет собственную старую runtime-конфигурацию туннеля, сначала устанавливает ограниченные rules, затем удаляет старые широкие правила `FORWARD -i/-o <interface> ACCEPT`. Миграция выполняется только для туннеля, в старой runtime-конфигурации которого есть legacy-директивы AWG-Forge. Маршрутизация в приватные сети, доступные через выбранный egress, остаётся задачей operator firewall и routing policy.
+После обновления при apply AWG-Forge сначала устанавливает ограниченные rules, затем удаляет точные старые широкие правила `FORWARD -i/-o <interface> ACCEPT` этого туннеля. Миграция распознаёт собственные legacy-директивы runtime-конфигурации и соответствующие остаточные rules на хосте; чужие firewall rules не удаляются. Маршрутизация в приватные сети, доступные через выбранный egress, остаётся задачей operator firewall и routing policy.
 
 Если `APPLY_CONFIG=false`, `firewall check/repair` ничего не меняет и показывает предупреждение.
 

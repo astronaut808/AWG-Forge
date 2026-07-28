@@ -19,6 +19,7 @@
 - Updated the pinned `amneziawg-go` build reference to `c1e9bb3758e7` for the upstream Outline SDK module-path migration.
 - Fresh installer and `.env.example` now enable SQLite by default; existing installations remain unchanged unless SQLite is explicitly enabled during upgrade.
 - Reconfigure now preserves existing operational `.env` settings such as SQLite, TLS, and trusted-proxy configuration.
+- Hardened `uninstall.sh` for non-interactive use: it safely parses nested tunnel state, supports `curl | bash`, and keeps local data unless `--purge` is explicitly requested.
 
 ## v0.16.0 - 2026-07-12
 
