@@ -7,7 +7,7 @@ Host networking is the recommended production mode for awg-forge. In this mode, 
 Interactive quick start:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/v0.16.0/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
 chmod +x install.sh
 sudo ./install.sh
 ```

@@ -29,17 +29,17 @@ Self-hosted панель управления AmneziaWG для Docker: Go backen
 Интерактивная установка на Linux/VPS. Нужен Docker:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/v0.16.0/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
 chmod +x install.sh
 sudo ./install.sh
 ```
 
 Скрипт проверит Docker до создания файлов, создаст `/opt/awg-forge`, сгенерирует `.env`, пароль и `SESSION_SECRET`, включит SQLite, создаст первый туннель в `state.json`, применит начальную миграцию SQLite, запустит Docker Compose и покажет команду для SSH tunnel. По умолчанию первый туннель создается на AmneziaWG 2.0.
 
-Обновление managed installation. Используй установщик из актуального release: в нём находятся проверки совместимости и migrations этой версии.
+Обновление managed installation. Используй установщик из `master`: он соответствует актуальному release и содержит проверки совместимости и migrations этой версии.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/v0.16.0/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
 chmod +x install.sh
 sudo AWG_FORGE_HOME=/opt/awg-forge ./install.sh upgrade
 ```
