@@ -207,6 +207,53 @@ func TestMigrateLegacyRulesCreatesTaggedRulesBeforeDeletingLegacyRules(t *testin
 	}
 }
 
+func TestLegacyRulesPresentDetectsPartialLegacyFirewallState(t *testing.T) {
+	tunnel := testState().Tunnels[0]
+	legacy := LegacyRulesForTunnel("eth0", tunnel)
+	runner := &fakeRunner{counts: map[string]int{
+		legacy[2].Spec(): 1,
+	}}
+	present, err := LegacyRulesPresent(testConfig(), tunnel, runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !present {
+		t.Fatal("LegacyRulesPresent = false, want true for a residual broad FORWARD rule")
+	}
+
+	present, err = LegacyRulesPresent(testConfig(), tunnel, &fakeRunner{counts: map[string]int{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if present {
+		t.Fatal("LegacyRulesPresent = true, want false without legacy rules")
+	}
+}
+
+func TestMigrateLegacyRulesRemovesPartialLegacyFirewallState(t *testing.T) {
+	tunnel := testState().Tunnels[0]
+	legacy := LegacyRulesForTunnel("eth0", tunnel)
+	runner := &orderedRunner{fakeRunner: fakeRunner{counts: map[string]int{
+		legacy[2].Spec(): 1,
+	}}}
+	if _, err := MigrateLegacyRules(testConfig(), tunnel, runner); err != nil {
+		t.Fatal(err)
+	}
+	if got := runner.counts[legacy[2].Spec()]; got != 0 {
+		t.Fatalf("residual legacy rule count = %d, want 0", got)
+	}
+	firstDelete := -1
+	for i, action := range runner.actions {
+		if action == "delete-legacy" {
+			firstDelete = i
+			break
+		}
+	}
+	if firstDelete < 4 {
+		t.Fatalf("legacy rule deletion happened before all managed rules were installed: %#v", runner.actions)
+	}
+}
+
 func TestRemoveRulesForTunnelDoesNotRemoveLegacyRules(t *testing.T) {
 	tunnel := testState().Tunnels[0]
 	runner := &fakeRunner{counts: map[string]int{}}

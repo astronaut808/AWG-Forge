@@ -28,7 +28,7 @@ test_dir="$(mktemp -d)"
 trap 'rm -rf "$test_dir"' EXIT
 cd "$test_dir"
 
-mkdir -p data custom
+mkdir -p bin data custom
 cat > data/state.json <<'EOF'
 {
   "external_interface": "ens3",
@@ -62,6 +62,16 @@ cat > data/state.json <<'EOF'
 }
 EOF
 printf 'CONFIG_DIR=%s\n' "$test_dir/custom" > .env
+
+for command in docker docker-compose ip iptables; do
+  printf '#!/usr/bin/env bash\nexit 1\n' > "bin/$command"
+  chmod +x "bin/$command"
+done
+
+pipe_output="$(PATH="$test_dir/bin:$PATH" AWG_FORGE_HOME="$test_dir" bash -s -- --dry-run --yes < "$repo_root/uninstall.sh")"
+assert_contains "$pipe_output" "uninstall completed" "piped uninstall dry run"
+
+printf 'OK   uninstall supports curl pipe execution with strict shell options\n'
 
 assert_equal "$(state_path)" "data/state.json" "state path"
 assert_equal "$(state_external_interface "$(state_path)")" "ens3" "external interface"

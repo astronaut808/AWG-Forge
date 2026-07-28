@@ -530,23 +530,35 @@ func runtimeConfigHasLegacyFirewallRules(path string, tunnel config.Tunnel) (boo
 }
 
 func (s *Service) migrateLegacyFirewallRules(tunnel config.Tunnel, runtimePath string) error {
-	legacy, err := runtimeConfigHasLegacyFirewallRules(runtimePath, tunnel)
-	if err != nil || !legacy {
+	legacyConfig, err := runtimeConfigHasLegacyFirewallRules(runtimePath, tunnel)
+	if err != nil {
 		return err
+	}
+	legacyRules, err := firewall.LegacyRulesPresent(s.cfg, tunnel, firewall.IPTablesRunner{})
+	if err != nil {
+		return err
+	}
+	if !legacyConfig && !legacyRules {
+		return nil
 	}
 	report, err := firewall.MigrateLegacyRules(s.cfg, tunnel, firewall.IPTablesRunner{})
 	if err != nil {
 		s.log("error", "firewall.legacy_migration.failed", "legacy tunnel firewall migration failed", firewallReportFields(report), err)
 		return err
 	}
-	contents, err := os.ReadFile(runtimePath)
-	if err != nil {
-		return err
+	if legacyConfig {
+		contents, err := os.ReadFile(runtimePath)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(runtimePath, []byte(withoutLegacyFirewallDirectives(string(contents), tunnel)), 0600); err != nil {
+			return err
+		}
 	}
-	if err := os.WriteFile(runtimePath, []byte(withoutLegacyFirewallDirectives(string(contents), tunnel)), 0600); err != nil {
-		return err
-	}
-	s.log("info", "firewall.legacy_rules.migrated", "legacy tunnel firewall rules migrated", tunnelAuditFields(tunnel), nil)
+	fields := tunnelAuditFields(tunnel)
+	fields["legacy_runtime_config"] = legacyConfig
+	fields["legacy_host_rules"] = legacyRules
+	s.log("info", "firewall.legacy_rules.migrated", "legacy tunnel firewall rules migrated", fields, nil)
 	return nil
 }
 

@@ -181,6 +181,22 @@ func MigrateLegacyRules(cfg config.Config, tunnel config.Tunnel, runner Runner) 
 	return report, nil
 }
 
+func LegacyRulesPresent(cfg config.Config, tunnel config.Tunnel, runner Runner) (bool, error) {
+	if !cfg.ApplyConfig {
+		return false, nil
+	}
+	for _, rule := range LegacyRulesForTunnel(cfg.ExternalInterface, tunnel) {
+		count, err := runner.Count(rule)
+		if err != nil {
+			return false, err
+		}
+		if count > 0 {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func RemoveRulesForTunnel(cfg config.Config, tunnel config.Tunnel, runner Runner) error {
 	if !cfg.ApplyConfig {
 		return nil

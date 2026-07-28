@@ -596,11 +596,12 @@ func (s *Service) DeleteTunnelWithConfirmation(tunnelID, confirmationName string
 	}
 	if s.cfg.ApplyConfig {
 		if err := s.migrateLegacyFirewallRules(tunnel, runtimePath); err != nil {
+			applyErr := &ApplyError{Err: err}
 			if rollbackErr := s.rollbackRuntimeState(previousState, tunnel.ID); rollbackErr != nil {
-				return errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
+				return errors.Join(applyErr, fmt.Errorf("rollback failed: %w", rollbackErr))
 			}
 			s.log("error", "tunnel.delete.failed", "legacy firewall migration failed during tunnel delete", tunnelAuditFields(tunnel), err)
-			return err
+			return applyErr
 		}
 		if err := exec.Command("awg-quick", "down", tunnel.InterfaceName).Run(); err != nil {
 			if rollbackErr := s.rollbackRuntimeState(previousState, tunnel.ID); rollbackErr != nil {

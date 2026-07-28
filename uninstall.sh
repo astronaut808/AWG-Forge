@@ -102,8 +102,12 @@ run_compose() {
 }
 
 prepare_workdir() {
-  local script_dir target
-  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P || true)"
+  local script_dir script_source target
+  script_source="${BASH_SOURCE[0]:-}"
+  script_dir=""
+  if [[ -n "$script_source" ]]; then
+    script_dir="$(cd "$(dirname "$script_source")" >/dev/null 2>&1 && pwd -P || true)"
+  fi
   target="${AWG_FORGE_HOME:-}"
   if [[ -z "$target" ]]; then
     if [[ -n "$script_dir" && -f "$script_dir/$COMPOSE_FILE" ]]; then
@@ -408,7 +412,7 @@ main() {
   ok "uninstall completed"
 }
 
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+if [[ "${BASH_SOURCE[0]:-$0}" == "$0" ]]; then
   parse_args "$@"
   main
 fi
