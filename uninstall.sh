@@ -152,7 +152,7 @@ state_tunnels() {
   [[ -f "$file" ]] || return 0
   awk '
     /"tunnels": \[/ { in_tunnels=1; next }
-    in_tunnels && /^[[:space:]]*\]/ { exit }
+    in_tunnels && depth == 0 && /^[[:space:]]*\]/ { exit }
     !in_tunnels { next }
     /^[[:space:]]*\{/ {
       depth++

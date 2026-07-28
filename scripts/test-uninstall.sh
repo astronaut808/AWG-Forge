@@ -43,7 +43,13 @@ cat > data/state.json <<'EOF'
       "enabled": true,
       "listen_port": 51820,
       "ipv4_subnet": "10.8.0.0/24",
-      "egress_mode": "warp"
+      "egress_mode": "warp",
+      "clients": [
+        {
+          "id": "client-1",
+          "enabled": true
+        }
+      ]
     },
     {
       "id": "fedcba9876543210",

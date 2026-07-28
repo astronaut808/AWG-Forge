@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -580,6 +579,13 @@ func (s *Service) DeleteTunnelWithConfirmation(tunnelID, confirmationName string
 	if tunnelHasEverConnectedClient(tunnel) && confirmationName != tunnel.Name {
 		return fmt.Errorf("type tunnel name %q to confirm deletion", tunnel.Name)
 	}
+	runtimePath := ""
+	if s.cfg.ApplyConfig {
+		runtimePath, err = runtimeConfigPath(tunnel.InterfaceName)
+		if err != nil {
+			return err
+		}
+	}
 	if _, err := s.store.BackupState(state, "delete-"+tunnel.InterfaceName); err != nil {
 		return err
 	}
@@ -589,7 +595,6 @@ func (s *Service) DeleteTunnelWithConfirmation(tunnelID, confirmationName string
 		return err
 	}
 	if s.cfg.ApplyConfig {
-		runtimePath := filepath.Join("/etc/amnezia/amneziawg", tunnel.InterfaceName+".conf")
 		if err := s.migrateLegacyFirewallRules(tunnel, runtimePath); err != nil {
 			if rollbackErr := s.rollbackRuntimeState(previousState, tunnel.ID); rollbackErr != nil {
 				return errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
