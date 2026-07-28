@@ -143,24 +143,24 @@ docker exec awg-forge awg-forge doctor
 
 ## Uninstall
 
-If you need to remove awg-forge, run uninstall while `data/state.json` still exists. This lets the script remove exact managed firewall rules for each tunnel.
+If you need to remove awg-forge, run uninstall while `data/state.json` still exists. This lets the script remove exact managed tunnel interfaces, firewall rules (current tagged scoped rules and legacy untagged rules), and WARP policy routes when applicable.
+
+Always run the current `uninstall.sh` from `master` before removal. It contains cleanup logic for current and legacy installations.
 
 ```bash
-cd /opt/awg-forge
-sudo ./uninstall.sh
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/uninstall.sh | sudo bash
 ```
 
 Remove the container, runtime interfaces, firewall rules, and local install files:
 
 ```bash
-cd /opt/awg-forge
-sudo ./uninstall.sh --purge
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/uninstall.sh | sudo bash -s -- --purge
 ```
 
 Preview all actions without stopping the container or modifying the host:
 
 ```bash
-sudo ./uninstall.sh --dry-run --yes
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/uninstall.sh | sudo bash -s -- --dry-run --yes
 ```
 
 By default, the script removes only interfaces and firewall rules that can be matched to tunnels in `data/state.json`. If state is already missing, unknown `awg*` interfaces are preserved to avoid deleting an unrelated AmneziaWG tunnel.
@@ -168,11 +168,5 @@ By default, the script removes only interfaces and firewall rules that can be ma
 After reviewing those interfaces, remove them explicitly:
 
 ```bash
-sudo ./uninstall.sh --remove-orphans
-```
-
-For a no-clone install:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/uninstall.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/uninstall.sh | sudo bash -s -- --remove-orphans
 ```

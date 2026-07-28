@@ -11,6 +11,7 @@
 
 ### Changed
 
+- Scoped managed forwarding to each tunnel subnet and selected egress, added tagged rule ownership, and added safe migration from legacy broad forwarding rules during apply and uninstall.
 - Streamlined Maintenance Center around operator tasks: contextual firewall repair in Doctor, combined backup/restore, CLI-only upstream update checks, and safe runtime metadata in Support.
 - Improved Doctor database migration guidance for Docker and skipped traffic-limit diagnostics until a required migration completes.
 - Require an exact tunnel-name confirmation before deleting a tunnel that has clients with a recorded connection.

@@ -2195,7 +2195,7 @@ func TestFirewallSummaryForTunnelFlagsMissingRules(t *testing.T) {
 		ApplyEnabled: true,
 		Results: []firewall.RuleReport{
 			{Tunnel: "awg0", Rule: "masquerade", Status: "ok"},
-			{Tunnel: "awg0", Rule: "forward-in", Status: "missing"},
+			{Tunnel: "awg0", Rule: "forward-egress", Status: "missing"},
 		},
 	}
 

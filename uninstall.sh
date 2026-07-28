@@ -151,13 +151,29 @@ state_tunnels() {
   local file="$1"
   [[ -f "$file" ]] || return 0
   awk '
+    /"id":/ { id=$2; gsub(/[",]/, "", id) }
     /"interface_name":/ { iface=$2; gsub(/[",]/, "", iface) }
     /"listen_port":/ { port=$2; gsub(/,/, "", port) }
     /"ipv4_subnet":/ { subnet=$2; gsub(/[",]/, "", subnet) }
+    /"egress_mode":/ { egress=$2; gsub(/[",]/, "", egress) }
     /"enabled":/ { enabled=$2; gsub(/,/, "", enabled) }
     iface && port && subnet && enabled {
-      print iface "|" port "|" subnet "|" enabled
-      iface=port=subnet=enabled=""
+      print id "|" iface "|" port "|" subnet "|" egress "|" enabled
+      id=iface=port=subnet=egress=enabled=""
+    }
+  ' "$file"
+}
+
+state_warp_interface() {
+  local file="$1"
+  [[ -f "$file" ]] || return 0
+  awk -F'"' '
+    /"warp":/ { in_warp=1; next }
+    in_warp && /"tunnels":/ { exit }
+    in_warp && /"interface_name":/ { iface=$4 }
+    in_warp && /"private_key":/ { configured=1 }
+    END {
+      if (configured) print (iface == "" ? "warp0" : iface)
     }
   ' "$file"
 }
@@ -211,15 +227,69 @@ iptables_delete_all() {
   done
 }
 
-cleanup_tunnel_rules() {
+ip_rule_delete_all() {
+  local subnet="$1"
+  have ip || return 0
+  if $DRY_RUN; then
+    run ip rule del from "$subnet" lookup 200
+    return 0
+  fi
+  while ip rule del from "$subnet" lookup 200 >/dev/null 2>&1; do
+    :
+  done
+}
+
+cleanup_warp_route() {
   local iface="$1"
-  local port="$2"
-  local subnet="$3"
-  local external_interface="$4"
+  local subnet="$2"
+  [[ -n "$iface" && -n "$subnet" ]] || return 0
+  ip_rule_delete_all "$subnet"
+  if have ip; then
+    if $DRY_RUN; then
+      run ip route del "$subnet" dev "$iface" table 200
+    else
+      ip route del "$subnet" dev "$iface" table 200 >/dev/null 2>&1 || true
+    fi
+  fi
+}
+
+cleanup_tunnel_rules() {
+  local tunnel_id="$1"
+  local iface="$2"
+  local port="$3"
+  local subnet="$4"
+  local external_interface="$5"
   [[ -n "$subnet" && -n "$external_interface" ]] && iptables_delete_all nat POSTROUTING -s "$subnet" -o "$external_interface" -j MASQUERADE
   [[ -n "$port" ]] && iptables_delete_all "" INPUT -p udp -m udp --dport "$port" -j ACCEPT
   [[ -n "$iface" ]] && iptables_delete_all "" FORWARD -i "$iface" -j ACCEPT
   [[ -n "$iface" ]] && iptables_delete_all "" FORWARD -o "$iface" -j ACCEPT
+  cleanup_tagged_tunnel_rules "$tunnel_id" "$iface" "$port" "$subnet" "$external_interface"
+}
+
+cleanup_tagged_tunnel_rules() {
+  local tunnel_id="$1"
+  local iface="$2"
+  local port="$3"
+  local subnet="$4"
+  local external_interface="$5"
+  local tag egress
+  local -a egresses
+  [[ -n "$tunnel_id" && -n "$iface" && -n "$port" && -n "$subnet" && -n "$external_interface" ]] || return 0
+  if [[ ! "$tunnel_id" =~ ^[A-Za-z0-9_-]+$ ]] || (( ${#tunnel_id} > 220 )); then
+    warn "cannot derive managed firewall tags for tunnel $iface from an invalid state ID"
+    return 0
+  fi
+  tag="awg-forge-$tunnel_id"
+  egresses=("$external_interface")
+  if [[ "$external_interface" != "warp0" ]]; then
+    egresses+=("warp0")
+  fi
+  iptables_delete_all "" INPUT -p udp -m udp --dport "$port" -m comment --comment "$tag-input-udp" -j ACCEPT
+  for egress in "${egresses[@]}"; do
+    iptables_delete_all nat POSTROUTING -s "$subnet" -o "$egress" -m comment --comment "$tag-masquerade" -j MASQUERADE
+    iptables_delete_all "" FORWARD -i "$iface" -s "$subnet" -o "$egress" -m conntrack --ctstate NEW,ESTABLISHED,RELATED -m comment --comment "$tag-forward-egress" -j ACCEPT
+    iptables_delete_all "" FORWARD -i "$egress" -o "$iface" -d "$subnet" -m conntrack --ctstate ESTABLISHED,RELATED -m comment --comment "$tag-forward-return" -j ACCEPT
+  done
 }
 
 cleanup_interface() {
@@ -291,12 +361,21 @@ main() {
   external_interface="${external_interface:-eth0}"
 
   if [[ -f "$state" ]]; then
-    while IFS='|' read -r iface port subnet _enabled; do
+    local warp_interface=""
+    while IFS='|' read -r tunnel_id iface port subnet egress _enabled; do
       [[ -n "$iface" ]] || continue
       warn "cleaning tunnel $iface"
-      cleanup_tunnel_rules "$iface" "$port" "$subnet" "$external_interface"
+      cleanup_tunnel_rules "$tunnel_id" "$iface" "$port" "$subnet" "$external_interface"
+      if [[ "$egress" == "warp" ]]; then
+        cleanup_warp_route "$iface" "$subnet"
+        warp_interface="${warp_interface:-$(state_warp_interface "$state")}"
+        warp_interface="${warp_interface:-warp0}"
+      fi
       cleanup_interface "$iface"
     done < <(state_tunnels "$state")
+    if [[ -n "$warp_interface" ]]; then
+      cleanup_interface "$warp_interface"
+    fi
     if $REMOVE_ORPHANS; then
       cleanup_orphan_interfaces "$state"
     fi

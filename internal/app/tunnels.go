@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -385,7 +386,29 @@ func (s *Service) updateTunnelSettings(tunnelID string, update TunnelSettingsUpd
 		if old.InterfaceName != settings.Name {
 			_ = exec.Command("awg-quick", "down", old.InterfaceName).Run()
 		}
-		_ = s.cleanupFirewallRules(old)
+		oldRuntimePath := filepath.Join("/etc/amnezia/amneziawg", old.InterfaceName+".conf")
+		if err := s.migrateLegacyFirewallRules(old, oldRuntimePath); err != nil {
+			deleteRendered := []string{}
+			if old.InterfaceName != settings.Name {
+				deleteRendered = append(deleteRendered, settings.Name)
+			}
+			if rollbackErr := s.rollbackRuntimeState(previousState, old.ID, deleteRendered...); rollbackErr != nil {
+				return config.Tunnel{}, errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
+			}
+			s.log("error", "tunnel.settings.failed", "legacy firewall migration failed during tunnel settings update", tunnelAuditFields(old), err)
+			return config.Tunnel{}, err
+		}
+		if err := s.cleanupFirewallRules(old); err != nil {
+			deleteRendered := []string{}
+			if old.InterfaceName != settings.Name {
+				deleteRendered = append(deleteRendered, settings.Name)
+			}
+			if rollbackErr := s.rollbackRuntimeState(previousState, old.ID, deleteRendered...); rollbackErr != nil {
+				return config.Tunnel{}, errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
+			}
+			s.log("error", "tunnel.settings.failed", "tunnel settings firewall cleanup failed", tunnelAuditFields(old), err)
+			return config.Tunnel{}, err
+		}
 	}
 	if old.InterfaceName != settings.Name {
 		_ = s.store.DeleteRenderedTunnel(old.InterfaceName)
@@ -563,6 +586,14 @@ func (s *Service) DeleteTunnelWithConfirmation(tunnelID, confirmationName string
 		return err
 	}
 	if s.cfg.ApplyConfig {
+		runtimePath := filepath.Join("/etc/amnezia/amneziawg", tunnel.InterfaceName+".conf")
+		if err := s.migrateLegacyFirewallRules(tunnel, runtimePath); err != nil {
+			if rollbackErr := s.rollbackRuntimeState(previousState, tunnel.ID); rollbackErr != nil {
+				return errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
+			}
+			s.log("error", "tunnel.delete.failed", "legacy firewall migration failed during tunnel delete", tunnelAuditFields(tunnel), err)
+			return err
+		}
 		if err := exec.Command("awg-quick", "down", tunnel.InterfaceName).Run(); err != nil {
 			if rollbackErr := s.rollbackRuntimeState(previousState, tunnel.ID); rollbackErr != nil {
 				return errors.Join(&ApplyError{Err: err}, fmt.Errorf("rollback failed: %w", rollbackErr))

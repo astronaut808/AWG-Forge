@@ -246,10 +246,12 @@ Repair only reconciles expected awg-forge rules for enabled tunnels:
 
 - `nat POSTROUTING MASQUERADE` for the tunnel subnet;
 - `INPUT udp --dport <port> ACCEPT`;
-- `FORWARD -i <interface> ACCEPT`;
-- `FORWARD -o <interface> ACCEPT`.
+- stateful forwarding from the tunnel subnet through its selected WAN or WARP egress;
+- return forwarding from that egress to the tunnel subnet only for `ESTABLISHED,RELATED` connections.
 
-Repair removes duplicates only for these managed rules and adds missing rules. It does not touch unrelated firewall rules. Disabled tunnels do not receive new rules.
+Every current managed rule is tagged with an `awg-forge-<tunnel-id>-...` comment. Repair removes duplicates only for those tagged rules and adds missing rules; it does not touch unrelated firewall rules. Disabled tunnels do not receive new rules.
+
+On the first apply after an upgrade, AWG-Forge detects its own old rendered tunnel configuration, installs the scoped rules, then removes the older broad `FORWARD -i/-o <interface> ACCEPT` rules. This migration is limited to a tunnel whose old runtime configuration contains the legacy AWG-Forge directives. Routing to private networks reachable through the selected egress remains an operator firewall and routing decision.
 
 When `APPLY_CONFIG=false`, `firewall check/repair` does not change anything and reports a warning.
 
