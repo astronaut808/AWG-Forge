@@ -5,7 +5,7 @@
 Install [Docker Engine from the official documentation](https://docs.docker.com/engine/install/) first. If Docker or Docker Compose is unavailable, the installer exits before creating `/opt/awg-forge` or any project files.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/v0.16.0/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
 chmod +x install.sh
 sudo ./install.sh
 ```
@@ -27,7 +27,7 @@ By default, it installs into:
 You can choose a custom path:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/v0.16.0/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
 chmod +x install.sh
 sudo AWG_FORGE_HOME=/srv/awg-forge ./install.sh
 ```
@@ -93,7 +93,7 @@ For a managed installation using the standard `.env`, `docker-compose.yml`, and 
 
 ```bash
 sudo docker exec awg-forge awg-forge doctor
-curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/v0.16.0/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
 chmod +x install.sh
 sudo AWG_FORGE_HOME=/opt/awg-forge ./install.sh upgrade
 sudo docker exec awg-forge awg-forge doctor

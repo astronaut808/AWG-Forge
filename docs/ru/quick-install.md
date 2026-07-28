@@ -5,7 +5,7 @@
 Перед запуском установи [Docker Engine с официальной документации](https://docs.docker.com/engine/install/). Если Docker или Docker Compose отсутствуют, скрипт завершится до создания `/opt/awg-forge` и любых файлов проекта.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/v0.16.0/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
 chmod +x install.sh
 sudo ./install.sh
 ```
@@ -27,7 +27,7 @@ sudo IMAGE=ghcr.io/astronaut808/awg-forge:test ./install.sh
 Можно указать свой путь:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/v0.16.0/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
 chmod +x install.sh
 sudo AWG_FORGE_HOME=/srv/awg-forge ./install.sh
 ```
@@ -93,7 +93,7 @@ reinstall-backup-YYYYMMDD-HHMMSS/
 
 ```bash
 sudo docker exec awg-forge awg-forge doctor
-curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/v0.16.0/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
 chmod +x install.sh
 sudo AWG_FORGE_HOME=/opt/awg-forge ./install.sh upgrade
 sudo docker exec awg-forge awg-forge doctor
