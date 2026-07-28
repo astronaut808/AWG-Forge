@@ -155,25 +155,56 @@ state_tunnels() {
   local file="$1"
   [[ -f "$file" ]] || return 0
   awk '
-    /"tunnels": \[/ { in_tunnels=1; next }
-    in_tunnels && depth == 0 && /^[[:space:]]*\]/ { exit }
-    !in_tunnels { next }
-    /^[[:space:]]*\{/ {
-      depth++
-      if (depth == 1) id=iface=port=subnet=egress=enabled=""
-      next
+    function brace_delta(line, i, char, escaped, in_string, opens, closes) {
+      for (i = 1; i <= length(line); i++) {
+        char = substr(line, i, 1)
+        if (in_string) {
+          if (escaped) {
+            escaped = 0
+          } else if (char == "\\") {
+            escaped = 1
+          } else if (char == "\"") {
+            in_string = 0
+          }
+          continue
+        }
+        if (char == "\"") {
+          in_string = 1
+        } else if (char == "{") {
+          opens++
+        } else if (char == "}") {
+          closes++
+        }
+      }
+      return opens - closes
     }
-    depth == 1 && /"id":/ { id=$2; gsub(/[",]/, "", id) }
-    depth == 1 && /"interface_name":/ { iface=$2; gsub(/[",]/, "", iface) }
-    depth == 1 && /"listen_port":/ { port=$2; gsub(/,/, "", port) }
-    depth == 1 && /"ipv4_subnet":/ { subnet=$2; gsub(/[",]/, "", subnet) }
-    depth == 1 && /"egress_mode":/ { egress=$2; gsub(/[",]/, "", egress) }
-    depth == 1 && /"enabled":/ { enabled=$2; gsub(/,/, "", enabled) }
-    /^[[:space:]]*\},?$/ {
-      if (depth == 1 && iface && port && subnet && enabled) {
+
+    /"tunnels": \[/ { in_tunnels=1; next }
+    !in_tunnels { next }
+    depth == 0 && /^[[:space:]]*\]/ { exit }
+    {
+      delta = brace_delta($0)
+      if (depth == 0) {
+        if (delta > 0) {
+          depth += delta
+          id=iface=port=subnet=egress=enabled=""
+        }
+        next
+      }
+      previous_depth = depth
+      if (depth == 1) {
+        if (/"id":/) { id=$2; gsub(/[",]/, "", id) }
+        if (/"interface_name":/) { iface=$2; gsub(/[",]/, "", iface) }
+        if (/"listen_port":/) { port=$2; gsub(/,/, "", port) }
+        if (/"ipv4_subnet":/) { subnet=$2; gsub(/[",]/, "", subnet) }
+        if (/"egress_mode":/) { egress=$2; gsub(/[",]/, "", egress) }
+        if (/"enabled":/) { enabled=$2; gsub(/,/, "", enabled) }
+      }
+      depth += delta
+      if (previous_depth == 1 && depth == 0 && iface && port && subnet && enabled) {
         print id "|" iface "|" port "|" subnet "|" egress "|" enabled
       }
-      depth--
+      next
     }
   ' "$file"
 }
@@ -403,7 +434,7 @@ main() {
     fi
   fi
 
-  if $PURGE || confirm "Remove .env, data/, and docker-compose.yml?" "n"; then
+  if $PURGE || { ! $YES && confirm "Remove .env, data/, and docker-compose.yml?" "n"; }; then
     run rm -rf "$DATA_DIR" "$ENV_FILE" "$COMPOSE_FILE"
     ok "local install files removed"
   else

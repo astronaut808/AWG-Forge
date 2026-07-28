@@ -24,6 +24,16 @@ assert_contains() {
   fi
 }
 
+assert_not_contains() {
+  local got="$1"
+  local want="$2"
+  local label="$3"
+  if [[ "$got" == *"$want"* ]]; then
+    printf 'FAIL %s\nunexpected: %q\ngot:        %q\n' "$label" "$want" "$got" >&2
+    exit 1
+  fi
+}
+
 test_dir="$(mktemp -d)"
 trap 'rm -rf "$test_dir"' EXIT
 cd "$test_dir"
@@ -44,10 +54,14 @@ cat > data/state.json <<'EOF'
       "listen_port": 51820,
       "ipv4_subnet": "10.8.0.0/24",
       "egress_mode": "warp",
+      "protocol_params": {
+        "Jc": "4"
+      },
       "clients": [
         {
           "id": "client-1",
-          "enabled": true
+          "enabled": true,
+          "notes": "keep { literal braces }"
         }
       ]
     },
@@ -70,6 +84,13 @@ done
 
 pipe_output="$(PATH="$test_dir/bin:$PATH" AWG_FORGE_HOME="$test_dir" bash -s -- --dry-run --yes < "$repo_root/uninstall.sh")"
 assert_contains "$pipe_output" "uninstall completed" "piped uninstall dry run"
+assert_contains "$pipe_output" "cleaning tunnel awg0" "piped uninstall first tunnel"
+assert_contains "$pipe_output" "cleaning tunnel awg20" "piped uninstall second tunnel"
+assert_contains "$pipe_output" "kept local data and .env" "piped uninstall keeps data by default"
+assert_not_contains "$pipe_output" "DRY rm -rf" "piped uninstall does not purge without --purge"
+
+purge_output="$(PATH="$test_dir/bin:$PATH" AWG_FORGE_HOME="$test_dir" bash -s -- --dry-run --yes --purge < "$repo_root/uninstall.sh")"
+assert_contains "$purge_output" "DRY rm -rf data .env docker-compose.yml" "piped uninstall purges only with --purge"
 
 printf 'OK   uninstall supports curl pipe execution with strict shell options\n'
 
