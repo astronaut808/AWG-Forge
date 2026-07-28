@@ -58,12 +58,19 @@ output="$(iptables_delete_all "" FORWARD -i awg0 -j ACCEPT)"
 printf 'OK   uninstall dry-run terminates when an iptables rule exists\n'
 
 output="$(cleanup_tunnel_rules "0123456789abcdef" "awg0" "51820" "10.8.0.0/24" "ens3")"
+[[ "$output" == *"-t nat -D POSTROUTING -s 10.8.0.0/24 -o ens3 -j MASQUERADE"* ]]
+[[ "$output" == *"-t nat -D POSTROUTING -s 10.8.0.0/24 -o warp0 -j MASQUERADE"* ]]
 [[ "$output" == *"--comment awg-forge-0123456789abcdef-masquerade"* ]]
 [[ "$output" == *"--comment awg-forge-0123456789abcdef-input-udp"* ]]
 [[ "$output" == *"--comment awg-forge-0123456789abcdef-forward-egress"* ]]
 [[ "$output" == *"--comment awg-forge-0123456789abcdef-forward-return"* ]]
 
-printf 'OK   uninstall dry-run removes tagged managed firewall rules\n'
+printf 'OK   uninstall dry-run removes legacy and tagged managed firewall rules\n'
+
+warp_output="$(cleanup_tunnel_rules "0123456789abcdef" "awg0" "51820" "10.8.0.0/24" "warp0")"
+[[ "$(grep -Fxc 'DRY iptables -t nat -D POSTROUTING -s 10.8.0.0/24 -o warp0 -j MASQUERADE' <<< "$warp_output")" == "1" ]]
+
+printf 'OK   uninstall does not duplicate legacy WARP cleanup when WARP is the external interface\n'
 
 have() {
   [[ "$1" == "iptables" || "$1" == "ip" ]]

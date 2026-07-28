@@ -260,6 +260,7 @@ cleanup_tunnel_rules() {
   local subnet="$4"
   local external_interface="$5"
   [[ -n "$subnet" && -n "$external_interface" ]] && iptables_delete_all nat POSTROUTING -s "$subnet" -o "$external_interface" -j MASQUERADE
+  [[ -n "$subnet" && "$external_interface" != "warp0" ]] && iptables_delete_all nat POSTROUTING -s "$subnet" -o warp0 -j MASQUERADE
   [[ -n "$port" ]] && iptables_delete_all "" INPUT -p udp -m udp --dport "$port" -j ACCEPT
   [[ -n "$iface" ]] && iptables_delete_all "" FORWARD -i "$iface" -j ACCEPT
   [[ -n "$iface" ]] && iptables_delete_all "" FORWARD -o "$iface" -j ACCEPT
