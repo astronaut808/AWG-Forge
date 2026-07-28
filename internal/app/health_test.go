@@ -90,6 +90,21 @@ func TestRuntimeConfigHasLegacyFirewallRules(t *testing.T) {
 	}
 }
 
+func TestRuntimeConfigPathRejectsUnsafeInterfaceNames(t *testing.T) {
+	for _, name := range []string{"../escape", "awg/escape", `awg\\escape`, "awg..escape", "\x00awg"} {
+		if _, err := runtimeConfigPath(name); err == nil {
+			t.Fatalf("runtime config path accepted unsafe interface name %q", name)
+		}
+	}
+	path, err := runtimeConfigPath("awg20")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != "/etc/amnezia/amneziawg/awg20.conf" {
+		t.Fatalf("runtime config path = %q", path)
+	}
+}
+
 func TestWithoutLegacyFirewallDirectivesPreservesOtherHooks(t *testing.T) {
 	tunnel := config.Tunnel{InterfaceName: "awg20"}
 	contents := "PostUp = echo custom\nPostUp = iptables -C FORWARD -i awg20 -j ACCEPT; iptables -C FORWARD -o awg20 -j ACCEPT\nPostDown = while iptables -C FORWARD -i awg20 -j ACCEPT; do :; done\nPostDown = echo custom\n"

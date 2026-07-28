@@ -159,8 +159,8 @@ func validateInitialTunnelOptions(options InitOptions, spec tunnelSpec) error {
 	if options.AllowedIPs == "" {
 		return errors.New("allowed IPs are required")
 	}
-	if !tunnelNameRE.MatchString(spec.Name) {
-		return errors.New("tunnel name must start with a letter and contain only letters, numbers, dots, underscores, or dashes")
+	if err := validateTunnelInterfaceName(spec.Name); err != nil {
+		return err
 	}
 	if spec.ListenPort < 1 || spec.ListenPort > 65535 {
 		return errors.New("listen port must be 1..65535")
@@ -188,6 +188,9 @@ func (s *Service) repairLoadedState(state config.State) (config.State, error) {
 		state.Warp.PersistentKeepalive = 25
 		changed = true
 	}
+	if err := validateTunnelInterfaceName(state.Warp.InterfaceName); err != nil {
+		return config.State{}, fmt.Errorf("invalid WARP interface name: %w", err)
+	}
 	if state.SessionSecret == "" {
 		secret, err := s.sessionSecretValue()
 		if err != nil {
@@ -213,6 +216,9 @@ func (s *Service) repairLoadedState(state config.State) (config.State, error) {
 		changed = true
 	}
 	for ti := range state.Tunnels {
+		if err := validateTunnelInterfaceName(state.Tunnels[ti].InterfaceName); err != nil {
+			return config.State{}, fmt.Errorf("invalid tunnel interface name %q: %w", state.Tunnels[ti].InterfaceName, err)
+		}
 		if state.Tunnels[ti].EgressMode == "" {
 			state.Tunnels[ti].EgressMode = config.EgressWAN
 			changed = true

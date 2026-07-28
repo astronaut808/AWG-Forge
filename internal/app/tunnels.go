@@ -267,8 +267,8 @@ func (s *Service) createTunnel(profileID, name, subnet string, port int, automat
 		return config.Tunnel{}, err
 	}
 	subnet = normalizedSubnet
-	if !tunnelNameRE.MatchString(name) {
-		return config.Tunnel{}, errors.New("tunnel name must start with a letter and contain only letters, numbers, dots, underscores, or dashes")
+	if err := validateTunnelInterfaceName(name); err != nil {
+		return config.Tunnel{}, err
 	}
 	if port < 1 || port > 65535 {
 		return config.Tunnel{}, errors.New("listen port must be between 1 and 65535")
@@ -386,7 +386,10 @@ func (s *Service) updateTunnelSettings(tunnelID string, update TunnelSettingsUpd
 		if old.InterfaceName != settings.Name {
 			_ = exec.Command("awg-quick", "down", old.InterfaceName).Run()
 		}
-		oldRuntimePath := filepath.Join("/etc/amnezia/amneziawg", old.InterfaceName+".conf")
+		oldRuntimePath, err := runtimeConfigPath(old.InterfaceName)
+		if err != nil {
+			return config.Tunnel{}, err
+		}
 		if err := s.migrateLegacyFirewallRules(old, oldRuntimePath); err != nil {
 			deleteRendered := []string{}
 			if old.InterfaceName != settings.Name {
@@ -487,8 +490,8 @@ func validateEgressMode(mode string) error {
 }
 
 func validateResolvedTunnelSettings(settings resolvedTunnelSettings) error {
-	if !tunnelNameRE.MatchString(settings.Name) {
-		return errors.New("tunnel name must start with a letter and contain only letters, numbers, dots, underscores, or dashes")
+	if err := validateTunnelInterfaceName(settings.Name); err != nil {
+		return err
 	}
 	if err := validateServerHost(settings.ServerHost); err != nil {
 		return err

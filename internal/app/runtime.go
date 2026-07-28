@@ -220,7 +220,10 @@ func (s *Service) FirewallRepair() (firewall.Report, error) {
 
 func (s *Service) apply(tunnel config.Tunnel) error {
 	serverPath := filepath.Join(s.cfg.ConfigDir, "tunnels", tunnel.InterfaceName, "server.conf")
-	runtimePath := filepath.Join("/etc/amnezia/amneziawg", tunnel.InterfaceName+".conf")
+	runtimePath, err := runtimeConfigPath(tunnel.InterfaceName)
+	if err != nil {
+		return err
+	}
 	if err := s.migrateLegacyFirewallRules(tunnel, runtimePath); err != nil {
 		return err
 	}
@@ -248,6 +251,9 @@ func (s *Service) apply(tunnel config.Tunnel) error {
 func (s *Service) reconcileWarpRuntime(state config.State) error {
 	routes := warp.RoutesForState(state)
 	interfaceName := state.Warp.RuntimeInterface()
+	if err := validateTunnelInterfaceName(interfaceName); err != nil {
+		return fmt.Errorf("invalid WARP interface name: %w", err)
+	}
 	if len(routes) == 0 {
 		_ = exec.Command("awg-quick", "down", interfaceName).Run()
 		return nil
@@ -259,11 +265,13 @@ func (s *Service) reconcileWarpRuntime(state config.State) error {
 	if err != nil {
 		return err
 	}
-	runtimeDir := "/etc/amnezia/amneziawg"
-	if err := os.MkdirAll(runtimeDir, 0700); err != nil {
+	if err := os.MkdirAll(runtimeConfigDir, 0700); err != nil {
 		return err
 	}
-	runtimePath := filepath.Join(runtimeDir, interfaceName+".conf")
+	runtimePath, err := runtimeConfigPath(interfaceName)
+	if err != nil {
+		return err
+	}
 	if err := os.WriteFile(runtimePath, []byte(conf), 0600); err != nil {
 		return err
 	}

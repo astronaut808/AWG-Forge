@@ -151,15 +151,25 @@ state_tunnels() {
   local file="$1"
   [[ -f "$file" ]] || return 0
   awk '
-    /"id":/ { id=$2; gsub(/[",]/, "", id) }
-    /"interface_name":/ { iface=$2; gsub(/[",]/, "", iface) }
-    /"listen_port":/ { port=$2; gsub(/,/, "", port) }
-    /"ipv4_subnet":/ { subnet=$2; gsub(/[",]/, "", subnet) }
-    /"egress_mode":/ { egress=$2; gsub(/[",]/, "", egress) }
-    /"enabled":/ { enabled=$2; gsub(/,/, "", enabled) }
-    iface && port && subnet && enabled {
-      print id "|" iface "|" port "|" subnet "|" egress "|" enabled
-      id=iface=port=subnet=egress=enabled=""
+    /"tunnels": \[/ { in_tunnels=1; next }
+    in_tunnels && /^[[:space:]]*\]/ { exit }
+    !in_tunnels { next }
+    /^[[:space:]]*\{/ {
+      depth++
+      if (depth == 1) id=iface=port=subnet=egress=enabled=""
+      next
+    }
+    depth == 1 && /"id":/ { id=$2; gsub(/[",]/, "", id) }
+    depth == 1 && /"interface_name":/ { iface=$2; gsub(/[",]/, "", iface) }
+    depth == 1 && /"listen_port":/ { port=$2; gsub(/,/, "", port) }
+    depth == 1 && /"ipv4_subnet":/ { subnet=$2; gsub(/[",]/, "", subnet) }
+    depth == 1 && /"egress_mode":/ { egress=$2; gsub(/[",]/, "", egress) }
+    depth == 1 && /"enabled":/ { enabled=$2; gsub(/,/, "", enabled) }
+    /^[[:space:]]*\},?$/ {
+      if (depth == 1 && iface && port && subnet && enabled) {
+        print id "|" iface "|" port "|" subnet "|" egress "|" enabled
+      }
+      depth--
     }
   ' "$file"
 }
