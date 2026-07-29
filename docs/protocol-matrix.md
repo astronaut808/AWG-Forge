@@ -9,12 +9,37 @@ awg-forge is a launcher and manager for existing AmneziaWG implementations. It d
 | `awg_legacy_1_0` | Implemented | Renders AmneziaWG Legacy / 1.0 config fields: `Jc`, `Jmin`, `Jmax`, `S1`, `S2`, `H1`, `H2`, `H3`, `H4`. Defaults are generated for obfuscation, not WireGuard fallback. |
 | `awg_1_5` | Implemented | Adds `I1-I5` signature/masking packets to client configs. Defaults include the official DNS-like `I1` conversion packet plus small generated runtime-random signature packets for `I2-I5`. |
 | `awg_2_0` | Implemented | Uses `I1-I5`, adds `S3` and `S4`, supports `H1-H4` ranges, validates non-overlapping header ranges, and renders fresh tunnel/client configs. Defaults use a generated QUIC Initial-like `I1` CPS signature. `.conf` import has been validated on desktop and iOS clients with compatible AmneziaVPN builds. |
+| `awg_3_0` | Experimental | Disabled by default. Adds the upstream AWG 3 interface fields and a generated `HeaderProtectionKey`; the key is stored separately from public parameters and never returned by the API or support bundle. Use only the pinned experimental image below and import `.conf` in AmneziaVPN 5.0.0.5 or newer. QR and `vpn://` export are intentionally unavailable until their client format is verified. |
 
 ## Planned, Not Implemented
 
 | Profile | Status | Notes |
 | --- | --- | --- |
 | `custom` | Planned | Reserved for explicit user-provided config parameters after validation rules are clear. |
+
+## Experimental AWG 3.0
+
+AWG 3.0 is not the default profile and is not part of the standard release image. Build the explicitly pinned userspace image locally:
+
+```bash
+make docker-build-awg3
+```
+
+Set `AWG3_EXPERIMENTAL=true` in `.env`, then use `awg-forge:awg3-experimental` as the Compose image. That image sets its internal `AWG3_RUNTIME=true` capability; the standard image cannot expose AWG 3 merely by changing `.env`. The build pins `amneziawg-go` to `9f5d948bc72cc554791cfe0fb91527e4acfb6b79` and `amneziawg-tools` to `05434cab7d91bbbc607d18ec5fade91f4b83774c`; do not replace these references without a separate compatibility review.
+
+Confirm the locally built image before using it:
+
+```bash
+docker image inspect awg-forge:awg3-experimental --format '{{ index .Config.Labels "org.awg-forge.awg3-runtime" }}'
+```
+
+The result must be `true`.
+
+This local experimental image is outside the managed release-upgrade path. Rebuild it with the same command, then recreate the service with `docker compose up -d --force-recreate`; do not use `install.sh upgrade` for this local image.
+
+The profile renders the inherited AWG 2.0 fields plus `HeaderProtectionKey`, `ContentPaddingAddition`, `RekeyAfterTime`, `RekeyTimeout`, `RejectAfterTime`, `KeepaliveTimeout`, and `MaxHandshakeAttempts`. The optional numeric fields accept an unsigned `uint32` value or ascending `min-max` range. `HeaderProtectionKey` is a generated base64 32-byte secret and AWG 3 requires `S1-S4 >= 12`.
+
+AmneziaVPN 5.0.0.5 has stable AWG 3 support. AWG-Forge currently exposes only `.conf` import for this profile: its AmneziaVPN QR packing is still validated only for AWG 1.5/2.0 and must not advertise `protocol_version = "3"` until the client-side native JSON format is confirmed.
 
 ## Source Findings For AWG 2.0
 

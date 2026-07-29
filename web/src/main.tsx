@@ -37,7 +37,7 @@ type Modal =
   | { kind: "protocol"; tunnel: Tunnel }
   | { kind: "create-client"; tunnel: Tunnel }
   | { kind: "client-settings"; tunnel: Tunnel; client: Client }
-  | { kind: "client-config"; client: Client }
+  | { kind: "client-config"; tunnel: Tunnel; client: Client }
   | { kind: "delete-tunnel"; tunnel: Tunnel }
   | { kind: "maintenance" };
 
@@ -196,7 +196,7 @@ function App() {
         }
         if (confirm(m.actions.deleteTunnelConfirm(tunnel.name))) void runAction(m.actions.tunnelDeleted, () => api.deleteTunnel(tunnel.id));
       }}
-      onClientConfig={(client) => setModal({ kind: "client-config", client })}
+      onClientConfig={(client) => setModal({ kind: "client-config", tunnel, client })}
       onClientSettings={(client) => setModal({ kind: "client-settings", tunnel, client })}
       onClientToggle={(client) => {
         if (!client.enabled && client.traffic?.exceeded) {
@@ -532,7 +532,7 @@ function ModalContent({ modal, state, notify, close, reload, runAction }: {
   if (modal.kind === "protocol") return <ProtocolForm tunnel={modal.tunnel} runAction={runAction} />;
   if (modal.kind === "create-client") return <CreateClientForm tunnel={modal.tunnel} trafficLimitsEnabled={state.database.enabled} runAction={runAction} />;
   if (modal.kind === "client-settings") return <ClientSettingsForm client={modal.client} runAction={runAction} />;
-  if (modal.kind === "client-config") return <ClientConfigPanel client={modal.client} notify={notify} />;
+  if (modal.kind === "client-config") return <ClientConfigPanel client={modal.client} profile={modal.tunnel.profile} notify={notify} />;
   if (modal.kind === "delete-tunnel") return <DeleteTunnelConfirmation tunnel={modal.tunnel} close={close} runAction={runAction} />;
   return <MaintenanceCenter state={state} notify={notify} close={close} reload={reload} />;
 }
@@ -753,7 +753,7 @@ function ExpirationField({ current, keepCurrent = false }: { current?: string; k
   </>;
 }
 
-function ClientConfigPanel({ client, notify }: { client: Client; notify: (message: string) => void }) {
+function ClientConfigPanel({ client, profile, notify }: { client: Client; profile: string; notify: (message: string) => void }) {
   const { m } = useI18n();
   const awgQRURL = api.clientQRCodeURL(client.id);
   const notifyRef = useRef(notify);
@@ -833,6 +833,19 @@ function ClientConfigPanel({ client, notify }: { client: Client; notify: (messag
     } catch {
       notify(m.clientConfig.clipboardUnavailable);
     }
+  }
+
+  if (profile === "awg_3_0") {
+    return <PanelTitle title={m.clientConfig.title} subtitle={`${client.name} · ${client.address}`}>
+      <section class="config-option">
+        <div>
+          <h3>{m.clientConfig.importOptions}</h3>
+          <p>{m.clientConfig.awg3ConfOnly}</p>
+        </div>
+        <div class="config-actions"><button class="button primary" type="button" onClick={() => downloadConfig(client.id)}>{m.clientConfig.downloadConf}</button></div>
+      </section>
+      <p class="note">{m.clientConfig.secretWarning}</p>
+    </PanelTitle>;
   }
 
   return <PanelTitle title={m.clientConfig.title} subtitle={`${client.name} · ${client.address}`}>

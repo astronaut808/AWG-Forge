@@ -362,12 +362,28 @@ func (s *Service) UpdateProtocol(profileID string, params config.ProtocolParams)
 }
 
 func (s *Service) UpdateTunnelProtocol(tunnelID, profileID string, params config.ProtocolParams) error {
+	return s.updateTunnelProtocol(tunnelID, profileID, params, false)
+}
+
+func (s *Service) updateTunnelProtocol(tunnelID, profileID string, params config.ProtocolParams, regenerateSecrets bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p, ok := protocol.ByID(profileID)
 	if !ok {
 		return fmt.Errorf("unsupported protocol profile %q", profileID)
 	}
+	if !s.profileEnabled(profileID) {
+		return s.profileUnavailableError(profileID)
+	}
+	state, err := s.initLocked()
+	if err != nil {
+		return err
+	}
+	idx, ok := tunnelIndexByID(state, tunnelID)
+	if !ok {
+		return errors.New("tunnel not found")
+	}
+	params = cloneProtocolParams(params)
 	defaults, err := p.GenerateDefaults()
 	if err != nil {
 		return err
@@ -383,13 +399,15 @@ func (s *Service) UpdateTunnelProtocol(tunnelID, profileID string, params config
 	if err := p.Validate(params); err != nil {
 		return err
 	}
-	state, err := s.initLocked()
-	if err != nil {
-		return err
+	secrets := state.Tunnels[idx].ProtocolSecrets
+	if state.Tunnels[idx].ProtocolProfileID != profileID || regenerateSecrets {
+		secrets, err = protocol.GenerateSecrets(p)
+		if err != nil {
+			return err
+		}
 	}
-	idx, ok := tunnelIndexByID(state, tunnelID)
-	if !ok {
-		return errors.New("tunnel not found")
+	if err := protocol.ValidateSecrets(p, secrets); err != nil {
+		return err
 	}
 	previousState, err := cloneState(state)
 	if err != nil {
@@ -398,6 +416,7 @@ func (s *Service) UpdateTunnelProtocol(tunnelID, profileID string, params config
 	now := time.Now().UTC()
 	state.Tunnels[idx].ProtocolProfileID = profileID
 	state.Tunnels[idx].ProtocolParams = params
+	state.Tunnels[idx].ProtocolSecrets = secrets
 	state.Tunnels[idx].ConfigRevision++
 	state.Tunnels[idx].UpdatedAt = now
 	state.UpdatedAt = now
@@ -435,7 +454,29 @@ func (s *Service) RegenerateTunnelProtocol(tunnelID, profileID string) error {
 	if err != nil {
 		return err
 	}
-	return s.UpdateTunnelProtocol(tunnelID, profileID, params)
+	return s.updateTunnelProtocol(tunnelID, profileID, params, true)
+}
+
+func (s *Service) profileEnabled(profileID string) bool {
+	return !protocol.IsExperimental(profileID) || (s.cfg.AWG3Experimental && s.cfg.AWG3Runtime)
+}
+
+func (s *Service) profileUnavailableError(profileID string) error {
+	if !protocol.IsExperimental(profileID) {
+		return nil
+	}
+	if !s.cfg.AWG3Experimental {
+		return fmt.Errorf("protocol profile %q is experimental; set AWG3_EXPERIMENTAL=true", profileID)
+	}
+	return fmt.Errorf("protocol profile %q requires the AWG 3 experimental image", profileID)
+}
+
+func cloneProtocolParams(params config.ProtocolParams) config.ProtocolParams {
+	cloned := make(config.ProtocolParams, len(params))
+	for key, value := range params {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func tunnelAuditFields(tunnel config.Tunnel) map[string]any {

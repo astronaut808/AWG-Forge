@@ -99,6 +99,7 @@ export function dateTimeLocalToISO(value: string): string {
 export function profileTitle(profileID: string): string {
   if (profileID === "awg_1_5") return "AmneziaWG 1.5";
   if (profileID === "awg_2_0") return "AmneziaWG 2.0";
+  if (profileID === "awg_3_0") return "AmneziaWG 3.0 (experimental)";
   return "AmneziaWG Legacy / 1.0";
 }
 

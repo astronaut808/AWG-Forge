@@ -11,11 +11,12 @@ ARG AWG_FORGE_VERSION=dev
 ARG AWG_FORGE_COMMIT=unknown
 ARG AMNEZIAWG_GO_REF_OVERRIDE=
 ARG AMNEZIAWG_TOOLS_REF_OVERRIDE=
+ARG AWG3_EXPERIMENTAL=false
 RUN . ./build/amneziawg.refs \
   && if [ -n "$AMNEZIAWG_GO_REF_OVERRIDE" ]; then AMNEZIAWG_GO_REF="$AMNEZIAWG_GO_REF_OVERRIDE"; fi \
   && if [ -n "$AMNEZIAWG_TOOLS_REF_OVERRIDE" ]; then AMNEZIAWG_TOOLS_REF="$AMNEZIAWG_TOOLS_REF_OVERRIDE"; fi \
   && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
-  -ldflags="-s -w -X github.com/astronaut808/awg-forge/internal/buildinfo.Version=$AWG_FORGE_VERSION -X github.com/astronaut808/awg-forge/internal/buildinfo.Commit=$AWG_FORGE_COMMIT -X github.com/astronaut808/awg-forge/internal/buildinfo.AmneziaWGGoRef=$AMNEZIAWG_GO_REF -X github.com/astronaut808/awg-forge/internal/buildinfo.AmneziaWGToolsRef=$AMNEZIAWG_TOOLS_REF" \
+  -ldflags="-s -w -X github.com/astronaut808/awg-forge/internal/buildinfo.Version=$AWG_FORGE_VERSION -X github.com/astronaut808/awg-forge/internal/buildinfo.Commit=$AWG_FORGE_COMMIT -X github.com/astronaut808/awg-forge/internal/buildinfo.AmneziaWGGoRef=$AMNEZIAWG_GO_REF -X github.com/astronaut808/awg-forge/internal/buildinfo.AmneziaWGToolsRef=$AMNEZIAWG_TOOLS_REF -X github.com/astronaut808/awg-forge/internal/buildinfo.AWG3Runtime=$AWG3_EXPERIMENTAL" \
   -o /out/awg-forge ./cmd/awg-forge
 
 FROM golang:1.26.5-bookworm AS awg-go-builder
@@ -46,6 +47,7 @@ RUN make -C src install WITH_WGQUICK=yes WITH_SYSTEMDUNITS=no WITH_BASHCOMPLETIO
 FROM debian:bookworm-slim
 ARG AWG_FORGE_VERSION=dev
 ARG AWG_FORGE_COMMIT=unknown
+ARG AWG3_EXPERIMENTAL=false
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash ca-certificates dumb-init iproute2 iptables nftables procps openresolv \
   && rm -rf /var/lib/apt/lists/*
@@ -59,7 +61,8 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
 LABEL org.opencontainers.image.title="awg-forge" \
       org.opencontainers.image.version=$AWG_FORGE_VERSION \
       org.opencontainers.image.revision=$AWG_FORGE_COMMIT \
-      org.awg-forge.amneziawg-update-mode="manual"
+      org.awg-forge.amneziawg-update-mode="manual" \
+      org.awg-forge.awg3-runtime=$AWG3_EXPERIMENTAL
 ENV CONFIG_DIR=/etc/awg-forge \
     AWG_FORGE_VERSION=$AWG_FORGE_VERSION \
     AWG_FORGE_COMMIT=$AWG_FORGE_COMMIT \

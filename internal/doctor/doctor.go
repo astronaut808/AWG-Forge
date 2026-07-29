@@ -15,6 +15,7 @@ import (
 	"github.com/astronaut808/awg-forge/internal/app"
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/firewall"
+	"github.com/astronaut808/awg-forge/internal/protocol"
 	"github.com/astronaut808/awg-forge/internal/render"
 	"github.com/astronaut808/awg-forge/internal/sqldb"
 	"github.com/astronaut808/awg-forge/internal/webtls"
@@ -519,14 +520,15 @@ type awgPeer struct {
 
 func awgShow(interfaceName string) (awgInterface, error) {
 	out, err := exec.Command("awg", "show", interfaceName).CombinedOutput()
+	output := protocol.SanitizeRuntimeOutput(string(out))
 	if err != nil {
-		msg := strings.TrimSpace(string(out))
+		msg := strings.TrimSpace(output)
 		if msg == "" {
 			msg = err.Error()
 		}
 		return awgInterface{}, fmt.Errorf("awg show %s failed: %s", interfaceName, msg)
 	}
-	return parseAWGShow(string(out)), nil
+	return parseAWGShow(output), nil
 }
 
 var listenPortRE = regexp.MustCompile(`^listening port:\s+([0-9]+)$`)

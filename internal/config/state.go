@@ -14,6 +14,7 @@ type State struct {
 }
 
 type ProtocolParams map[string]string
+type ProtocolSecrets map[string]string
 
 const (
 	EgressWAN  = "wan"
@@ -57,30 +58,31 @@ func (w Warp) Registered() bool {
 }
 
 type Tunnel struct {
-	ID                string         `json:"id"`
-	Name              string         `json:"name"`
-	InterfaceName     string         `json:"interface_name"`
-	EgressMode        string         `json:"egress_mode,omitempty"`
-	Enabled           bool           `json:"enabled"`
-	ListenPort        int            `json:"listen_port"`
-	ServerHost        string         `json:"server_host,omitempty"`
-	ServerAddress     string         `json:"server_address"`
-	IPv4Subnet        string         `json:"ipv4_subnet"`
-	DNS               string         `json:"dns"`
-	AllowedIPs        string         `json:"allowed_ips"`
-	Keepalive         int            `json:"persistent_keepalive"`
-	MTU               int            `json:"mtu"`
-	ServerPrivateKey  string         `json:"server_private_key"`
-	ServerPublicKey   string         `json:"server_public_key"`
-	ProtocolProfileID string         `json:"protocol_profile_id"`
-	ProtocolParams    ProtocolParams `json:"protocol_params"`
-	ConfigRevision    int            `json:"config_revision"`
-	Clients           []Client       `json:"clients"`
-	LastRenderAt      time.Time      `json:"last_render_at,omitempty"`
-	LastApplyAt       time.Time      `json:"last_apply_at,omitempty"`
-	LastApplyError    string         `json:"last_apply_error,omitempty"`
-	CreatedAt         time.Time      `json:"created_at"`
-	UpdatedAt         time.Time      `json:"updated_at"`
+	ID                string          `json:"id"`
+	Name              string          `json:"name"`
+	InterfaceName     string          `json:"interface_name"`
+	EgressMode        string          `json:"egress_mode,omitempty"`
+	Enabled           bool            `json:"enabled"`
+	ListenPort        int             `json:"listen_port"`
+	ServerHost        string          `json:"server_host,omitempty"`
+	ServerAddress     string          `json:"server_address"`
+	IPv4Subnet        string          `json:"ipv4_subnet"`
+	DNS               string          `json:"dns"`
+	AllowedIPs        string          `json:"allowed_ips"`
+	Keepalive         int             `json:"persistent_keepalive"`
+	MTU               int             `json:"mtu"`
+	ServerPrivateKey  string          `json:"server_private_key"`
+	ServerPublicKey   string          `json:"server_public_key"`
+	ProtocolProfileID string          `json:"protocol_profile_id"`
+	ProtocolParams    ProtocolParams  `json:"protocol_params"`
+	ProtocolSecrets   ProtocolSecrets `json:"protocol_secrets,omitempty"`
+	ConfigRevision    int             `json:"config_revision"`
+	Clients           []Client        `json:"clients"`
+	LastRenderAt      time.Time       `json:"last_render_at,omitempty"`
+	LastApplyAt       time.Time       `json:"last_apply_at,omitempty"`
+	LastApplyError    string          `json:"last_apply_error,omitempty"`
+	CreatedAt         time.Time       `json:"created_at"`
+	UpdatedAt         time.Time       `json:"updated_at"`
 }
 
 type Client struct {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/firewall"
+	"github.com/astronaut808/awg-forge/internal/protocol"
 	"github.com/astronaut808/awg-forge/internal/warp"
 )
 
@@ -333,7 +334,7 @@ func runtimeAWGShow(interfaceName string) (runtimeInterface, error) {
 	if err != nil {
 		return runtimeInterface{}, fmt.Errorf("awg show %s failed: %w", interfaceName, err)
 	}
-	return parseRuntimeAWGShow(string(out)), nil
+	return parseRuntimeAWGShow(protocol.SanitizeRuntimeOutput(string(out))), nil
 }
 
 var handshakeAgePartRE = regexp.MustCompile(`(?i)(\d+)\s+(day|hour|minute|second)s?`)

@@ -74,6 +74,7 @@ func TestSanitizeTextRedactsRuntimeKeys(t *testing.T) {
 	got := sanitizeText(`interface: awg0
   public key: server-public-key
   private key: server-private-key
+  header protection key: awg3-header-protection-key
 
 peer: client-public-key
   preshared key: client-psk
@@ -81,13 +82,31 @@ peer: client-public-key
   h1: 123456
   i1: <r 2><b 0x1234>
 `)
-	for _, secret := range []string{"server-public-key", "server-private-key", "client-public-key", "client-psk", "123456", "0x1234"} {
+	for _, secret := range []string{"server-public-key", "server-private-key", "awg3-header-protection-key", "client-public-key", "client-psk", "123456", "0x1234"} {
 		if strings.Contains(got, secret) {
 			t.Fatalf("sanitizeText leaked %q in:\n%s", secret, got)
 		}
 	}
 	if !strings.Contains(got, "sha256:") {
 		t.Fatalf("sanitizeText should keep key fingerprints:\n%s", got)
+	}
+}
+
+func TestGenerateRedactsAWG3HeaderProtectionKey(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.AWG3Experimental = true
+	cfg.AWG3Runtime = true
+	svc := app.New(cfg)
+	tunnel, err := svc.CreateTunnel("awg_3_0", "awg30", "10.30.0.0/24", 51840)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := Generate(context.Background(), cfg, svc, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secret := tunnel.ProtocolSecrets["HeaderProtectionKey"]; strings.Contains(unzipText(t, bundle.Data), secret) {
+		t.Fatal("support bundle leaked the AWG3 header protection key")
 	}
 }
 

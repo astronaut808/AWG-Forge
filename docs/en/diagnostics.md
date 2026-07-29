@@ -80,7 +80,7 @@ docker exec awg-forge awg-forge doctor
 docker exec awg-forge awg show <interface>
 ```
 
-Do not publish full `awg show <interface> dump` output without redaction: it can contain the interface private key and preshared keys. Runtime output is useful for peers, endpoints, handshakes, and counters. AWG-Forge is the source for the selected profile, stale-config status, and whether a fresh client config is needed after client-facing tunnel changes. For AmneziaWG 2.0, use the `.conf` import fallback when the target client has compatibility limitations.
+Do not publish raw `awg show` output without redaction. It can contain interface private keys, preshared keys, and AWG 3 `HeaderProtectionKey`; `dump` output is especially sensitive. Runtime output is useful for peers, endpoints, handshakes, and counters. AWG-Forge is the source for the selected profile, stale-config status, and whether a fresh client config is needed after client-facing tunnel changes. For AmneziaWG 2.0 or experimental 3.0, use `.conf` import when the target client has compatibility limitations.
 
 Record the network, time, client version, and packet-capture result before changing settings.
 

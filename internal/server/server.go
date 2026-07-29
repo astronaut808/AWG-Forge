@@ -28,6 +28,7 @@ import (
 	"github.com/astronaut808/awg-forge/internal/buildinfo"
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/doctor"
+	"github.com/astronaut808/awg-forge/internal/protocol"
 	"github.com/astronaut808/awg-forge/internal/sqldb"
 	"github.com/astronaut808/awg-forge/internal/support"
 	"github.com/astronaut808/awg-forge/internal/updates"
@@ -1156,19 +1157,28 @@ func (w *web) clientQRAPI(rw http.ResponseWriter, r *http.Request, id string) {
 		writeError(rw, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	conf, client, err := w.service.ClientConfigForDownload(id)
+	tunnel, err := w.service.ClientExportTunnel(id)
 	if err != nil {
 		http.NotFound(rw, r)
 		return
 	}
-	code, err := qr.Encode(conf, qr.L, qr.Auto)
+	if !supportsQRAndVPNExport(tunnel) {
+		writeError(rw, http.StatusConflict, "AWG 3 experimental profiles support .conf export only")
+		return
+	}
+	ctx, err := w.service.ClientExportContext(id)
+	if err != nil {
+		http.NotFound(rw, r)
+		return
+	}
+	code, err := qr.Encode(ctx.RenderedConf, qr.L, qr.Auto)
 	if err != nil {
 		w.audit("warn", "client.qr.rejected", "client QR generation failed", map[string]any{"client_id": id}, err)
 		writeError(rw, http.StatusBadRequest, "client config is too large for QR")
 		return
 	}
 	w.audit("info", "client.qr.viewed", "client config QR viewed", map[string]any{"client_id": id}, nil)
-	if err := writeQRCodePNG(rw, code, configFilename(client)+".png"); err != nil {
+	if err := writeQRCodePNG(rw, code, configFilename(ctx.Client)+".png"); err != nil {
 		w.audit("warn", "client.qr.write_failed", "client QR response write failed", map[string]any{"client_id": id}, err)
 	}
 }
@@ -1176,6 +1186,15 @@ func (w *web) clientQRAPI(rw http.ResponseWriter, r *http.Request, id string) {
 func (w *web) clientAmneziaVPNQRAPI(rw http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodGet {
 		writeError(rw, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	tunnel, err := w.service.ClientExportTunnel(id)
+	if err != nil {
+		writeError(rw, http.StatusNotFound, "not found")
+		return
+	}
+	if !supportsQRAndVPNExport(tunnel) {
+		writeError(rw, http.StatusConflict, "AWG 3 experimental profiles support .conf export only")
 		return
 	}
 	ctx, err := w.service.ClientExportContext(id)
@@ -1213,6 +1232,15 @@ func (w *web) clientAmneziaVPNQRAPI(rw http.ResponseWriter, r *http.Request, id 
 func (w *web) clientAmneziaVPNQRSeriesAPI(rw http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodGet {
 		writeError(rw, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	tunnel, err := w.service.ClientExportTunnel(id)
+	if err != nil {
+		writeError(rw, http.StatusNotFound, "not found")
+		return
+	}
+	if !supportsQRAndVPNExport(tunnel) {
+		writeError(rw, http.StatusConflict, "AWG 3 experimental profiles support .conf export only")
 		return
 	}
 	if _, err := w.service.ClientExportContext(id); err != nil {
@@ -1282,6 +1310,15 @@ func (w *web) clientImportKeyAPI(rw http.ResponseWriter, r *http.Request, id str
 		writeError(rw, http.StatusForbidden, "forbidden")
 		return
 	}
+	tunnel, err := w.service.ClientExportTunnel(id)
+	if err != nil {
+		writeError(rw, http.StatusNotFound, "not found")
+		return
+	}
+	if !supportsQRAndVPNExport(tunnel) {
+		writeError(rw, http.StatusConflict, "AWG 3 experimental profiles support .conf export only")
+		return
+	}
 	key, client, err := w.service.ClientImportKey(id)
 	if err != nil {
 		writeError(rw, http.StatusNotFound, "not found")
@@ -1332,13 +1369,25 @@ func (w *web) publicState(ctx context.Context, state config.State) map[string]an
 		"tls":                 publicTLS(w.tls, w.cfg),
 		"build":               buildinfo.Current(),
 		"published_udp_ports": w.cfg.PublishedUDPPorts,
-		"profiles": []map[string]any{
-			profileMeta("awg_legacy_1_0", "1.0", "Legacy", true, state),
-			profileMeta("awg_1_5", "1.5", "Modern", true, state),
-			profileMeta("awg_2_0", "2.0", "Modern", true, state),
-		},
-		"tunnels": tunnels,
+		"profiles":            availableProfiles(w.cfg.AWG3Experimental && w.cfg.AWG3Runtime, state),
+		"tunnels":             tunnels,
 	}
+}
+
+func availableProfiles(awg3Experimental bool, state config.State) []map[string]any {
+	profiles := []map[string]any{
+		profileMeta("awg_legacy_1_0", "1.0", "Legacy", true, state),
+		profileMeta("awg_1_5", "1.5", "Modern", true, state),
+		profileMeta("awg_2_0", "2.0", "Modern", true, state),
+	}
+	if awg3Experimental {
+		profiles = append(profiles, profileMeta("awg_3_0", "3.0", "Experimental", true, state))
+	}
+	return profiles
+}
+
+func supportsQRAndVPNExport(tunnel config.Tunnel) bool {
+	return !protocol.IsExperimental(tunnel.ProtocolProfileID)
 }
 
 func (w *web) clientTrafficSummary(ctx context.Context, state config.State) map[string]map[string]clientTrafficSummary {
