@@ -48,6 +48,17 @@ func TestLogLevelValidation(t *testing.T) {
 	})
 }
 
+func TestAWG3ExperimentalFlag(t *testing.T) {
+	t.Setenv("AWG3_EXPERIMENTAL", "true")
+	cfg, err := config.FromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.AWG3Experimental {
+		t.Fatal("AWG3_EXPERIMENTAL=true was not loaded")
+	}
+}
+
 func TestTLSModeAndTrustedProxyValidation(t *testing.T) {
 	t.Run("rejects unknown TLS mode", func(t *testing.T) {
 		t.Setenv("WEBUI_TLS_MODE", "acme-domain")

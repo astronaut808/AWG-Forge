@@ -16,6 +16,7 @@ The main example is [.env.example](../../.env.example).
 - `WEBUI_TRUSTED_PROXY_CIDRS`: comma-separated CIDRs allowed to supply forwarded headers. Required when `WEBUI_TRUST_PROXY_HEADERS=true`.
 - `EXTERNAL_INTERFACE`: server egress interface, often `eth0` or `ens3`. In bridge networking this is usually `eth0` inside the container.
 - `APPLY_CONFIG`: when `true`, awg-forge applies runtime tunnel changes with AmneziaWG tools.
+- `AWG3_EXPERIMENTAL`: enables the experimental AmneziaWG 3.0 profile. Defaults to `false`; enable it only with the matching experimental image described in [the protocol matrix](../protocol-matrix.md).
 - `PUBLISHED_UDP_PORTS`: published Docker UDP ports/ranges, for example `51820-51840,7443`.
 - `TUNNEL_UDP_PORT_RANGE`: range used for automatic tunnel port selection. Defaults to `30000-49999`. In bridge mode, automatic selection is limited to the overlap with `PUBLISHED_UDP_PORTS`.
 - `AUDIT_LOG_ENABLED`: enables the safe audit log. Defaults to `true`.
@@ -38,6 +39,8 @@ New installs keep runtime settings in `.env` and tunnel settings in `state.json`
 During a fresh install, `install.sh` runs a one-shot `awg-forge init` container before starting the service. That command creates `data/state.json` with the selected first tunnel. After that, `docker compose up -d` starts from ready state, and tunnel settings are managed from the Web UI/API and persisted in `state.json`.
 
 The installer asks for the protocol profile before tunnel defaults, so profile-specific defaults stay aligned. Pressing Enter on the profile question selects AWG 2.0. The installer selects a free UDP port from `30000-49999` by default; the profile ports below remain the defaults for manual selection:
+
+The installer intentionally does not offer AWG 3.0. AWG 2.0 remains the supported default profile.
 
 | Profile | Tunnel name | Port | Subnet |
 | --- | --- | --- | --- |

@@ -1,0 +1,8 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Fixture used to verify AWG3 header-key redaction"
+regexes = [
+  '''awg3-header-protection-key''',
+]

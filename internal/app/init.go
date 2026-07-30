@@ -268,17 +268,28 @@ func (s *Service) repairProtocolParams(tunnel *config.Tunnel) (bool, error) {
 	if !ok {
 		return false, fmt.Errorf("unsupported protocol profile %q", tunnel.ProtocolProfileID)
 	}
-	if err := p.Validate(tunnel.ProtocolParams); err == nil {
+	if !s.profileEnabled(tunnel.ProtocolProfileID) {
+		return false, s.profileUnavailableError(tunnel.ProtocolProfileID)
+	}
+	if err := p.Validate(tunnel.ProtocolParams); err == nil && protocol.ValidateSecrets(p, tunnel.ProtocolSecrets) == nil {
 		return false, nil
 	}
 	params, err := p.GenerateDefaults()
 	if err != nil {
 		return false, err
 	}
+	secrets, err := protocol.GenerateSecrets(p)
+	if err != nil {
+		return false, err
+	}
 	if err := p.Validate(params); err != nil {
 		return false, err
 	}
+	if err := protocol.ValidateSecrets(p, secrets); err != nil {
+		return false, err
+	}
 	tunnel.ProtocolParams = params
+	tunnel.ProtocolSecrets = secrets
 	tunnel.ConfigRevision++
 	tunnel.UpdatedAt = time.Now().UTC()
 	return true, nil

@@ -76,6 +76,9 @@ func (s *Service) SuggestTunnel(profileID string) (TunnelSuggestion, error) {
 	if _, ok := protocol.ByID(profileID); !ok {
 		return TunnelSuggestion{}, errors.New("unknown protocol profile")
 	}
+	if !s.profileEnabled(profileID) {
+		return TunnelSuggestion{}, s.profileUnavailableError(profileID)
+	}
 	state, err := s.initLocked()
 	if err != nil {
 		return TunnelSuggestion{}, err
@@ -180,6 +183,8 @@ func SuggestedTunnelSpec(profileID string) (name string, port int, subnet string
 		return "awg15", 51825, "10.15.0.0/24"
 	case "awg_2_0":
 		return "awg20", 51830, "10.20.0.0/24"
+	case "awg_3_0":
+		return "awg30", 51840, "10.30.0.0/24"
 	default:
 		return "awg0", 51820, "10.8.0.0/24"
 	}
@@ -650,6 +655,9 @@ func (s *Service) newTunnel(spec tunnelSpec) (config.Tunnel, error) {
 	if !ok {
 		return config.Tunnel{}, fmt.Errorf("unsupported protocol profile %q", spec.ProfileID)
 	}
+	if !s.profileEnabled(spec.ProfileID) {
+		return config.Tunnel{}, s.profileUnavailableError(spec.ProfileID)
+	}
 	priv, pub, err := keys.PrivateKey()
 	if err != nil {
 		return config.Tunnel{}, err
@@ -658,7 +666,14 @@ func (s *Service) newTunnel(spec tunnelSpec) (config.Tunnel, error) {
 	if err != nil {
 		return config.Tunnel{}, err
 	}
+	secrets, err := protocol.GenerateSecrets(p)
+	if err != nil {
+		return config.Tunnel{}, err
+	}
 	if err := p.Validate(params); err != nil {
+		return config.Tunnel{}, err
+	}
+	if err := protocol.ValidateSecrets(p, secrets); err != nil {
 		return config.Tunnel{}, err
 	}
 	normalizedSubnet, _, err := normalizeIPv4CIDR(spec.IPv4Subnet)
@@ -687,6 +702,7 @@ func (s *Service) newTunnel(spec tunnelSpec) (config.Tunnel, error) {
 		ServerPublicKey:   pub,
 		ProtocolProfileID: spec.ProfileID,
 		ProtocolParams:    params,
+		ProtocolSecrets:   secrets,
 		ConfigRevision:    1,
 		Clients:           []config.Client{},
 		CreatedAt:         now,

@@ -7,6 +7,7 @@ import (
 	"github.com/astronaut808/awg-forge/internal/app"
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/firewall"
+	"github.com/astronaut808/awg-forge/internal/protocol"
 	"github.com/astronaut808/awg-forge/internal/sqldb"
 )
 
@@ -202,6 +203,12 @@ func orderedParams(profileID string, params config.ProtocolParams) []map[string]
 }
 
 func protocolParamKeys(profileID string) []string {
+	if profile, ok := protocol.ByID(profileID); ok {
+		if keys := protocol.ParamKeys(profile); len(keys) != 0 {
+			sort.Strings(keys)
+			return keys
+		}
+	}
 	keys := []string{"Jc", "Jmin", "Jmax", "S1", "S2", "H1", "H2", "H3", "H4"}
 	switch profileID {
 	case "awg_1_5":

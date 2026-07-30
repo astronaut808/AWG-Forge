@@ -79,6 +79,30 @@ func TestRepairDeletesDuplicatesAndInsertsOneRule(t *testing.T) {
 	}
 }
 
+func TestRepairReplacesConflictingManagedRule(t *testing.T) {
+	state := config.State{Tunnels: []config.Tunnel{testState().Tunnels[0]}}
+	rules := ExpectedRules(testConfig(), state)
+	runner := &fakeRunner{
+		counts:    map[string]int{},
+		conflicts: map[string]int{rules[0].Spec(): 1},
+	}
+	report, err := Repair(testConfig(), state, runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runner.managedDeletes != 1 {
+		t.Fatalf("managed deletes = %d, want 1", runner.managedDeletes)
+	}
+	if got := runner.counts[rules[0].Spec()]; got != 1 {
+		t.Fatalf("repaired rule count = %d, want 1", got)
+	}
+	for _, item := range report.Results {
+		if item.Status != "ok" {
+			t.Fatalf("%s status = %s, want ok", item.Rule, item.Status)
+		}
+	}
+}
+
 func TestExpectedRulesAreScopedAndOwned(t *testing.T) {
 	tunnel := testState().Tunnels[0]
 	rules := ExpectedRulesForTunnel("eth0", tunnel)
@@ -152,6 +176,32 @@ func TestIPTablesRunnerCountsTaggedRuleDespiteCanonicalOutput(t *testing.T) {
 	}
 	if count != 1 || outputCalls != 1 || runCalls != 1 {
 		t.Fatalf("count=%d output=%d run=%d, want 1, 1, 1", count, outputCalls, runCalls)
+	}
+}
+
+func TestIPTablesRunnerRemovesOnlyConflictingTaggedRule(t *testing.T) {
+	rule := ExpectedRulesForTunnel("eth0", testState().Tunnels[0])[2]
+	comment, ok := ruleCommentFromArgs(rule.Args)
+	if !ok {
+		t.Fatal("managed rule has no comment")
+	}
+	output := "-A FORWARD -i awg0 -o eth0 -m comment --comment " + comment + " -j ACCEPT\n" +
+		"-A FORWARD -i awg15 -o eth0 -m comment --comment awg-forge-other-forward-egress -j ACCEPT\n"
+	var got []string
+	runner := IPTablesRunner{
+		output: func(args ...string) ([]byte, error) {
+			return []byte(output), nil
+		},
+		run: func(args ...string) error {
+			got = append(got, strings.Join(args, " "))
+			return nil
+		},
+	}
+	if err := runner.RemoveManaged(rule); err != nil {
+		t.Fatal(err)
+	}
+	if want := "-D FORWARD -i awg0 -o eth0 -m comment --comment " + comment + " -j ACCEPT"; len(got) != 1 || got[0] != want {
+		t.Fatalf("delete calls = %#v, want %q", got, want)
 	}
 }
 
@@ -278,6 +328,31 @@ func TestRemoveRulesForTunnelDoesNotRemoveLegacyRules(t *testing.T) {
 	}
 }
 
+func TestRemoveRulesForTunnelRemovesConflictingManagedRules(t *testing.T) {
+	tunnel := testState().Tunnels[0]
+	rules := ExpectedRulesForTunnel("eth0", tunnel)
+	runner := &fakeRunner{
+		counts:    map[string]int{},
+		conflicts: map[string]int{rules[2].Spec(): 1},
+	}
+	for i, rule := range rules {
+		if i != 2 {
+			runner.counts[rule.Spec()] = 1
+		}
+	}
+	if err := RemoveRulesForTunnel(testConfig(), tunnel, runner); err != nil {
+		t.Fatal(err)
+	}
+	if runner.managedDeletes != 1 {
+		t.Fatalf("managed deletes = %d, want 1", runner.managedDeletes)
+	}
+	for _, rule := range rules {
+		if got := runner.counts[rule.Spec()]; got != 0 {
+			t.Fatalf("managed rule %s count = %d, want 0", rule.Spec(), got)
+		}
+	}
+}
+
 func TestMigrateLegacyRulesKeepsLegacyRulesWhenManagedSetupFails(t *testing.T) {
 	tunnel := testState().Tunnels[0]
 	runner := &failingInsertRunner{fakeRunner: fakeRunner{counts: map[string]int{}}}
@@ -311,9 +386,11 @@ func TestRepairDoesNothingWhenApplyDisabled(t *testing.T) {
 }
 
 type fakeRunner struct {
-	counts  map[string]int
-	inserts int
-	deletes int
+	counts         map[string]int
+	conflicts      map[string]int
+	inserts        int
+	deletes        int
+	managedDeletes int
 }
 
 type orderedRunner struct {
@@ -344,6 +421,10 @@ func (r *orderedRunner) Insert(rule Rule) error {
 }
 
 func (r fakeRunner) Count(rule Rule) (int, error) {
+	if r.conflicts[rule.Spec()] > 0 {
+		comment, _ := ruleCommentFromArgs(rule.Args)
+		return 0, &managedRuleConflictError{comment: comment}
+	}
 	return r.counts[rule.Spec()], nil
 }
 
@@ -353,6 +434,15 @@ func (r *fakeRunner) Delete(rule Rule) error {
 		r.counts[key]--
 	}
 	r.deletes++
+	return nil
+}
+
+func (r *fakeRunner) RemoveManaged(rule Rule) error {
+	key := rule.Spec()
+	if r.conflicts[key] > 0 {
+		r.conflicts[key]--
+	}
+	r.managedDeletes++
 	return nil
 }
 

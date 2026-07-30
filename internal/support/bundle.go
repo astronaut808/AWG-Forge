@@ -523,7 +523,7 @@ func doctorText(results []doctor.Result) string {
 }
 
 var (
-	keyLineRE       = regexp.MustCompile(`(?m)^(\s*(?:private key|preshared key):\s+).+$`)
+	keyLineRE       = regexp.MustCompile(`(?mi)^(\s*(?:private key|preshared key|header protection key):\s+).+$`)
 	protocolParamRE = regexp.MustCompile(`(?mi)^(\s*(?:jc|jmin|jmax|s[1-4]|h[1-4]|i[1-5]):\s+).+$`)
 	pubKeyLineRE    = regexp.MustCompile(`(?m)^(\s*(?:public key|peer):\s+)(\S+).*$`)
 )

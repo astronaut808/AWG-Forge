@@ -13,6 +13,7 @@ import (
 
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/firewall"
+	"github.com/astronaut808/awg-forge/internal/protocol"
 	"github.com/astronaut808/awg-forge/internal/warp"
 )
 
@@ -231,7 +232,7 @@ func (s *Service) apply(tunnel config.Tunnel) error {
 		return err
 	}
 	if err := exec.Command("ip", "link", "show", tunnel.InterfaceName).Run(); err != nil {
-		if err := runAWGQuick("up", tunnel.InterfaceName); err != nil {
+		if err := runAWGQuickForProfile(tunnel.ProtocolProfileID, "up", tunnel.InterfaceName); err != nil {
 			return err
 		}
 		return s.ensureFirewallRules(tunnel)
@@ -276,7 +277,7 @@ func (s *Service) reconcileWarpRuntime(state config.State) error {
 		return err
 	}
 	_ = exec.Command("awg-quick", "down", interfaceName).Run()
-	if err := runAWGQuick("up", interfaceName); err != nil {
+	if err := runAWGQuickWithUserspace(s.cfg.AWG3Experimental && s.cfg.AWG3Runtime, "up", interfaceName); err != nil {
 		return err
 	}
 	return nil
@@ -333,7 +334,7 @@ func runtimeAWGShow(interfaceName string) (runtimeInterface, error) {
 	if err != nil {
 		return runtimeInterface{}, fmt.Errorf("awg show %s failed: %w", interfaceName, err)
 	}
-	return parseRuntimeAWGShow(string(out)), nil
+	return parseRuntimeAWGShow(protocol.SanitizeRuntimeOutput(string(out))), nil
 }
 
 var handshakeAgePartRE = regexp.MustCompile(`(?i)(\d+)\s+(day|hour|minute|second)s?`)
@@ -509,11 +510,55 @@ func byteDelta(before, after uint64) uint64 {
 }
 
 func runAWGQuick(args ...string) error {
-	err := exec.Command("awg-quick", args...).Run()
+	return runAWGQuickWithUserspace(false, args...)
+}
+
+func runAWGQuickForProfile(profileID string, args ...string) error {
+	return runAWGQuickWithUserspace(profileID == "awg_3_0", args...)
+}
+
+func runAWGQuickWithUserspace(forceUserspace bool, args ...string) error {
+	cmd := exec.Command("awg-quick", args...)
+	if forceUserspace {
+		cmd.Env = append(os.Environ(), "AWG_QUICK_FORCE_USERSPACE=1")
+	}
+	out, err := cmd.CombinedOutput()
 	if err != nil {
+		if detail := sanitizeAWGQuickFailure(string(out)); detail != "" {
+			return fmt.Errorf("awg-quick %s failed: %w: %s", strings.Join(args, " "), err, detail)
+		}
 		return fmt.Errorf("awg-quick %s failed: %w", strings.Join(args, " "), err)
 	}
 	return nil
+}
+
+var (
+	awgQuickSecretLineRE = regexp.MustCompile(`(?im)^\s*(?:privatekey|presharedkey|headerprotectionkey)\s*=.*$|^\s*(?:private key|preshared key|header protection key):.*$`)
+	awgQuickBase64KeyRE  = regexp.MustCompile(`\b[A-Za-z0-9+/]{43}=`)
+)
+
+func sanitizeAWGQuickFailure(output string) string {
+	output = protocol.SanitizeRuntimeOutput(output)
+	output = awgQuickSecretLineRE.ReplaceAllString(output, "")
+	output = awgQuickBase64KeyRE.ReplaceAllString(output, "<redacted>")
+
+	lines := strings.Split(output, "\n")
+	filtered := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "[#]") {
+			continue
+		}
+		filtered = append(filtered, line)
+	}
+	if len(filtered) > 4 {
+		filtered = filtered[len(filtered)-4:]
+	}
+	detail := strings.Join(filtered, "; ")
+	if len(detail) > 512 {
+		return detail[:512] + "..."
+	}
+	return detail
 }
 
 func runtimeConfigHasLegacyFirewallRules(path string, tunnel config.Tunnel) (bool, error) {

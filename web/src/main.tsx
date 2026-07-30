@@ -37,7 +37,7 @@ type Modal =
   | { kind: "protocol"; tunnel: Tunnel }
   | { kind: "create-client"; tunnel: Tunnel }
   | { kind: "client-settings"; tunnel: Tunnel; client: Client }
-  | { kind: "client-config"; client: Client }
+  | { kind: "client-config"; tunnel: Tunnel; client: Client }
   | { kind: "delete-tunnel"; tunnel: Tunnel }
   | { kind: "maintenance" };
 
@@ -196,7 +196,7 @@ function App() {
         }
         if (confirm(m.actions.deleteTunnelConfirm(tunnel.name))) void runAction(m.actions.tunnelDeleted, () => api.deleteTunnel(tunnel.id));
       }}
-      onClientConfig={(client) => setModal({ kind: "client-config", client })}
+      onClientConfig={(client) => setModal({ kind: "client-config", tunnel, client })}
       onClientSettings={(client) => setModal({ kind: "client-settings", tunnel, client })}
       onClientToggle={(client) => {
         if (!client.enabled && client.traffic?.exceeded) {
@@ -532,7 +532,7 @@ function ModalContent({ modal, state, notify, close, reload, runAction }: {
   if (modal.kind === "protocol") return <ProtocolForm tunnel={modal.tunnel} runAction={runAction} />;
   if (modal.kind === "create-client") return <CreateClientForm tunnel={modal.tunnel} trafficLimitsEnabled={state.database.enabled} runAction={runAction} />;
   if (modal.kind === "client-settings") return <ClientSettingsForm client={modal.client} runAction={runAction} />;
-  if (modal.kind === "client-config") return <ClientConfigPanel client={modal.client} notify={notify} />;
+  if (modal.kind === "client-config") return <ClientConfigPanel client={modal.client} profile={modal.tunnel.profile} notify={notify} />;
   if (modal.kind === "delete-tunnel") return <DeleteTunnelConfirmation tunnel={modal.tunnel} close={close} runAction={runAction} />;
   return <MaintenanceCenter state={state} notify={notify} close={close} reload={reload} />;
 }
@@ -753,8 +753,9 @@ function ExpirationField({ current, keepCurrent = false }: { current?: string; k
   </>;
 }
 
-function ClientConfigPanel({ client, notify }: { client: Client; notify: (message: string) => void }) {
+function ClientConfigPanel({ client, profile, notify }: { client: Client; profile: string; notify: (message: string) => void }) {
   const { m } = useI18n();
+  const isAWG3 = profile === "awg_3_0";
   const awgQRURL = api.clientQRCodeURL(client.id);
   const notifyRef = useRef(notify);
   const [importKey, setImportKey] = useState("");
@@ -769,13 +770,15 @@ function ClientConfigPanel({ client, notify }: { client: Client; notify: (messag
   const expandedQRTitle = expandedQR === "amneziavpn" ? m.clientConfig.amneziaVPNQR : m.clientConfig.amneziaWGQR;
   const hasVPNQRSeries = vpnQRChunks > 1;
   const vpnQRDownloadName = hasVPNQRSeries ? `${client.name}-amneziavpn-${vpnQRChunk + 1}-of-${vpnQRChunks}.png` : `${client.name}-amneziavpn.png`;
-  const activeQRURL = qrMode === "amneziavpn" ? vpnQRURL : awgQRURL;
-  const activeQRTitle = qrMode === "amneziavpn" ? m.clientConfig.amneziaVPNQR : m.clientConfig.amneziaWGQR;
-  const activeQRDescription = qrMode === "amneziavpn"
+  const activeQRURL = isAWG3 || qrMode === "amneziavpn" ? vpnQRURL : awgQRURL;
+  const activeQRTitle = isAWG3 || qrMode === "amneziavpn" ? m.clientConfig.amneziaVPNQR : m.clientConfig.amneziaWGQR;
+  const activeQRDescription = isAWG3
+    ? m.clientConfig.awg3AmneziaVPNDescription
+    : qrMode === "amneziavpn"
     ? m.clientConfig.amneziaVPNDescription
     : m.clientConfig.amneziaWGDescription;
-  const activeQRAlt = qrMode === "amneziavpn" ? m.clientConfig.amneziaVPNAlt(client.name) : m.clientConfig.amneziaWGAlt(client.name);
-  const activeQRDownloadName = qrMode === "amneziavpn" ? vpnQRDownloadName : `${client.name}-amneziawg.png`;
+  const activeQRAlt = isAWG3 || qrMode === "amneziavpn" ? m.clientConfig.amneziaVPNAlt(client.name) : m.clientConfig.amneziaWGAlt(client.name);
+  const activeQRDownloadName = isAWG3 || qrMode === "amneziavpn" ? vpnQRDownloadName : `${client.name}-amneziawg.png`;
   const messagesRef = useRef(m);
   messagesRef.current = m;
 
@@ -842,35 +845,35 @@ function ClientConfigPanel({ client, notify }: { client: Client; notify: (messag
           <h3>{activeQRTitle}</h3>
           <p>{activeQRDescription}</p>
         </div>
-        <div class="segmented qr-mode-tabs" role="tablist" aria-label={m.clientConfig.qrImportMode}>
+        {!isAWG3 && <div class="segmented qr-mode-tabs" role="tablist" aria-label={m.clientConfig.qrImportMode}>
           <button class={qrMode === "amneziavpn" ? "active" : ""} type="button" role="tab" aria-selected={qrMode === "amneziavpn"} onClick={() => setQRMode("amneziavpn")}>AmneziaVPN</button>
           <button class={qrMode === "amneziawg" ? "active" : ""} type="button" role="tab" aria-selected={qrMode === "amneziawg"} onClick={() => setQRMode("amneziawg")}>AmneziaWG</button>
-        </div>
+        </div>}
         <div class="qr-panel">
-          <button class="qr-image-button" type="button" onClick={() => setExpandedQR(qrMode)} aria-label={m.clientConfig.openLarger(activeQRTitle)}>
+          <button class="qr-image-button" type="button" onClick={() => setExpandedQR(isAWG3 ? "amneziavpn" : qrMode)} aria-label={m.clientConfig.openLarger(activeQRTitle)}>
             <img class="qr-image" src={activeQRURL} alt={activeQRAlt} />
           </button>
-          {qrMode === "amneziavpn" && hasVPNQRSeries && <div class="qr-series">
+          {(isAWG3 || qrMode === "amneziavpn") && hasVPNQRSeries && <div class="qr-series">
             <button class="button" type="button" disabled={vpnQRChunk === 0} onClick={() => setVPNQRChunk((value) => Math.max(0, value - 1))}>{m.clientConfig.previous}</button>
             <span>{m.clientConfig.qrCounter(vpnQRChunk + 1, vpnQRChunks)}</span>
             <button class="button" type="button" disabled={vpnQRChunk + 1 >= vpnQRChunks} onClick={() => setVPNQRChunk((value) => Math.min(vpnQRChunks - 1, value + 1))}>{m.clientConfig.next}</button>
           </div>}
         </div>
         <div class="action-row">
-          <a class="button" href={activeQRURL} download={activeQRDownloadName}>{m.clientConfig.downloadQR} {qrMode === "amneziavpn" && hasVPNQRSeries ? `${vpnQRChunk + 1}` : ""}</a>
+          <a class="button" href={activeQRURL} download={activeQRDownloadName}>{m.clientConfig.downloadQR} {(isAWG3 || qrMode === "amneziavpn") && hasVPNQRSeries ? `${vpnQRChunk + 1}` : ""}</a>
         </div>
       </section>
       <section class="config-option">
         <div>
           <h3>{m.clientConfig.importOptions}</h3>
-          <p>{m.clientConfig.importOptionsText}</p>
+          <p>{isAWG3 ? m.clientConfig.awg3ImportOptionsText : m.clientConfig.importOptionsText}</p>
         </div>
         <div class="config-actions">
           <button class="button primary" type="button" onClick={() => downloadConfig(client.id)}>{m.clientConfig.downloadConf}</button>
-          <button class="button" disabled={busy} type="button" onClick={copyImportKey}>{m.clientConfig.copyVpnKey}</button>
+          {!isAWG3 && <button class="button" disabled={busy} type="button" onClick={copyImportKey}>{m.clientConfig.copyVpnKey}</button>}
         </div>
-        {importKey && <textarea class="mono import-key" aria-label={m.clientConfig.vpnImportLink} readOnly value={importKey} />}
-        {importWarning && <p class="note">{importWarning}</p>}
+        {!isAWG3 && importKey && <textarea class="mono import-key" aria-label={m.clientConfig.vpnImportLink} readOnly value={importKey} />}
+        {!isAWG3 && importWarning && <p class="note">{importWarning}</p>}
       </section>
     </div>
     <p class="note">{m.clientConfig.secretWarning}</p>

@@ -375,6 +375,18 @@ type ClientExportContext struct {
 	RenderedConf string
 }
 
+func (s *Service) ClientExportTunnel(id string) (config.Tunnel, error) {
+	state, err := s.Init()
+	if err != nil {
+		return config.Tunnel{}, err
+	}
+	tunnel, _, ok := findClient(state, id)
+	if !ok {
+		return config.Tunnel{}, errors.New("client not found")
+	}
+	return tunnel, nil
+}
+
 func (s *Service) ClientExportContext(id string) (ClientExportContext, error) {
 	state, err := s.Init()
 	if err != nil {

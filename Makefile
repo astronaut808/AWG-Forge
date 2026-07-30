@@ -1,7 +1,10 @@
 COMPOSE ?= docker compose
 CONTAINER ?= awg-forge
 
-.PHONY: test test-shell vet build lint-go lint-js quality ui-build ui-check ci security security-fast updates updates-local updates-docker update-amneziawg-refs docker-build docker-up docker-down
+.PHONY: test test-shell vet build lint-go lint-js quality ui-build ui-check ci security security-fast updates updates-local updates-docker update-amneziawg-refs docker-build docker-build-awg3 docker-up docker-down
+
+AWG3_GO_REF ?= 0527dfa47639714dd8f5c9ffbd9d40d19083f0ba
+AWG3_TOOLS_REF ?= 05434cab7d91bbbc607d18ec5fade91f4b83774c
 
 test:
 	go test ./...
@@ -58,6 +61,9 @@ update-amneziawg-refs:
 
 docker-build:
 	docker build -t awg-forge:local .
+
+docker-build-awg3:
+	docker build --build-arg AWG3_EXPERIMENTAL=true --build-arg AMNEZIAWG_GO_REF_OVERRIDE=$(AWG3_GO_REF) --build-arg AMNEZIAWG_TOOLS_REF_OVERRIDE=$(AWG3_TOOLS_REF) -t awg-forge:awg3-experimental .
 
 docker-up:
 	$(COMPOSE) up -d
