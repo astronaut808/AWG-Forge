@@ -40,6 +40,7 @@ type Report struct {
 type Runner interface {
 	Count(rule Rule) (int, error)
 	Delete(rule Rule) error
+	RemoveManaged(rule Rule) error
 	Insert(rule Rule) error
 }
 
@@ -218,6 +219,16 @@ func repairRules(rules []Rule, runner Runner) []string {
 	for _, rule := range rules {
 		count, err := runner.Count(rule)
 		if err != nil {
+			if isManagedRuleConflict(err) {
+				if err := runner.RemoveManaged(rule); err != nil {
+					errs = append(errs, err.Error())
+					continue
+				}
+				if err := runner.Insert(rule); err != nil {
+					errs = append(errs, err.Error())
+				}
+				continue
+			}
 			errs = append(errs, err.Error())
 			continue
 		}
@@ -242,6 +253,9 @@ func deleteAll(rule Rule, runner Runner) error {
 	for i := 0; i < 64; i++ {
 		count, err := runner.Count(rule)
 		if err != nil {
+			if isManagedRuleConflict(err) {
+				return runner.RemoveManaged(rule)
+			}
 			return err
 		}
 		if count == 0 {
@@ -288,6 +302,19 @@ type IPTablesRunner struct {
 	run    func(args ...string) error
 }
 
+type managedRuleConflictError struct {
+	comment string
+}
+
+func (e *managedRuleConflictError) Error() string {
+	return fmt.Sprintf("managed firewall tag %q conflicts with the expected rule", e.comment)
+}
+
+func isManagedRuleConflict(err error) bool {
+	var conflict *managedRuleConflictError
+	return errors.As(err, &conflict)
+}
+
 func (r IPTablesRunner) Count(rule Rule) (int, error) {
 	comment, managed := ruleCommentFromArgs(rule.Args)
 	if !managed {
@@ -316,7 +343,7 @@ func (r IPTablesRunner) Count(rule Rule) (int, error) {
 		return 0, err
 	}
 	if !exists {
-		return 0, fmt.Errorf("managed firewall tag %q conflicts with the expected rule", comment)
+		return 0, &managedRuleConflictError{comment: comment}
 	}
 	return count, nil
 }
@@ -327,6 +354,38 @@ func (r IPTablesRunner) Delete(rule Rule) error {
 	err := r.commandRun(args...)
 	if err != nil {
 		return fmt.Errorf("iptables %s failed: %w", strings.Join(args, " "), err)
+	}
+	return nil
+}
+
+func (r IPTablesRunner) RemoveManaged(rule Rule) error {
+	comment, ok := ruleCommentFromArgs(rule.Args)
+	if !ok {
+		return errors.New("managed firewall rule is missing its comment")
+	}
+	args := append(tableArgs(rule.Table), "-S", rule.Chain)
+	out, err := r.commandOutput(args...)
+	if err != nil {
+		return fmt.Errorf("iptables %s failed: %w", strings.Join(args, " "), err)
+	}
+	removed := 0
+	for _, line := range strings.Split(string(out), "\n") {
+		if !lineHasComment(line, comment) {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 3 || fields[0] != "-A" || fields[1] != rule.Chain {
+			return fmt.Errorf("cannot remove malformed managed firewall rule for tag %q", comment)
+		}
+		deleteArgs := append(tableArgs(rule.Table), "-D", rule.Chain)
+		deleteArgs = append(deleteArgs, fields[2:]...)
+		if err := r.commandRun(deleteArgs...); err != nil {
+			return fmt.Errorf("iptables %s failed: %w", strings.Join(deleteArgs, " "), err)
+		}
+		removed++
+	}
+	if removed == 0 {
+		return fmt.Errorf("managed firewall tag %q was not found", comment)
 	}
 	return nil
 }

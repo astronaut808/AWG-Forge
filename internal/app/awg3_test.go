@@ -79,6 +79,49 @@ func TestAWG3RegenerationRotatesSecretAndRevision(t *testing.T) {
 	}
 }
 
+func TestAWG3PersistentKeepaliveRangeUpdatesClientConfigAndRevision(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.AWG3Experimental = true
+	cfg.AWG3Runtime = true
+	svc := app.New(cfg)
+	tunnel, err := svc.CreateTunnel("awg_3_0", "awg30", "10.30.0.0/24", 51840)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := svc.AddClientToTunnel(tunnel.ID, "AWG3 Phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := svc.Init()
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeTunnel := findTunnel(t, before, tunnel.ID)
+	params := make(config.ProtocolParams, len(beforeTunnel.ProtocolParams))
+	for key, value := range beforeTunnel.ProtocolParams {
+		params[key] = value
+	}
+	params["PersistentKeepalive"] = "20-30"
+	if err := svc.UpdateTunnelProtocol(tunnel.ID, "awg_3_0", params); err != nil {
+		t.Fatal(err)
+	}
+	after, err := svc.Init()
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := findTunnel(t, after, tunnel.ID)
+	if updated.ConfigRevision <= beforeTunnel.ConfigRevision {
+		t.Fatal("AWG3 PersistentKeepalive update did not increase config revision")
+	}
+	conf, _, err := svc.ClientConfigForDownload(client.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(conf, "PersistentKeepalive = 20-30") {
+		t.Fatalf("AWG3 client config did not use the persistent keepalive range:\n%s", conf)
+	}
+}
+
 func findTunnel(t *testing.T, state config.State, id string) config.Tunnel {
 	t.Helper()
 	for _, tunnel := range state.Tunnels {

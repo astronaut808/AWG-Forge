@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -33,7 +34,7 @@ func TestAWG3PublicStateOmitsHeaderProtectionKey(t *testing.T) {
 	}
 }
 
-func TestAWG3RejectsQRExports(t *testing.T) {
+func TestAWG3AmneziaVPNQRPreservesNativeFields(t *testing.T) {
 	cfg := awg3TestConfig(t)
 	svc := app.New(cfg)
 	tunnel, err := svc.CreateTunnel("awg_3_0", "awg30", "10.30.0.0/24", 51840)
@@ -48,17 +49,86 @@ func TestAWG3RejectsQRExports(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := &web{cfg: cfg, service: svc}
-	for _, handler := range []func(http.ResponseWriter, *http.Request, string){w.clientQRAPI, w.clientAmneziaVPNQRAPI, w.clientAmneziaVPNQRSeriesAPI} {
-		rr := httptest.NewRecorder()
-		handler(rr, httptest.NewRequest(http.MethodGet, "/", nil), client.ID)
-		if rr.Code != http.StatusConflict {
-			t.Fatalf("QR handler status = %d, want %d: %s", rr.Code, http.StatusConflict, rr.Body.String())
+	ctx, err := svc.ClientExportContext(client.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaultJSON, err := buildAmneziaVPNClientConfig(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var defaultOuter amneziaVPNConfig
+	if err := json.Unmarshal(defaultJSON, &defaultOuter); err != nil {
+		t.Fatal(err)
+	}
+	var defaultLast map[string]any
+	if err := json.Unmarshal([]byte(defaultOuter.Containers[0].AWG.LastConfig), &defaultLast); err != nil {
+		t.Fatal(err)
+	}
+	if defaultLast["config"] != ctx.RenderedConf {
+		t.Fatal("AWG3 last_config config does not exactly match the rendered client config")
+	}
+	outerJSON, err := json.Marshal(defaultOuter.Containers[0].AWG)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var outerFields map[string]any
+	if err := json.Unmarshal(outerJSON, &outerFields); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{
+		"Jc", "Jmin", "Jmax", "S1", "S2", "S3", "S4", "H1", "H2", "H3", "H4", "I1", "I2", "I3", "I4", "I5",
+		"HeaderProtectionKey", "ContentPaddingAddition", "RekeyAfterTime", "RekeyTimeout", "RejectAfterTime", "KeepaliveTimeout", "MaxHandshakeAttempts",
+	} {
+		if lastValue := defaultLast[key]; lastValue == nil || lastValue == "" {
+			t.Fatalf("AWG3 last_config is missing required field %s", key)
+		} else if outerFields[key] != lastValue {
+			t.Fatalf("AWG3 field %s differs between outer metadata and last_config: %q != %q", key, outerFields[key], lastValue)
 		}
 	}
-	rr := httptest.NewRecorder()
-	w.clientImportKeyAPI(rr, httptest.NewRequest(http.MethodPost, "http://127.0.0.1:51821/", nil), client.ID)
-	if rr.Code != http.StatusConflict {
-		t.Fatalf("import key status = %d, want %d: %s", rr.Code, http.StatusConflict, rr.Body.String())
+	keepalive := strconv.Itoa(ctx.Tunnel.Keepalive)
+	if defaultLast["persistent_keep_alive"] != keepalive || !strings.Contains(ctx.RenderedConf, "PersistentKeepalive = "+keepalive+"\n") {
+		t.Fatal("AWG3 persistent keepalive does not match the rendered client config")
+	}
+	for key, want := range map[string]string{
+		"ContentPaddingAddition": "0",
+		"RekeyAfterTime":         "120",
+		"RekeyTimeout":           "5",
+		"RejectAfterTime":        "180",
+		"KeepaliveTimeout":       "10",
+		"MaxHandshakeAttempts":   "18",
+	} {
+		if got := defaultLast[key]; got != want {
+			t.Fatalf("default AWG3 client field %s = %q, want %q", key, got, want)
+		}
+		if got := awg3OuterField(defaultOuter.Containers[0].AWG, key); got != want {
+			t.Fatalf("default AWG3 server field %s = %q, want %q", key, got, want)
+		}
+		if !strings.Contains(ctx.RenderedConf, key+" = "+want+"\n") {
+			t.Fatalf("rendered AWG3 client config does not contain %s", key)
+		}
+	}
+	ctx.Tunnel.ProtocolParams["ContentPaddingAddition"] = "10-20"
+	ctx.Tunnel.ProtocolParams["RekeyAfterTime"] = "120"
+	ctx.Tunnel.ProtocolParams["RekeyTimeout"] = "5-10"
+	ctx.Tunnel.ProtocolParams["RejectAfterTime"] = "300"
+	ctx.Tunnel.ProtocolParams["KeepaliveTimeout"] = "15"
+	ctx.Tunnel.ProtocolParams["MaxHandshakeAttempts"] = "3-5"
+	ctx.Tunnel.ProtocolParams["PersistentKeepalive"] = "20-30"
+	jsonBytes, err := buildAmneziaVPNClientConfig(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var outer amneziaVPNConfig
+	if err := json.Unmarshal(jsonBytes, &outer); err != nil {
+		t.Fatal(err)
+	}
+	if outer.Containers[0].AWG.ProtocolVersion != "2" {
+		t.Fatalf("protocol_version = %q, want 2", outer.Containers[0].AWG.ProtocolVersion)
+	}
+	var last map[string]any
+	if err := json.Unmarshal([]byte(outer.Containers[0].AWG.LastConfig), &last); err != nil {
+		t.Fatal(err)
 	}
 	state, err := svc.State()
 	if err != nil {
@@ -68,9 +138,70 @@ func TestAWG3RejectsQRExports(t *testing.T) {
 	if !ok {
 		t.Fatal("AWG3 tunnel disappeared from state")
 	}
-	if updated.Clients[0].ConfigRevision == updated.ConfigRevision {
-		t.Fatal("rejected AWG3 QR or vpn:// export marked the stale client config as delivered")
+	if last["HeaderProtectionKey"] != updated.ProtocolSecrets["HeaderProtectionKey"] {
+		t.Fatal("AmneziaVPN QR did not preserve the AWG3 header protection key")
 	}
+	if outer.Containers[0].AWG.HeaderProtectionKey != updated.ProtocolSecrets["HeaderProtectionKey"] {
+		t.Fatal("AmneziaVPN QR did not mirror the AWG3 header protection key in server metadata")
+	}
+	for key, want := range map[string]string{
+		"ContentPaddingAddition": "10-20",
+		"RekeyAfterTime":         "120",
+		"RekeyTimeout":           "5-10",
+		"RejectAfterTime":        "300",
+		"KeepaliveTimeout":       "15",
+		"MaxHandshakeAttempts":   "3-5",
+		"persistent_keep_alive":  "20-30",
+	} {
+		if last[key] != want {
+			t.Fatalf("AWG3 field %s = %q, want %q", key, last[key], want)
+		}
+		if key == "persistent_keep_alive" {
+			continue
+		}
+		if got := awg3OuterField(outer.Containers[0].AWG, key); got != want {
+			t.Fatalf("AWG3 server field %s = %q, want %q", key, got, want)
+		}
+	}
+
+	rr := httptest.NewRecorder()
+	w.clientAmneziaVPNQRAPI(rr, httptest.NewRequest(http.MethodGet, "/", nil), client.ID)
+	if rr.Code != http.StatusOK || rr.Header().Get("Content-Type") != "image/png" {
+		t.Fatalf("AmneziaVPN QR response = %d %q, want 200 image/png", rr.Code, rr.Header().Get("Content-Type"))
+	}
+	rr = httptest.NewRecorder()
+	w.clientAmneziaVPNQRSeriesAPI(rr, httptest.NewRequest(http.MethodGet, "/", nil), client.ID)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("AmneziaVPN QR series status = %d, want 200", rr.Code)
+	}
+	rr = httptest.NewRecorder()
+	w.clientQRAPI(rr, httptest.NewRequest(http.MethodGet, "/", nil), client.ID)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("raw QR status = %d, want %d: %s", rr.Code, http.StatusConflict, rr.Body.String())
+	}
+	rr = httptest.NewRecorder()
+	w.clientImportKeyAPI(rr, httptest.NewRequest(http.MethodPost, "http://127.0.0.1:51821/", nil), client.ID)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("import key status = %d, want %d: %s", rr.Code, http.StatusConflict, rr.Body.String())
+	}
+}
+
+func awg3OuterField(awg amneziaVPNAWG, key string) string {
+	switch key {
+	case "ContentPaddingAddition":
+		return awg.ContentPaddingAddition
+	case "RekeyAfterTime":
+		return awg.RekeyAfterTime
+	case "RekeyTimeout":
+		return awg.RekeyTimeout
+	case "RejectAfterTime":
+		return awg.RejectAfterTime
+	case "KeepaliveTimeout":
+		return awg.KeepaliveTimeout
+	case "MaxHandshakeAttempts":
+		return awg.MaxHandshakeAttempts
+	}
+	return ""
 }
 
 func TestAWG3ProfileIsOnlyListedWhenEnabled(t *testing.T) {

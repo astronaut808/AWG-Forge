@@ -41,20 +41,12 @@ type amneziaVPNAWG struct {
 	Port               string `json:"port"`
 	ProtocolVersion    string `json:"protocol_version"`
 	TransportProto     string `json:"transport_proto"`
+	amneziaVPNProtocolFields
 }
 
-type amneziaVPNLastConfig struct {
-	AllowedIPs          []string `json:"allowed_ips"`
-	ClientIP            string   `json:"client_ip"`
-	ClientPrivateKey    string   `json:"client_priv_key"`
-	Config              string   `json:"config"`
-	HostName            string   `json:"hostName"`
-	MTU                 string   `json:"mtu,omitempty"`
-	PersistentKeepalive string   `json:"persistent_keep_alive"`
-	Port                int      `json:"port"`
-	PresharedKey        string   `json:"psk_key"`
-	ServerPublicKey     string   `json:"server_pub_key"`
-
+// amneziaVPNProtocolFields mirrors the AWG fields the native client writes in
+// both its server metadata and per-client last_config JSON.
+type amneziaVPNProtocolFields struct {
 	Jc   string `json:"Jc,omitempty"`
 	Jmin string `json:"Jmin,omitempty"`
 	Jmax string `json:"Jmax,omitempty"`
@@ -71,6 +63,29 @@ type amneziaVPNLastConfig struct {
 	I3   string `json:"I3,omitempty"`
 	I4   string `json:"I4,omitempty"`
 	I5   string `json:"I5,omitempty"`
+
+	HeaderProtectionKey    string `json:"HeaderProtectionKey,omitempty"`
+	ContentPaddingAddition string `json:"ContentPaddingAddition,omitempty"`
+	RekeyAfterTime         string `json:"RekeyAfterTime,omitempty"`
+	RekeyTimeout           string `json:"RekeyTimeout,omitempty"`
+	RejectAfterTime        string `json:"RejectAfterTime,omitempty"`
+	KeepaliveTimeout       string `json:"KeepaliveTimeout,omitempty"`
+	MaxHandshakeAttempts   string `json:"MaxHandshakeAttempts,omitempty"`
+}
+
+type amneziaVPNLastConfig struct {
+	AllowedIPs          []string `json:"allowed_ips"`
+	ClientIP            string   `json:"client_ip"`
+	ClientPrivateKey    string   `json:"client_priv_key"`
+	Config              string   `json:"config"`
+	HostName            string   `json:"hostName"`
+	MTU                 string   `json:"mtu,omitempty"`
+	PersistentKeepalive string   `json:"persistent_keep_alive"`
+	Port                int      `json:"port"`
+	PresharedKey        string   `json:"psk_key"`
+	ServerPublicKey     string   `json:"server_pub_key"`
+
+	amneziaVPNProtocolFields
 }
 
 func buildAmneziaVPNClientConfig(ctx app.ClientExportContext) ([]byte, error) {
@@ -91,32 +106,48 @@ func buildAmneziaVPNClientConfig(ctx app.ClientExportContext) ([]byte, error) {
 	// AmneziaVPN compatibility investigation.
 	port := strconv.Itoa(ctx.Tunnel.ListenPort)
 	params := ctx.Tunnel.ProtocolParams
+	keepalive := strconv.Itoa(ctx.Tunnel.Keepalive)
+	if ctx.Tunnel.ProtocolProfileID == "awg_3_0" && strings.TrimSpace(params["PersistentKeepalive"]) != "" {
+		keepalive = params["PersistentKeepalive"]
+	}
+	fields := amneziaVPNProtocolFields{
+		Jc:   params["Jc"],
+		Jmin: params["Jmin"],
+		Jmax: params["Jmax"],
+		S1:   params["S1"],
+		S2:   params["S2"],
+		S3:   params["S3"],
+		S4:   params["S4"],
+		H1:   params["H1"],
+		H2:   params["H2"],
+		H3:   params["H3"],
+		H4:   params["H4"],
+		I1:   params["I1"],
+		I2:   params["I2"],
+		I3:   params["I3"],
+		I4:   params["I4"],
+		I5:   params["I5"],
+	}
+	if ctx.Tunnel.ProtocolProfileID == "awg_3_0" {
+		fields.HeaderProtectionKey = ctx.Tunnel.ProtocolSecrets["HeaderProtectionKey"]
+		fields.ContentPaddingAddition = params["ContentPaddingAddition"]
+		fields.RekeyAfterTime = params["RekeyAfterTime"]
+		fields.RekeyTimeout = params["RekeyTimeout"]
+		fields.RejectAfterTime = params["RejectAfterTime"]
+		fields.KeepaliveTimeout = params["KeepaliveTimeout"]
+		fields.MaxHandshakeAttempts = params["MaxHandshakeAttempts"]
+	}
 	last := amneziaVPNLastConfig{
-		AllowedIPs:          []string{ctx.Tunnel.AllowedIPs},
-		ClientIP:            ctx.Client.IPv4Address + "/32",
-		ClientPrivateKey:    ctx.Client.PrivateKey,
-		Config:              ctx.RenderedConf,
-		HostName:            host,
-		PersistentKeepalive: strconv.Itoa(ctx.Tunnel.Keepalive),
-		Port:                ctx.Tunnel.ListenPort,
-		PresharedKey:        ctx.Client.PresharedKey,
-		ServerPublicKey:     ctx.Tunnel.ServerPublicKey,
-		Jc:                  params["Jc"],
-		Jmin:                params["Jmin"],
-		Jmax:                params["Jmax"],
-		S1:                  params["S1"],
-		S2:                  params["S2"],
-		S3:                  params["S3"],
-		S4:                  params["S4"],
-		H1:                  params["H1"],
-		H2:                  params["H2"],
-		H3:                  params["H3"],
-		H4:                  params["H4"],
-		I1:                  params["I1"],
-		I2:                  params["I2"],
-		I3:                  params["I3"],
-		I4:                  params["I4"],
-		I5:                  params["I5"],
+		AllowedIPs:               []string{ctx.Tunnel.AllowedIPs},
+		ClientIP:                 ctx.Client.IPv4Address + "/32",
+		ClientPrivateKey:         ctx.Client.PrivateKey,
+		Config:                   ctx.RenderedConf,
+		HostName:                 host,
+		PersistentKeepalive:      keepalive,
+		Port:                     ctx.Tunnel.ListenPort,
+		PresharedKey:             ctx.Client.PresharedKey,
+		ServerPublicKey:          ctx.Tunnel.ServerPublicKey,
+		amneziaVPNProtocolFields: fields,
 	}
 	if ctx.Tunnel.MTU > 0 {
 		last.MTU = strconv.Itoa(ctx.Tunnel.MTU)
@@ -130,14 +161,25 @@ func buildAmneziaVPNClientConfig(ctx app.ClientExportContext) ([]byte, error) {
 	if ctx.Tunnel.ProtocolProfileID == "awg_2_0" || (params["S3"] != "" && params["S4"] != "") {
 		protocolVersion = "2"
 	}
+	outerFields := amneziaVPNProtocolFields{}
+	if ctx.Tunnel.ProtocolProfileID == "awg_3_0" {
+		// Keep the established AWG 1.x/2.0 outer payload byte-for-byte stable.
+		// AWG3 needs these fields in both layers because that is how the native
+		// client serializes an AWG profile with header protection.
+		outerFields = fields
+	}
+	// AmneziaVPN 5.0.0.5 has no distinct native protocol_version "3" value.
+	// Its AWG 3 support is selected by the structured fields in last_config.
+	// Keep the existing AWG 2 container metadata so the client retains S3/S4.
 	outer := amneziaVPNConfig{
 		Containers: []amneziaVPNContainer{{
 			AWG: amneziaVPNAWG{
-				IsThirdPartyConfig: true,
-				LastConfig:         string(lastConfigJSON),
-				Port:               port,
-				ProtocolVersion:    protocolVersion,
-				TransportProto:     "udp",
+				IsThirdPartyConfig:       true,
+				LastConfig:               string(lastConfigJSON),
+				Port:                     port,
+				ProtocolVersion:          protocolVersion,
+				TransportProto:           "udp",
+				amneziaVPNProtocolFields: outerFields,
 			},
 			Container: "amnezia-awg",
 		}},

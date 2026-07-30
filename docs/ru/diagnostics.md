@@ -80,7 +80,7 @@ docker exec awg-forge awg-forge doctor
 docker exec awg-forge awg show <interface>
 ```
 
-Не публикуй raw-вывод `awg show` без редактирования. Он может содержать private key интерфейса, preshared keys и `HeaderProtectionKey` AWG 3; вывод `dump` особенно чувствителен. Runtime output полезен для peers, endpoints, handshakes и counters. Источник данных AWG-Forge — выбранный profile, stale-config status и необходимость заново скачать client config после client-facing изменений туннеля. Для AmneziaWG 2.0 и экспериментального 3.0 используй `.conf` import при ограничениях целевого клиента.
+Не публикуй raw-вывод `awg show` без редактирования. Он может содержать private key интерфейса, preshared keys и `HeaderProtectionKey` AWG 3; вывод `dump` особенно чувствителен. Runtime output полезен для peers, endpoints, handshakes и counters. Источник данных AWG-Forge — выбранный profile, stale-config status и необходимость заново скачать client config после client-facing изменений туннеля. Для экспериментального AWG 3 в AmneziaVPN 5.0.0.5 используй отдельный QR AmneziaVPN, а не прямой импорт `.conf`.
 
 Зафиксируй сеть, время, версию клиента и результат packet capture до изменения настроек.
 

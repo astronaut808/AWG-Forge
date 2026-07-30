@@ -1162,8 +1162,8 @@ func (w *web) clientQRAPI(rw http.ResponseWriter, r *http.Request, id string) {
 		http.NotFound(rw, r)
 		return
 	}
-	if !supportsQRAndVPNExport(tunnel) {
-		writeError(rw, http.StatusConflict, "AWG 3 experimental profiles support .conf export only")
+	if !supportsRawQRExport(tunnel) {
+		writeError(rw, http.StatusConflict, "AWG 3 experimental profiles do not support raw .conf QR export")
 		return
 	}
 	ctx, err := w.service.ClientExportContext(id)
@@ -1193,8 +1193,8 @@ func (w *web) clientAmneziaVPNQRAPI(rw http.ResponseWriter, r *http.Request, id 
 		writeError(rw, http.StatusNotFound, "not found")
 		return
 	}
-	if !supportsQRAndVPNExport(tunnel) {
-		writeError(rw, http.StatusConflict, "AWG 3 experimental profiles support .conf export only")
+	if !supportsAmneziaVPNQRExport(tunnel) {
+		writeError(rw, http.StatusConflict, "client profile does not support AmneziaVPN QR export")
 		return
 	}
 	ctx, err := w.service.ClientExportContext(id)
@@ -1239,8 +1239,8 @@ func (w *web) clientAmneziaVPNQRSeriesAPI(rw http.ResponseWriter, r *http.Reques
 		writeError(rw, http.StatusNotFound, "not found")
 		return
 	}
-	if !supportsQRAndVPNExport(tunnel) {
-		writeError(rw, http.StatusConflict, "AWG 3 experimental profiles support .conf export only")
+	if !supportsAmneziaVPNQRExport(tunnel) {
+		writeError(rw, http.StatusConflict, "client profile does not support AmneziaVPN QR export")
 		return
 	}
 	if _, err := w.service.ClientExportContext(id); err != nil {
@@ -1315,8 +1315,8 @@ func (w *web) clientImportKeyAPI(rw http.ResponseWriter, r *http.Request, id str
 		writeError(rw, http.StatusNotFound, "not found")
 		return
 	}
-	if !supportsQRAndVPNExport(tunnel) {
-		writeError(rw, http.StatusConflict, "AWG 3 experimental profiles support .conf export only")
+	if !supportsVPNImportKeyExport(tunnel) {
+		writeError(rw, http.StatusConflict, "AWG 3 experimental profiles do not support vpn:// export")
 		return
 	}
 	key, client, err := w.service.ClientImportKey(id)
@@ -1386,7 +1386,16 @@ func availableProfiles(awg3Experimental bool, state config.State) []map[string]a
 	return profiles
 }
 
-func supportsQRAndVPNExport(tunnel config.Tunnel) bool {
+func supportsRawQRExport(tunnel config.Tunnel) bool {
+	return !protocol.IsExperimental(tunnel.ProtocolProfileID)
+}
+
+func supportsAmneziaVPNQRExport(tunnel config.Tunnel) bool {
+	_, ok := protocol.ByID(tunnel.ProtocolProfileID)
+	return ok
+}
+
+func supportsVPNImportKeyExport(tunnel config.Tunnel) bool {
 	return !protocol.IsExperimental(tunnel.ProtocolProfileID)
 }
 

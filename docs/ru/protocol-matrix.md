@@ -9,7 +9,7 @@ awg-forge — запускатор и менеджер существующих 
 | `awg_legacy_1_0` | Реализован | Рендерит Legacy / 1.0 поля `Jc`, `Jmin`, `Jmax`, `S1`, `S2`, `H1-H4`. Defaults генерируются для обфускации, а не для WireGuard fallback. |
 | `awg_1_5` | Реализован | Добавляет `I1-I5` signature/masking packets в клиентские конфиги. Defaults включают DNS-like `I1` и небольшую CPS-цепочку для `I2-I5`. |
 | `awg_2_0` | Реализован | Использует `I1-I5`, добавляет `S3/S4`, поддерживает ranges для `H1-H4`, валидирует непересечение ranges и рендерит fresh configs. Defaults используют генерируемый QUIC Initial-like `I1`. `.conf` импорт проверен на desktop и iOS с совместимыми AmneziaVPN builds. |
-| `awg_3_0` | Экспериментальный | По умолчанию выключен. Добавляет upstream AWG 3 поля и генерируемый `HeaderProtectionKey`; ключ хранится отдельно от публичных параметров и не возвращается API или support bundle. Используй только закреплённый экспериментальный образ ниже и импорт `.conf` в AmneziaVPN 5.0.0.5 или новее. QR и `vpn://` экспорт намеренно недоступны, пока их формат не подтверждён. |
+| `awg_3_0` | Экспериментальный | По умолчанию выключен. Добавляет upstream AWG 3 поля и генерируемый `HeaderProtectionKey`; ключ хранится отдельно от публичных параметров и не возвращается API или support bundle. Используй только закреплённый экспериментальный образ ниже. Для AmneziaVPN 5.0.0.5 используй отдельный QR AmneziaVPN: прямой импорт `.conf` теряет поля AWG 3. Raw `.conf` QR и `vpn://` экспорт остаются недоступны. |
 
 ## Запланировано
 
@@ -25,7 +25,9 @@ AWG 3.0 не является профилем по умолчанию и не �
 make docker-build-awg3
 ```
 
-Укажи `AWG3_EXPERIMENTAL=true` в `.env`, затем используй в Compose image `awg-forge:awg3-experimental`. Этот образ выставляет внутренний признак совместимого runtime `AWG3_RUNTIME=true`; стандартный образ не сможет открыть AWG 3 только изменением `.env`. Сборка закрепляет `amneziawg-go` на `9f5d948bc72cc554791cfe0fb91527e4acfb6b79` и `amneziawg-tools` на `05434cab7d91bbbc607d18ec5fade91f4b83774c`; не меняй эти references без отдельной compatibility-проверки.
+Укажи `AWG3_EXPERIMENTAL=true` в `.env`, затем используй в Compose image `awg-forge:awg3-experimental`. Этот образ выставляет внутренний признак совместимого runtime `AWG3_RUNTIME=true`; стандартный образ не сможет открыть AWG 3 только изменением `.env`. Сборка закрепляет `amneziawg-go` на стабильном релизе `v3.0.2` (`0527dfa47639714dd8f5c9ffbd9d40d19083f0ba`) и `amneziawg-tools` на `05434cab7d91bbbc607d18ec5fade91f4b83774c`; не меняй эти references без отдельной compatibility-проверки.
+
+В этом эксперименте AWG 3 поддерживается только через userspace `amneziawg-go`. Для этого профиля AWG-Forge явно запускает `amneziawg-go`, даже если загружен Linux kernel module `amneziawg`. Закреплённый toolchain появился до нового Netlink API AWG 3, а совместимость с kernel module не проверена end-to-end. Раннее расхождение по диапазонам `PersistentKeepalive` связано с [upstream issue #196](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/196), который закрыт без связанной проверки. Не включай kernel mode, пока отдельная закреплённая пара tools/kernel не пройдёт scalar и range `setconf`/`showconf` тесты для каждого поля AWG 3. При `AWG3_EXPERIMENTAL=true` экспериментальный image также запускает WARP через userspace, потому что его peer использует `PersistentKeepalive`; AWG 1.x и 2.0 сохраняют обычный выбор runtime. Стандартный image не меняет выбор runtime для WARP. Не удаляй `PersistentKeepalive` и не приводи его к числу как обход: AWG 3 поддерживает и диапазоны.
 
 До использования проверь локально собранный образ:
 
@@ -37,9 +39,11 @@ docker image inspect awg-forge:awg3-experimental --format '{{ index .Config.Labe
 
 Этот локальный экспериментальный образ не входит в managed release-upgrade path. Пересобери его той же командой, затем пересоздай сервис через `docker compose up -d --force-recreate`; не используй для этого локального образа `install.sh upgrade`.
 
-Профиль рендерит унаследованные поля AWG 2.0 и `HeaderProtectionKey`, `ContentPaddingAddition`, `RekeyAfterTime`, `RekeyTimeout`, `RejectAfterTime`, `KeepaliveTimeout`, `MaxHandshakeAttempts`. Необязательные числовые поля принимают беззнаковое `uint32` значение или возрастающий диапазон `min-max`. `HeaderProtectionKey` — генерируемый base64-секрет на 32 байта; для AWG 3 требуется `S1-S4 >= 12`.
+Профиль рендерит унаследованные поля AWG 2.0 и `HeaderProtectionKey`, `ContentPaddingAddition`, `RekeyAfterTime`, `RekeyTimeout`, `RejectAfterTime`, `KeepaliveTimeout`, `MaxHandshakeAttempts`. `HeaderProtectionKey` обязателен и генерируется как base64-секрет на 32 байта; для AWG 3 также требуется `S1-S4 >= 12`. Остальные поля AWG 3 — необязательные upstream overrides, но AWG-Forge явно записывает userspace-дефолты v3.0.2: `ContentPaddingAddition=0`, `RekeyAfterTime=120`, `RekeyTimeout=5`, `RejectAfterTime=180`, `KeepaliveTimeout=10`, `MaxHandshakeAttempts=18`. `PersistentKeepalive` остаётся client-side значением, настроенным для туннеля. Все эти поля принимают беззнаковое значение `uint32` или возрастающий диапазон `min-max`, где это поддерживает upstream.
 
-AmneziaVPN 5.0.0.5 стабильно поддерживает AWG 3. Пока AWG-Forge предоставляет для этого профиля только импорт `.conf`: AmneziaVPN QR packing подтверждён лишь для AWG 1.5/2.0 и не должен рекламировать `protocol_version = "3"`, пока native JSON format клиента не проверен.
+AmneziaVPN 5.0.0.5 стабильно поддерживает AWG 3. Для этого профиля используй отдельный **QR AmneziaVPN** из AWG-Forge. Он зеркалирует поля AWG во внешних metadata `containers[0].awg` и native structured `last_config`; `last_config.config` в точности совпадает с рендеренным client `.conf`. Прямой импорт `.conf` в текущем клиенте распознаёт metadata AWG 2, но отбрасывает эти поля AWG 3: конфигурация может выглядеть похожей, но handshake не состоится.
+
+Во внешнем JSON QR остаётся `protocol_version = "2"`: в текущем исходном коде AmneziaVPN нет отдельного native metadata-значения `"3"`, а поля AWG 3 задаются через structured `last_config`. Поэтому текущий UI клиента может показывать у native AWG 3-профиля `version 2`; эта метка не отражает runtime-поля. Подтверждай AWG 3 успешным handshake, а не меткой в UI. Не меняй это metadata значение без подтверждения у клиента. Raw `.conf` QR и `vpn://` export для AWG 3 остаются выключены.
 
 ## AWG 2.0
 

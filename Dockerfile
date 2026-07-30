@@ -55,8 +55,11 @@ COPY --from=forge-builder /out/awg-forge /usr/local/bin/awg-forge
 COPY --from=awg-go-builder /out-amneziawg-go /usr/local/bin/amneziawg-go
 COPY --from=tools-builder /out/usr/bin/awg /usr/local/bin/awg
 COPY --from=tools-builder /out/usr/bin/awg-quick /usr/local/bin/awg-quick
+COPY scripts/patch-awg-quick-force-userspace.sh /usr/local/bin/patch-awg-quick-force-userspace
 COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/patch-awg-quick-force-userspace \
+  && /usr/local/bin/patch-awg-quick-force-userspace /usr/local/bin/awg-quick \
+  && rm /usr/local/bin/patch-awg-quick-force-userspace \
   && iptables -V | grep -q nf_tables
 LABEL org.opencontainers.image.title="awg-forge" \
       org.opencontainers.image.version=$AWG_FORGE_VERSION \

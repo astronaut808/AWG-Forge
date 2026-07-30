@@ -12,6 +12,15 @@ import (
 
 const headerProtectionKey = "HeaderProtectionKey"
 
+const (
+	awg30DefaultContentPaddingAddition = "0"
+	awg30DefaultRekeyAfterTime         = "120"
+	awg30DefaultRekeyTimeout           = "5"
+	awg30DefaultRejectAfterTime        = "180"
+	awg30DefaultKeepaliveTimeout       = "10"
+	awg30DefaultMaxHandshakeAttempts   = "18"
+)
+
 var awg30Keys = append(append([]string(nil), awg20Keys...),
 	"ContentPaddingAddition",
 	"RekeyAfterTime",
@@ -21,6 +30,8 @@ var awg30Keys = append(append([]string(nil), awg20Keys...),
 	"MaxHandshakeAttempts",
 )
 
+var awg30PeerKeys = []string{"PersistentKeepalive"}
+
 // AWG30 is experimental until the pinned runtime image uses AWG 3-capable tools.
 // HeaderProtectionKey is intentionally kept in ProtocolSecrets, never ProtocolParams.
 type AWG30 struct{}
@@ -28,7 +39,9 @@ type AWG30 struct{}
 func (AWG30) ID() string          { return "awg_3_0" }
 func (AWG30) DisplayName() string { return "AmneziaWG 3.0 (experimental)" }
 func (AWG30) Version() string     { return "3" }
-func (AWG30) ParamKeys() []string { return append([]string(nil), awg30Keys...) }
+func (AWG30) ParamKeys() []string {
+	return append(append([]string(nil), awg30Keys...), awg30PeerKeys...)
+}
 
 func (AWG30) GenerateDefaults() (config.ProtocolParams, error) {
 	params, err := AWG20{}.GenerateDefaults()
@@ -48,9 +61,13 @@ func (AWG30) GenerateDefaults() (config.ProtocolParams, error) {
 			params[key] = strconv.Itoa(value)
 		}
 	}
-	for _, key := range awg30Keys[len(awg20Keys):] {
-		params[key] = ""
-	}
+	params["ContentPaddingAddition"] = awg30DefaultContentPaddingAddition
+	params["RekeyAfterTime"] = awg30DefaultRekeyAfterTime
+	params["RekeyTimeout"] = awg30DefaultRekeyTimeout
+	params["RejectAfterTime"] = awg30DefaultRejectAfterTime
+	params["KeepaliveTimeout"] = awg30DefaultKeepaliveTimeout
+	params["MaxHandshakeAttempts"] = awg30DefaultMaxHandshakeAttempts
+	params["PersistentKeepalive"] = ""
 	return params, nil
 }
 
@@ -81,6 +98,9 @@ func (AWG30) Validate(params config.ProtocolParams) error {
 			return err
 		}
 	}
+	if err := validateUintRange("PersistentKeepalive", params["PersistentKeepalive"]); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -107,8 +127,7 @@ func (p AWG30) RenderServerInterface(ctx RenderContext) ([]ConfigLine, error) {
 		return nil, err
 	}
 	lines = appendParamKeys(lines, ctx.Tunnel.ProtocolParams, awg20Keys)
-	lines = append(lines, ConfigLine{Key: headerProtectionKey, Value: ctx.Tunnel.ProtocolSecrets[headerProtectionKey]})
-	return appendParamKeys(lines, ctx.Tunnel.ProtocolParams, awg30Keys[len(awg20Keys):]), nil
+	return append(lines, ConfigLine{Key: headerProtectionKey, Value: ctx.Tunnel.ProtocolSecrets[headerProtectionKey]}), nil
 }
 
 func (AWG30) RenderServerPeer(ctx RenderContext, client config.Client) ([]ConfigLine, error) {
@@ -132,7 +151,17 @@ func (p AWG30) RenderClientInterface(ctx RenderContext, client config.Client) ([
 }
 
 func (AWG30) RenderClientPeer(ctx RenderContext, client config.Client) ([]ConfigLine, error) {
-	return Legacy10{}.RenderClientPeer(ctx, client)
+	keepalive := strconv.Itoa(ctx.Tunnel.Keepalive)
+	if configured := strings.TrimSpace(ctx.Tunnel.ProtocolParams["PersistentKeepalive"]); configured != "" {
+		keepalive = configured
+	}
+	return []ConfigLine{
+		{"PublicKey", ctx.Tunnel.ServerPublicKey},
+		{"PresharedKey", client.PresharedKey},
+		{"AllowedIPs", ctx.Tunnel.AllowedIPs},
+		{"PersistentKeepalive", keepalive},
+		{"Endpoint", fmt.Sprintf("%s:%d", ctx.EndpointHost(), ctx.Tunnel.ListenPort)},
+	}, nil
 }
 
 func validateUintRange(key, value string) error {
