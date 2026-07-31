@@ -112,8 +112,19 @@ func TestACMEDomainBuildsHTTP01Runtime(t *testing.T) {
 	request.Host = "panel.example.com"
 	response := httptest.NewRecorder()
 	runtime.ACMEHTTPHandler.ServeHTTP(response, request)
-	if response.Code != http.StatusMovedPermanently || response.Header().Get("Location") != "https://panel.example.com:8443/settings?view=tls" {
+	if response.Code != http.StatusMovedPermanently || response.Header().Get("Location") != "https://panel.example.com:8443/" {
 		t.Fatalf("ACME fallback = %d %q", response.Code, response.Header().Get("Location"))
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "http://panel.example.com/", nil)
+	request.Host = "panel.example.com"
+	request.URL.Scheme = "https"
+	request.URL.Host = "attacker.example"
+	request.URL.Path = "/phish"
+	response = httptest.NewRecorder()
+	runtime.ACMEHTTPHandler.ServeHTTP(response, request)
+	if location := response.Header().Get("Location"); location != "https://panel.example.com:8443/" {
+		t.Fatalf("ACME fallback reflected request target: %q", location)
 	}
 
 	request = httptest.NewRequest(http.MethodGet, "http://attacker.example/", nil)
@@ -122,6 +133,48 @@ func TestACMEDomainBuildsHTTP01Runtime(t *testing.T) {
 	runtime.ACMEHTTPHandler.ServeHTTP(response, request)
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("unexpected host status = %d, want 404", response.Code)
+	}
+}
+
+func TestACMEFallbackRedirectNeverReflectsRequestTarget(t *testing.T) {
+	handler := acmeFallback("panel.example.com", 8443)
+	tests := []struct {
+		name    string
+		request *http.Request
+	}{
+		{
+			name:    "scheme relative path",
+			request: httptest.NewRequest(http.MethodGet, "http://panel.example.com//attacker.example/login?next=https://evil.example", nil),
+		},
+		{
+			name: "absolute request target",
+			request: func() *http.Request {
+				request := httptest.NewRequest(http.MethodGet, "http://panel.example.com/", nil)
+				request.RequestURI = "https://attacker.example/login?next=https://evil.example"
+				request.URL.Scheme = "https"
+				request.URL.Host = "attacker.example"
+				request.URL.Path = "/login"
+				request.URL.RawQuery = "next=https://evil.example"
+				return request
+			}(),
+		},
+		{
+			name:    "encoded path",
+			request: httptest.NewRequest(http.MethodGet, "http://panel.example.com/%2F%2Fevil.example?return_to=%2F%2Fevil.example", nil),
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			test.request.Host = "panel.example.com"
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, test.request)
+			if response.Code != http.StatusMovedPermanently {
+				t.Fatalf("status = %d, want %d", response.Code, http.StatusMovedPermanently)
+			}
+			if location := response.Header().Get("Location"); location != "https://panel.example.com:8443/" {
+				t.Fatalf("Location = %q, want canonical URL", location)
+			}
+		})
 	}
 }
 

@@ -62,7 +62,7 @@ const webShutdownTimeout = 15 * time.Second
 
 type idempotencyEntry struct {
 	status    int
-	body      []byte
+	body      json.RawMessage
 	createdAt time.Time
 	ready     chan struct{}
 }

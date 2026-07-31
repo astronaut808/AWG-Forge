@@ -36,12 +36,12 @@ ui-build:
 ci: ui-check ui-build test test-shell vet build lint-go lint-js quality
 
 security:
-	gitleaks detect --source=. --no-banner
+	gitleaks detect --source=. --no-banner --log-opts=HEAD
 	trivy fs .
 	semgrep --config=auto --disable-version-check .
 
 security-fast:
-	gitleaks detect --source=. --no-banner
+	gitleaks detect --source=. --no-banner --log-opts=HEAD
 	trivy fs --severity HIGH,CRITICAL --quiet .
 	semgrep --config=p/golang --config=p/typescript --config=p/secrets --disable-version-check .
 

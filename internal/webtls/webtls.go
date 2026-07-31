@@ -355,7 +355,9 @@ func acmeFallback(domain string, port int) http.Handler {
 		if port != 443 {
 			target += fmt.Sprintf(":%d", port)
 		}
-		http.Redirect(w, r, target+r.URL.RequestURI(), http.StatusMovedPermanently)
+		// TCP/80 exists only for ACME HTTP-01. Redirecting to a canonical URL
+		// avoids reflecting an untrusted request target into the Location header.
+		http.Redirect(w, r, target+"/", http.StatusMovedPermanently)
 	})
 }
 

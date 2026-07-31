@@ -69,6 +69,44 @@ func TestRequestLogAddsCorrelationWithoutLeakingRequestData(t *testing.T) {
 	}
 }
 
+func TestWriteCachedJSONPreservesJSONResponseContract(t *testing.T) {
+	body, err := json.Marshal(map[string]string{"input": "<script>alert(1)</script>"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	recorder := httptest.NewRecorder()
+	writeCachedJSON(recorder, http.StatusCreated, json.RawMessage(body))
+	if got, want := recorder.Code, http.StatusCreated; got != want {
+		t.Fatalf("status = %d, want %d", got, want)
+	}
+	if got, want := recorder.Header().Get("Content-Type"), "application/json"; got != want {
+		t.Fatalf("Content-Type = %q, want %q", got, want)
+	}
+	var payload map[string]string
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("cached response is not JSON: %v", err)
+	}
+	if got, want := payload["input"], "<script>alert(1)</script>"; got != want {
+		t.Fatalf("input = %q, want %q", got, want)
+	}
+}
+
+func TestWriteCachedJSONRejectsInvalidJSON(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	writeCachedJSON(recorder, http.StatusCreated, json.RawMessage(`{"input":`))
+	if got, want := recorder.Code, http.StatusInternalServerError; got != want {
+		t.Fatalf("status = %d, want %d", got, want)
+	}
+	var payload map[string]string
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("error response is not JSON: %v", err)
+	}
+	if got, want := payload["error"], "failed to encode response"; got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+}
+
 func TestRequestLogUsesNormalizedUnknownRoute(t *testing.T) {
 	var output bytes.Buffer
 	cfg := config.Config{ConfigDir: t.TempDir(), AuditLogEnabled: false}

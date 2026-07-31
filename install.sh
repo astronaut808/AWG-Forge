@@ -415,8 +415,8 @@ normalize_acme_domain() {
   [[ -n "$domain" && ${#domain} -le 253 && "$domain" == *.* && "$domain" != *'*'* ]] || return 1
   [[ ! "$domain" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
 
-  local IFS=.
-  read -r -a labels <<<"$domain"
+  local -a labels
+  IFS=. read -r -a labels <<<"$domain"
   for label in "${labels[@]}"; do
     [[ ${#label} -ge 1 && ${#label} -le 63 ]] || return 1
     [[ "$label" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] || return 1

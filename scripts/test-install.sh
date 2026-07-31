@@ -86,9 +86,14 @@ unset -f docker
 
 printf 'OK   fresh install configures the automatic UDP port range\n'
 
+original_ifs="$IFS"
 valid_acme_domain="$(normalize_acme_domain ' Panel.Example.com. ')"
 if [[ "$valid_acme_domain" != "panel.example.com" ]]; then
   printf 'FAIL installer did not normalize a valid ACME DNS name\n' >&2
+  exit 1
+fi
+if [[ "$IFS" != "$original_ifs" ]]; then
+  printf 'FAIL installer ACME validation changed caller IFS\n' >&2
   exit 1
 fi
 for invalid_acme_domain in 'foo..example.com' 'foo-.example.com' '-foo.example.com' '203.0.113.4' '*.example.com'; do
