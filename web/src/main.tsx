@@ -1093,7 +1093,12 @@ function SupportPanel({ state, action, busyAction }: { state: AppState; action: 
               <p>{m.maintenance.tlsSubject}: {state.tls.subject || "-"}</p>
               <p>{m.maintenance.tlsIssuer}: {state.tls.issuer || "-"} · {m.maintenance.tlsValidUntil}: {formatTLSDate(state.tls.not_after, locale)}</p>
             </>}
-            <p>{m.maintenance.tlsSettingsSource}: {tlsSettingsSourceLabel(state.tls.source, m)} · {m.maintenance.trustedProxyHeaders}: {state.tls.trusted_proxy_headers ? m.maintenance.trustedProxyEnabled(state.tls.trusted_proxy_cidrs) : m.maintenance.trustedProxyDisabled}</p>
+            {state.tls.mode === "acme-domain" && <>
+              <p>{m.maintenance.tlsDomain}: {state.tls.domain || "-"}</p>
+              <p>{m.maintenance.tlsCertificateStatus}: {state.tls.state === "active" ? m.maintenance.tlsActive : state.tls.state === "failed" ? m.maintenance.tlsFailed : m.maintenance.tlsPending}</p>
+              {state.tls.state === "active" && <p>{m.maintenance.tlsValidUntil}: {formatTLSDate(state.tls.not_after, locale)}</p>}
+            </>}
+	            <p>{m.maintenance.trustedProxyHeaders}: {state.tls.trusted_proxy_headers ? m.maintenance.trustedProxyEnabled(state.tls.trusted_proxy_cidrs) : m.maintenance.trustedProxyDisabled}</p>
           </>}
         </div>
       </div>
@@ -1113,11 +1118,8 @@ function tlsModeLabel(tls: AppState["tls"], m: Messages): string {
   if (tls.error) return m.maintenance.tlsInvalid;
   if (tls.mode === "manual") return m.maintenance.tlsManual;
   if (tls.mode === "reverse-proxy") return m.maintenance.tlsReverseProxy;
+  if (tls.mode === "acme-domain") return m.maintenance.tlsACMEDomain;
   return m.maintenance.tlsOff;
-}
-
-function tlsSettingsSourceLabel(source: string | undefined, m: Messages): string {
-  return source === "managed" ? m.maintenance.tlsSettingsFile : m.maintenance.tlsEnvironment;
 }
 
 function formatTLSDate(value: string | undefined, locale: string): string {

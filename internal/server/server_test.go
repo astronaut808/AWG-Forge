@@ -329,11 +329,10 @@ func TestHTTPServerUsesBoundedTimeouts(t *testing.T) {
 func TestManualTLSServerHandshake(t *testing.T) {
 	certPath, keyPath := writeManualTLSCertificate(t, "panel.example.com")
 	cfg := config.Config{
-		ConfigDir:          t.TempDir(),
-		WebUITLSMode:       string(webtls.ModeManual),
-		WebUITLSCertFile:   certPath,
-		WebUITLSKeyFile:    keyPath,
-		WebUITLSServerName: "panel.example.com",
+		ConfigDir: t.TempDir(),
+	}
+	if err := webtls.Save(cfg, webtls.Settings{Mode: webtls.ModeManual, CertFile: certPath, KeyFile: keyPath, ServerName: "panel.example.com"}); err != nil {
+		t.Fatal(err)
 	}
 	tlsRuntime, err := webtls.Load(cfg)
 	if err != nil {
@@ -379,9 +378,7 @@ func TestManualTLSServerHandshake(t *testing.T) {
 }
 
 func TestPublicTLSDoesNotExposeCertificatePaths(t *testing.T) {
-	cfg := config.Config{
-		WebUITLSMode: string(webtls.ModeManual),
-	}
+	cfg := config.Config{}
 	summary := publicTLS(webtls.Status{Mode: webtls.ModeManual, Subject: "CN=panel.example.com", Issuer: "CN=issuer"}, cfg)
 	encoded, err := json.Marshal(summary)
 	if err != nil {
@@ -389,6 +386,26 @@ func TestPublicTLSDoesNotExposeCertificatePaths(t *testing.T) {
 	}
 	if strings.Contains(string(encoded), "/private/") {
 		t.Fatalf("TLS summary exposes a certificate path: %s", encoded)
+	}
+}
+
+func TestPublicTLSIncludesActiveACMECertificateMetadata(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	summary := publicTLS(webtls.Status{
+		Mode:      webtls.ModeACMEDomain,
+		Domain:    "panel.example.com",
+		State:     "active",
+		Subject:   "CN=panel.example.com",
+		Issuer:    "CN=Let's Encrypt",
+		NotBefore: now.Add(-time.Hour),
+		NotAfter:  now.Add(24 * time.Hour),
+	}, config.Config{})
+
+	if got, want := summary["not_after"], now.Add(24*time.Hour); got != want {
+		t.Fatalf("not_after = %v, want %v", got, want)
+	}
+	if got, want := summary["subject"], "CN=panel.example.com"; got != want {
+		t.Fatalf("subject = %v, want %q", got, want)
 	}
 }
 

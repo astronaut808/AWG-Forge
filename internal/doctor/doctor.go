@@ -210,7 +210,7 @@ func (c *checker) checkTLS(cfg config.Config) {
 		c.fail(categorySecurity, "TLS", err.Error())
 		return
 	}
-	status := runtime.Status
+	status := runtime.ReadStatus()
 	switch status.Mode {
 	case webtls.ModeOff:
 		if cfg.WebUIHost == "0.0.0.0" || cfg.WebUIHost == "::" {
@@ -222,6 +222,15 @@ func (c *checker) checkTLS(cfg config.Config) {
 		c.ok(categorySecurity, "TLS", "reverse-proxy termination selected")
 	case webtls.ModeManual:
 		c.ok(categorySecurity, "TLS", "manual certificate valid until "+status.NotAfter.Format(time.RFC3339))
+	case webtls.ModeACMEDomain:
+		switch status.State {
+		case "active":
+			c.ok(categorySecurity, "TLS", "ACME certificate for "+status.Domain+" valid until "+status.NotAfter.Format(time.RFC3339))
+		case "failed":
+			c.warn(categorySecurity, "TLS", "ACME certificate issuance failed for "+status.Domain+"; verify DNS and external TCP/80 reach this host")
+		default:
+			c.warn(categorySecurity, "TLS", "ACME certificate is pending for "+status.Domain+"; verify DNS and external TCP/80 reach this host")
+		}
 	}
 	if cfg.WebUITrustProxyHeaders {
 		c.ok(categorySecurity, "trusted proxy headers", fmt.Sprintf("enabled for %d CIDR entries", len(cfg.WebUITrustedProxyCIDRs)))

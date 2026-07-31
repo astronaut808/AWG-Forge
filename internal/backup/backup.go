@@ -165,6 +165,9 @@ func createPlainZip(cfg config.Config, state config.State, now time.Time) ([]byt
 	if err := addOptionalExistingFile(zw, cfg.ConfigDir, webtls.SettingsRelativePath, &metas); err != nil {
 		return nil, err
 	}
+	if err := addOptionalTree(zw, cfg.ConfigDir, webtls.ACMECacheRelativePath, &metas); err != nil {
+		return nil, err
+	}
 	tunnelRoot := filepath.Join(cfg.ConfigDir, "tunnels")
 	if err := filepath.WalkDir(tunnelRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -232,6 +235,39 @@ func addOptionalExistingFile(zw *zip.Writer, root, rel string, metas *[]FileMeta
 		return err
 	}
 	return addExistingFile(zw, root, rel, metas)
+}
+
+func addOptionalTree(zw *zip.Writer, root, rel string, metas *[]FileMeta) error {
+	base := filepath.Join(root, filepath.FromSlash(rel))
+	info, err := os.Lstat(base)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("backup path %s must be a directory, not a symlink", rel)
+	}
+	return filepath.WalkDir(base, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("backup path %s must not contain symlinks", rel)
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if !entry.Type().IsRegular() {
+			return fmt.Errorf("backup path %s must contain regular files only", rel)
+		}
+		itemRel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		return addExistingFile(zw, root, itemRel, metas)
+	})
 }
 
 func addJSON(zw *zip.Writer, name string, v any) error {
