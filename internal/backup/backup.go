@@ -227,12 +227,16 @@ func addExistingFile(zw *zip.Writer, root, rel string, metas *[]FileMeta) error 
 }
 
 func addOptionalExistingFile(zw *zip.Writer, root, rel string, metas *[]FileMeta) error {
-	_, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel)))
+	path := filepath.Join(root, filepath.FromSlash(rel))
+	info, err := os.Lstat(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
 		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return fmt.Errorf("backup path %s must be a regular file, not a symlink", rel)
 	}
 	return addExistingFile(zw, root, rel, metas)
 }

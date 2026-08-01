@@ -738,13 +738,30 @@ print_next_steps() {
     printf 'Password file: %s\n' "$ENV_FILE"
   fi
   printf '\n'
+  local tls_mode="off" scheme="http"
+  if [[ -f "$DATA_DIR/tls/config.json" ]]; then
+    tls_mode="$(sed -nE 's/.*"mode"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$DATA_DIR/tls/config.json" | head -n 1)"
+  fi
+  case "$tls_mode" in
+    acme-domain|manual) scheme="https" ;;
+    reverse-proxy) scheme="" ;;
+  esac
+
   if [[ "$webui_host" == "127.0.0.1" || "$webui_host" == "localhost" || "$webui_host" == "::1" ]]; then
     bold "Access through SSH tunnel"
     printf 'ssh -L %s:127.0.0.1:%s user@%s\n' "$webui_port" "$webui_port" "$server_host"
-    printf 'Then open: http://127.0.0.1:%s\n' "$webui_port"
+    if [[ -n "$scheme" ]]; then
+      printf 'Then open: %s://127.0.0.1:%s\n' "$scheme" "$webui_port"
+    else
+      printf 'Then open the HTTPS URL configured in your reverse proxy.\n'
+    fi
   else
     warn "Web UI is bound to $webui_host. Protect it with firewall/VPN/reverse proxy."
-    printf 'Open: http://%s:%s\n' "$server_host" "$webui_port"
+    if [[ -n "$scheme" ]]; then
+      printf 'Open: %s://%s:%s\n' "$scheme" "$server_host" "$webui_port"
+    else
+      printf 'Open the HTTPS URL configured in your reverse proxy.\n'
+    fi
   fi
   printf '\n'
   bold "Useful commands"

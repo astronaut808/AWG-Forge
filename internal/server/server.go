@@ -81,7 +81,7 @@ func ServeContext(ctx context.Context, cfg config.Config, service *app.Service, 
 	serverContext, stopServer := context.WithCancel(context.Background())
 	defer stopServer()
 	w := newWeb(serverContext, cfg, service, secret, tlsRuntime)
-	server := newHTTPServer(fmt.Sprintf("%s:%d", cfg.WebUIHost, cfg.WebUIPort), newHandler(w))
+	server := newHTTPServer(webUIAddress(cfg.WebUIHost, cfg.WebUIPort), newHandler(w))
 	listener, err := net.Listen("tcp", server.Addr)
 	if err != nil {
 		return err
@@ -168,6 +168,10 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 		WriteTimeout:      webWriteTimeout,
 		IdleTimeout:       webIdleTimeout,
 	}
+}
+
+func webUIAddress(host string, port int) string {
+	return net.JoinHostPort(host, strconv.Itoa(port))
 }
 
 func newHandler(w *web) http.Handler {

@@ -162,7 +162,14 @@ docker exec awg-forge awg-forge tls status
 
 ### Reverse Proxy
 
-Когда возможно, оставь `WEBUI_HOST=127.0.0.1` и настрой HTTPS в proxy. Сначала задай trusted forwarded headers и явные CIDR proxy в `.env`:
+Когда возможно, оставь `WEBUI_HOST=127.0.0.1` и настрой HTTPS в proxy. При переходе с ACME или manual TLS сначала сохрани `off` через одноразовый CLI-контейнер:
+
+```bash
+cd /opt/awg-forge
+docker compose run --rm --no-deps awg-forge tls disable
+```
+
+Затем задай trusted forwarded headers и явные CIDR proxy в `.env`:
 
 ```env
 WEBUI_TRUST_PROXY_HEADERS=true

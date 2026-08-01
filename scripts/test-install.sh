@@ -119,6 +119,23 @@ rm -rf "$DATA_DIR/tls"
 
 printf 'OK   installer detects managed ACME before restricting Web UI access\n'
 
+mkdir -p "$DATA_DIR/tls"
+printf '{"mode":"acme-domain"}\n' >"$DATA_DIR/tls/config.json"
+next_steps="$(print_next_steps "panel.example.com" "0.0.0.0" "8443" "" "awg_2_0" "docker compose")"
+if ! grep -q 'Open: https://panel.example.com:8443' <<<"$next_steps"; then
+	printf 'FAIL installer does not print the HTTPS URL for ACME TLS\n' >&2
+	exit 1
+fi
+printf '{"mode":"reverse-proxy"}\n' >"$DATA_DIR/tls/config.json"
+next_steps="$(print_next_steps "panel.example.com" "0.0.0.0" "8443" "" "awg_2_0" "docker compose")"
+if ! grep -q 'Open the HTTPS URL configured in your reverse proxy.' <<<"$next_steps"; then
+	printf 'FAIL installer does not defer reverse-proxy URLs to proxy configuration\n' >&2
+	exit 1
+fi
+rm -rf "$DATA_DIR/tls"
+
+printf 'OK   installer prints an access URL that matches the configured TLS mode\n'
+
 random_u32() {
   printf '1'
 }

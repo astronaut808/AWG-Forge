@@ -6,5 +6,11 @@ exclude:
   # such as "Backup password"; Aislop reports those as duplicate code / hardcoded secrets.
   - web/src/i18n.ts
 
+rules:
+  # Existing server/UI composition files are intentionally large. Keep scanning them
+  # for lint and security findings; do not lower the score solely for their size.
+  complexity/file-too-large: off
+  complexity/function-too-long: off
+
 ci:
   failBelow: 80

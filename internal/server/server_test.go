@@ -364,6 +364,15 @@ func TestHTTPServerUsesBoundedTimeouts(t *testing.T) {
 	}
 }
 
+func TestWebUIAddressSupportsIPv4AndIPv6(t *testing.T) {
+	if got, want := webUIAddress("0.0.0.0", 8443), "0.0.0.0:8443"; got != want {
+		t.Fatalf("IPv4 address = %q, want %q", got, want)
+	}
+	if got, want := webUIAddress("::", 8443), "[::]:8443"; got != want {
+		t.Fatalf("IPv6 address = %q, want %q", got, want)
+	}
+}
+
 func TestManualTLSServerHandshake(t *testing.T) {
 	certPath, keyPath := writeManualTLSCertificate(t, "panel.example.com")
 	cfg := config.Config{

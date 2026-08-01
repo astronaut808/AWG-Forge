@@ -162,7 +162,14 @@ The same safe mode, certificate, and trusted-proxy summary is available in `Main
 
 ### Reverse Proxy
 
-Keep `WEBUI_HOST=127.0.0.1` where possible and configure HTTPS in the proxy. First enable trusted forwarded headers and explicit proxy CIDRs in `.env`:
+Keep `WEBUI_HOST=127.0.0.1` where possible and configure HTTPS in the proxy. When moving from ACME or manual TLS, first save `off` through a one-shot CLI container:
+
+```bash
+cd /opt/awg-forge
+docker compose run --rm --no-deps awg-forge tls disable
+```
+
+Then enable trusted forwarded headers and explicit proxy CIDRs in `.env`:
 
 ```env
 WEBUI_TRUST_PROXY_HEADERS=true

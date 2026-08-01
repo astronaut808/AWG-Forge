@@ -100,6 +100,28 @@ func TestBackupIncludesTLSSettings(t *testing.T) {
 	t.Fatalf("backup does not contain %s", webtls.SettingsRelativePath)
 }
 
+func TestBackupRejectsTLSSymlink(t *testing.T) {
+	cfg := testConfig(t)
+	svc := app.New(cfg)
+	if _, err := svc.Init(); err != nil {
+		t.Fatal(err)
+	}
+	secretPath := filepath.Join(t.TempDir(), "unrelated-secret")
+	if err := os.WriteFile(secretPath, []byte("must not be backed up"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	tlsDir := filepath.Join(cfg.ConfigDir, "tls")
+	if err := os.MkdirAll(tlsDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secretPath, filepath.Join(tlsDir, "config.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Create(context.Background(), cfg, svc, testPassword, Options{}); err == nil {
+		t.Fatal("expected backup to reject TLS settings symlink")
+	}
+}
+
 func TestBackupIncludesACMECacheOnlyInEncryptedArchive(t *testing.T) {
 	cfg := testConfig(t)
 	svc := app.New(cfg)
