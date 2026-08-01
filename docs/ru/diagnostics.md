@@ -17,7 +17,7 @@ Doctor проверяет:
 - `awg`, `awg-quick`, `amneziawg-go`;
 - `iptables`, `ip`, `nf_tables`;
 - session cookie security policy;
-- режим TLS Web UI, валидность manual certificate и trusted proxy configuration;
+- режим TLS Web UI, валидность manual или cached ACME certificate и trusted proxy configuration;
 - optional database mode, schema и journal mode;
 - превышенные client traffic limits, если включен SQLite;
 - IPv4 forwarding;

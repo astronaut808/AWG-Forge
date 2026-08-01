@@ -119,6 +119,8 @@ ssh -L 51821:127.0.0.1:51821 user@server
 
 If you choose `WEBUI_HOST=0.0.0.0` or `::`, the script shows a warning and requires explicit confirmation. Use public binds only behind a firewall, VPN, or reverse proxy.
 
+For a fresh installation, the script also offers an ACME domain certificate. Select it only after the domain points to this host and TCP/80 is reachable from the Internet. The panel continues on the chosen Web UI port; see [TLS configuration](configuration.md#web-ui-tls) for constraints and existing-install setup.
+
 The password is shown at the end and stored in `/opt/awg-forge/.env`, or in `.env` inside `AWG_FORGE_HOME`:
 
 ```env

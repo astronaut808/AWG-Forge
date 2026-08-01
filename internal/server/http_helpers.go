@@ -57,8 +57,9 @@ func (w *web) withIdempotency(rw http.ResponseWriter, r *http.Request, action st
 		status = http.StatusInternalServerError
 		body, _ = json.Marshal(errorPayload("failed to encode response"))
 	}
-	w.finishIdempotency(cacheKey, status, body)
-	writeCachedJSON(rw, status, body)
+	cachedBody := json.RawMessage(body)
+	w.finishIdempotency(cacheKey, status, cachedBody)
+	writeCachedJSON(rw, status, cachedBody)
 }
 
 func (w *web) idempotencyEntry(key string) (*idempotencyEntry, bool) {
@@ -78,7 +79,7 @@ func (w *web) idempotencyEntry(key string) (*idempotencyEntry, bool) {
 	return entry, true
 }
 
-func (w *web) finishIdempotency(key string, status int, body []byte) {
+func (w *web) finishIdempotency(key string, status int, body json.RawMessage) {
 	w.mu.Lock()
 	entry := w.idem[key]
 	entry.status = status
@@ -93,12 +94,14 @@ func writeJSON(rw http.ResponseWriter, status int, payload any) {
 	_ = json.NewEncoder(rw).Encode(payload)
 }
 
-func writeCachedJSON(rw http.ResponseWriter, status int, body []byte) {
+func writeCachedJSON(rw http.ResponseWriter, status int, body json.RawMessage) {
+	if !json.Valid(body) {
+		writeError(rw, http.StatusInternalServerError, "failed to encode response")
+		return
+	}
 	rw.Header().Set("Content-Type", "application/json")
 	rw.WriteHeader(status)
-	// Cached API responses are JSON bytes produced by json.Marshal in this process.
-	_, _ = rw.Write(body) // nosemgrep: go.lang.security.audit.xss.no-direct-write-to-responsewriter.no-direct-write-to-responsewriter
-	_, _ = rw.Write([]byte("\n"))
+	_ = json.NewEncoder(rw).Encode(body)
 }
 
 func writeRawResponse(rw http.ResponseWriter, body []byte) {

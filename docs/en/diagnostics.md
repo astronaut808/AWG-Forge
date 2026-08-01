@@ -17,7 +17,7 @@ Doctor checks:
 - `awg`, `awg-quick`, `amneziawg-go`;
 - `iptables`, `ip`, `nf_tables`;
 - session cookie security policy;
-- Web UI TLS mode, manual certificate validity, and trusted proxy configuration;
+- Web UI TLS mode, manual or cached ACME certificate validity, and trusted proxy configuration;
 - optional database mode, schema, and journal mode;
 - exceeded client traffic limits when SQLite is enabled;
 - IPv4 forwarding;

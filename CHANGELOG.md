@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Added managed ACME HTTP-01 certificates for a public domain through `awg-forge tls use acme-domain`, including automatic renewal and persisted certificate cache.
+- Added `awg-forge tls use reverse-proxy` for deployments where a trusted reverse proxy terminates TLS.
+
+### Changed
+
+- Made `CONFIG_DIR/tls/config.json` the sole desired TLS configuration source; `.env` now contains only deployment context such as bind address, session-cookie policy, and trusted-proxy settings.
+- Added TLS configuration and ACME certificate state to encrypted backup validation without including private key material in support output.
+- Updated installation, configuration, diagnostics, and security documentation for managed ACME, reverse proxy, TLS recovery, and public/loopback binding workflows.
+- Publish Docker images for pushes to `develop` as `ghcr.io/astronaut808/awg-forge:develop` in addition to immutable commit tags.
+- Scope local Gitleaks targets to history reachable from the current `HEAD`, so unrelated local branches do not affect security gates.
+- Updated Aislop to v0.14.0 and retained its quality gate in CI with scoped exclusions for legacy file/function-size findings.
+
+### Fixed
+
+- Hardened the ACME HTTP fallback redirect so untrusted HTTP request targets cannot influence its HTTPS `Location` header.
+- Fixed Web UI listener construction for IPv6 `WEBUI_HOST` values such as `::`.
+- Show an access URL that matches the configured TLS mode after installation or reconfiguration.
+
+### Security
+
+- Hardened cached idempotent API responses to remain validated `application/json` output rather than writing cached bytes directly to the response.
+- Reject TLS settings symlinks during backup creation instead of following a replaced path.
+
 ## v0.17.0 - 2026-07-29
 
 ### Added

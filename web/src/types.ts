@@ -145,13 +145,14 @@ export type DatabaseSummary = {
 
 export type TLSSummary = {
   mode: string;
-  source?: string;
   valid: boolean;
   error?: string;
   subject?: string;
   issuer?: string;
   not_before?: string;
   not_after?: string;
+  domain?: string;
+  state?: string;
   trusted_proxy_headers: boolean;
   trusted_proxy_cidrs: number;
 };

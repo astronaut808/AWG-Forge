@@ -69,7 +69,72 @@ if ! grep -qx 'TUNNEL_UDP_PORT_RANGE=30000-49999' "$ENV_FILE"; then
   exit 1
 fi
 
+if grep -q '^WEBUI_TLS_' "$ENV_FILE"; then
+	printf 'FAIL fresh install stores TLS desired configuration in .env\n' >&2
+	exit 1
+fi
+
+docker() {
+  printf '%s\n' "$*" >"$test_dir/docker-command"
+}
+configure_tls "docker compose" off "" ""
+if [[ "$(<"$test_dir/docker-command")" != "compose run --rm --no-deps awg-forge tls disable" ]]; then
+  printf 'FAIL TLS bootstrap did not invoke docker compose as separate arguments\n' >&2
+  exit 1
+fi
+unset -f docker
+
 printf 'OK   fresh install configures the automatic UDP port range\n'
+
+original_ifs="$IFS"
+valid_acme_domain="$(normalize_acme_domain ' Panel.Example.com. ')"
+if [[ "$valid_acme_domain" != "panel.example.com" ]]; then
+  printf 'FAIL installer did not normalize a valid ACME DNS name\n' >&2
+  exit 1
+fi
+if [[ "$IFS" != "$original_ifs" ]]; then
+  printf 'FAIL installer ACME validation changed caller IFS\n' >&2
+  exit 1
+fi
+for invalid_acme_domain in 'foo..example.com' 'foo-.example.com' '-foo.example.com' '203.0.113.4' '*.example.com'; do
+  if normalize_acme_domain "$invalid_acme_domain" >/dev/null; then
+    printf 'FAIL installer accepted invalid ACME DNS name: %s\n' "$invalid_acme_domain" >&2
+    exit 1
+  fi
+done
+
+printf 'OK   ACME DNS validation matches the managed TLS constraints\n'
+
+mkdir -p "$DATA_DIR/tls"
+printf '{"mode":"acme-domain"}\n' >"$DATA_DIR/tls/config.json"
+if ! managed_acme_tls_configured; then
+  printf 'FAIL installer did not detect managed ACME TLS\n' >&2
+  exit 1
+fi
+if ! is_loopback_webui_host 127.0.0.1 || ! is_loopback_webui_host localhost || is_loopback_webui_host 0.0.0.0; then
+  printf 'FAIL installer did not classify Web UI bind addresses correctly\n' >&2
+  exit 1
+fi
+rm -rf "$DATA_DIR/tls"
+
+printf 'OK   installer detects managed ACME before restricting Web UI access\n'
+
+mkdir -p "$DATA_DIR/tls"
+printf '{"mode":"acme-domain"}\n' >"$DATA_DIR/tls/config.json"
+next_steps="$(print_next_steps "panel.example.com" "0.0.0.0" "8443" "" "awg_2_0" "docker compose")"
+if ! grep -q 'Open: https://panel.example.com:8443' <<<"$next_steps"; then
+	printf 'FAIL installer does not print the HTTPS URL for ACME TLS\n' >&2
+	exit 1
+fi
+printf '{"mode":"reverse-proxy"}\n' >"$DATA_DIR/tls/config.json"
+next_steps="$(print_next_steps "panel.example.com" "0.0.0.0" "8443" "" "awg_2_0" "docker compose")"
+if ! grep -q 'Open the HTTPS URL configured in your reverse proxy.' <<<"$next_steps"; then
+	printf 'FAIL installer does not defer reverse-proxy URLs to proxy configuration\n' >&2
+	exit 1
+fi
+rm -rf "$DATA_DIR/tls"
+
+printf 'OK   installer prints an access URL that matches the configured TLS mode\n'
 
 random_u32() {
   printf '1'
@@ -103,13 +168,15 @@ PASSWORD=existing-password
 SESSION_SECRET=existing-secret
 EXTERNAL_INTERFACE=eth0
 DATABASE_MODE=sqlite
-WEBUI_TLS_MODE=manual
-WEBUI_TLS_CERT_FILE=/etc/awg-forge/tls/cert.pem
 EOF
 write_env "127.0.0.1" "51900" "existing-password" "existing-secret" "ens3" reconfigure
-if ! grep -qx 'DATABASE_MODE=sqlite' "$ENV_FILE" || ! grep -qx 'WEBUI_TLS_MODE=manual' "$ENV_FILE" || ! grep -qx 'WEBUI_TLS_CERT_FILE=/etc/awg-forge/tls/cert.pem' "$ENV_FILE"; then
-  printf 'FAIL reconfigure did not preserve existing operational settings\n' >&2
-  exit 1
+if ! grep -qx 'DATABASE_MODE=sqlite' "$ENV_FILE"; then
+	printf 'FAIL reconfigure did not preserve existing operational settings\n' >&2
+	exit 1
+fi
+if grep -q '^WEBUI_TLS_' "$ENV_FILE"; then
+	printf 'FAIL reconfigure preserves obsolete TLS environment settings\n' >&2
+	exit 1
 fi
 if ! grep -qx 'WEBUI_PORT=51900' "$ENV_FILE" || ! grep -qx 'EXTERNAL_INTERFACE=ens3' "$ENV_FILE"; then
   printf 'FAIL reconfigure did not update selected runtime settings\n' >&2

@@ -19,7 +19,7 @@ If the UI is published publicly, a password is required.
 
 ## TLS and Reverse Proxies
 
-Built-in Web UI TLS supports `off`, `reverse-proxy`, and `manual`; see [configuration](configuration.md#web-ui-tls). `manual` mode requires TLS 1.3 and rejects invalid certificates, mismatched keys, expired certificates, key symlinks, private keys without mode `0600`, and key directories without mode `0700`.
+Built-in Web UI TLS supports `off`, `reverse-proxy`, `manual`, and `acme-domain`; see [configuration](configuration.md#web-ui-tls). `manual` mode requires TLS 1.3 and rejects invalid certificates, mismatched keys, expired certificates, key symlinks, private keys without mode `0600`, and key directories without mode `0700`. `acme-domain` uses HTTP-01 only on TCP/80, accepts one exact DNS name, keeps its account and certificate cache under `CONFIG_DIR/tls/acme` with mode `0700`, and requires secure cookies with trusted proxy headers disabled.
 
 Reverse-proxy mode requires a Web UI password, `WEBUI_TRUST_PROXY_HEADERS=true`, and direct proxy addresses in `WEBUI_TRUSTED_PROXY_CIDRS`. Untrusted forwarded headers are ignored. Keep TLS termination and the Web UI bind separate: the proxy can expose HTTPS on any port while awg-forge remains on loopback.
 
