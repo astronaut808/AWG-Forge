@@ -1088,18 +1088,19 @@ function SupportPanel({ state, action, busyAction }: { state: AppState; action: 
       <div class="row">
         <div>
           <strong>{m.maintenance.tls}</strong>
-          {state.tls.error ? <p>{m.maintenance.tlsInvalid}: {state.tls.error}</p> : <>
-            {state.tls.mode === "manual" && <>
-              <p>{m.maintenance.tlsSubject}: {state.tls.subject || "-"}</p>
-              <p>{m.maintenance.tlsIssuer}: {state.tls.issuer || "-"} · {m.maintenance.tlsValidUntil}: {formatTLSDate(state.tls.not_after, locale)}</p>
-            </>}
-            {state.tls.mode === "acme-domain" && <>
-              <p>{m.maintenance.tlsDomain}: {state.tls.domain || "-"}</p>
-              <p>{m.maintenance.tlsCertificateStatus}: {state.tls.state === "active" ? m.maintenance.tlsActive : state.tls.state === "failed" ? m.maintenance.tlsFailed : m.maintenance.tlsPending}</p>
-              {state.tls.state === "active" && <p>{m.maintenance.tlsValidUntil}: {formatTLSDate(state.tls.not_after, locale)}</p>}
-            </>}
-	            <p>{m.maintenance.trustedProxyHeaders}: {state.tls.trusted_proxy_headers ? m.maintenance.trustedProxyEnabled(state.tls.trusted_proxy_cidrs) : m.maintenance.trustedProxyDisabled}</p>
+          {state.tls.error && <p>{m.maintenance.tlsInvalid}: {state.tls.error}</p>}
+          {state.tls.mode === "manual" && <>
+            <p>{m.maintenance.tlsSubject}: {state.tls.subject || "-"}</p>
+            <p>{m.maintenance.tlsIssuer}: {state.tls.issuer || "-"} · {m.maintenance.tlsValidUntil}: {formatTLSDate(state.tls.not_after, locale)}</p>
           </>}
+          {(state.tls.mode === "acme-domain" || state.tls.mode === "acme-ip") && <>
+            <p>{state.tls.mode === "acme-ip" ? m.maintenance.tlsACMEIP : m.maintenance.tlsDomain}: {state.tls.mode === "acme-ip" ? state.tls.ip || "-" : state.tls.domain || "-"}</p>
+            <p>{m.maintenance.tlsCertificateStatus}: {state.tls.state === "active" ? m.maintenance.tlsActive : state.tls.state === "failed" ? m.maintenance.tlsFailed : m.maintenance.tlsPending}</p>
+            {state.tls.state === "active" && <p>{m.maintenance.tlsValidUntil}: {formatTLSDate(state.tls.not_after, locale)}</p>}
+            {state.tls.warning && <p>{m.maintenance.tlsRenewalWarning}</p>}
+            {state.tls.next_attempt && <p>{m.maintenance.tlsNextAttempt}: {formatTLSDate(state.tls.next_attempt, locale)}</p>}
+          </>}
+          <p>{m.maintenance.trustedProxyHeaders}: {state.tls.trusted_proxy_headers ? m.maintenance.trustedProxyEnabled(state.tls.trusted_proxy_cidrs) : m.maintenance.trustedProxyDisabled}</p>
         </div>
       </div>
     </div>
@@ -1119,6 +1120,7 @@ function tlsModeLabel(tls: AppState["tls"], m: Messages): string {
   if (tls.mode === "manual") return m.maintenance.tlsManual;
   if (tls.mode === "reverse-proxy") return m.maintenance.tlsReverseProxy;
   if (tls.mode === "acme-domain") return m.maintenance.tlsACMEDomain;
+  if (tls.mode === "acme-ip") return m.maintenance.tlsACMEIP;
   return m.maintenance.tlsOff;
 }
 

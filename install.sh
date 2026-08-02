@@ -436,7 +436,7 @@ is_loopback_webui_host() {
 managed_acme_tls_configured() {
   local settings_path="$DATA_DIR/tls/config.json"
   [[ -f "$settings_path" ]] || return 1
-  grep -Eq '"mode"[[:space:]]*:[[:space:]]*"acme-domain"' "$settings_path"
+  grep -Eq '"mode"[[:space:]]*:[[:space:]]*"acme-(domain|ip)"' "$settings_path"
 }
 
 profile_from_choice() {
@@ -685,10 +685,16 @@ configure_tls() {
   local mode="$2"
   local domain="$3"
   local email="$4"
+  local ip="${5:-}"
 
   if [[ "$mode" == "acme-domain" ]]; then
     $compose run --rm --no-deps awg-forge tls use acme-domain \
       --domain "$domain" \
+      --email "$email" \
+      --accept-tos
+  elif [[ "$mode" == "acme-ip" ]]; then
+    $compose run --rm --no-deps awg-forge tls use acme-ip \
+      --ip "$ip" \
       --email "$email" \
       --accept-tos
   else
@@ -738,14 +744,21 @@ print_next_steps() {
     printf 'Password file: %s\n' "$ENV_FILE"
   fi
   printf '\n'
-  local tls_mode="off" scheme="http"
+  local tls_mode="off" scheme="http" access_host="$server_host"
   if [[ -f "$DATA_DIR/tls/config.json" ]]; then
     tls_mode="$(sed -nE 's/.*"mode"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$DATA_DIR/tls/config.json" | head -n 1)"
   fi
   case "$tls_mode" in
-    acme-domain|manual) scheme="https" ;;
+    acme-domain|acme-ip|manual) scheme="https" ;;
     reverse-proxy) scheme="" ;;
   esac
+  if [[ "$tls_mode" == "acme-ip" ]]; then
+    access_host="$(sed -nE 's/.*"acme_ip"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$DATA_DIR/tls/config.json" | head -n 1)"
+    access_host="${access_host:-$server_host}"
+    if [[ "$access_host" == *:* && "$access_host" != \[*\] ]]; then
+      access_host="[$access_host]"
+    fi
+  fi
 
   if [[ "$webui_host" == "127.0.0.1" || "$webui_host" == "localhost" || "$webui_host" == "::1" ]]; then
     bold "Access through SSH tunnel"
@@ -758,7 +771,7 @@ print_next_steps() {
   else
     warn "Web UI is bound to $webui_host. Protect it with firewall/VPN/reverse proxy."
     if [[ -n "$scheme" ]]; then
-      printf 'Open: %s://%s:%s\n' "$scheme" "$server_host" "$webui_port"
+      printf 'Open: %s://%s:%s\n' "$scheme" "$access_host" "$webui_port"
     else
       printf 'Open the HTTPS URL configured in your reverse proxy.\n'
     fi
@@ -1053,7 +1066,7 @@ main() {
 
   printf '\n'
   bold "Network"
-  local server_host external_interface webui_host webui_port tls_mode tls_acme_domain tls_acme_email
+  local server_host external_interface webui_host webui_port tls_mode tls_acme_domain tls_acme_ip tls_acme_email
   server_host="$default_host"
   if ! $existing_state; then
     server_host="$(prompt "Server host or public IP" "$default_host")"
@@ -1081,31 +1094,50 @@ main() {
   fi
   tls_mode="off"
   tls_acme_domain=""
+  tls_acme_ip=""
   tls_acme_email=""
   if [[ "$INSTALL_ACTION" == "fresh" ]]; then
     printf '\n'
     bold "Web UI TLS"
     printf '1) HTTP for loopback or SSH tunnel (default)\n'
     printf '2) ACME certificate for a public DNS domain (HTTP-01 on TCP/80)\n'
+    printf '3) Short-lived ACME certificate for a public IP (HTTP-01 on TCP/80)\n'
     local tls_choice
     tls_choice="$(prompt "Choose TLS mode" "1")"
-    while [[ "$tls_choice" != "1" && "$tls_choice" != "2" ]]; do
-      warn "Choose 1 or 2"
+    while [[ "$tls_choice" != "1" && "$tls_choice" != "2" && "$tls_choice" != "3" ]]; do
+      warn "Choose 1, 2, or 3"
       tls_choice="$(prompt "Choose TLS mode" "1")"
     done
-    if [[ "$tls_choice" == "2" ]]; then
+    if [[ "$tls_choice" == "2" || "$tls_choice" == "3" ]]; then
       if [[ "$webui_host" == "127.0.0.1" || "$webui_host" == "localhost" || "$webui_host" == "::1" ]]; then
         warn "ACME requires a publicly reachable Web UI bind."
-        confirm "Bind Web UI to 0.0.0.0?" "n" || exit 1
-        webui_host="0.0.0.0"
+        if [[ "$tls_choice" == "2" ]]; then
+          confirm "Bind Web UI to 0.0.0.0?" "n" || exit 1
+          webui_host="0.0.0.0"
+        fi
       fi
-      tls_mode="acme-domain"
-      while ! tls_acme_domain="$(normalize_acme_domain "$(prompt "Public DNS domain for the Web UI")")"; do
-        warn "Enter a public DNS name, for example panel.example.com"
-      done
+      if [[ "$tls_choice" == "2" ]]; then
+        tls_mode="acme-domain"
+        while ! tls_acme_domain="$(normalize_acme_domain "$(prompt "Public DNS domain for the Web UI")")"; do
+          warn "Enter a public DNS name, for example panel.example.com"
+        done
+      else
+        tls_mode="acme-ip"
+        tls_acme_ip="$(prompt "Public IPv4 or IPv6 address for the Web UI")"
+        [[ -n "$tls_acme_ip" ]] || { fail "public IP address is required"; exit 1; }
+        local acme_webui_host="0.0.0.0"
+        if [[ "$tls_acme_ip" == *:* ]]; then
+          acme_webui_host="::"
+        fi
+        if [[ "$webui_host" != "$acme_webui_host" && "$webui_host" != "$tls_acme_ip" ]]; then
+          warn "ACME IP TLS needs Web UI to listen on the same IP family."
+          confirm "Bind Web UI to $acme_webui_host?" "n" || exit 1
+          webui_host="$acme_webui_host"
+        fi
+      fi
       tls_acme_email="$(prompt "ACME contact email")"
       [[ -n "$tls_acme_email" ]] || { fail "ACME contact email is required"; exit 1; }
-      warn "The domain must resolve to this host and TCP/80 must be reachable before startup."
+      warn "The selected public identifier must reach this host and TCP/80 must be reachable before startup."
       confirm "Accept the certificate authority terms of service?" "n" || exit 1
     fi
   fi
@@ -1216,7 +1248,7 @@ main() {
 
     printf '\n'
     bold "Configure Web UI TLS"
-    if ! configure_tls "$compose" "$tls_mode" "$tls_acme_domain" "$tls_acme_email"; then
+    if ! configure_tls "$compose" "$tls_mode" "$tls_acme_domain" "$tls_acme_email" "$tls_acme_ip"; then
       fail "could not save Web UI TLS configuration"
       exit 1
     fi

@@ -4,6 +4,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
@@ -133,6 +134,186 @@ func TestACMEDomainBuildsHTTP01Runtime(t *testing.T) {
 	runtime.ACMEHTTPHandler.ServeHTTP(response, request)
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("unexpected host status = %d, want 404", response.Code)
+	}
+}
+
+func TestACMEIPBuildsIsolatedHTTP01Runtime(t *testing.T) {
+	cfg := config.Config{ConfigDir: t.TempDir(), Password: "secret", WebUIHost: "0.0.0.0", WebUIPort: 8443, SessionCookieSecure: "auto"}
+	runtime, err := buildRuntime(cfg, Settings{Mode: ModeACMEIP, ACMEIP: "8.8.8.8", ACMEEmail: "admin@example.com", ACMEAcceptTOS: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.TLSConfig == nil || runtime.ACMEHTTPHandler == nil || runtime.Status.IP != "8.8.8.8" || runtime.Status.State != "pending" {
+		t.Fatalf("unexpected ACME IP runtime: %#v", runtime)
+	}
+	response := httptest.NewRecorder()
+	runtime.ACMEHTTPHandler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "http://8.8.8.8/", nil))
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("ACME IP handler exposed a non-challenge request: %d", response.Code)
+	}
+}
+
+func TestACMEIPRequiresMatchingWebUIBind(t *testing.T) {
+	tests := []struct {
+		name    string
+		host    string
+		ip      string
+		wantErr bool
+	}{
+		{name: "IPv4 wildcard", host: "0.0.0.0", ip: "8.8.8.8"},
+		{name: "IPv4 exact address", host: "8.8.8.8", ip: "8.8.8.8"},
+		{name: "IPv6 wildcard", host: "::", ip: "2001:4860:4860::8888"},
+		{name: "IPv6 exact address", host: "2001:4860:4860::8888", ip: "2001:4860:4860::8888"},
+		{name: "IPv4 bind for IPv6 certificate", host: "0.0.0.0", ip: "2001:4860:4860::8888", wantErr: true},
+		{name: "IPv6 bind for IPv4 certificate", host: "::", ip: "8.8.8.8", wantErr: true},
+		{name: "different public address", host: "1.1.1.1", ip: "8.8.8.8", wantErr: true},
+		{name: "hostname", host: "panel.example.com", ip: "8.8.8.8", wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := config.Config{
+				ConfigDir:           t.TempDir(),
+				Password:            "secret",
+				WebUIHost:           test.host,
+				WebUIPort:           8443,
+				SessionCookieSecure: "auto",
+			}
+			_, err := buildRuntime(cfg, Settings{Mode: ModeACMEIP, ACMEIP: test.ip, ACMEEmail: "admin@example.com", ACMEAcceptTOS: true})
+			if (err != nil) != test.wantErr {
+				t.Fatalf("buildRuntime error = %v, want error: %t", err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestACMEIPHTTP01HandlerOnlyServesLiveGETToken(t *testing.T) {
+	state := &acmeIPState{tokens: map[string]string{"token": "token.authorization"}}
+	handler := state.httpHandler()
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		statusCode int
+		body       string
+	}{
+		{name: "active token", method: http.MethodGet, path: "/.well-known/acme-challenge/token", statusCode: http.StatusOK, body: "token.authorization"},
+		{name: "unknown token", method: http.MethodGet, path: "/.well-known/acme-challenge/other", statusCode: http.StatusNotFound},
+		{name: "nested path", method: http.MethodGet, path: "/.well-known/acme-challenge/token/extra", statusCode: http.StatusNotFound},
+		{name: "head", method: http.MethodHead, path: "/.well-known/acme-challenge/token", statusCode: http.StatusNotFound},
+		{name: "post", method: http.MethodPost, path: "/.well-known/acme-challenge/token", statusCode: http.StatusNotFound},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(test.method, "http://example.test"+test.path, nil))
+			if response.Code != test.statusCode {
+				t.Fatalf("status = %d, want %d", response.Code, test.statusCode)
+			}
+			if test.body != "" && response.Body.String() != test.body {
+				t.Fatalf("body = %q, want %q", response.Body.String(), test.body)
+			}
+		})
+	}
+}
+
+func TestACMEIPRetryScheduleAndInitialAttempt(t *testing.T) {
+	now := time.Date(2026, time.August, 2, 12, 0, 0, 0, time.UTC)
+	state := &acmeIPState{status: Status{Mode: ModeACMEIP, State: "pending"}}
+	if got := state.nextAttemptDelay(now); got != 0 {
+		t.Fatalf("initial delay = %s, want immediate attempt", got)
+	}
+	state.status.NextAttempt = now.Add(5 * time.Minute)
+	if got, want := state.nextAttemptDelay(now), 5*time.Minute; got != want {
+		t.Fatalf("persisted delay = %s, want %s", got, want)
+	}
+	for attempt, want := range map[int]time.Duration{1: time.Minute, 2: 2 * time.Minute, 3: 4 * time.Minute, 7: time.Hour} {
+		if got := acmeIPRetryDelay(attempt); got != want {
+			t.Fatalf("attempt %d delay = %s, want %s", attempt, got, want)
+		}
+	}
+}
+
+func TestACMEIPRestoresRenewalBackoffForCachedCertificate(t *testing.T) {
+	cfg := config.Config{ConfigDir: t.TempDir(), Password: "secret", WebUIHost: "0.0.0.0", WebUIPort: 8443, SessionCookieSecure: "auto"}
+	ip := netip.MustParseAddr("8.8.8.8")
+	cacheDir := filepath.Join(cfg.ConfigDir, filepath.FromSlash(ACMECacheRelativePath), "ip")
+	if err := ensurePrivateDirectory(cacheDir); err != nil {
+		t.Fatal(err)
+	}
+	certPath, keyPath := writeCertificate(t, "unused.example", []net.IP{net.IP(ip.AsSlice())})
+	pair, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saveACMEIPCertificate(cacheDir, pair); err != nil {
+		t.Fatal(err)
+	}
+	next := time.Now().UTC().Add(10 * time.Minute).Truncate(time.Second)
+	if err := saveACMEIPStatus(cacheDir, Status{Mode: ModeACMEIP, IP: ip.String(), State: "active", Warning: "certificate renewal failed", NextAttempt: next, AttemptCount: 3}); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := buildRuntime(cfg, Settings{Mode: ModeACMEIP, ACMEIP: ip.String(), ACMEEmail: "admin@example.com", ACMEAcceptTOS: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := runtime.ReadStatus()
+	if status.Warning != "certificate renewal failed" || !status.NextAttempt.Equal(next) || status.AttemptCount != 3 {
+		t.Fatalf("renewal backoff was not restored: %#v", status)
+	}
+}
+
+func TestACMEIPDoesNotTreatStatusAsCertificate(t *testing.T) {
+	cfg := config.Config{ConfigDir: t.TempDir(), Password: "secret", WebUIHost: "0.0.0.0", WebUIPort: 8443, SessionCookieSecure: "auto"}
+	ip := netip.MustParseAddr("8.8.8.8")
+	cacheDir := filepath.Join(cfg.ConfigDir, filepath.FromSlash(ACMECacheRelativePath), "ip")
+	if err := ensurePrivateDirectory(cacheDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveACMEIPStatus(cacheDir, Status{Mode: ModeACMEIP, IP: ip.String(), State: "active", NextAttempt: time.Now().UTC().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := buildRuntime(cfg, Settings{Mode: ModeACMEIP, ACMEIP: ip.String(), ACMEEmail: "admin@example.com", ACMEAcceptTOS: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := runtime.ReadStatus()
+	if status.State != "pending" || !status.NextAttempt.IsZero() {
+		t.Fatalf("missing certificate must retry immediately, got %#v", status)
+	}
+}
+
+func TestACMEIPRejectsUnsafeCacheFiles(t *testing.T) {
+	cacheDir := filepath.Join(t.TempDir(), "ip")
+	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "target")
+	if err := os.WriteFile(target, []byte("not a certificate"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(cacheDir, "certificate.pem")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := loadACMEIPCertificate(cacheDir, netip.MustParseAddr("8.8.8.8")); err == nil {
+		t.Fatal("expected certificate cache symlink to be rejected")
+	}
+	if err := os.Remove(filepath.Join(cacheDir, "certificate.pem")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(cacheDir, "status.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := loadACMEIPStatus(cacheDir, netip.MustParseAddr("8.8.8.8")); err == nil {
+		t.Fatal("expected status cache symlink to be rejected")
+	}
+}
+
+func TestACMEIPRejectsNonPublicAddresses(t *testing.T) {
+	cfg := config.Config{ConfigDir: t.TempDir(), Password: "secret", WebUIHost: "0.0.0.0", WebUIPort: 8443, SessionCookieSecure: "auto"}
+	for _, ip := range []string{"127.0.0.1", "10.0.0.1", "::1", "::", "not-an-ip"} {
+		if _, err := buildRuntime(cfg, Settings{Mode: ModeACMEIP, ACMEIP: ip, ACMEEmail: "admin@example.com", ACMEAcceptTOS: true}); err == nil {
+			t.Fatalf("%s: expected validation error", ip)
+		}
 	}
 }
 

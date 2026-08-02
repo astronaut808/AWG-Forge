@@ -456,6 +456,41 @@ func TestPublicTLSIncludesActiveACMECertificateMetadata(t *testing.T) {
 	}
 }
 
+func TestPublicTLSIncludesACMEIPWithoutConfigurationPaths(t *testing.T) {
+	summary := publicTLS(webtls.Status{Mode: webtls.ModeACMEIP, IP: "8.8.8.8", State: "pending"}, config.Config{})
+	if got, want := summary["ip"], "8.8.8.8"; got != want {
+		t.Fatalf("ip = %v, want %q", got, want)
+	}
+	if _, ok := summary["cert_file"]; ok {
+		t.Fatal("public TLS summary must not expose certificate file paths")
+	}
+}
+
+func TestPublicTLSReportsSafeACMEFailureAndRetry(t *testing.T) {
+	next := time.Now().UTC().Add(time.Minute).Truncate(time.Second)
+	summary := publicTLS(webtls.Status{Mode: webtls.ModeACMEIP, IP: "8.8.8.8", State: "failed", Error: "certificate issuance failed", NextAttempt: next}, config.Config{})
+	if got, want := summary["error"], "certificate issuance failed"; got != want {
+		t.Fatalf("error = %v, want %q", got, want)
+	}
+	if got, want := summary["next_attempt"], next; got != want {
+		t.Fatalf("next_attempt = %v, want %v", got, want)
+	}
+	if got := summary["valid"]; got != false {
+		t.Fatalf("valid = %v, want false", got)
+	}
+}
+
+func TestPublicTLSKeepsValidCertificateDuringRenewalRetry(t *testing.T) {
+	next := time.Now().UTC().Add(time.Minute).Truncate(time.Second)
+	summary := publicTLS(webtls.Status{Mode: webtls.ModeACMEIP, IP: "8.8.8.8", State: "active", Warning: "certificate renewal failed", NextAttempt: next}, config.Config{})
+	if got, want := summary["warning"], "certificate renewal failed"; got != want {
+		t.Fatalf("warning = %v, want %q", got, want)
+	}
+	if got := summary["valid"]; got != true {
+		t.Fatalf("valid = %v, want true", got)
+	}
+}
+
 func writeManualTLSCertificate(t *testing.T, dnsName string) (string, string) {
 	t.Helper()
 	dir := t.TempDir()

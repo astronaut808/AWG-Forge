@@ -5,6 +5,7 @@
 ### Added
 
 - Added managed ACME HTTP-01 certificates for a public domain through `awg-forge tls use acme-domain`, including automatic renewal and persisted certificate cache.
+- Added managed ACME HTTP-01 certificates for a public IPv4 or IPv6 address through `awg-forge tls use acme-ip`; the short-lived certificate is renewed by the running service before expiry.
 - Added `awg-forge tls use reverse-proxy` for deployments where a trusted reverse proxy terminates TLS.
 
 ### Changed

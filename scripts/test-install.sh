@@ -82,6 +82,12 @@ if [[ "$(<"$test_dir/docker-command")" != "compose run --rm --no-deps awg-forge 
   printf 'FAIL TLS bootstrap did not invoke docker compose as separate arguments\n' >&2
   exit 1
 fi
+
+configure_tls "docker compose" acme-ip "" "admin@example.com" "2001:db8::1"
+if [[ "$(<"$test_dir/docker-command")" != "compose run --rm --no-deps awg-forge tls use acme-ip --ip 2001:db8::1 --email admin@example.com --accept-tos" ]]; then
+  printf 'FAIL TLS bootstrap did not pass ACME IP settings as separate arguments\n' >&2
+  exit 1
+fi
 unset -f docker
 
 printf 'OK   fresh install configures the automatic UDP port range\n'
@@ -111,6 +117,11 @@ if ! managed_acme_tls_configured; then
   printf 'FAIL installer did not detect managed ACME TLS\n' >&2
   exit 1
 fi
+printf '{"mode":"acme-ip"}\n' >"$DATA_DIR/tls/config.json"
+if ! managed_acme_tls_configured; then
+  printf 'FAIL installer did not detect managed ACME IP TLS\n' >&2
+  exit 1
+fi
 if ! is_loopback_webui_host 127.0.0.1 || ! is_loopback_webui_host localhost || is_loopback_webui_host 0.0.0.0; then
   printf 'FAIL installer did not classify Web UI bind addresses correctly\n' >&2
   exit 1
@@ -131,6 +142,12 @@ next_steps="$(print_next_steps "panel.example.com" "0.0.0.0" "8443" "" "awg_2_0"
 if ! grep -q 'Open the HTTPS URL configured in your reverse proxy.' <<<"$next_steps"; then
 	printf 'FAIL installer does not defer reverse-proxy URLs to proxy configuration\n' >&2
 	exit 1
+fi
+printf '{"mode":"acme-ip","acme_ip":"2001:db8::1"}\n' >"$DATA_DIR/tls/config.json"
+next_steps="$(print_next_steps "panel.example.com" "0.0.0.0" "8443" "" "awg_2_0" "docker compose")"
+if ! grep -q 'Open: https://\[2001:db8::1\]:8443' <<<"$next_steps"; then
+  printf 'FAIL installer does not print a bracketed IPv6 ACME IP URL\n' >&2
+  exit 1
 fi
 rm -rf "$DATA_DIR/tls"
 

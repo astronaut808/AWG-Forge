@@ -152,7 +152,10 @@ export type TLSSummary = {
   not_before?: string;
   not_after?: string;
   domain?: string;
+  ip?: string;
   state?: string;
+  warning?: string;
+  next_attempt?: string;
   trusted_proxy_headers: boolean;
   trusted_proxy_cidrs: number;
 };
