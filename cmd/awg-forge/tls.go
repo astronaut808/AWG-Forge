@@ -47,7 +47,7 @@ func runTLS(cfg config.Config, svc *app.Service, args []string) error {
 
 func runTLSUse(cfg config.Config, svc *app.Service, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: awg-forge tls use manual --cert <path> --key <path> [--server-name name] | tls use acme-domain --domain <name> --email <address> --accept-tos | tls use reverse-proxy")
+		return errors.New("usage: awg-forge tls use manual --cert <path> --key <path> [--server-name name] | tls use acme-domain --domain <name> --email <address> --accept-tos | tls use acme-ip --ip <address> --email <address> --accept-tos | tls use reverse-proxy")
 	}
 	if args[0] == "acme-domain" {
 		return runTLSUseACMEDomain(cfg, svc, args[1:])
