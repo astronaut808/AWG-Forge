@@ -1114,8 +1114,8 @@ main() {
     printf '\n'
     bold "Web UI TLS"
     printf '1) HTTP for loopback or SSH tunnel (default)\n'
-    printf '2) ACME certificate for a public DNS domain (HTTP-01 on TCP/80)\n'
-    printf '3) Short-lived ACME certificate for a public IP (HTTP-01 on TCP/80)\n'
+    printf '2) ACME certificate for a public DNS domain with automatic renewal (HTTP-01 on TCP/80)\n'
+    printf '3) Short-lived ACME certificate for a public IP with automatic renewal (HTTP-01 on TCP/80)\n'
     local tls_choice
     tls_choice="$(prompt "Choose TLS mode" "1")"
     while [[ "$tls_choice" != "1" && "$tls_choice" != "2" && "$tls_choice" != "3" ]]; do

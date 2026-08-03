@@ -1162,10 +1162,9 @@ function SupportPanel({ state, action, busyAction }: { state: AppState; action: 
       <Metric title={m.maintenance.publishedUDP} value={ports} />
       <Metric title={m.maintenance.version} value={build?.version || "dev"} />
     </div>
-    <div class="list tls-summary">
-      <div class="row">
-        <div>
-          <strong>{m.maintenance.tls}</strong>
+    <section class="tls-summary" aria-label={m.maintenance.tlsStatus}>
+      <h3>{m.maintenance.tlsStatus}</h3>
+      <div>
           {state.tls.error && <p>{m.maintenance.tlsInvalid}: {state.tls.error}</p>}
           {state.tls.mode === "manual" && <>
             <p>{m.maintenance.tlsSubject}: {state.tls.subject || "-"}</p>
@@ -1179,9 +1178,8 @@ function SupportPanel({ state, action, busyAction }: { state: AppState; action: 
             {state.tls.next_attempt && <p>{m.maintenance.tlsNextAttempt}: {formatTLSDate(state.tls.next_attempt, locale)}</p>}
           </>}
           <p>{m.maintenance.trustedProxyHeaders}: {state.tls.trusted_proxy_headers ? m.maintenance.trustedProxyEnabled(state.tls.trusted_proxy_cidrs) : m.maintenance.trustedProxyDisabled}</p>
-        </div>
       </div>
-    </div>
+    </section>
     <pre class="command-block">{`docker exec awg-forge awg-forge doctor
 docker exec awg-forge awg show
 docker compose logs -f`}</pre>
