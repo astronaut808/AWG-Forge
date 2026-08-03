@@ -43,10 +43,15 @@ type Modal =
 
 type MaintenanceTab = "overview" | "doctor" | "warp" | "backup" | "support" | "logs" | "traffic";
 type QRImportMode = "amneziavpn" | "amneziawg";
+type ExpandedQR = { mode: QRImportMode; chunk: number };
 type TrafficLimitUnit = "mib" | "gib" | "tib";
 type TrafficLimitPeriod = "lifetime" | "rolling_30d";
 type LoadResult = "ok" | "unauthorized" | "failed";
 type PortSelectionMode = "automatic" | "manual";
+
+function qrImageKey(clientID: string, mode: QRImportMode, chunk: number): string {
+  return `${clientID}:${mode}:${mode === "amneziavpn" ? chunk : 0}`;
+}
 
 const themeKey = "awg-forge.theme";
 const dashboardFilterKey = "awg-forge.dashboard-filter";
@@ -755,33 +760,55 @@ function ExpirationField({ current, keepCurrent = false }: { current?: string; k
 
 function ClientConfigPanel({ client, notify }: { client: Client; notify: (message: string) => void }) {
   const { m } = useI18n();
-  const awgQRURL = api.clientQRCodeURL(client.id);
   const notifyRef = useRef(notify);
+  const qrImageURLsRef = useRef<Record<string, string>>({});
   const [importKey, setImportKey] = useState("");
   const [importWarning, setImportWarning] = useState("");
   const [vpnQRChunks, setVPNQRChunks] = useState(1);
   const [vpnQRChunk, setVPNQRChunk] = useState(0);
   const [qrMode, setQRMode] = useState<QRImportMode>("amneziavpn");
-  const [expandedQR, setExpandedQR] = useState<"" | QRImportMode>("");
+  const [qrImageURLs, setQRImageURLs] = useState<Record<string, string>>({});
+  const [loadingQRKeys, setLoadingQRKeys] = useState<Record<string, boolean>>({});
+  const [failedQRKeys, setFailedQRKeys] = useState<Record<string, boolean>>({});
+  const [expandedQR, setExpandedQR] = useState<ExpandedQR | null>(null);
   const [busy, setBusy] = useState(false);
-  const vpnQRURL = api.clientAmneziaVPNQRCodeURL(client.id, vpnQRChunk);
-  const expandedQRURL = expandedQR === "amneziavpn" ? vpnQRURL : awgQRURL;
-  const expandedQRTitle = expandedQR === "amneziavpn" ? m.clientConfig.amneziaVPNQR : m.clientConfig.amneziaWGQR;
   const hasVPNQRSeries = vpnQRChunks > 1;
   const vpnQRDownloadName = hasVPNQRSeries ? `${client.name}-amneziavpn-${vpnQRChunk + 1}-of-${vpnQRChunks}.png` : `${client.name}-amneziavpn.png`;
-  const activeQRURL = qrMode === "amneziavpn" ? vpnQRURL : awgQRURL;
+  const activeQRKey = qrImageKey(client.id, qrMode, vpnQRChunk);
+  const activeQRRequestURL = qrMode === "amneziavpn"
+    ? api.clientAmneziaVPNQRCodeURL(client.id, vpnQRChunk)
+    : api.clientQRCodeURL(client.id);
+  const activeQRURL = qrImageURLs[activeQRKey] || "";
+  const activeQRLoading = Boolean(loadingQRKeys[activeQRKey]);
+  const activeQRFailed = Boolean(failedQRKeys[activeQRKey]);
   const activeQRTitle = qrMode === "amneziavpn" ? m.clientConfig.amneziaVPNQR : m.clientConfig.amneziaWGQR;
   const activeQRDescription = qrMode === "amneziavpn"
     ? m.clientConfig.amneziaVPNDescription
     : m.clientConfig.amneziaWGDescription;
   const activeQRAlt = qrMode === "amneziavpn" ? m.clientConfig.amneziaVPNAlt(client.name) : m.clientConfig.amneziaWGAlt(client.name);
   const activeQRDownloadName = qrMode === "amneziavpn" ? vpnQRDownloadName : `${client.name}-amneziawg.png`;
+  const expandedQRKey = expandedQR ? qrImageKey(client.id, expandedQR.mode, expandedQR.chunk) : "";
+  const expandedQRURL = expandedQRKey ? qrImageURLs[expandedQRKey] || "" : "";
+  const expandedQRTitle = expandedQR?.mode === "amneziavpn" ? m.clientConfig.amneziaVPNQR : m.clientConfig.amneziaWGQR;
+  const expandedQRDownloadName = expandedQR?.mode === "amneziavpn"
+    ? (hasVPNQRSeries ? `${client.name}-amneziavpn-${(expandedQR?.chunk || 0) + 1}-of-${vpnQRChunks}.png` : `${client.name}-amneziavpn.png`)
+    : `${client.name}-amneziawg.png`;
   const messagesRef = useRef(m);
   messagesRef.current = m;
 
   useEffect(() => {
     notifyRef.current = notify;
   }, [notify]);
+
+  useEffect(() => {
+    setQRImageURLs({});
+    setLoadingQRKeys({});
+    setFailedQRKeys({});
+    return () => {
+      for (const url of Object.values(qrImageURLsRef.current)) URL.revokeObjectURL(url);
+      qrImageURLsRef.current = {};
+    };
+  }, [client.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -799,13 +826,56 @@ function ClientConfigPanel({ client, notify }: { client: Client; notify: (messag
   }, [client.id]);
 
   useEffect(() => {
+    if (qrImageURLs[activeQRKey] || failedQRKeys[activeQRKey]) return;
+
+    let cancelled = false;
+    const controller = new AbortController();
+    setLoadingQRKeys((current) => ({ ...current, [activeQRKey]: true }));
+    api.clientQRCodePNG(activeQRRequestURL, controller.signal)
+      .then((image) => {
+        const url = URL.createObjectURL(image);
+        if (cancelled) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+        qrImageURLsRef.current[activeQRKey] = url;
+        setQRImageURLs((current) => ({ ...current, [activeQRKey]: url }));
+      })
+      .catch((err) => {
+        if (cancelled || (err instanceof DOMException && err.name === "AbortError")) return;
+        setFailedQRKeys((current) => ({ ...current, [activeQRKey]: true }));
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingQRKeys((current) => ({ ...current, [activeQRKey]: false }));
+      });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [activeQRKey, activeQRRequestURL, failedQRKeys, qrImageURLs]);
+
+  useEffect(() => {
     if (!expandedQR) return;
     function closeOnEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") setExpandedQR("");
+      if (event.key === "Escape") setExpandedQR(null);
     }
     globalThis.addEventListener("keydown", closeOnEscape);
     return () => globalThis.removeEventListener("keydown", closeOnEscape);
   }, [expandedQR]);
+
+  function selectVPNQRChunk(chunk: number) {
+    setVPNQRChunk(chunk);
+    setExpandedQR((current) => current?.mode === "amneziavpn" ? { ...current, chunk } : current);
+  }
+
+  function retryActiveQR() {
+    setFailedQRKeys((current) => {
+      const next = { ...current };
+      delete next[activeQRKey];
+      return next;
+    });
+  }
 
   async function loadImportKey(): Promise<string> {
     if (importKey) return importKey;
@@ -847,17 +917,23 @@ function ClientConfigPanel({ client, notify }: { client: Client; notify: (messag
           <button class={qrMode === "amneziawg" ? "active" : ""} type="button" role="tab" aria-selected={qrMode === "amneziawg"} onClick={() => setQRMode("amneziawg")}>AmneziaWG</button>
         </div>
         <div class="qr-panel">
-          <button class="qr-image-button" type="button" onClick={() => setExpandedQR(qrMode)} aria-label={m.clientConfig.openLarger(activeQRTitle)}>
+          {activeQRURL && <button class="qr-image-button" type="button" onClick={() => setExpandedQR({ mode: qrMode, chunk: vpnQRChunk })} aria-label={m.clientConfig.openLarger(activeQRTitle)}>
             <img class="qr-image" src={activeQRURL} alt={activeQRAlt} />
-          </button>
+          </button>}
+          {!activeQRURL && <div class="qr-image-loading" role={activeQRFailed ? "alert" : "status"}>
+            <span>{activeQRFailed ? m.common.requestFailed : m.common.loading}</span>
+            {activeQRFailed && <button class="button" type="button" onClick={retryActiveQR}>{m.common.retry}</button>}
+          </div>}
           {qrMode === "amneziavpn" && hasVPNQRSeries && <div class="qr-series">
-            <button class="button" type="button" disabled={vpnQRChunk === 0} onClick={() => setVPNQRChunk((value) => Math.max(0, value - 1))}>{m.clientConfig.previous}</button>
+            <button class="button" type="button" disabled={vpnQRChunk === 0} onClick={() => selectVPNQRChunk(Math.max(0, vpnQRChunk - 1))}>{m.clientConfig.previous}</button>
             <span>{m.clientConfig.qrCounter(vpnQRChunk + 1, vpnQRChunks)}</span>
-            <button class="button" type="button" disabled={vpnQRChunk + 1 >= vpnQRChunks} onClick={() => setVPNQRChunk((value) => Math.min(vpnQRChunks - 1, value + 1))}>{m.clientConfig.next}</button>
+            <button class="button" type="button" disabled={vpnQRChunk + 1 >= vpnQRChunks} onClick={() => selectVPNQRChunk(Math.min(vpnQRChunks - 1, vpnQRChunk + 1))}>{m.clientConfig.next}</button>
           </div>}
         </div>
         <div class="action-row">
-          <a class="button" href={activeQRURL} download={activeQRDownloadName}>{m.clientConfig.downloadQR} {qrMode === "amneziavpn" && hasVPNQRSeries ? `${vpnQRChunk + 1}` : ""}</a>
+          {activeQRURL
+            ? <a class="button" href={activeQRURL} download={activeQRDownloadName}>{m.clientConfig.downloadQR} {qrMode === "amneziavpn" && hasVPNQRSeries ? `${vpnQRChunk + 1}` : ""}</a>
+            : <button class="button" type="button" disabled>{activeQRLoading ? m.common.loading : m.clientConfig.downloadQR}</button>}
         </div>
       </section>
       <section class="config-option">
@@ -875,22 +951,24 @@ function ClientConfigPanel({ client, notify }: { client: Client; notify: (messag
     </div>
     <p class="note">{m.clientConfig.secretWarning}</p>
     {expandedQR && <dialog open class="qr-lightbox" aria-label={expandedQRTitle}>
-      <button class="qr-lightbox-backdrop-button" type="button" onClick={() => setExpandedQR("")} aria-label={m.clientConfig.closePreview} />
+      <button class="qr-lightbox-backdrop-button" type="button" onClick={() => setExpandedQR(null)} aria-label={m.clientConfig.closePreview} />
       <div class="qr-lightbox-card">
         <div class="qr-lightbox-head">
           <div>
             <h3>{expandedQRTitle}</h3>
-            <p>{expandedQR === "amneziavpn" ? (hasVPNQRSeries ? m.clientConfig.qrCounter(vpnQRChunk + 1, vpnQRChunks) : m.clientConfig.amneziaVPNImportQR) : m.clientConfig.rawConfQR}</p>
+            <p>{expandedQR.mode === "amneziavpn" ? (hasVPNQRSeries ? m.clientConfig.qrCounter(expandedQR.chunk + 1, vpnQRChunks) : m.clientConfig.amneziaVPNImportQR) : m.clientConfig.rawConfQR}</p>
           </div>
-          <button class="button icon" type="button" onClick={() => setExpandedQR("")} aria-label={m.clientConfig.closePreview}>×</button>
+          <button class="button icon" type="button" onClick={() => setExpandedQR(null)} aria-label={m.clientConfig.closePreview}>×</button>
         </div>
         <img class="qr-lightbox-image" src={expandedQRURL} alt={m.clientConfig.expandedAlt(expandedQRTitle, client.name)} />
-        {expandedQR === "amneziavpn" && hasVPNQRSeries && <div class="qr-series">
-          <button class="button" type="button" disabled={vpnQRChunk === 0} onClick={() => setVPNQRChunk((value) => Math.max(0, value - 1))}>{m.clientConfig.previous}</button>
-          <span>{m.clientConfig.qrCounter(vpnQRChunk + 1, vpnQRChunks)}</span>
-          <button class="button" type="button" disabled={vpnQRChunk + 1 >= vpnQRChunks} onClick={() => setVPNQRChunk((value) => Math.min(vpnQRChunks - 1, value + 1))}>{m.clientConfig.next}</button>
+        {expandedQR.mode === "amneziavpn" && hasVPNQRSeries && <div class="qr-series">
+          <button class="button" type="button" disabled={expandedQR.chunk === 0} onClick={() => selectVPNQRChunk(Math.max(0, expandedQR.chunk - 1))}>{m.clientConfig.previous}</button>
+          <span>{m.clientConfig.qrCounter(expandedQR.chunk + 1, vpnQRChunks)}</span>
+          <button class="button" type="button" disabled={expandedQR.chunk + 1 >= vpnQRChunks} onClick={() => selectVPNQRChunk(Math.min(vpnQRChunks - 1, expandedQR.chunk + 1))}>{m.clientConfig.next}</button>
         </div>}
-        <a class="button" href={expandedQRURL} download={expandedQR === "amneziavpn" ? vpnQRDownloadName : `${client.name}-amneziawg.png`}>{m.clientConfig.downloadQR}</a>
+        {expandedQRURL
+          ? <a class="button" href={expandedQRURL} download={expandedQRDownloadName}>{m.clientConfig.downloadQR}</a>
+          : <button class="button" type="button" disabled>{m.common.loading}</button>}
       </div>
     </dialog>}
   </PanelTitle>;

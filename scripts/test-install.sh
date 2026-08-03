@@ -126,6 +126,18 @@ if ! is_loopback_webui_host 127.0.0.1 || ! is_loopback_webui_host localhost || i
   printf 'FAIL installer did not classify Web UI bind addresses correctly\n' >&2
   exit 1
 fi
+if [[ "$(acme_ip_default_webui_host 203.0.113.4)" != "0.0.0.0" ]] || [[ "$(acme_ip_default_webui_host 2001:db8::4)" != "::" ]]; then
+  printf 'FAIL installer did not select the ACME IP wildcard bind by address family\n' >&2
+  exit 1
+fi
+if ! acme_ip_webui_host_matches 203.0.113.4 0.0.0.0 || ! acme_ip_webui_host_matches 203.0.113.4 203.0.113.4 || acme_ip_webui_host_matches 203.0.113.4 ::; then
+  printf 'FAIL installer did not validate IPv4 ACME IP binds\n' >&2
+  exit 1
+fi
+if ! acme_ip_webui_host_matches 2001:db8::4 :: || ! acme_ip_webui_host_matches 2001:db8::4 2001:db8::4 || acme_ip_webui_host_matches 2001:db8::4 0.0.0.0; then
+  printf 'FAIL installer did not validate IPv6 ACME IP binds\n' >&2
+  exit 1
+fi
 rm -rf "$DATA_DIR/tls"
 
 printf 'OK   installer detects managed ACME before restricting Web UI access\n'
@@ -152,6 +164,16 @@ fi
 rm -rf "$DATA_DIR/tls"
 
 printf 'OK   installer prints an access URL that matches the configured TLS mode\n'
+
+cd "$test_dir"
+next_steps="$(print_next_steps "panel.example.com" "127.0.0.1" "51821" "generated-password" "awg_2_0" "docker compose")"
+physical_test_dir="$(pwd -P)"
+if ! grep -Fq "Password file: $physical_test_dir/.env" <<<"$next_steps"; then
+  printf 'FAIL installer does not print an absolute password file path\n' >&2
+  exit 1
+fi
+
+printf 'OK   installer prints an absolute password file path\n'
 
 random_u32() {
   printf '1'

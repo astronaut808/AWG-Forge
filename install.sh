@@ -433,6 +433,22 @@ is_loopback_webui_host() {
   return 1
 }
 
+acme_ip_default_webui_host() {
+  if [[ "$1" == *:* ]]; then
+    printf '::'
+    return
+  fi
+  printf '0.0.0.0'
+}
+
+acme_ip_webui_host_matches() {
+  local certificate_ip="$1"
+  local webui_host="$2"
+  local wildcard
+  wildcard="$(acme_ip_default_webui_host "$certificate_ip")"
+  [[ "$webui_host" == "$wildcard" || "$webui_host" == "$certificate_ip" ]]
+}
+
 managed_acme_tls_configured() {
   local settings_path="$DATA_DIR/tls/config.json"
   [[ -f "$settings_path" ]] || return 1
@@ -741,7 +757,7 @@ print_next_steps() {
   printf 'Web UI bind:  %s:%s\n' "$webui_host" "$webui_port"
   if [[ -n "$password" ]]; then
     printf 'Password:     %s\n' "$password"
-    printf 'Password file: %s\n' "$ENV_FILE"
+    printf 'Password file: %s/%s\n' "$(pwd -P)" "$ENV_FILE"
   fi
   printf '\n'
   local tls_mode="off" scheme="http" access_host="$server_host"
@@ -769,7 +785,14 @@ print_next_steps() {
       printf 'Then open the HTTPS URL configured in your reverse proxy.\n'
     fi
   else
-    warn "Web UI is bound to $webui_host. Protect it with firewall/VPN/reverse proxy."
+    case "$tls_mode" in
+      off)
+        warn "Web UI is bound to $webui_host over HTTP. Protect it with firewall/VPN/reverse proxy."
+        ;;
+      acme-domain|acme-ip|manual)
+        muted "Web UI is publicly available over HTTPS. Restrict administrative access further if needed."
+        ;;
+    esac
     if [[ -n "$scheme" ]]; then
       printf 'Open: %s://%s:%s\n' "$scheme" "$access_host" "$webui_port"
     else
@@ -1069,6 +1092,9 @@ main() {
   local server_host external_interface webui_host webui_port tls_mode tls_acme_domain tls_acme_ip tls_acme_email
   server_host="$default_host"
   if ! $existing_state; then
+    if [[ "$default_host" != "vpn.example.com" ]]; then
+      muted "Detected outbound address: $default_host. Verify it is the public endpoint; NAT or floating IP can differ."
+    fi
     server_host="$(prompt "Server host or public IP" "$default_host")"
   else
     ok "existing state.json found; tunnel settings will be kept"
@@ -1079,23 +1105,11 @@ main() {
   existing_webui_port="$(env_value WEBUI_PORT)"
   external_interface="$(prompt "External interface" "${existing_external_interface:-$default_interface}")"
 
-  webui_host="$(prompt "Web UI bind host" "${existing_webui_host:-127.0.0.1}")"
-  if [[ "$webui_host" == "0.0.0.0" || "$webui_host" == "::" ]]; then
-    warn "Binding Web UI publicly is risky. Use a firewall, VPN, or reverse proxy."
-    confirm "Continue with public Web UI bind?" "n" || exit 1
-  fi
-  webui_port="$(prompt "Web UI TCP port" "${existing_webui_port:-51821}")"
-  while ! validate_port "$webui_port"; do
-    warn "Port must be 1..65535"
-    webui_port="$(prompt "Web UI TCP port" "${existing_webui_port:-51821}")"
-  done
-  if port_in_use_tcp "$webui_port"; then
-    warn "TCP port $webui_port appears to be in use"
-  fi
   tls_mode="off"
   tls_acme_domain=""
   tls_acme_ip=""
   tls_acme_email=""
+  local webui_default_host="${existing_webui_host:-127.0.0.1}"
   if [[ "$INSTALL_ACTION" == "fresh" ]]; then
     printf '\n'
     bold "Web UI TLS"
@@ -1108,38 +1122,60 @@ main() {
       warn "Choose 1, 2, or 3"
       tls_choice="$(prompt "Choose TLS mode" "1")"
     done
-    if [[ "$tls_choice" == "2" || "$tls_choice" == "3" ]]; then
-      if [[ "$webui_host" == "127.0.0.1" || "$webui_host" == "localhost" || "$webui_host" == "::1" ]]; then
-        warn "ACME requires a publicly reachable Web UI bind."
-        if [[ "$tls_choice" == "2" ]]; then
-          confirm "Bind Web UI to 0.0.0.0?" "n" || exit 1
-          webui_host="0.0.0.0"
-        fi
-      fi
-      if [[ "$tls_choice" == "2" ]]; then
+    case "$tls_choice" in
+      1)
+        webui_default_host="127.0.0.1"
+        ;;
+      2)
         tls_mode="acme-domain"
         while ! tls_acme_domain="$(normalize_acme_domain "$(prompt "Public DNS domain for the Web UI")")"; do
           warn "Enter a public DNS name, for example panel.example.com"
         done
-      else
+        webui_default_host="0.0.0.0"
+        ;;
+      3)
         tls_mode="acme-ip"
-        tls_acme_ip="$(prompt "Public IPv4 or IPv6 address for the Web UI")"
+        tls_acme_ip="$(prompt "Public IPv4 or IPv6 address for the Web UI" "${default_host:-}")"
         [[ -n "$tls_acme_ip" ]] || { fail "public IP address is required"; exit 1; }
-        local acme_webui_host="0.0.0.0"
-        if [[ "$tls_acme_ip" == *:* ]]; then
-          acme_webui_host="::"
-        fi
-        if [[ "$webui_host" != "$acme_webui_host" && "$webui_host" != "$tls_acme_ip" ]]; then
-          warn "ACME IP TLS needs Web UI to listen on the same IP family."
-          confirm "Bind Web UI to $acme_webui_host?" "n" || exit 1
-          webui_host="$acme_webui_host"
-        fi
-      fi
-      tls_acme_email="$(prompt "ACME contact email")"
-      [[ -n "$tls_acme_email" ]] || { fail "ACME contact email is required"; exit 1; }
-      warn "The selected public identifier must reach this host and TCP/80 must be reachable before startup."
-      confirm "Accept the certificate authority terms of service?" "n" || exit 1
+        webui_default_host="$(acme_ip_default_webui_host "$tls_acme_ip")"
+        ;;
+    esac
+  else
+    muted "Existing TLS settings will be kept. Use 'awg-forge tls status' to inspect them."
+  fi
+
+  printf '\n'
+  bold "Web UI"
+  webui_host="$(prompt "Web UI bind host" "$webui_default_host")"
+  while [[ "$tls_mode" == "acme-domain" ]] && is_loopback_webui_host "$webui_host"; do
+    warn "ACME requires a publicly reachable Web UI bind."
+    webui_host="$(prompt "Web UI bind host" "0.0.0.0")"
+  done
+  while [[ "$tls_mode" == "acme-ip" ]] && ! acme_ip_webui_host_matches "$tls_acme_ip" "$webui_host"; do
+    warn "ACME IP TLS requires its matching wildcard bind or the exact certificate IP."
+    webui_host="$(prompt "Web UI bind host" "$(acme_ip_default_webui_host "$tls_acme_ip")")"
+  done
+  if ! is_loopback_webui_host "$webui_host"; then
+    if [[ "$tls_mode" == "off" ]]; then
+      warn "The Web UI will be publicly reachable over HTTP. HTTPS is recommended."
+    else
+      muted "The Web UI will be publicly reachable over HTTPS. Restrict administration with a firewall or VPN when possible."
     fi
+    confirm "Continue with this public Web UI bind?" "n" || exit 1
+  fi
+  webui_port="$(prompt "Web UI TCP port" "${existing_webui_port:-51821}")"
+  while ! validate_port "$webui_port"; do
+    warn "Port must be 1..65535"
+    webui_port="$(prompt "Web UI TCP port" "${existing_webui_port:-51821}")"
+  done
+  if port_in_use_tcp "$webui_port"; then
+    warn "TCP port $webui_port appears to be in use"
+  fi
+  if [[ "$INSTALL_ACTION" == "fresh" && ( "$tls_mode" == "acme-domain" || "$tls_mode" == "acme-ip" ) ]]; then
+    tls_acme_email="$(prompt "ACME contact email")"
+    [[ -n "$tls_acme_email" ]] || { fail "ACME contact email is required"; exit 1; }
+    warn "The selected public identifier must reach this host and TCP/80 must be reachable before startup."
+    confirm "Accept the certificate authority terms of service?" "n" || exit 1
   fi
 
   local profile="existing state"

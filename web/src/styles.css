@@ -1182,6 +1182,20 @@ textarea {
   width: min(240px, 100%);
 }
 
+.qr-image-loading {
+  display: grid;
+  width: min(300px, 100%);
+  aspect-ratio: 1;
+  place-items: center;
+  gap: 12px;
+  padding: 10px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  text-align: center;
+}
+
 .qr-series {
   display: flex;
   align-items: center;

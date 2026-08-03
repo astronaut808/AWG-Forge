@@ -77,7 +77,7 @@ DNS-01, wildcard certificates, and TLS-ALPN-01 are not implemented.
 
 Use this mode only when the domain's A/AAAA records reach this host and external TCP port `80` is available. HTTP-01 is always served on port `80`; the Web UI itself remains on `WEBUI_PORT`, including a non-default port. awg-forge never opens host firewall or provider security-group rules automatically.
 
-For a fresh managed installation, select **ACME certificate** in `install.sh`. On an existing installation, first set a public `WEBUI_HOST` in `.env`, keep `SESSION_COOKIE_SECURE=auto` or `true`, and keep `WEBUI_TRUST_PROXY_HEADERS=false`. Recreate the container so the CLI validates that deployment context, then configure ACME:
+For a fresh managed installation, select **ACME certificate** in `install.sh`. The installer then proposes the public IPv4 wildcard bind `0.0.0.0`; you can enter an exact public bind address instead. On an existing installation, first set a public `WEBUI_HOST` in `.env`, keep `SESSION_COOKIE_SECURE=auto` or `true`, and keep `WEBUI_TRUST_PROXY_HEADERS=false`. Recreate the container so the CLI validates that deployment context, then configure ACME:
 
 ```bash
 cd /opt/awg-forge
@@ -98,7 +98,7 @@ The installer starts the service without waiting for certificate issuance. The f
 
 Use this only for the server's publicly routed IPv4 or IPv6 address. Let's Encrypt IP certificates use the `shortlived` profile and are valid for about six days; awg-forge starts renewal 72 hours before expiry. Domain names, private addresses, loopback addresses, and DNS-01 are not accepted by this mode.
 
-The requirements are the same as domain HTTP-01: a non-loopback `WEBUI_HOST`, `PASSWORD`, `SESSION_COOKIE_SECURE=auto` or `true`, disabled trusted proxy headers, and externally reachable TCP/80. The Web UI bind must match the certificate IP family: use `WEBUI_HOST=0.0.0.0` (or the exact address) for IPv4 and `WEBUI_HOST=::` (or the exact address) for IPv6. This deliberately does not rely on dual-stack wildcard behavior. It only enables IPv6 for the Web UI listener and certificate; tunnel IPv6 egress and client IPv6 addressing remain unsupported. Configure an existing installation with:
+The requirements are the same as domain HTTP-01: a non-loopback `WEBUI_HOST`, `PASSWORD`, `SESSION_COOKIE_SECURE=auto` or `true`, disabled trusted proxy headers, and externally reachable TCP/80. The Web UI bind must match the certificate IP family: use `WEBUI_HOST=0.0.0.0` (or the exact address) for IPv4 and `WEBUI_HOST=::` (or the exact address) for IPv6. This deliberately does not rely on dual-stack wildcard behavior. For a fresh installation, the installer asks for the certificate IP first and proposes the matching bind automatically. It only enables IPv6 for the Web UI listener and certificate; tunnel IPv6 egress and client IPv6 addressing remain unsupported. Configure an existing installation with:
 
 ```bash
 cd /opt/awg-forge

@@ -107,6 +107,17 @@ func TestWriteCachedJSONRejectsInvalidJSON(t *testing.T) {
 	}
 }
 
+func TestSecurityHeadersAllowOnlyImageBlobURLs(t *testing.T) {
+	w := &web{}
+	rr := httptest.NewRecorder()
+
+	w.setSecurityHeaders(rr)
+
+	if got, want := rr.Header().Get("Content-Security-Policy"), "default-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'"; got != want {
+		t.Fatalf("Content-Security-Policy = %q, want %q", got, want)
+	}
+}
+
 func TestRequestLogUsesNormalizedUnknownRoute(t *testing.T) {
 	var output bytes.Buffer
 	cfg := config.Config{ConfigDir: t.TempDir(), AuditLogEnabled: false}

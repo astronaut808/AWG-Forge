@@ -210,7 +210,9 @@ func (s *acmeIPState) httpHandler() http.Handler {
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
-		_, _ = w.Write([]byte(keyAuthorization))
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		// HTTP-01 requires the exact ACME key authorization as a text/plain response.
+		_, _ = w.Write([]byte(keyAuthorization)) // nosemgrep: go.lang.security.audit.xss.no-direct-write-to-responsewriter.no-direct-write-to-responsewriter, go.net.xss.no-direct-write-to-responsewriter-taint.no-direct-write-to-responsewriter-taint
 	})
 }
 

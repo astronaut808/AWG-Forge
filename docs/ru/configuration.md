@@ -77,7 +77,7 @@ DNS-01, wildcard certificates и TLS-ALPN-01 не реализованы.
 
 Используй этот режим, только когда A/AAAA-записи домена ведут на этот сервер и внешний TCP-порт `80` доступен. HTTP-01 всегда обслуживается на порту `80`; сам Web UI остаётся на `WEBUI_PORT`, в том числе на нестандартном порту. awg-forge не открывает host firewall или security group провайдера автоматически.
 
-При чистой managed-установке выбери **ACME certificate** в `install.sh`. В уже существующей установке сначала укажи публичный `WEBUI_HOST` в `.env`, оставь `SESSION_COOKIE_SECURE=auto` или `true` и `WEBUI_TRUST_PROXY_HEADERS=false`. Пересоздай контейнер, чтобы CLI проверил этот deployment context, затем настрой ACME:
+При чистой managed-установке выбери **ACME certificate** в `install.sh`. Затем установщик предложит публичный IPv4 wildcard bind `0.0.0.0`; при необходимости можно указать точный публичный адрес. В уже существующей установке сначала укажи публичный `WEBUI_HOST` в `.env`, оставь `SESSION_COOKIE_SECURE=auto` или `true` и `WEBUI_TRUST_PROXY_HEADERS=false`. Пересоздай контейнер, чтобы CLI проверил этот deployment context, затем настрой ACME:
 
 ```bash
 cd /opt/awg-forge
@@ -98,7 +98,7 @@ docker restart awg-forge
 
 Используй этот режим только для публично маршрутизируемого IPv4 или IPv6 сервера. IP-сертификаты Let's Encrypt используют профиль `shortlived` и действуют около шести дней; awg-forge начинает обновление за 72 часа до окончания. Доменные имена, private и loopback-адреса, а также DNS-01 для этого режима не принимаются.
 
-Требования такие же, как для domain HTTP-01: non-loopback `WEBUI_HOST`, `PASSWORD`, `SESSION_COOKIE_SECURE=auto` или `true`, выключенные trusted proxy headers и внешний доступ к TCP/80. Bind Web UI должен совпадать с семейством IP сертификата: для IPv4 используй `WEBUI_HOST=0.0.0.0` (или точный адрес), для IPv6 — `WEBUI_HOST=::` (или точный адрес). Это намеренно не полагается на неявное dual-stack поведение. Поддержка IPv6 здесь относится только к listener и сертификату Web UI; IPv6 egress туннелей и IPv6-адреса клиентов пока не поддерживаются. Настрой существующую установку так:
+Требования такие же, как для domain HTTP-01: non-loopback `WEBUI_HOST`, `PASSWORD`, `SESSION_COOKIE_SECURE=auto` или `true`, выключенные trusted proxy headers и внешний доступ к TCP/80. Bind Web UI должен совпадать с семейством IP сертификата: для IPv4 используй `WEBUI_HOST=0.0.0.0` (или точный адрес), для IPv6 — `WEBUI_HOST=::` (или точный адрес). Это намеренно не полагается на неявное dual-stack поведение. При чистой установке installer сначала спросит IP сертификата и автоматически предложит соответствующий bind. Поддержка IPv6 здесь относится только к listener и сертификату Web UI; IPv6 egress туннелей и IPv6-адреса клиентов пока не поддерживаются. Настрой существующую установку так:
 
 ```bash
 cd /opt/awg-forge

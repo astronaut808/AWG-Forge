@@ -212,6 +212,17 @@ func TestACMEIPHTTP01HandlerOnlyServesLiveGETToken(t *testing.T) {
 			if test.body != "" && response.Body.String() != test.body {
 				t.Fatalf("body = %q, want %q", response.Body.String(), test.body)
 			}
+			if test.body != "" {
+				if got, want := response.Header().Get("Content-Type"), "text/plain; charset=utf-8"; got != want {
+					t.Fatalf("Content-Type = %q, want %q", got, want)
+				}
+				if got, want := response.Header().Get("Cache-Control"), "no-store"; got != want {
+					t.Fatalf("Cache-Control = %q, want %q", got, want)
+				}
+				if got, want := response.Header().Get("X-Content-Type-Options"), "nosniff"; got != want {
+					t.Fatalf("X-Content-Type-Options = %q, want %q", got, want)
+				}
+			}
 		})
 	}
 }
