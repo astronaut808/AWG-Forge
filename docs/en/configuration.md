@@ -69,14 +69,15 @@ TLS desired configuration is stored only in `CONFIG_DIR/tls/config.json`, separa
 - `reverse-proxy`: Caddy, Nginx, or another proxy terminates HTTPS;
 - `manual`: awg-forge serves a provided certificate chain and private key.
 - `acme-domain`: awg-forge obtains and renews a certificate for one public DNS name with HTTP-01.
+- `acme-ip`: awg-forge obtains and renews a short-lived certificate for one public IP with HTTP-01.
 
-`acme-ip`, DNS-01, wildcard certificates, and TLS-ALPN-01 are not implemented.
+DNS-01, wildcard certificates, and TLS-ALPN-01 are not implemented.
 
 ### ACME Domain TLS
 
 Use this mode only when the domain's A/AAAA records reach this host and external TCP port `80` is available. HTTP-01 is always served on port `80`; the Web UI itself remains on `WEBUI_PORT`, including a non-default port. awg-forge never opens host firewall or provider security-group rules automatically.
 
-For a fresh managed installation, select **ACME certificate** in `install.sh`. On an existing installation, first set a public `WEBUI_HOST` in `.env`, keep `SESSION_COOKIE_SECURE=auto` or `true`, and keep `WEBUI_TRUST_PROXY_HEADERS=false`. Recreate the container so the CLI validates that deployment context, then configure ACME:
+For a fresh managed installation, select **ACME certificate** in `install.sh`. The installer then proposes the public IPv4 wildcard bind `0.0.0.0`; you can enter an exact public bind address instead. On an existing installation, first set a public `WEBUI_HOST` in `.env`, keep `SESSION_COOKIE_SECURE=auto` or `true`, and keep `WEBUI_TRUST_PROXY_HEADERS=false`. Recreate the container so the CLI validates that deployment context, then configure ACME:
 
 ```bash
 cd /opt/awg-forge
@@ -93,6 +94,23 @@ The mode requires a non-loopback `WEBUI_HOST`, `PASSWORD`, `SESSION_COOKIE_SECUR
 
 The installer starts the service without waiting for certificate issuance. The first HTTPS request for the configured domain triggers issuance; this avoids making installation depend on temporary CA or network availability. Until then, `doctor`, `tls status`, and Maintenance -> Support report `pending`; after a successful request they report the active cached certificate. They cannot prove that port `80` is reachable from the public Internet.
 
+### ACME IP TLS
+
+Use this only for the server's publicly routed IPv4 or IPv6 address. Let's Encrypt IP certificates use the `shortlived` profile and are valid for about six days; awg-forge starts renewal 72 hours before expiry. Domain names, private addresses, loopback addresses, and DNS-01 are not accepted by this mode.
+
+The requirements are the same as domain HTTP-01: a non-loopback `WEBUI_HOST`, `PASSWORD`, `SESSION_COOKIE_SECURE=auto` or `true`, disabled trusted proxy headers, and externally reachable TCP/80. The Web UI bind must match the certificate IP family: use `WEBUI_HOST=0.0.0.0` (or the exact address) for IPv4 and `WEBUI_HOST=::` (or the exact address) for IPv6. This deliberately does not rely on dual-stack wildcard behavior. For a fresh installation, the installer asks for the certificate IP first and proposes the matching bind automatically. It only enables IPv6 for the Web UI listener and certificate; tunnel IPv6 egress and client IPv6 addressing remain unsupported. Configure an existing installation with:
+
+```bash
+cd /opt/awg-forge
+# Set WEBUI_HOST=0.0.0.0 for IPv4, or WEBUI_HOST=:: for IPv6 in .env.
+docker compose up -d --force-recreate
+docker exec awg-forge awg-forge tls use acme-ip \
+  --ip <public-ipv4-or-ipv6> --email admin@example.com --accept-tos
+docker restart awg-forge
+```
+
+The running service starts the first issuance attempt immediately after its HTTPS and HTTP-01 listeners are ready. It does not fall back to public HTTP if issuance fails. `tls status`, `doctor`, and Maintenance show a safe failure state and the next retry time. Retries use a bounded backoff, so correcting the address or TCP/80 path does not require a restart.
+
 ACME account material and certificates live in `CONFIG_DIR/tls/acme` with directory mode `0700`. They are included only in the encrypted awg-forge backup, never in the support bundle. Certificate renewal is managed by the running process.
 
 #### ACME issuance problems and recovery
@@ -104,7 +122,7 @@ docker exec awg-forge awg-forge tls status
 docker exec awg-forge awg-forge doctor
 ```
 
-Verify that the exact A/AAAA records resolve to this host, inbound TCP/80 reaches it from the Internet, and another service or proxy is not already using port `80`. Correct the issue, then open the configured HTTPS URL again to retry issuance.
+For domain mode, verify that the exact A/AAAA records resolve to this host. For IP mode, verify that the configured public IP is routed to this host. In both modes, verify that inbound TCP/80 reaches the host and that another service or proxy is not already using port `80`. After correction, the running service retries automatically at the time reported by `tls status` and Doctor.
 
 To restore SSH-only access instead, use the recovery procedure below. It also works when the main container is restarting and `docker exec` is unavailable.
 

@@ -117,10 +117,11 @@ func ServeContext(ctx context.Context, cfg config.Config, service *app.Service, 
 	}()
 	if acmeServer != nil {
 		go func() {
-			service.RuntimeLog().Info(context.Background(), "server", "server.acme_http.started", "ACME HTTP-01 listener started", map[string]any{"address": acmeServer.Addr, "domain": tlsRuntime.Status.Domain})
+			service.RuntimeLog().Info(context.Background(), "server", "server.acme_http.started", "ACME HTTP-01 listener started", map[string]any{"address": acmeServer.Addr, "domain": tlsRuntime.Status.Domain, "ip": tlsRuntime.Status.IP})
 			errCh <- acmeServer.Serve(acmeListener)
 		}()
 	}
+	tlsRuntime.Start(ctx)
 
 	select {
 	case err := <-errCh:
@@ -1510,18 +1511,29 @@ func publicTLS(status webtls.Status, cfg config.Config) map[string]any {
 		result["not_before"] = status.NotBefore
 		result["not_after"] = status.NotAfter
 	}
-	if status.Mode == webtls.ModeACMEDomain {
-		result["domain"] = status.Domain
+	if status.Mode == webtls.ModeACMEDomain || status.Mode == webtls.ModeACMEIP {
+		if status.Mode == webtls.ModeACMEDomain {
+			result["domain"] = status.Domain
+		} else {
+			result["ip"] = status.IP
+		}
 		result["state"] = status.State
+		if status.Error != "" {
+			result["error"] = status.Error
+		}
+		if status.Warning != "" {
+			result["warning"] = status.Warning
+		}
+		if !status.NextAttempt.IsZero() {
+			result["next_attempt"] = status.NextAttempt
+		}
 		if status.State == "active" {
 			result["subject"] = status.Subject
 			result["issuer"] = status.Issuer
 			result["not_before"] = status.NotBefore
 			result["not_after"] = status.NotAfter
 		}
-		if status.Error != "" {
-			result["valid"] = false
-		}
+		result["valid"] = status.Error == ""
 	}
 	return result
 }

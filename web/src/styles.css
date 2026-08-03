@@ -590,6 +590,24 @@ section.panel.stack {
   font-size: 15px;
 }
 
+.tls-summary {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.tls-summary h3,
+.tls-summary p {
+  margin: 0;
+}
+
+.tls-summary p {
+  overflow-wrap: anywhere;
+}
+
 .badge {
   display: inline-flex;
   align-items: center;
@@ -1180,6 +1198,20 @@ textarea {
 
 .qr-image.compact {
   width: min(240px, 100%);
+}
+
+.qr-image-loading {
+  display: grid;
+  width: min(300px, 100%);
+  aspect-ratio: 1;
+  place-items: center;
+  gap: 12px;
+  padding: 10px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  text-align: center;
 }
 
 .qr-series {

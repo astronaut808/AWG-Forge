@@ -5,6 +5,7 @@
 ### Added
 
 - Added managed ACME HTTP-01 certificates for a public domain through `awg-forge tls use acme-domain`, including automatic renewal and persisted certificate cache.
+- Added managed ACME HTTP-01 certificates for a public IPv4 or IPv6 address through `awg-forge tls use acme-ip`; the short-lived certificate is renewed by the running service before expiry.
 - Added `awg-forge tls use reverse-proxy` for deployments where a trusted reverse proxy terminates TLS.
 
 ### Changed
@@ -21,11 +22,13 @@
 - Hardened the ACME HTTP fallback redirect so untrusted HTTP request targets cannot influence its HTTPS `Location` header.
 - Fixed Web UI listener construction for IPv6 `WEBUI_HOST` values such as `::`.
 - Show an access URL that matches the configured TLS mode after installation or reconfiguration.
+- Cache client QR previews only in the active Config dialog, so switching QR import modes no longer briefly shows the previous QR.
 
 ### Security
 
 - Hardened cached idempotent API responses to remain validated `application/json` output rather than writing cached bytes directly to the response.
 - Reject TLS settings symlinks during backup creation instead of following a replaced path.
+- Mark ACME IP HTTP-01 challenge responses as `nosniff` while preserving their required exact `text/plain` body.
 
 ## v0.17.0 - 2026-07-29
 

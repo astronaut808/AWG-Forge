@@ -82,6 +82,12 @@ if [[ "$(<"$test_dir/docker-command")" != "compose run --rm --no-deps awg-forge 
   printf 'FAIL TLS bootstrap did not invoke docker compose as separate arguments\n' >&2
   exit 1
 fi
+
+configure_tls "docker compose" acme-ip "" "admin@example.com" "2001:db8::1"
+if [[ "$(<"$test_dir/docker-command")" != "compose run --rm --no-deps awg-forge tls use acme-ip --ip 2001:db8::1 --email admin@example.com --accept-tos" ]]; then
+  printf 'FAIL TLS bootstrap did not pass ACME IP settings as separate arguments\n' >&2
+  exit 1
+fi
 unset -f docker
 
 printf 'OK   fresh install configures the automatic UDP port range\n'
@@ -111,8 +117,25 @@ if ! managed_acme_tls_configured; then
   printf 'FAIL installer did not detect managed ACME TLS\n' >&2
   exit 1
 fi
+printf '{"mode":"acme-ip"}\n' >"$DATA_DIR/tls/config.json"
+if ! managed_acme_tls_configured; then
+  printf 'FAIL installer did not detect managed ACME IP TLS\n' >&2
+  exit 1
+fi
 if ! is_loopback_webui_host 127.0.0.1 || ! is_loopback_webui_host localhost || is_loopback_webui_host 0.0.0.0; then
   printf 'FAIL installer did not classify Web UI bind addresses correctly\n' >&2
+  exit 1
+fi
+if [[ "$(acme_ip_default_webui_host 203.0.113.4)" != "0.0.0.0" ]] || [[ "$(acme_ip_default_webui_host 2001:db8::4)" != "::" ]]; then
+  printf 'FAIL installer did not select the ACME IP wildcard bind by address family\n' >&2
+  exit 1
+fi
+if ! acme_ip_webui_host_matches 203.0.113.4 0.0.0.0 || ! acme_ip_webui_host_matches 203.0.113.4 203.0.113.4 || acme_ip_webui_host_matches 203.0.113.4 ::; then
+  printf 'FAIL installer did not validate IPv4 ACME IP binds\n' >&2
+  exit 1
+fi
+if ! acme_ip_webui_host_matches 2001:db8::4 :: || ! acme_ip_webui_host_matches 2001:db8::4 2001:db8::4 || acme_ip_webui_host_matches 2001:db8::4 0.0.0.0; then
+  printf 'FAIL installer did not validate IPv6 ACME IP binds\n' >&2
   exit 1
 fi
 rm -rf "$DATA_DIR/tls"
@@ -132,9 +155,25 @@ if ! grep -q 'Open the HTTPS URL configured in your reverse proxy.' <<<"$next_st
 	printf 'FAIL installer does not defer reverse-proxy URLs to proxy configuration\n' >&2
 	exit 1
 fi
+printf '{"mode":"acme-ip","acme_ip":"2001:db8::1"}\n' >"$DATA_DIR/tls/config.json"
+next_steps="$(print_next_steps "panel.example.com" "0.0.0.0" "8443" "" "awg_2_0" "docker compose")"
+if ! grep -q 'Open: https://\[2001:db8::1\]:8443' <<<"$next_steps"; then
+  printf 'FAIL installer does not print a bracketed IPv6 ACME IP URL\n' >&2
+  exit 1
+fi
 rm -rf "$DATA_DIR/tls"
 
 printf 'OK   installer prints an access URL that matches the configured TLS mode\n'
+
+cd "$test_dir"
+next_steps="$(print_next_steps "panel.example.com" "127.0.0.1" "51821" "generated-password" "awg_2_0" "docker compose")"
+physical_test_dir="$(pwd -P)"
+if ! grep -Fq "Password file: $physical_test_dir/.env" <<<"$next_steps"; then
+  printf 'FAIL installer does not print an absolute password file path\n' >&2
+  exit 1
+fi
+
+printf 'OK   installer prints an absolute password file path\n'
 
 random_u32() {
   printf '1'

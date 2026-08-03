@@ -43,6 +43,24 @@ func TestTLSUseACMEDomainSavesValidatedManagedSettings(t *testing.T) {
 	}
 }
 
+func TestTLSUseACMEIPSavesValidatedManagedSettings(t *testing.T) {
+	cfg := config.Config{ConfigDir: t.TempDir(), Password: "admin-password", WebUIHost: "0.0.0.0", WebUIPort: 8443, SessionCookieSecure: "auto"}
+	svc := app.New(cfg)
+	if _, err := svc.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := runTLS(cfg, svc, []string{"use", "acme-ip", "--ip", "8.8.8.8", "--email", "admin@example.com", "--accept-tos"}); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := webtls.Load(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.Status.Mode != webtls.ModeACMEIP || runtime.Settings.ACMEIP != "8.8.8.8" {
+		t.Fatalf("unexpected ACME IP runtime: %#v", runtime)
+	}
+}
+
 func TestTLSUseReverseProxySavesSettings(t *testing.T) {
 	cfg := config.Config{
 		ConfigDir:              t.TempDir(),

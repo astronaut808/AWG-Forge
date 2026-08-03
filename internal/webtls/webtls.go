@@ -30,6 +30,7 @@ const (
 	ModeReverseProxy Mode = "reverse-proxy"
 	ModeManual       Mode = "manual"
 	ModeACMEDomain   Mode = "acme-domain"
+	ModeACMEIP       Mode = "acme-ip"
 )
 
 const (
@@ -44,19 +45,25 @@ type Settings struct {
 	KeyFile       string `json:"key_file,omitempty"`
 	ServerName    string `json:"server_name,omitempty"`
 	ACMEDomain    string `json:"acme_domain,omitempty"`
+	ACMEIP        string `json:"acme_ip,omitempty"`
 	ACMEEmail     string `json:"acme_email,omitempty"`
 	ACMEAcceptTOS bool   `json:"acme_accept_tos,omitempty"`
 }
 
 type Status struct {
-	Mode      Mode
-	Subject   string
-	Issuer    string
-	NotBefore time.Time
-	NotAfter  time.Time
-	Domain    string
-	State     string
-	Error     string
+	Mode         Mode      `json:"mode"`
+	Subject      string    `json:"subject,omitempty"`
+	Issuer       string    `json:"issuer,omitempty"`
+	NotBefore    time.Time `json:"not_before,omitempty"`
+	NotAfter     time.Time `json:"not_after,omitempty"`
+	Domain       string    `json:"domain,omitempty"`
+	IP           string    `json:"ip,omitempty"`
+	State        string    `json:"state,omitempty"`
+	Error        string    `json:"error,omitempty"`
+	Warning      string    `json:"warning,omitempty"`
+	LastAttempt  time.Time `json:"last_attempt,omitempty"`
+	NextAttempt  time.Time `json:"next_attempt,omitempty"`
+	AttemptCount int       `json:"attempt_count,omitempty"`
 }
 
 type Runtime struct {
@@ -65,6 +72,13 @@ type Runtime struct {
 	TLSConfig       *tls.Config
 	ACMEHTTPHandler http.Handler
 	statusReader    func() Status
+	start           func(context.Context)
+}
+
+func (r Runtime) Start(ctx context.Context) {
+	if r.start != nil {
+		r.start(ctx)
+	}
 }
 
 func (r Runtime) ReadStatus() Status {
@@ -121,6 +135,13 @@ func Save(cfg config.Config, settings Settings) error {
 		}
 		settings.ACMEDomain = domain
 	}
+	if settings.Mode == ModeACMEIP {
+		ip, err := normalizePublicIP(settings.ACMEIP)
+		if err != nil {
+			return err
+		}
+		settings.ACMEIP = ip.String()
+	}
 	if _, err := buildRuntime(cfg, settings); err != nil {
 		return err
 	}
@@ -174,6 +195,9 @@ func buildRuntime(cfg config.Config, settings Settings) (Runtime, error) {
 	if settings.Mode == ModeACMEDomain {
 		return buildACMERuntime(cfg, runtime)
 	}
+	if settings.Mode == ModeACMEIP {
+		return buildACMEIPRuntime(cfg, runtime)
+	}
 	if settings.Mode != ModeManual {
 		return runtime, nil
 	}
@@ -205,9 +229,14 @@ func validateSettings(settings Settings) error {
 			return errors.New("manual TLS certificate and key paths must differ")
 		}
 		return nil
-	case ModeACMEDomain:
-		domain, err := normalizeDomain(settings.ACMEDomain)
-		if err != nil {
+	case ModeACMEDomain, ModeACMEIP:
+		if settings.Mode == ModeACMEDomain {
+			domain, err := normalizeDomain(settings.ACMEDomain)
+			if err != nil {
+				return err
+			}
+			settings.ACMEDomain = domain
+		} else if _, err := normalizePublicIP(settings.ACMEIP); err != nil {
 			return err
 		}
 		if settings.ACMEEmail == "" {
@@ -220,10 +249,9 @@ func validateSettings(settings Settings) error {
 		if !settings.ACMEAcceptTOS {
 			return errors.New("ACME terms of service must be accepted")
 		}
-		settings.ACMEDomain = domain
 		return nil
 	default:
-		return errors.New("TLS mode must be off, reverse-proxy, manual, or acme-domain")
+		return errors.New("TLS mode must be off, reverse-proxy, manual, acme-domain, or acme-ip")
 	}
 }
 
@@ -236,7 +264,7 @@ func validateDeployment(cfg config.Config, settings Settings) error {
 		if !cfg.WebUITrustProxyHeaders || len(cfg.WebUITrustedProxyCIDRs) == 0 {
 			return errors.New("trusted proxy headers and CIDRs are required when reverse-proxy TLS is active")
 		}
-	case ModeACMEDomain:
+	case ModeACMEDomain, ModeACMEIP:
 		if cfg.Password == "" {
 			return errors.New("PASSWORD is required when ACME TLS is active")
 		}
@@ -249,8 +277,34 @@ func validateDeployment(cfg config.Config, settings Settings) error {
 		if hostIsLoopback(cfg.WebUIHost) {
 			return errors.New("WEBUI_HOST must be publicly reachable when ACME TLS is active")
 		}
+		if settings.Mode == ModeACMEIP {
+			ip, err := normalizePublicIP(settings.ACMEIP)
+			if err != nil {
+				return err
+			}
+			if err := validateACMEIPWebUIHost(cfg.WebUIHost, ip); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
+}
+
+func validateACMEIPWebUIHost(host string, certificateIP netip.Addr) error {
+	bind, err := netip.ParseAddr(strings.TrimSpace(host))
+	if err != nil {
+		return errors.New("WEBUI_HOST must be a literal IPv4 or IPv6 address when ACME IP TLS is active")
+	}
+	bind = bind.Unmap()
+	certificateIP = certificateIP.Unmap()
+	wildcard := netip.IPv4Unspecified()
+	if certificateIP.Is6() {
+		wildcard = netip.IPv6Unspecified()
+	}
+	if bind == wildcard || bind == certificateIP {
+		return nil
+	}
+	return fmt.Errorf("WEBUI_HOST must be %s or %s for ACME IP TLS", wildcard, certificateIP)
 }
 
 func buildACMERuntime(cfg config.Config, runtime Runtime) (Runtime, error) {
