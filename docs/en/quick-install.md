@@ -119,7 +119,7 @@ ssh -L 51821:127.0.0.1:51821 user@server
 
 If you choose `WEBUI_HOST=0.0.0.0` or `::`, the script shows a warning and requires explicit confirmation. Use public binds only behind a firewall, VPN, or reverse proxy.
 
-For a fresh installation, the script also offers an ACME certificate for a public DNS domain or a short-lived public IP certificate. Select either only after TCP/80 is reachable from the Internet. The panel continues on the chosen Web UI port. The installer does not wait for the CA: the service starts issuance after its listeners are ready and reports retry status through Doctor and `tls status`; see [TLS configuration](configuration.md#web-ui-tls) for constraints and recovery.
+For a fresh installation, the script also offers an ACME certificate for a public DNS domain or a short-lived public IP certificate. Select either only after TCP/80 is reachable from the Internet. The panel continues on the chosen Web UI port. The installer does not wait for the CA: an IP certificate starts its first issuance attempt after the listeners are ready, while a domain certificate is requested by the first HTTPS request for the configured name. Doctor and `tls status` report pending and retry state; see [TLS configuration](configuration.md#web-ui-tls) for constraints and recovery.
 
 The password is shown at the end and stored in `/opt/awg-forge/.env`, or in `.env` inside `AWG_FORGE_HOME`:
 
