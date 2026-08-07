@@ -20,8 +20,8 @@ import (
 	"sync"
 	"time"
 
-	acme "github.com/eggsampler/acme/v3"
 	"github.com/astronaut808/awg-forge/internal/config"
+	acme "github.com/eggsampler/acme/v3"
 )
 
 const (
