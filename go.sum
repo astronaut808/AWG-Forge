@@ -1,9 +1,9 @@
-github.com/astronaut808/acme/v3 v3.8.2-0.20260803215626-c19d0244715d h1:Sh1OtkOKepRInr1LRKx8cZgIiUpy11tpJFxuTxRj18s=
-github.com/astronaut808/acme/v3 v3.8.2-0.20260803215626-c19d0244715d/go.mod h1:jbbSuds5/nE0fCtXb5MRfzAmSuBvkaos0EkpSyAVHyU=
 github.com/boombuler/barcode v1.1.0 h1:ChaYjBR63fr4LFyGn8E8nt7dBSt3MiU3zMOZqFvVkHo=
 github.com/boombuler/barcode v1.1.0/go.mod h1:paBWMcWSl3LHKBqUq+rly7CNSldXjb2rDl3JlRe0mD8=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
+github.com/eggsampler/acme/v3 v3.8.2 h1:+VxXatOWZeskQ0CwDHZpSMb4ZJ33VInP1eVmFAad+UU=
+github.com/eggsampler/acme/v3 v3.8.2/go.mod h1:/qh0rKC/Dh7Jj+p4So7DbWmFNzC4dpcpK53r226Fhuo=
 github.com/google/pprof v0.0.0-20250317173921-a4b03ec1a45e h1:ijClszYn+mADRFY17kjQEVQ1XRhq2/JR1M3sGqeJoxs=
 github.com/google/pprof v0.0.0-20250317173921-a4b03ec1a45e/go.mod h1:boTsfXsheKC2y+lKOCMpSfarhxDeIzfZG1jqGcPl3cA=
 github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=

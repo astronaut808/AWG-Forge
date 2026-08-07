@@ -71,6 +71,15 @@ The bridge example publishes:
 - Web UI: `127.0.0.1:51821:51821/tcp`;
 - tunnel UDP ports: `51820-51840:51820-51840/udp`.
 
+This example is for loopback HTTP or SSH-tunnel access. To use built-in `acme-domain` or `acme-ip` TLS in bridge mode, also publish the HTTP-01 listener and allow TCP/80 through the host firewall and provider security group:
+
+```yaml
+ports:
+  - "80:80/tcp"
+```
+
+TCP/80 is used only for ACME validation; the Web UI remains on `WEBUI_PORT`.
+
 In bridge mode, keep tunnel listen ports inside `51820-51840` unless you update the compose file and recreate the container.
 
 Set:

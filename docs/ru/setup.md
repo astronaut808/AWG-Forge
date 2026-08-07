@@ -71,6 +71,15 @@ docker compose -f docker-compose.bridge.yml up -d
 - Web UI: `127.0.0.1:51821:51821/tcp`;
 - UDP-порты туннелей: `51820-51840:51820-51840/udp`.
 
+Этот пример рассчитан на доступ к HTTP через loopback или SSH tunnel. Чтобы использовать встроенный TLS `acme-domain` или `acme-ip` в bridge mode, также опубликуй HTTP-01 listener и разреши TCP/80 в firewall хоста и security group провайдера:
+
+```yaml
+ports:
+  - "80:80/tcp"
+```
+
+TCP/80 нужен только для ACME-проверки; Web UI остаётся на `WEBUI_PORT`.
+
 В bridge mode держи tunnel listen ports внутри `51820-51840`, если не меняешь compose-файл и не пересоздаешь контейнер.
 
 Для bridge mode также выставь:
