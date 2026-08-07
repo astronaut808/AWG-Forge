@@ -3,8 +3,8 @@ module github.com/astronaut808/awg-forge
 go 1.26.5
 
 require (
-	github.com/astronaut808/acme/v3 v3.8.2-0.20260803215626-c19d0244715d
 	github.com/boombuler/barcode v1.1.0
+	github.com/eggsampler/acme/v3 v3.8.2
 	golang.org/x/crypto v0.54.0
 	modernc.org/sqlite v1.54.0
 )

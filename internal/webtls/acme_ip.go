@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	acme "github.com/astronaut808/acme/v3"
+	acme "github.com/eggsampler/acme/v3"
 	"github.com/astronaut808/awg-forge/internal/config"
 )
 
