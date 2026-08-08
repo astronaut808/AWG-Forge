@@ -11,10 +11,12 @@ import type {
 
 export class APIError extends Error {
   status: number;
+  code?: string;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, code?: string) {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -42,18 +44,32 @@ async function request<T>(url: string, options: RequestOptions = {}): Promise<T>
   }
 
   const res = await fetch(url, init);
-  if (!res.ok) throw new APIError(res.status, await errorText(res));
+  if (!res.ok) {
+    const error = await errorDetails(res);
+    throw new APIError(res.status, error.message, error.code);
+  }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
 
-async function errorText(res: Response): Promise<string> {
+async function errorDetails(res: Response): Promise<{ message: string; code?: string }> {
   try {
-    const data = await res.json();
-    return String(data.error || `Request failed: ${res.status}`);
+    const data: unknown = await res.json();
+    if (typeof data === "object" && data !== null) {
+      const payload = data as { error?: unknown; code?: unknown };
+      return {
+        message: typeof payload.error === "string" ? payload.error : `Request failed: ${res.status}`,
+        code: typeof payload.code === "string" ? payload.code : undefined,
+      };
+    }
   } catch {
-    return `Request failed: ${res.status}`;
+    // Fall through to the status-based error below.
   }
+  return { message: `Request failed: ${res.status}` };
+}
+
+async function errorText(res: Response): Promise<string> {
+  return (await errorDetails(res)).message;
 }
 
 export function login(password: string): Promise<{ ok: true }> {

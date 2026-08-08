@@ -50,6 +50,9 @@ jobs:
       - name: Build UI
         run: npm run ui:build
 
+      - name: Verify API contract
+        run: make api-contract
+
       - name: Check generated UI
         run: git diff --exit-code -- internal/server/static
 

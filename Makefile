@@ -1,7 +1,7 @@
 COMPOSE ?= docker compose
 CONTAINER ?= awg-forge
 
-.PHONY: test test-shell vet build lint-go lint-js quality ui-build ui-check ci security security-fast updates updates-local updates-docker update-amneziawg-refs docker-build docker-up docker-down
+.PHONY: test test-shell vet build lint-go lint-js quality ui-build ui-check api-contract ci security security-fast updates updates-local updates-docker update-amneziawg-refs docker-build docker-up docker-down
 
 test:
 	go test ./...
@@ -11,6 +11,7 @@ test-shell:
 	bash scripts/test-install.sh
 	bash scripts/test-upgrade.sh
 	bash scripts/test-uninstall.sh
+	bash scripts/test-release-workflow.sh
 
 vet:
 	go vet ./...
@@ -33,7 +34,10 @@ ui-check:
 ui-build:
 	npm run ui:build
 
-ci: ui-check ui-build test test-shell vet build lint-go lint-js quality
+api-contract:
+	go test ./internal/server -run '^Test(API(ErrorResponseContract|ContractRegenerateProtocolRejectsMalformedJSON)|Idempotency|OpenAPIContract)'
+
+ci: ui-check ui-build api-contract test test-shell vet build lint-go lint-js quality
 
 security:
 	gitleaks detect --source=. --no-banner --log-opts=HEAD

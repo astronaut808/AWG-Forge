@@ -11,6 +11,7 @@
 - [Обновления AmneziaWG](updates.md)
 - [Разработка](development.md)
 - [Безопасность](security.md)
+- [Контракт API панели управления](api.md)
 - [Contributing](../../CONTRIBUTING.md)
 - [Security policy](../../SECURITY.md)
 
