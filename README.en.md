@@ -139,6 +139,7 @@ Backup/restore, firewall repair, support bundle, and audit log are available fro
 - [AmneziaWG updates](docs/en/updates.md)
 - [Development](docs/en/development.md)
 - [Security](docs/en/security.md)
+- [Browser control API contract](docs/en/api.md)
 - [Changelog](CHANGELOG.md)
 
 ## Development

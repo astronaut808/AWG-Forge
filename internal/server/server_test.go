@@ -1029,14 +1029,15 @@ func TestEnableClientRechecksExceededTrafficLimit(t *testing.T) {
 	if rr.Code != http.StatusConflict {
 		t.Fatalf("status = %d body = %s, want %d", rr.Code, rr.Body.String(), http.StatusConflict)
 	}
-	var payload struct {
-		Error string `json:"error"`
-	}
+	var payload apiErrorResponse
 	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(payload.Error, "traffic limit exceeded") {
 		t.Fatalf("error = %q, want traffic limit reason", payload.Error)
+	}
+	if got, want := payload.Code, "traffic_limit_exceeded"; got != want {
+		t.Fatalf("code = %q, want %q", got, want)
 	}
 	state, err := svc.State()
 	if err != nil {

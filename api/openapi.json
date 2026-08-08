@@ -1,0 +1,163 @@
+{
+  "openapi": "3.1.1",
+  "info": {
+    "title": "AWG-Forge browser control API",
+    "version": "0.19.0-unreleased",
+    "description": "Same-origin control API used by the bundled Web UI. This is not a public remote-management API. It uses the authenticated browser session, does not enable CORS, and the bundled UI supplies an Idempotency-Key for state-changing operations."
+  },
+  "servers": [{ "url": "/" }],
+  "security": [{ "sessionCookie": [] }],
+  "paths": {
+    "/api/login": {
+      "post": {
+        "operationId": "login",
+        "security": [],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LoginRequest" } } } },
+        "responses": { "200": { "$ref": "#/components/responses/OK" }, "401": { "$ref": "#/components/responses/APIError" }, "429": { "$ref": "#/components/responses/APIError" } }
+      }
+    },
+    "/api/logout": {
+      "post": {
+        "operationId": "logout",
+        "responses": { "200": { "$ref": "#/components/responses/OK" }, "default": { "$ref": "#/components/responses/APIError" } }
+      }
+    },
+    "/api/state": {
+      "get": {
+        "operationId": "getState",
+        "responses": { "200": { "description": "Current desired configuration and safe runtime summary.", "headers": { "X-Request-ID": { "$ref": "#/components/headers/RequestID" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/State" } } } }, "401": { "$ref": "#/components/responses/APIError" } }
+      }
+    },
+    "/api/tunnels": {
+      "post": {
+        "operationId": "createTunnel",
+        "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateTunnelRequest" } } } },
+        "responses": { "201": { "description": "Tunnel created.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TunnelEnvelope" } } } }, "default": { "$ref": "#/components/responses/APIError" } }
+      }
+    },
+    "/api/tunnels/suggestion": {
+      "get": {
+        "operationId": "suggestTunnel",
+        "parameters": [{ "name": "profile", "in": "query", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Safe tunnel defaults for the selected profile.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TunnelSuggestionEnvelope" } } } }, "default": { "$ref": "#/components/responses/APIError" } }
+      }
+    },
+    "/api/tunnels/{id}/settings": {
+      "patch": {
+        "operationId": "updateTunnelSettings",
+        "parameters": [{ "$ref": "#/components/parameters/TunnelID" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateTunnelSettingsRequest" } } } },
+        "responses": { "200": { "description": "Tunnel updated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TunnelEnvelope" } } } }, "default": { "$ref": "#/components/responses/APIError" } }
+      }
+    },
+    "/api/tunnels/{id}/delete": {
+      "delete": {
+        "operationId": "deleteTunnel",
+        "parameters": [{ "$ref": "#/components/parameters/TunnelID" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": false, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DeleteTunnelRequest" } } } },
+        "responses": { "200": { "$ref": "#/components/responses/OK" }, "default": { "$ref": "#/components/responses/APIError" } }
+      }
+    },
+    "/api/tunnels/{id}/restart": {
+      "post": {
+        "operationId": "restartTunnel",
+        "parameters": [{ "$ref": "#/components/parameters/TunnelID" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "responses": { "200": { "$ref": "#/components/responses/OK" }, "default": { "$ref": "#/components/responses/APIError" } }
+      }
+    },
+    "/api/tunnels/{id}/protocol": {
+      "patch": {
+        "operationId": "updateTunnelProtocol",
+        "parameters": [{ "$ref": "#/components/parameters/TunnelID" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateProtocolRequest" } } } },
+        "responses": { "200": { "$ref": "#/components/responses/OK" }, "default": { "$ref": "#/components/responses/APIError" } }
+      }
+    },
+    "/api/tunnels/{id}/regenerate": {
+      "post": {
+        "operationId": "regenerateTunnelProtocol",
+        "parameters": [{ "$ref": "#/components/parameters/TunnelID" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RegenerateProtocolRequest" } } } },
+        "responses": { "200": { "$ref": "#/components/responses/OK" }, "default": { "$ref": "#/components/responses/APIError" } }
+      }
+    },
+    "/api/clients": {
+      "post": {
+        "operationId": "createClient",
+        "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateClientRequest" } } } },
+        "responses": { "201": { "description": "Client created.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ClientEnvelope" } } } }, "default": { "$ref": "#/components/responses/APIError" } }
+      }
+    },
+    "/api/clients/{id}/settings": {
+      "patch": {
+        "operationId": "updateClientSettings",
+        "parameters": [{ "$ref": "#/components/parameters/ClientID" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateClientSettingsRequest" } } } },
+        "responses": { "200": { "description": "Client updated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ClientEnvelope" } } } }, "default": { "$ref": "#/components/responses/APIError" } }
+      }
+    },
+    "/api/clients/{id}/traffic-limit": {
+      "patch": {
+        "operationId": "updateClientTrafficLimit",
+        "parameters": [{ "$ref": "#/components/parameters/ClientID" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TrafficLimitRequest" } } } },
+        "responses": { "200": { "$ref": "#/components/responses/OK" }, "default": { "$ref": "#/components/responses/APIError" } }
+      }
+    },
+    "/api/clients/{id}/enable": {
+      "post": { "operationId": "enableClient", "parameters": [{ "$ref": "#/components/parameters/ClientID" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "responses": { "200": { "$ref": "#/components/responses/OK" }, "default": { "$ref": "#/components/responses/APIError" } } }
+    },
+    "/api/clients/{id}/disable": {
+      "post": { "operationId": "disableClient", "parameters": [{ "$ref": "#/components/parameters/ClientID" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "responses": { "200": { "$ref": "#/components/responses/OK" }, "default": { "$ref": "#/components/responses/APIError" } } }
+    },
+    "/api/clients/{id}/delete": {
+      "delete": { "operationId": "deleteClient", "parameters": [{ "$ref": "#/components/parameters/ClientID" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "responses": { "200": { "$ref": "#/components/responses/OK" }, "default": { "$ref": "#/components/responses/APIError" } } }
+    },
+    "/api/warp": {
+      "get": { "operationId": "getWarp", "responses": { "200": { "description": "WARP configuration and runtime summary.", "content": { "application/json": { "schema": { "type": "object", "required": ["warp", "status"], "properties": { "warp": { "type": "object", "additionalProperties": true }, "status": { "type": "object", "additionalProperties": true } } } } } }, "default": { "$ref": "#/components/responses/APIError" } } },
+      "delete": { "operationId": "deleteWarp", "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }], "responses": { "200": { "$ref": "#/components/responses/OK" }, "default": { "$ref": "#/components/responses/APIError" } } }
+    },
+    "/api/warp/import": {
+      "post": { "operationId": "importWarp", "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WarpImportRequest" } } } }, "responses": { "200": { "description": "WARP configuration imported.", "content": { "application/json": { "schema": { "type": "object", "required": ["warp"], "properties": { "warp": { "type": "object", "additionalProperties": true } } } } } }, "default": { "$ref": "#/components/responses/APIError" } } }
+    },
+    "/api/warp/register": {
+      "post": { "operationId": "registerWarp", "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }], "responses": { "200": { "description": "WARP registered.", "content": { "application/json": { "schema": { "type": "object", "required": ["warp"], "properties": { "warp": { "type": "object", "additionalProperties": true } } } } } }, "default": { "$ref": "#/components/responses/APIError" } } }
+    },
+    "/api/warp/restart": {
+      "post": { "operationId": "restartWarp", "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }], "responses": { "200": { "$ref": "#/components/responses/OK" }, "default": { "$ref": "#/components/responses/APIError" } } }
+    }
+  },
+  "components": {
+    "securitySchemes": { "sessionCookie": { "type": "apiKey", "in": "cookie", "name": "awg_forge_session", "description": "Signed, HttpOnly browser session cookie. It cannot be supplied by JavaScript clients." } },
+    "parameters": {
+      "IdempotencyKey": { "name": "Idempotency-Key", "in": "header", "required": false, "schema": { "type": "string", "minLength": 1, "maxLength": 128 }, "description": "The bundled UI sends a unique key for each logical mutation. Reusing a key with a different request body returns 409." },
+      "TunnelID": { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+      "ClientID": { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+    },
+    "headers": { "RequestID": { "description": "Correlation ID for runtime logs and support.", "schema": { "type": "string" } } },
+    "responses": {
+      "OK": { "description": "Operation completed.", "headers": { "X-Request-ID": { "$ref": "#/components/headers/RequestID" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OK" } } } },
+      "APIError": { "description": "Safe API error. Exact internal details are recorded only in the audit and runtime logs.", "headers": { "X-Request-ID": { "$ref": "#/components/headers/RequestID" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/APIError" } } } }
+    },
+    "schemas": {
+      "OK": { "type": "object", "required": ["ok"], "properties": { "ok": { "type": "boolean", "const": true } } },
+      "APIError": { "type": "object", "required": ["error", "code"], "properties": { "error": { "type": "string" }, "code": { "type": "string", "pattern": "^[a-z0-9_]+$" } } },
+      "LoginRequest": { "type": "object", "required": ["password"], "properties": { "password": { "type": "string", "writeOnly": true } } },
+      "State": { "type": "object", "description": "Current safe control-plane state. Sensitive keys, raw client configurations, and QR payloads are excluded.", "additionalProperties": true },
+      "CreateTunnelRequest": { "type": "object", "required": ["profile", "name", "egress_mode", "subnet"], "properties": { "profile": { "type": "string" }, "name": { "type": "string" }, "egress_mode": { "type": "string", "enum": ["wan", "warp"] }, "port": { "type": "integer", "minimum": 1, "maximum": 65535 }, "automatic_port": { "type": "boolean" }, "subnet": { "type": "string" } } },
+      "UpdateTunnelSettingsRequest": { "type": "object", "required": ["name", "server_host", "egress_mode", "port", "subnet", "dns", "allowed_ips", "keepalive", "mtu", "enabled"], "properties": { "name": { "type": "string" }, "server_host": { "type": "string" }, "egress_mode": { "type": "string", "enum": ["wan", "warp"] }, "port": { "type": "integer", "minimum": 1, "maximum": 65535 }, "subnet": { "type": "string" }, "dns": { "type": "string" }, "allowed_ips": { "type": "string" }, "keepalive": { "type": "integer", "minimum": 0 }, "mtu": { "type": "integer", "minimum": 0 }, "enabled": { "type": "boolean" } } },
+      "DeleteTunnelRequest": { "type": "object", "properties": { "confirmation_name": { "type": "string" } } },
+      "UpdateProtocolRequest": { "type": "object", "required": ["profile", "params"], "properties": { "profile": { "type": "string" }, "params": { "type": "object", "additionalProperties": { "type": "string" } } } },
+      "RegenerateProtocolRequest": { "type": "object", "properties": { "profile": { "type": "string" } } },
+      "CreateClientRequest": { "type": "object", "required": ["tunnel_id", "name"], "properties": { "tunnel_id": { "type": "string" }, "name": { "type": "string" }, "expires_at": { "type": "string", "format": "date-time" }, "traffic_limit_bytes": { "type": ["integer", "null"], "minimum": 1 }, "traffic_limit_period": { "type": "string", "enum": ["", "lifetime", "rolling_30d"] } } },
+      "UpdateClientSettingsRequest": { "type": "object", "required": ["name", "notes", "expires_at"], "properties": { "name": { "type": "string" }, "notes": { "type": "string" }, "expires_at": { "type": "string", "format": "date-time" } } },
+      "TrafficLimitRequest": { "type": "object", "required": ["limit_bytes"], "properties": { "limit_bytes": { "type": ["integer", "null"], "minimum": 1 }, "limit_period": { "type": "string", "enum": ["", "lifetime", "rolling_30d"] } } },
+      "WarpImportRequest": { "type": "object", "required": ["config"], "properties": { "config": { "type": "string", "writeOnly": true, "description": "Private WARP configuration. Never log or persist it outside the protected configuration store." } } },
+      "TunnelEnvelope": { "type": "object", "required": ["tunnel"], "properties": { "tunnel": { "type": "object", "additionalProperties": true } } },
+      "ClientEnvelope": { "type": "object", "required": ["client"], "properties": { "client": { "type": "object", "additionalProperties": true } } },
+      "TunnelSuggestionEnvelope": { "type": "object", "required": ["suggestion"], "properties": { "suggestion": { "type": "object", "required": ["name", "port", "subnet", "udp_port_range"], "properties": { "name": { "type": "string" }, "port": { "type": "integer" }, "subnet": { "type": "string" }, "udp_port_range": { "type": "string" } } } } }
+    }
+  }
+}

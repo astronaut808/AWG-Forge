@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Added an OpenAPI 3.1 browser control API contract for the stable tunnel, client, traffic-limit, and WARP control surface, with compatibility tests for the contract envelope.
+
+### Changed
+
+- Publish GitHub Releases automatically from the matching `CHANGELOG.md` section when a version tag is pushed.
+
+### Security
+
+- Added stable safe API error codes and bound idempotency keys to request bodies, preventing a reused key from replaying a different mutation.
+
 ## v0.18.0 - 2026-08-08
 
 ### Added

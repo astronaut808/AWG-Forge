@@ -61,10 +61,11 @@ const webIdleTimeout = 60 * time.Second
 const webShutdownTimeout = 15 * time.Second
 
 type idempotencyEntry struct {
-	status    int
-	body      json.RawMessage
-	createdAt time.Time
-	ready     chan struct{}
+	status      int
+	body        json.RawMessage
+	fingerprint string
+	createdAt   time.Time
+	ready       chan struct{}
 }
 
 func Serve(cfg config.Config, service *app.Service, tlsRuntime webtls.Runtime) error {
@@ -347,9 +348,7 @@ func (w *web) loginAPI(rw http.ResponseWriter, r *http.Request) {
 		writeError(rw, http.StatusForbidden, "forbidden")
 		return
 	}
-	var req struct {
-		Password string `json:"password"`
-	}
+	var req loginRequest
 	if err := readJSON(rw, r, &req); err != nil {
 		writeError(rw, http.StatusBadRequest, "invalid json")
 		return
@@ -519,7 +518,8 @@ func (w *web) firewallRepairAPI(rw http.ResponseWriter, r *http.Request) {
 	}
 	report, err := w.service.FirewallRepair()
 	if err != nil {
-		writeJSON(rw, http.StatusInternalServerError, map[string]any{"error": err.Error(), "firewall": report})
+		w.audit("error", "firewall.repair.failed", "firewall repair failed", nil, err)
+		writeOperationError(rw, http.StatusInternalServerError, "firewall_repair_failed", "firewall repair failed")
 		return
 	}
 	writeJSON(rw, http.StatusOK, map[string]any{"firewall": report})
@@ -540,16 +540,14 @@ func (w *web) warpAPI(rw http.ResponseWriter, r *http.Request) {
 		})
 	case path == "/import" && r.Method == http.MethodPost && w.validOrigin(r):
 		w.withIdempotency(rw, r, "warp-import", func() (int, any) {
-			var req struct {
-				Config string `json:"config"`
-			}
+			var req warpImportRequest
 			if err := readJSON(rw, r, &req); err != nil {
 				return http.StatusBadRequest, errorPayload("invalid json")
 			}
 			_, err := w.service.ImportWarpConfig(req.Config)
 			if err != nil {
 				w.audit("warn", "warp.import.rejected", "WARP import request rejected", nil, err)
-				return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
+				return mutationErrorStatus(err, http.StatusBadRequest), operationErrorPayload("warp_import_failed", "failed to import WARP configuration")
 			}
 			state, _ := w.service.State()
 			return http.StatusOK, map[string]any{"warp": w.service.WarpSummary(state)}
@@ -558,7 +556,7 @@ func (w *web) warpAPI(rw http.ResponseWriter, r *http.Request) {
 		w.withIdempotency(rw, r, "warp-register", func() (int, any) {
 			if _, err := w.service.RegisterWarp(r.Context()); err != nil {
 				w.audit("warn", "warp.register.rejected", "WARP registration request rejected", nil, err)
-				return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
+				return mutationErrorStatus(err, http.StatusBadRequest), operationErrorPayload("warp_register_failed", "failed to register WARP")
 			}
 			state, _ := w.service.State()
 			return http.StatusOK, map[string]any{"warp": w.service.WarpSummary(state)}
@@ -567,7 +565,7 @@ func (w *web) warpAPI(rw http.ResponseWriter, r *http.Request) {
 		w.withIdempotency(rw, r, "warp-restart", func() (int, any) {
 			if err := w.service.RestartWarp(); err != nil {
 				w.audit("warn", "warp.restart.rejected", "WARP restart request rejected", nil, err)
-				return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
+				return mutationErrorStatus(err, http.StatusBadRequest), operationErrorPayload("warp_restart_failed", "failed to restart WARP")
 			}
 			return http.StatusOK, map[string]any{"ok": true}
 		})
@@ -575,7 +573,7 @@ func (w *web) warpAPI(rw http.ResponseWriter, r *http.Request) {
 		w.withIdempotency(rw, r, "warp-delete", func() (int, any) {
 			if err := w.service.DeleteWarpConfig(r.Context()); err != nil {
 				w.audit("warn", "warp.delete.rejected", "WARP delete request rejected", nil, err)
-				return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
+				return mutationErrorStatus(err, http.StatusBadRequest), operationErrorPayload("warp_delete_failed", "failed to delete WARP configuration")
 			}
 			return http.StatusOK, map[string]any{"ok": true}
 		})
@@ -589,9 +587,7 @@ func (w *web) backupAPI(rw http.ResponseWriter, r *http.Request) {
 		writeError(rw, http.StatusForbidden, "forbidden")
 		return
 	}
-	var req struct {
-		Password string `json:"password"`
-	}
+	var req backupRequest
 	if err := readJSON(rw, r, &req); err != nil {
 		writeError(rw, http.StatusBadRequest, "invalid json")
 		return
@@ -600,7 +596,7 @@ func (w *web) backupAPI(rw http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	archive, err := backup.Create(ctx, w.cfg, w.service, req.Password, backup.Options{})
 	if err != nil {
-		writeError(rw, http.StatusBadRequest, err.Error())
+		writeOperationError(rw, http.StatusBadRequest, "backup_create_failed", "failed to create encrypted backup")
 		w.audit("error", "backup.create.failed", "encrypted backup creation failed", nil, err)
 		return
 	}
@@ -621,7 +617,7 @@ func (w *web) supportBundleAPI(rw http.ResponseWriter, r *http.Request) {
 	bundle, err := support.Generate(ctx, w.cfg, w.service, support.Options{})
 	if err != nil {
 		w.audit("error", "support_bundle.failed", "support bundle creation failed", nil, err)
-		writeError(rw, http.StatusInternalServerError, err.Error())
+		writeOperationError(rw, http.StatusInternalServerError, "support_bundle_failed", "failed to create support bundle")
 		return
 	}
 	w.audit("info", "support_bundle.created", "support bundle created", map[string]any{"name": bundle.Name}, nil)
@@ -687,7 +683,7 @@ func (w *web) restoreVerifyAPI(rw http.ResponseWriter, r *http.Request) {
 	report, err := backup.Verify(ctx, w.cfg, password, tmpPath)
 	if err != nil {
 		w.audit("error", "restore.verify.failed", "backup verification failed", nil, err)
-		writeError(rw, http.StatusBadRequest, err.Error())
+		writeOperationError(rw, http.StatusBadRequest, "backup_verification_failed", "backup verification failed")
 		return
 	}
 	w.audit("info", "restore.verified", "backup verified", map[string]any{"tunnels": len(report.Tunnels), "clients": report.ClientCount}, nil)
@@ -700,14 +696,7 @@ func (w *web) tunnelsAPI(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.withIdempotency(rw, r, "create-tunnel", func() (int, any) {
-		var req struct {
-			Profile    string `json:"profile"`
-			Name       string `json:"name"`
-			EgressMode string `json:"egress_mode"`
-			Port       int    `json:"port"`
-			AutoPort   bool   `json:"automatic_port"`
-			Subnet     string `json:"subnet"`
-		}
+		var req createTunnelRequest
 		if err := readJSON(rw, r, &req); err != nil {
 			w.audit("warn", "tunnel.create.rejected", "tunnel creation request rejected", map[string]any{"reason": "invalid json"}, err)
 			return http.StatusBadRequest, errorPayload("invalid json")
@@ -722,7 +711,7 @@ func (w *web) tunnelsAPI(rw http.ResponseWriter, r *http.Request) {
 		})
 		if err != nil {
 			w.audit("warn", "tunnel.create.rejected", "tunnel creation request rejected", map[string]any{"profile": req.Profile, "name": req.Name, "egress": req.EgressMode, "port": req.Port, "automatic_port": req.AutoPort, "subnet": req.Subnet}, err)
-			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
+			return mutationErrorStatus(err, http.StatusBadRequest), operationErrorPayload("tunnel_create_failed", "failed to create tunnel")
 		}
 		return http.StatusCreated, map[string]any{"tunnel": publicTunnel(tunnel, app.TunnelStatus{})}
 	})
@@ -735,7 +724,7 @@ func (w *web) tunnelSuggestionAPI(rw http.ResponseWriter, r *http.Request) {
 	}
 	suggestion, err := w.service.SuggestTunnel(r.URL.Query().Get("profile"))
 	if err != nil {
-		writeError(rw, http.StatusBadRequest, err.Error())
+		writeOperationError(rw, http.StatusBadRequest, "invalid_protocol_profile", "invalid protocol profile")
 		return
 	}
 	noStore(rw)
@@ -781,7 +770,7 @@ func (w *web) tunnelHealthAPI(rw http.ResponseWriter, r *http.Request, id string
 	}
 	health, err := w.service.TunnelHealthByID(id, 2)
 	if err != nil {
-		writeError(rw, http.StatusBadRequest, err.Error())
+		writeOperationError(rw, http.StatusBadRequest, "tunnel_health_unavailable", "tunnel health unavailable")
 		return
 	}
 	writeJSON(rw, http.StatusOK, map[string]any{"health": health})
@@ -793,18 +782,7 @@ func (w *web) updateTunnelSettingsAPI(rw http.ResponseWriter, r *http.Request, i
 		return
 	}
 	w.withIdempotency(rw, r, "update-tunnel-settings:"+id, func() (int, any) {
-		var req struct {
-			Name       string `json:"name"`
-			ServerHost string `json:"server_host"`
-			EgressMode string `json:"egress_mode"`
-			Port       int    `json:"port"`
-			Subnet     string `json:"subnet"`
-			DNS        string `json:"dns"`
-			AllowedIPs string `json:"allowed_ips"`
-			Keepalive  int    `json:"keepalive"`
-			MTU        int    `json:"mtu"`
-			Enabled    bool   `json:"enabled"`
-		}
+		var req updateTunnelSettingsRequest
 		if err := readJSON(rw, r, &req); err != nil {
 			w.audit("warn", "tunnel.settings.rejected", "tunnel settings request rejected", map[string]any{"tunnel_id": id, "reason": "invalid json"}, err)
 			return http.StatusBadRequest, errorPayload("invalid json")
@@ -823,7 +801,7 @@ func (w *web) updateTunnelSettingsAPI(rw http.ResponseWriter, r *http.Request, i
 		})
 		if err != nil {
 			w.audit("warn", "tunnel.settings.rejected", "tunnel settings request rejected", map[string]any{"tunnel_id": id, "name": req.Name, "port": req.Port, "subnet": req.Subnet, "enabled": req.Enabled}, err)
-			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
+			return mutationErrorStatus(err, http.StatusBadRequest), operationErrorPayload("tunnel_settings_update_failed", "failed to update tunnel settings")
 		}
 		return http.StatusOK, map[string]any{"tunnel": publicTunnel(tunnel, app.TunnelStatus{})}
 	})
@@ -835,16 +813,14 @@ func (w *web) deleteTunnelAPI(rw http.ResponseWriter, r *http.Request, id string
 		return
 	}
 	w.withIdempotency(rw, r, "delete-tunnel:"+id, func() (int, any) {
-		var req struct {
-			ConfirmationName string `json:"confirmation_name"`
-		}
+		var req deleteTunnelRequest
 		if err := readJSON(rw, r, &req); err != nil && !errors.Is(err, io.EOF) {
 			w.audit("warn", "tunnel.delete.rejected", "tunnel delete request rejected", map[string]any{"tunnel_id": id, "reason": "invalid json"}, err)
 			return http.StatusBadRequest, errorPayload("invalid json")
 		}
 		if err := w.service.DeleteTunnelWithConfirmation(id, req.ConfirmationName); err != nil {
 			w.audit("warn", "tunnel.delete.rejected", "tunnel delete request rejected", map[string]any{"tunnel_id": id, "confirmation_provided": req.ConfirmationName != ""}, err)
-			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
+			return mutationErrorStatus(err, http.StatusBadRequest), operationErrorPayload("tunnel_delete_failed", "failed to delete tunnel")
 		}
 		return http.StatusOK, map[string]any{"ok": true}
 	})
@@ -858,7 +834,7 @@ func (w *web) restartTunnelAPI(rw http.ResponseWriter, r *http.Request, id strin
 	w.withIdempotency(rw, r, "restart-tunnel:"+id, func() (int, any) {
 		if err := w.service.RestartTunnelByID(id); err != nil {
 			w.audit("warn", "tunnel.restart.rejected", "tunnel restart request rejected", map[string]any{"tunnel_id": id}, err)
-			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
+			return mutationErrorStatus(err, http.StatusBadRequest), operationErrorPayload("tunnel_restart_failed", "failed to restart tunnel")
 		}
 		return http.StatusOK, map[string]any{"ok": true}
 	})
@@ -870,17 +846,14 @@ func (w *web) updateProtocolAPI(rw http.ResponseWriter, r *http.Request, id stri
 		return
 	}
 	w.withIdempotency(rw, r, "update-protocol:"+id, func() (int, any) {
-		var req struct {
-			Profile string                `json:"profile"`
-			Params  config.ProtocolParams `json:"params"`
-		}
+		var req updateProtocolRequest
 		if err := readJSON(rw, r, &req); err != nil {
 			w.audit("warn", "tunnel.protocol.rejected", "tunnel protocol request rejected", map[string]any{"tunnel_id": id, "reason": "invalid json"}, err)
 			return http.StatusBadRequest, errorPayload("invalid json")
 		}
 		if err := w.service.UpdateTunnelProtocol(id, req.Profile, req.Params); err != nil {
 			w.audit("warn", "tunnel.protocol.rejected", "tunnel protocol request rejected", map[string]any{"tunnel_id": id, "profile": req.Profile}, err)
-			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
+			return mutationErrorStatus(err, http.StatusBadRequest), operationErrorPayload("tunnel_protocol_update_failed", "failed to update tunnel protocol")
 		}
 		return http.StatusOK, map[string]any{"ok": true}
 	})
@@ -892,13 +865,14 @@ func (w *web) regenerateProtocolAPI(rw http.ResponseWriter, r *http.Request, id 
 		return
 	}
 	w.withIdempotency(rw, r, "regenerate-protocol:"+id, func() (int, any) {
-		var req struct {
-			Profile string `json:"profile"`
+		var req regenerateProtocolRequest
+		if err := readJSON(rw, r, &req); err != nil {
+			w.audit("warn", "tunnel.protocol_regenerate.rejected", "tunnel protocol regenerate request rejected", map[string]any{"tunnel_id": id, "reason": "invalid json"}, err)
+			return http.StatusBadRequest, errorPayload("invalid json")
 		}
-		_ = readJSON(rw, r, &req)
 		if err := w.service.RegenerateTunnelProtocol(id, req.Profile); err != nil {
 			w.audit("warn", "tunnel.protocol_regenerate.rejected", "tunnel protocol regenerate request rejected", map[string]any{"tunnel_id": id, "profile": req.Profile}, err)
-			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
+			return mutationErrorStatus(err, http.StatusBadRequest), operationErrorPayload("tunnel_protocol_regenerate_failed", "failed to regenerate tunnel protocol")
 		}
 		return http.StatusOK, map[string]any{"ok": true}
 	})
@@ -910,13 +884,7 @@ func (w *web) clientsAPI(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.withIdempotency(rw, r, "create-client", func() (int, any) {
-		var req struct {
-			TunnelID           string          `json:"tunnel_id"`
-			Name               string          `json:"name"`
-			ExpiresAt          string          `json:"expires_at"`
-			TrafficLimitBytes  json.RawMessage `json:"traffic_limit_bytes"`
-			TrafficLimitPeriod string          `json:"traffic_limit_period"`
-		}
+		var req createClientRequest
 		if err := readJSON(rw, r, &req); err != nil {
 			w.audit("warn", "client.create.rejected", "client creation request rejected", map[string]any{"reason": "invalid json"}, err)
 			return http.StatusBadRequest, errorPayload("invalid json")
@@ -977,7 +945,7 @@ func (w *web) clientsAPI(rw http.ResponseWriter, r *http.Request) {
 			if limitPersistFailed {
 				return http.StatusInternalServerError, errorPayload("traffic limit unavailable")
 			}
-			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
+			return mutationErrorStatus(err, http.StatusBadRequest), operationErrorPayload("client_create_failed", "failed to create client")
 		}
 		if hasLimit {
 			w.audit("info", "client.traffic_limit.updated", "client traffic limit updated", map[string]any{"client_id": client.ID, "limit_set": true, "traffic_limit_period": limitPeriod}, nil)
@@ -1023,11 +991,7 @@ func (w *web) updateClientSettingsAPI(rw http.ResponseWriter, r *http.Request, i
 		return
 	}
 	w.withIdempotency(rw, r, "update-client-settings:"+id, func() (int, any) {
-		var req struct {
-			Name      string `json:"name"`
-			Notes     string `json:"notes"`
-			ExpiresAt string `json:"expires_at"`
-		}
+		var req updateClientSettingsRequest
 		if err := readJSON(rw, r, &req); err != nil {
 			w.audit("warn", "client.settings.rejected", "client settings request rejected", map[string]any{"client_id": id, "reason": "invalid json"}, err)
 			return http.StatusBadRequest, errorPayload("invalid json")
@@ -1040,7 +1004,7 @@ func (w *web) updateClientSettingsAPI(rw http.ResponseWriter, r *http.Request, i
 		client, err := w.service.UpdateClientSettingsWithOptions(id, app.ClientSettingsUpdate{Name: req.Name, Notes: req.Notes, ExpiresAt: expiresAt})
 		if err != nil {
 			w.audit("warn", "client.settings.rejected", "client settings request rejected", map[string]any{"client_id": id, "client_name": req.Name}, err)
-			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
+			return mutationErrorStatus(err, http.StatusBadRequest), operationErrorPayload("client_settings_update_failed", "failed to update client settings")
 		}
 		return http.StatusOK, map[string]any{"client": publicClient(client)}
 	})
@@ -1052,10 +1016,7 @@ func (w *web) updateClientTrafficLimitAPI(rw http.ResponseWriter, r *http.Reques
 		return
 	}
 	w.withIdempotency(rw, r, "update-client-traffic-limit:"+id, func() (int, any) {
-		var req struct {
-			LimitBytes  json.RawMessage `json:"limit_bytes"`
-			LimitPeriod string          `json:"limit_period"`
-		}
+		var req updateClientTrafficLimitRequest
 		if err := readJSON(rw, r, &req); err != nil {
 			w.audit("warn", "client.traffic_limit.rejected", "client traffic limit request rejected", map[string]any{"client_id": id, "reason": "invalid json"}, err)
 			return http.StatusBadRequest, errorPayload("invalid json")
@@ -1063,7 +1024,7 @@ func (w *web) updateClientTrafficLimitAPI(rw http.ResponseWriter, r *http.Reques
 		limitBytesValue, hasLimit, err := parseTrafficLimitBytes(req.LimitBytes)
 		if err != nil {
 			w.audit("warn", "client.traffic_limit.rejected", "client traffic limit request rejected", map[string]any{"client_id": id, "reason": "invalid limit"}, err)
-			return http.StatusBadRequest, errorPayload(err.Error())
+			return http.StatusBadRequest, errorPayload("invalid traffic limit")
 		}
 		var limitBytes *uint64
 		limitPeriod := sqldb.TrafficLimitPeriodLifetime
@@ -1085,7 +1046,7 @@ func (w *web) updateClientTrafficLimitAPI(rw http.ResponseWriter, r *http.Reques
 		defer cancel()
 		if err := sqldb.SetClientTrafficLimitWithPeriod(ctx, w.cfg, tunnel.ID, client.ID, limitBytes, limitPeriod); err != nil {
 			w.audit("warn", "client.traffic_limit.rejected", "client traffic limit request rejected", map[string]any{"client_id": id}, err)
-			return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
+			return mutationErrorStatus(err, http.StatusBadRequest), operationErrorPayload("traffic_limit_update_failed", "failed to update client traffic limit")
 		}
 		enforceTrafficLimits(ctx, w.cfg, w.service)
 		w.audit("info", "client.traffic_limit.updated", "client traffic limit updated", map[string]any{"client_id": id, "limit_set": limitBytes != nil, "traffic_limit_period": limitPeriod}, nil)
@@ -1117,7 +1078,7 @@ func (w *web) setClientEnabledAPI(rw http.ResponseWriter, r *http.Request, id st
 			exceeded, found, err := trafficLimitExceededForClient(ctx, w.cfg, id)
 			if err != nil {
 				w.audit("warn", "client.enabled_state.rejected", "client enabled state request rejected", map[string]any{"client_id": id, "enabled": enabled, "reason": "traffic limit check failed"}, err)
-				return mutationErrorStatus(err, http.StatusBadRequest), errorPayload(err.Error())
+				return mutationErrorStatus(err, http.StatusBadRequest), operationErrorPayload("client_state_update_failed", "failed to update client state")
 			}
 			if found {
 				w.audit("warn", "client.enabled_state.rejected", "client enabled state request rejected", map[string]any{
@@ -1128,12 +1089,12 @@ func (w *web) setClientEnabledAPI(rw http.ResponseWriter, r *http.Request, id st
 					"traffic_limit_bytes":  exceeded.LimitBytes,
 					"traffic_limit_period": string(exceeded.Period),
 				}, nil)
-				return http.StatusConflict, errorPayload("traffic limit exceeded; increase or clear the limit before enabling")
+				return http.StatusConflict, operationErrorPayload("traffic_limit_exceeded", "traffic limit exceeded; increase or clear the limit before enabling")
 			}
 		}
 		if err := w.service.SetClientEnabled(id, enabled); err != nil {
 			w.audit("warn", "client.enabled_state.rejected", "client enabled state request rejected", map[string]any{"client_id": id, "enabled": enabled}, err)
-			return mutationErrorStatus(err, http.StatusNotFound), errorPayload(err.Error())
+			return mutationErrorStatus(err, http.StatusNotFound), operationErrorPayload("client_state_update_failed", "failed to update client state")
 		}
 		if enabled {
 			ctx, cancel := context.WithTimeout(r.Context(), w.cfg.DatabaseQueryTimeout)
@@ -1171,7 +1132,7 @@ func (w *web) deleteClientAPI(rw http.ResponseWriter, r *http.Request, id string
 	w.withIdempotency(rw, r, "delete-client:"+id, func() (int, any) {
 		if err := w.service.RemoveClient(id); err != nil {
 			w.audit("warn", "client.delete.rejected", "client delete request rejected", map[string]any{"client_id": id}, err)
-			return mutationErrorStatus(err, http.StatusNotFound), errorPayload(err.Error())
+			return mutationErrorStatus(err, http.StatusNotFound), operationErrorPayload("client_delete_failed", "failed to delete client")
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), w.cfg.DatabaseQueryTimeout)
 		defer cancel()

@@ -39,6 +39,7 @@ http://127.0.0.1:51821
 - Prefer existing project patterns over adding dependencies.
 - For protocol changes, cite upstream AmneziaWG behavior or generated config examples.
 - For UI changes, keep all existing API payloads and idempotency behavior intact.
+- Update `api/openapi.json` and its contract tests when changing a documented browser API route or response envelope.
 
 ## Security
 

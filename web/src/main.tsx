@@ -1424,7 +1424,7 @@ function errorMessage(err: unknown, fallback = "request failed"): string {
 }
 
 function actionErrorMessage(err: unknown, m: Messages): string {
-  if (err instanceof api.APIError && err.status === 409 && err.message.includes("traffic limit exceeded")) {
+  if (err instanceof api.APIError && err.status === 409 && err.code === "traffic_limit_exceeded") {
     return m.forms.trafficLimitEnableBlocked;
   }
   return errorMessage(err, m.common.requestFailed);

@@ -141,6 +141,7 @@ Backup/restore, firewall repair, support bundle и audit log доступны в
 - [Обновления AmneziaWG](docs/ru/updates.md)
 - [Разработка](docs/ru/development.md)
 - [Безопасность](docs/ru/security.md)
+- [Контракт API панели управления](docs/ru/api.md)
 - [Changelog](CHANGELOG.md)
 
 ## Разработка

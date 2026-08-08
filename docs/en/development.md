@@ -16,6 +16,7 @@ make vet
 make build
 make ui-check
 make ui-build
+make api-contract
 make lint-go
 make lint-js
 make quality
@@ -59,6 +60,7 @@ git diff --check
 - `golangci-lint run`;
 - `npm run ui:check`;
 - `npm run ui:build`;
+- `make api-contract`, which parses the OpenAPI source and checks the documented core control-plane routes and error envelope;
 - `deno lint web/src`;
 - `npm run quality:aislop`, which runs `aislop ci` with the project `.aislop/config.yml`.
 
