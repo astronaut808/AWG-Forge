@@ -43,7 +43,7 @@ type web struct {
 	service  *app.Service
 	sessions []byte
 	shutdown context.Context
-	tls      webtls.Status
+	tls      webtls.Runtime
 	limits   map[string][]time.Time
 	idem     map[string]*idempotencyEntry
 	mu       sync.Mutex
@@ -62,7 +62,7 @@ const webShutdownTimeout = 15 * time.Second
 
 type idempotencyEntry struct {
 	status    int
-	body      []byte
+	body      json.RawMessage
 	createdAt time.Time
 	ready     chan struct{}
 }
@@ -80,8 +80,22 @@ func ServeContext(ctx context.Context, cfg config.Config, service *app.Service, 
 	}
 	serverContext, stopServer := context.WithCancel(context.Background())
 	defer stopServer()
-	w := newWeb(serverContext, cfg, service, secret, tlsRuntime.Status)
-	server := newHTTPServer(fmt.Sprintf("%s:%d", cfg.WebUIHost, cfg.WebUIPort), newHandler(w))
+	w := newWeb(serverContext, cfg, service, secret, tlsRuntime)
+	server := newHTTPServer(webUIAddress(cfg.WebUIHost, cfg.WebUIPort), newHandler(w))
+	listener, err := net.Listen("tcp", server.Addr)
+	if err != nil {
+		return err
+	}
+	var acmeServer *http.Server
+	var acmeListener net.Listener
+	if tlsRuntime.ACMEHTTPHandler != nil {
+		acmeServer = newHTTPServer(webtls.ACMEHTTPAddress, tlsRuntime.ACMEHTTPHandler)
+		acmeListener, err = net.Listen("tcp", acmeServer.Addr)
+		if err != nil {
+			_ = listener.Close()
+			return fmt.Errorf("ACME HTTP-01 listener: %w", err)
+		}
+	}
 
 	go enforceExpiredClients(ctx, service)
 	go collectTrafficHistory(ctx, cfg, service)
@@ -90,13 +104,8 @@ func ServeContext(ctx context.Context, cfg config.Config, service *app.Service, 
 		"traffic_history":        cfg.DatabaseMode == sqldb.ModeSQLite && cfg.ApplyConfig,
 	})
 
-	errCh := make(chan error, 1)
+	errCh := make(chan error, 2)
 	go func() {
-		listener, err := net.Listen("tcp", server.Addr)
-		if err != nil {
-			errCh <- err
-			return
-		}
 		if tlsRuntime.TLSConfig != nil {
 			server.TLSConfig = tlsRuntime.TLSConfig
 			service.RuntimeLog().Info(context.Background(), "server", "server.started", "web server started", map[string]any{"address": server.Addr, "tls_mode": tlsRuntime.Status.Mode})
@@ -106,6 +115,13 @@ func ServeContext(ctx context.Context, cfg config.Config, service *app.Service, 
 		service.RuntimeLog().Info(context.Background(), "server", "server.started", "web server started", map[string]any{"address": server.Addr, "tls_mode": webtls.ModeOff})
 		errCh <- server.Serve(listener)
 	}()
+	if acmeServer != nil {
+		go func() {
+			service.RuntimeLog().Info(context.Background(), "server", "server.acme_http.started", "ACME HTTP-01 listener started", map[string]any{"address": acmeServer.Addr, "domain": tlsRuntime.Status.Domain, "ip": tlsRuntime.Status.IP})
+			errCh <- acmeServer.Serve(acmeListener)
+		}()
+	}
+	tlsRuntime.Start(ctx)
 
 	select {
 	case err := <-errCh:
@@ -121,16 +137,27 @@ func ServeContext(ctx context.Context, cfg config.Config, service *app.Service, 
 		if err := server.Shutdown(shutdownCtx); err != nil {
 			return err
 		}
-		if err := <-errCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
-			return err
+		if acmeServer != nil {
+			if err := acmeServer.Shutdown(shutdownCtx); err != nil {
+				return err
+			}
+		}
+		servers := 1
+		if acmeServer != nil {
+			servers++
+		}
+		for range servers {
+			if err := <-errCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
+				return err
+			}
 		}
 		service.RuntimeLog().Info(context.Background(), "server", "server.stopped", "web server stopped", nil)
 		return nil
 	}
 }
 
-func newWeb(shutdown context.Context, cfg config.Config, service *app.Service, secret string, tlsStatus webtls.Status) *web {
-	return &web{cfg: cfg, service: service, sessions: []byte(secret), shutdown: shutdown, tls: tlsStatus, limits: map[string][]time.Time{}, idem: map[string]*idempotencyEntry{}}
+func newWeb(shutdown context.Context, cfg config.Config, service *app.Service, secret string, tlsRuntime webtls.Runtime) *web {
+	return &web{cfg: cfg, service: service, sessions: []byte(secret), shutdown: shutdown, tls: tlsRuntime, limits: map[string][]time.Time{}, idem: map[string]*idempotencyEntry{}}
 }
 
 func newHTTPServer(addr string, handler http.Handler) *http.Server {
@@ -142,6 +169,10 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 		WriteTimeout:      webWriteTimeout,
 		IdleTimeout:       webIdleTimeout,
 	}
+}
+
+func webUIAddress(host string, port int) string {
+	return net.JoinHostPort(host, strconv.Itoa(port))
 }
 
 func newHandler(w *web) http.Handler {
@@ -1329,7 +1360,7 @@ func (w *web) publicState(ctx context.Context, state config.State) map[string]an
 		"server_host":         state.ServerHost,
 		"warp":                w.service.WarpSummary(state),
 		"database":            publicDatabase(w.cfg),
-		"tls":                 publicTLS(w.tls, w.cfg),
+		"tls":                 publicTLS(w.tls.ReadStatus(), w.cfg),
 		"build":               buildinfo.Current(),
 		"published_udp_ports": w.cfg.PublishedUDPPorts,
 		"profiles": []map[string]any{
@@ -1470,7 +1501,6 @@ func publicTLS(status webtls.Status, cfg config.Config) map[string]any {
 	}
 	result := map[string]any{
 		"mode":                  status.Mode,
-		"source":                status.Source,
 		"valid":                 true,
 		"trusted_proxy_headers": cfg.WebUITrustProxyHeaders,
 		"trusted_proxy_cidrs":   len(cfg.WebUITrustedProxyCIDRs),
@@ -1480,6 +1510,30 @@ func publicTLS(status webtls.Status, cfg config.Config) map[string]any {
 		result["issuer"] = status.Issuer
 		result["not_before"] = status.NotBefore
 		result["not_after"] = status.NotAfter
+	}
+	if status.Mode == webtls.ModeACMEDomain || status.Mode == webtls.ModeACMEIP {
+		if status.Mode == webtls.ModeACMEDomain {
+			result["domain"] = status.Domain
+		} else {
+			result["ip"] = status.IP
+		}
+		result["state"] = status.State
+		if status.Error != "" {
+			result["error"] = status.Error
+		}
+		if status.Warning != "" {
+			result["warning"] = status.Warning
+		}
+		if !status.NextAttempt.IsZero() {
+			result["next_attempt"] = status.NextAttempt
+		}
+		if status.State == "active" {
+			result["subject"] = status.Subject
+			result["issuer"] = status.Issuer
+			result["not_before"] = status.NotBefore
+			result["not_after"] = status.NotAfter
+		}
+		result["valid"] = status.Error == ""
 	}
 	return result
 }

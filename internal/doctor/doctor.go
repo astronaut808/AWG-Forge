@@ -210,7 +210,7 @@ func (c *checker) checkTLS(cfg config.Config) {
 		c.fail(categorySecurity, "TLS", err.Error())
 		return
 	}
-	status := runtime.Status
+	status := runtime.ReadStatus()
 	switch status.Mode {
 	case webtls.ModeOff:
 		if cfg.WebUIHost == "0.0.0.0" || cfg.WebUIHost == "::" {
@@ -222,6 +222,32 @@ func (c *checker) checkTLS(cfg config.Config) {
 		c.ok(categorySecurity, "TLS", "reverse-proxy termination selected")
 	case webtls.ModeManual:
 		c.ok(categorySecurity, "TLS", "manual certificate valid until "+status.NotAfter.Format(time.RFC3339))
+	case webtls.ModeACMEDomain, webtls.ModeACMEIP:
+		identifier := status.Domain
+		if status.Mode == webtls.ModeACMEIP {
+			identifier = status.IP
+		}
+		switch status.State {
+		case "active":
+			message := "ACME certificate for " + identifier + " valid until " + status.NotAfter.Format(time.RFC3339)
+			if status.Warning != "" {
+				message += "; renewal failed"
+				if !status.NextAttempt.IsZero() {
+					message += "; next attempt " + status.NextAttempt.Format(time.RFC3339)
+				}
+				c.warn(categorySecurity, "TLS", message)
+			} else {
+				c.ok(categorySecurity, "TLS", message)
+			}
+		case "failed":
+			message := "ACME certificate issuance failed for " + identifier + "; verify the public address and external TCP/80 reach this host"
+			if !status.NextAttempt.IsZero() {
+				message += "; next attempt " + status.NextAttempt.Format(time.RFC3339)
+			}
+			c.warn(categorySecurity, "TLS", message)
+		default:
+			c.warn(categorySecurity, "TLS", "ACME certificate is pending for "+identifier+"; verify the public address and external TCP/80 reach this host")
+		}
 	}
 	if cfg.WebUITrustProxyHeaders {
 		c.ok(categorySecurity, "trusted proxy headers", fmt.Sprintf("enabled for %d CIDR entries", len(cfg.WebUITrustedProxyCIDRs)))

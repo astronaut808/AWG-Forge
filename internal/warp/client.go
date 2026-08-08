@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	DefaultAPIBaseURL       = "https://api.cloudflareclient.com/v0a4005"
+	DefaultAPIBaseURL       = "https://api.cloudflareclient.com/v0a4005" // aislop-ignore-line ai-slop/hardcoded-url -- Cloudflare's canonical WARP API endpoint, not deployment configuration.
 	DefaultAPIClientVersion = "a-6.30-3596"
 )
 

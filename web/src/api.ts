@@ -171,6 +171,13 @@ export function clientAmneziaVPNQRCodeURL(id: string, chunk = 0): string {
   return `/api/clients/${encodeURIComponent(id)}/amnezia-vpn-qr?chunk=${chunk}`;
 }
 
+export async function clientQRCodePNG(url: string, signal?: AbortSignal): Promise<Blob> {
+  const res = await fetch(url, { cache: "no-store", credentials: "same-origin", signal });
+  if (!res.ok) throw new APIError(res.status, await errorText(res));
+  if (res.headers.get("Content-Type") !== "image/png") throw new Error("QR response is not a PNG image");
+  return res.blob();
+}
+
 export function clientAmneziaVPNQRSeries(id: string): Promise<{ chunks: number }> {
   return request(`/api/clients/${encodeURIComponent(id)}/amnezia-vpn-qr-series`);
 }

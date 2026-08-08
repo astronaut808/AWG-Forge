@@ -10,7 +10,7 @@ chmod +x install.sh
 sudo ./install.sh
 ```
 
-This pins the installer to the current stable release. `master` is for development and testing, not production installs. Downloading the script first is recommended for interactive installs. In some `curl | sudo bash` TTY/sudo environments the prompt can appear stuck because the script body and interactive answers use different input streams.
+The `master` URL provides the current stable installer. Unreleased changes are accumulated in `develop`; use an explicit test image when testing them. Downloading the script first is recommended for interactive installs. In some `curl | sudo bash` TTY/sudo environments the prompt can appear stuck because the script body and interactive answers use different input streams.
 
 To test a non-release image, pass `IMAGE`:
 
@@ -118,6 +118,8 @@ ssh -L 51821:127.0.0.1:51821 user@server
 ```
 
 If you choose `WEBUI_HOST=0.0.0.0` or `::`, the script shows a warning and requires explicit confirmation. Use public binds only behind a firewall, VPN, or reverse proxy.
+
+For a fresh installation, the script also offers an ACME certificate for a public DNS domain or a short-lived public IP certificate. Select either only after TCP/80 is reachable from the Internet. The panel continues on the chosen Web UI port. The installer does not wait for the CA: an IP certificate starts its first issuance attempt after the listeners are ready, while a domain certificate is requested by the first HTTPS request for the configured name. Doctor and `tls status` report pending and retry state; see [TLS configuration](configuration.md#web-ui-tls) for constraints and recovery.
 
 The password is shown at the end and stored in `/opt/awg-forge/.env`, or in `.env` inside `AWG_FORGE_HOME`:
 

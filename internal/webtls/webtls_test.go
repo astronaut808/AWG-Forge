@@ -1,15 +1,21 @@
 package webtls
 
 import (
+	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"math/big"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -22,12 +28,9 @@ import (
 func TestServerConfigLoadsValidManualCertificate(t *testing.T) {
 	certPath, keyPath := writeCertificate(t, "panel.example.com", nil)
 	cfg := config.Config{
-		ConfigDir:          t.TempDir(),
-		WebUITLSMode:       string(ModeManual),
-		WebUITLSCertFile:   certPath,
-		WebUITLSKeyFile:    keyPath,
-		WebUITLSServerName: "panel.example.com",
+		ConfigDir: t.TempDir(),
 	}
+	saveSettings(t, cfg, Settings{Mode: ModeManual, CertFile: certPath, KeyFile: keyPath, ServerName: "panel.example.com"})
 	runtime, err := Load(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -47,12 +50,9 @@ func TestManualCertificateRejectsInsecureKeyPermissions(t *testing.T) {
 	if err := os.Chmod(keyPath, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Load(config.Config{
-		ConfigDir:        t.TempDir(),
-		WebUITLSMode:     string(ModeManual),
-		WebUITLSCertFile: certPath,
-		WebUITLSKeyFile:  keyPath,
-	})
+	cfg := config.Config{ConfigDir: t.TempDir()}
+	saveSettingsFile(t, cfg, Settings{Mode: ModeManual, CertFile: certPath, KeyFile: keyPath})
+	_, err := Load(cfg)
 	if err == nil {
 		t.Fatal("expected insecure key permission error")
 	}
@@ -63,12 +63,9 @@ func TestManualCertificateRejectsInsecureKeyDirectory(t *testing.T) {
 	if err := os.Chmod(filepath.Dir(keyPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Load(config.Config{
-		ConfigDir:        t.TempDir(),
-		WebUITLSMode:     string(ModeManual),
-		WebUITLSCertFile: certPath,
-		WebUITLSKeyFile:  keyPath,
-	})
+	cfg := config.Config{ConfigDir: t.TempDir()}
+	saveSettingsFile(t, cfg, Settings{Mode: ModeManual, CertFile: certPath, KeyFile: keyPath})
+	_, err := Load(cfg)
 	if err == nil {
 		t.Fatal("expected insecure key directory permission error")
 	}
@@ -80,12 +77,9 @@ func TestManualCertificateRejectsKeySymlink(t *testing.T) {
 	if err := os.Symlink(keyPath, linkPath); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Load(config.Config{
-		ConfigDir:        t.TempDir(),
-		WebUITLSMode:     string(ModeManual),
-		WebUITLSCertFile: certPath,
-		WebUITLSKeyFile:  linkPath,
-	})
+	cfg := config.Config{ConfigDir: t.TempDir()}
+	saveSettingsFile(t, cfg, Settings{Mode: ModeManual, CertFile: certPath, KeyFile: linkPath})
+	_, err := Load(cfg)
 	if err == nil {
 		t.Fatal("expected key symlink error")
 	}
@@ -93,22 +87,461 @@ func TestManualCertificateRejectsKeySymlink(t *testing.T) {
 
 func TestManualCertificateRejectsMismatchedServerName(t *testing.T) {
 	certPath, keyPath := writeCertificate(t, "panel.example.com", nil)
-	_, err := Load(config.Config{
-		ConfigDir:          t.TempDir(),
-		WebUITLSMode:       string(ModeManual),
-		WebUITLSCertFile:   certPath,
-		WebUITLSKeyFile:    keyPath,
-		WebUITLSServerName: "other.example.com",
-	})
+	cfg := config.Config{ConfigDir: t.TempDir()}
+	saveSettingsFile(t, cfg, Settings{Mode: ModeManual, CertFile: certPath, KeyFile: keyPath, ServerName: "other.example.com"})
+	_, err := Load(cfg)
 	if err == nil {
 		t.Fatal("expected certificate server-name mismatch error")
 	}
 }
 
-func TestSaveOverridesEnvironmentSettings(t *testing.T) {
+func TestACMEDomainBuildsHTTP01Runtime(t *testing.T) {
+	cfg := config.Config{ConfigDir: t.TempDir(), Password: "secret", WebUIHost: "0.0.0.0", WebUIPort: 8443, SessionCookieSecure: "auto"}
+	runtime, err := buildRuntime(cfg, Settings{Mode: ModeACMEDomain, ACMEDomain: "Panel.Example.com.", ACMEEmail: "admin@example.com", ACMEAcceptTOS: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.TLSConfig == nil || runtime.ACMEHTTPHandler == nil {
+		t.Fatal("ACME runtime did not configure HTTPS and HTTP-01 handlers")
+	}
+	if runtime.Status.Domain != "panel.example.com" || runtime.Status.State != "pending" {
+		t.Fatalf("unexpected ACME status: %#v", runtime.Status)
+	}
+	info, err := os.Stat(filepath.Join(cfg.ConfigDir, filepath.FromSlash(ACMECacheRelativePath)))
+	if err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatalf("ACME cache permissions = %v, want 0700", info.Mode())
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "http://panel.example.com/settings?view=tls", nil)
+	request.Host = "panel.example.com"
+	response := httptest.NewRecorder()
+	runtime.ACMEHTTPHandler.ServeHTTP(response, request)
+	if response.Code != http.StatusMovedPermanently || response.Header().Get("Location") != "https://panel.example.com:8443/" {
+		t.Fatalf("ACME fallback = %d %q", response.Code, response.Header().Get("Location"))
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "http://panel.example.com/", nil)
+	request.Host = "panel.example.com"
+	request.URL.Scheme = "https"
+	request.URL.Host = "attacker.example"
+	request.URL.Path = "/phish"
+	response = httptest.NewRecorder()
+	runtime.ACMEHTTPHandler.ServeHTTP(response, request)
+	if location := response.Header().Get("Location"); location != "https://panel.example.com:8443/" {
+		t.Fatalf("ACME fallback reflected request target: %q", location)
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "http://attacker.example/", nil)
+	request.Host = "attacker.example"
+	response = httptest.NewRecorder()
+	runtime.ACMEHTTPHandler.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("unexpected host status = %d, want 404", response.Code)
+	}
+}
+
+func TestACMEIPBuildsIsolatedHTTP01Runtime(t *testing.T) {
+	cfg := config.Config{ConfigDir: t.TempDir(), Password: "secret", WebUIHost: "0.0.0.0", WebUIPort: 8443, SessionCookieSecure: "auto"}
+	runtime, err := buildRuntime(cfg, Settings{Mode: ModeACMEIP, ACMEIP: "8.8.8.8", ACMEEmail: "admin@example.com", ACMEAcceptTOS: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.TLSConfig == nil || runtime.ACMEHTTPHandler == nil || runtime.Status.IP != "8.8.8.8" || runtime.Status.State != "pending" {
+		t.Fatalf("unexpected ACME IP runtime: %#v", runtime)
+	}
+	response := httptest.NewRecorder()
+	runtime.ACMEHTTPHandler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "http://8.8.8.8/", nil))
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("ACME IP handler exposed a non-challenge request: %d", response.Code)
+	}
+}
+
+func TestACMEIPRequiresMatchingWebUIBind(t *testing.T) {
+	tests := []struct {
+		name    string
+		host    string
+		ip      string
+		wantErr bool
+	}{
+		{name: "IPv4 wildcard", host: "0.0.0.0", ip: "8.8.8.8"},
+		{name: "IPv4 exact address", host: "8.8.8.8", ip: "8.8.8.8"},
+		{name: "IPv6 wildcard", host: "::", ip: "2001:4860:4860::8888"},
+		{name: "IPv6 exact address", host: "2001:4860:4860::8888", ip: "2001:4860:4860::8888"},
+		{name: "IPv4 bind for IPv6 certificate", host: "0.0.0.0", ip: "2001:4860:4860::8888", wantErr: true},
+		{name: "IPv6 bind for IPv4 certificate", host: "::", ip: "8.8.8.8", wantErr: true},
+		{name: "different public address", host: "1.1.1.1", ip: "8.8.8.8", wantErr: true},
+		{name: "hostname", host: "panel.example.com", ip: "8.8.8.8", wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := config.Config{
+				ConfigDir:           t.TempDir(),
+				Password:            "secret",
+				WebUIHost:           test.host,
+				WebUIPort:           8443,
+				SessionCookieSecure: "auto",
+			}
+			_, err := buildRuntime(cfg, Settings{Mode: ModeACMEIP, ACMEIP: test.ip, ACMEEmail: "admin@example.com", ACMEAcceptTOS: true})
+			if (err != nil) != test.wantErr {
+				t.Fatalf("buildRuntime error = %v, want error: %t", err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestACMEIPHTTP01HandlerOnlyServesLiveGETToken(t *testing.T) {
+	state := &acmeIPState{tokens: map[string]string{"token": "token.authorization"}}
+	handler := state.httpHandler()
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		statusCode int
+		body       string
+	}{
+		{name: "active token", method: http.MethodGet, path: "/.well-known/acme-challenge/token", statusCode: http.StatusOK, body: "token.authorization"},
+		{name: "unknown token", method: http.MethodGet, path: "/.well-known/acme-challenge/other", statusCode: http.StatusNotFound},
+		{name: "nested path", method: http.MethodGet, path: "/.well-known/acme-challenge/token/extra", statusCode: http.StatusNotFound},
+		{name: "head", method: http.MethodHead, path: "/.well-known/acme-challenge/token", statusCode: http.StatusNotFound},
+		{name: "post", method: http.MethodPost, path: "/.well-known/acme-challenge/token", statusCode: http.StatusNotFound},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(test.method, "http://example.test"+test.path, nil))
+			if response.Code != test.statusCode {
+				t.Fatalf("status = %d, want %d", response.Code, test.statusCode)
+			}
+			if test.body != "" && response.Body.String() != test.body {
+				t.Fatalf("body = %q, want %q", response.Body.String(), test.body)
+			}
+			if test.body != "" {
+				if got, want := response.Header().Get("Content-Type"), "text/plain; charset=utf-8"; got != want {
+					t.Fatalf("Content-Type = %q, want %q", got, want)
+				}
+				if got, want := response.Header().Get("Cache-Control"), "no-store"; got != want {
+					t.Fatalf("Cache-Control = %q, want %q", got, want)
+				}
+				if got, want := response.Header().Get("X-Content-Type-Options"), "nosniff"; got != want {
+					t.Fatalf("X-Content-Type-Options = %q, want %q", got, want)
+				}
+			}
+		})
+	}
+}
+
+func TestACMEIPRetryScheduleAndInitialAttempt(t *testing.T) {
+	now := time.Date(2026, time.August, 2, 12, 0, 0, 0, time.UTC)
+	state := &acmeIPState{status: Status{Mode: ModeACMEIP, State: "pending"}}
+	if got := state.nextAttemptDelay(now); got != 0 {
+		t.Fatalf("initial delay = %s, want immediate attempt", got)
+	}
+	state.status.NextAttempt = now.Add(5 * time.Minute)
+	if got, want := state.nextAttemptDelay(now), 5*time.Minute; got != want {
+		t.Fatalf("persisted delay = %s, want %s", got, want)
+	}
+	for attempt, want := range map[int]time.Duration{1: time.Minute, 2: 2 * time.Minute, 3: 4 * time.Minute, 7: time.Hour} {
+		if got := acmeIPRetryDelay(attempt); got != want {
+			t.Fatalf("attempt %d delay = %s, want %s", attempt, got, want)
+		}
+	}
+}
+
+func TestACMEIPShortLivedCertificateSchedulesLaterRenewal(t *testing.T) {
+	now := time.Date(2026, time.August, 2, 12, 0, 0, 0, time.UTC)
+	state := &acmeIPState{
+		cert:   &tls.Certificate{},
+		status: Status{Mode: ModeACMEIP, State: "active", NotAfter: now.Add(time.Hour)},
+	}
+	if got, want := state.nextAttemptDelay(now), 30*time.Minute; got != want {
+		t.Fatalf("short-lived certificate delay = %s, want %s", got, want)
+	}
+}
+
+func TestACMEIPRenewalWorkerRecordsIssuanceFailure(t *testing.T) {
+	cacheDir := filepath.Join(t.TempDir(), "ip")
+	if err := ensurePrivateDirectory(cacheDir); err != nil {
+		t.Fatal(err)
+	}
+	called := make(chan struct{})
+	state := &acmeIPState{
+		status: Status{Mode: ModeACMEIP, IP: "8.8.8.8", State: "pending"},
+		tokens: make(map[string]string),
+		issue: func() (*tls.Certificate, error) {
+			close(called)
+			return nil, errors.New("test issuance failure")
+		},
+	}
+	stopRenewal := startACMEIPRenewal(t, state, cacheDir)
+	defer stopRenewal()
+	<-called
+
+	status := waitForACMEIPStatus(t, state, func(status Status) bool { return status.State == "failed" })
+	if status.Error != "certificate issuance failed" || status.Warning != "" || status.AttemptCount != 1 || status.NextAttempt.IsZero() {
+		t.Fatalf("unexpected issuance failure status: %#v", status)
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		persisted, ok, err := loadACMEIPStatus(cacheDir, netip.MustParseAddr("8.8.8.8"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ok && persisted.State == "failed" && persisted.AttemptCount == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("persisted failure status = %#v, ok=%t", persisted, ok)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestACMEIPRenewalWorkerKeepsActiveCertificateOnFailure(t *testing.T) {
+	cacheDir := filepath.Join(t.TempDir(), "ip")
+	if err := ensurePrivateDirectory(cacheDir); err != nil {
+		t.Fatal(err)
+	}
+	called := make(chan struct{})
+	state := &acmeIPState{
+		cert:   &tls.Certificate{},
+		status: Status{Mode: ModeACMEIP, IP: "8.8.8.8", State: "active", NotAfter: time.Now().UTC().Add(-time.Second)},
+		tokens: make(map[string]string),
+		issue: func() (*tls.Certificate, error) {
+			close(called)
+			return nil, errors.New("test renewal failure")
+		},
+	}
+	stopRenewal := startACMEIPRenewal(t, state, cacheDir)
+	defer stopRenewal()
+	<-called
+
+	status := waitForACMEIPStatus(t, state, func(status Status) bool { return status.Warning != "" })
+	if status.State != "active" || status.Error != "" || status.Warning != "certificate renewal failed" || status.AttemptCount != 1 {
+		t.Fatalf("unexpected renewal failure status: %#v", status)
+	}
+}
+
+func TestACMEIPRenewalWorkerPersistsNewCertificate(t *testing.T) {
+	cacheDir := filepath.Join(t.TempDir(), "ip")
+	if err := ensurePrivateDirectory(cacheDir); err != nil {
+		t.Fatal(err)
+	}
+	ip := netip.MustParseAddr("8.8.8.8")
+	certPath, keyPath := writeCertificateWithValidity(t, "unused.example", []net.IP{net.IP(ip.AsSlice())}, 7*24*time.Hour)
+	pair, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := make(chan struct{})
+	state := &acmeIPState{
+		status: Status{Mode: ModeACMEIP, IP: ip.String(), State: "pending"},
+		tokens: make(map[string]string),
+		issue: func() (*tls.Certificate, error) {
+			close(called)
+			return &pair, nil
+		},
+	}
+	stopRenewal := startACMEIPRenewal(t, state, cacheDir)
+	defer stopRenewal()
+	<-called
+
+	status := waitForACMEIPStatus(t, state, func(status Status) bool { return status.State == "active" })
+	if status.NotAfter.IsZero() || status.AttemptCount != 0 || !status.NextAttempt.IsZero() {
+		t.Fatalf("unexpected successful renewal status: %#v", status)
+	}
+	if _, _, ok, err := loadACMEIPCertificate(cacheDir, ip); err != nil || !ok {
+		t.Fatalf("persisted certificate ok=%t, err=%v", ok, err)
+	}
+}
+
+func TestACMEIPAccountKeyIsPrivateAndReusable(t *testing.T) {
+	cacheDir := filepath.Join(t.TempDir(), "ip")
+	if err := ensurePrivateDirectory(cacheDir); err != nil {
+		t.Fatal(err)
+	}
+	first, err := loadOrCreateACMEAccountKey(cacheDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(cacheDir, "account-key.pem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := info.Mode().Perm(), os.FileMode(0o600); got != want {
+		t.Fatalf("account key permissions = %o, want %o", got, want)
+	}
+	second, err := loadOrCreateACMEAccountKey(cacheDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstPublicKey, err := x509.MarshalPKIXPublicKey(&first.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondPublicKey, err := x509.MarshalPKIXPublicKey(&second.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(firstPublicKey, secondPublicKey) {
+		t.Fatal("cached ACME account key changed")
+	}
+}
+
+func TestACMEIPRestoresRenewalBackoffForCachedCertificate(t *testing.T) {
+	cfg := config.Config{ConfigDir: t.TempDir(), Password: "secret", WebUIHost: "0.0.0.0", WebUIPort: 8443, SessionCookieSecure: "auto"}
+	ip := netip.MustParseAddr("8.8.8.8")
+	cacheDir := filepath.Join(cfg.ConfigDir, filepath.FromSlash(ACMECacheRelativePath), "ip")
+	if err := ensurePrivateDirectory(cacheDir); err != nil {
+		t.Fatal(err)
+	}
+	certPath, keyPath := writeCertificate(t, "unused.example", []net.IP{net.IP(ip.AsSlice())})
+	pair, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saveACMEIPCertificate(cacheDir, pair); err != nil {
+		t.Fatal(err)
+	}
+	next := time.Now().UTC().Add(10 * time.Minute).Truncate(time.Second)
+	if err := saveACMEIPStatus(cacheDir, Status{Mode: ModeACMEIP, IP: ip.String(), State: "active", Warning: "certificate renewal failed", NextAttempt: next, AttemptCount: 3}); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := buildRuntime(cfg, Settings{Mode: ModeACMEIP, ACMEIP: ip.String(), ACMEEmail: "admin@example.com", ACMEAcceptTOS: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := runtime.ReadStatus()
+	if status.Warning != "certificate renewal failed" || !status.NextAttempt.Equal(next) || status.AttemptCount != 3 {
+		t.Fatalf("renewal backoff was not restored: %#v", status)
+	}
+}
+
+func TestACMEIPDoesNotTreatStatusAsCertificate(t *testing.T) {
+	cfg := config.Config{ConfigDir: t.TempDir(), Password: "secret", WebUIHost: "0.0.0.0", WebUIPort: 8443, SessionCookieSecure: "auto"}
+	ip := netip.MustParseAddr("8.8.8.8")
+	cacheDir := filepath.Join(cfg.ConfigDir, filepath.FromSlash(ACMECacheRelativePath), "ip")
+	if err := ensurePrivateDirectory(cacheDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveACMEIPStatus(cacheDir, Status{Mode: ModeACMEIP, IP: ip.String(), State: "active", NextAttempt: time.Now().UTC().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := buildRuntime(cfg, Settings{Mode: ModeACMEIP, ACMEIP: ip.String(), ACMEEmail: "admin@example.com", ACMEAcceptTOS: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := runtime.ReadStatus()
+	if status.State != "pending" || !status.NextAttempt.IsZero() {
+		t.Fatalf("missing certificate must retry immediately, got %#v", status)
+	}
+}
+
+func TestACMEIPRejectsUnsafeCacheFiles(t *testing.T) {
+	cacheDir := filepath.Join(t.TempDir(), "ip")
+	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "target")
+	if err := os.WriteFile(target, []byte("not a certificate"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(cacheDir, "certificate.pem")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := loadACMEIPCertificate(cacheDir, netip.MustParseAddr("8.8.8.8")); err == nil {
+		t.Fatal("expected certificate cache symlink to be rejected")
+	}
+	if err := os.Remove(filepath.Join(cacheDir, "certificate.pem")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(cacheDir, "status.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := loadACMEIPStatus(cacheDir, netip.MustParseAddr("8.8.8.8")); err == nil {
+		t.Fatal("expected status cache symlink to be rejected")
+	}
+}
+
+func TestACMEIPRejectsNonPublicAddresses(t *testing.T) {
+	cfg := config.Config{ConfigDir: t.TempDir(), Password: "secret", WebUIHost: "0.0.0.0", WebUIPort: 8443, SessionCookieSecure: "auto"}
+	for _, ip := range []string{"127.0.0.1", "10.0.0.1", "::1", "::", "not-an-ip"} {
+		if _, err := buildRuntime(cfg, Settings{Mode: ModeACMEIP, ACMEIP: ip, ACMEEmail: "admin@example.com", ACMEAcceptTOS: true}); err == nil {
+			t.Fatalf("%s: expected validation error", ip)
+		}
+	}
+}
+
+func TestACMEFallbackRedirectNeverReflectsRequestTarget(t *testing.T) {
+	handler := acmeFallback("panel.example.com", 8443)
+	tests := []struct {
+		name    string
+		request *http.Request
+	}{
+		{
+			name:    "scheme relative path",
+			request: httptest.NewRequest(http.MethodGet, "http://panel.example.com//attacker.example/login?next=https://evil.example", nil),
+		},
+		{
+			name: "absolute request target",
+			request: func() *http.Request {
+				request := httptest.NewRequest(http.MethodGet, "http://panel.example.com/", nil)
+				request.RequestURI = "https://attacker.example/login?next=https://evil.example"
+				request.URL.Scheme = "https"
+				request.URL.Host = "attacker.example"
+				request.URL.Path = "/login"
+				request.URL.RawQuery = "next=https://evil.example"
+				return request
+			}(),
+		},
+		{
+			name:    "encoded path",
+			request: httptest.NewRequest(http.MethodGet, "http://panel.example.com/%2F%2Fevil.example?return_to=%2F%2Fevil.example", nil),
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			test.request.Host = "panel.example.com"
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, test.request)
+			if response.Code != http.StatusMovedPermanently {
+				t.Fatalf("status = %d, want %d", response.Code, http.StatusMovedPermanently)
+			}
+			if location := response.Header().Get("Location"); location != "https://panel.example.com:8443/" {
+				t.Fatalf("Location = %q, want canonical URL", location)
+			}
+		})
+	}
+}
+
+func TestACMEDomainRejectsUnsafeDeployment(t *testing.T) {
+	base := config.Config{ConfigDir: t.TempDir(), Password: "secret", WebUIHost: "0.0.0.0", WebUIPort: 443, SessionCookieSecure: "auto"}
+	settings := Settings{Mode: ModeACMEDomain, ACMEDomain: "panel.example.com", ACMEEmail: "admin@example.com", ACMEAcceptTOS: true}
+	tests := []struct {
+		name   string
+		mutate func(*config.Config, *Settings)
+	}{
+		{name: "loopback bind", mutate: func(cfg *config.Config, _ *Settings) { cfg.WebUIHost = "127.0.0.1" }},
+		{name: "insecure cookie", mutate: func(cfg *config.Config, _ *Settings) { cfg.SessionCookieSecure = "false" }},
+		{name: "trusted proxy", mutate: func(cfg *config.Config, _ *Settings) { cfg.WebUITrustProxyHeaders = true }},
+		{name: "IP address", mutate: func(_ *config.Config, settings *Settings) { settings.ACMEDomain = "203.0.113.4" }},
+		{name: "missing tos", mutate: func(_ *config.Config, settings *Settings) { settings.ACMEAcceptTOS = false }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := base
+			cfg.ConfigDir = t.TempDir()
+			candidate := settings
+			test.mutate(&cfg, &candidate)
+			if _, err := buildRuntime(cfg, candidate); err == nil {
+				t.Fatal("expected ACME deployment validation failure")
+			}
+		})
+	}
+}
+
+func TestSaveAndLoadTLSSettings(t *testing.T) {
 	cfg := config.Config{
 		ConfigDir:              t.TempDir(),
-		WebUITLSMode:           string(ModeOff),
 		Password:               "secret",
 		WebUITrustProxyHeaders: true,
 		WebUITrustedProxyCIDRs: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")},
@@ -121,7 +554,7 @@ func TestSaveOverridesEnvironmentSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	status := runtime.Status
-	if status.Mode != ModeReverseProxy || status.Source != SourceManaged {
+	if status.Mode != ModeReverseProxy {
 		t.Fatalf("status = %#v", status)
 	}
 	info, err := os.Stat(filepath.Join(cfg.ConfigDir, filepath.FromSlash(SettingsRelativePath)))
@@ -130,21 +563,6 @@ func TestSaveOverridesEnvironmentSettings(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("settings mode = %o, want 600", info.Mode().Perm())
-	}
-}
-
-func TestPersistedSettingsOverrideIncompleteManualEnvironment(t *testing.T) {
-	cfg := config.Config{ConfigDir: t.TempDir(), WebUITLSMode: string(ModeManual)}
-	if err := Save(cfg, Settings{Mode: ModeOff}); err != nil {
-		t.Fatal(err)
-	}
-	runtime, err := Load(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	status := runtime.Status
-	if status.Mode != ModeOff {
-		t.Fatalf("TLS mode = %q, want off", status.Mode)
 	}
 }
 
@@ -163,80 +581,36 @@ func TestPersistedReverseProxyRequiresSecureRuntimeSettings(t *testing.T) {
 	}
 }
 
-func TestUseEnvironmentKeepsManagedSettingsWhenEnvironmentIsInvalid(t *testing.T) {
-	cfg := config.Config{ConfigDir: t.TempDir(), WebUITLSMode: string(ModeManual)}
-	if err := Save(cfg, Settings{Mode: ModeOff}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := UseEnvironment(cfg); err == nil {
-		t.Fatal("expected invalid environment error")
-	}
-	if _, err := os.Stat(filepath.Join(cfg.ConfigDir, filepath.FromSlash(SettingsRelativePath))); err != nil {
-		t.Fatalf("managed settings were removed after invalid environment: %v", err)
-	}
-}
-
-func TestUseEnvironmentRemovesManagedSettingsAfterValidation(t *testing.T) {
-	certPath, keyPath := writeCertificate(t, "panel.example.com", nil)
-	cfg := config.Config{
-		ConfigDir:        t.TempDir(),
-		WebUITLSMode:     string(ModeManual),
-		WebUITLSCertFile: certPath,
-		WebUITLSKeyFile:  keyPath,
-	}
-	if err := Save(cfg, Settings{Mode: ModeOff}); err != nil {
-		t.Fatal(err)
-	}
-	runtime, err := UseEnvironment(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if runtime.Source != SourceEnvironment || runtime.Settings.Mode != ModeManual {
-		t.Fatalf("runtime = %#v", runtime)
-	}
-	if _, err := os.Stat(filepath.Join(cfg.ConfigDir, filepath.FromSlash(SettingsRelativePath))); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("managed settings still exist: %v", err)
-	}
-}
-
-func TestLoadSettingsSourceMatrix(t *testing.T) {
+func TestLoadSettingsFileMatrix(t *testing.T) {
 	certPath, keyPath := writeCertificate(t, "panel.example.com", nil)
 	tests := []struct {
-		name       string
-		setup      func(t *testing.T) config.Config
-		wantMode   Mode
-		wantSource Source
-		wantErr    bool
+		name     string
+		setup    func(t *testing.T) config.Config
+		wantMode Mode
+		wantErr  bool
 	}{
 		{
-			name: "environment off without managed settings",
+			name: "missing settings defaults to off",
 			setup: func(t *testing.T) config.Config {
-				return config.Config{ConfigDir: t.TempDir(), WebUITLSMode: string(ModeOff)}
+				return config.Config{ConfigDir: t.TempDir()}
 			},
-			wantMode: ModeOff, wantSource: SourceEnvironment,
+			wantMode: ModeOff,
 		},
 		{
-			name: "environment manual without managed settings",
+			name: "saved off configuration",
 			setup: func(t *testing.T) config.Config {
-				return config.Config{ConfigDir: t.TempDir(), WebUITLSMode: string(ModeManual), WebUITLSCertFile: certPath, WebUITLSKeyFile: keyPath}
-			},
-			wantMode: ModeManual, wantSource: SourceEnvironment,
-		},
-		{
-			name: "managed off overrides incomplete environment manual",
-			setup: func(t *testing.T) config.Config {
-				cfg := config.Config{ConfigDir: t.TempDir(), WebUITLSMode: string(ModeManual)}
+				cfg := config.Config{ConfigDir: t.TempDir()}
 				if err := Save(cfg, Settings{Mode: ModeOff}); err != nil {
 					t.Fatal(err)
 				}
 				return cfg
 			},
-			wantMode: ModeOff, wantSource: SourceManaged,
+			wantMode: ModeOff,
 		},
 		{
-			name: "managed manual does not fall back to environment off",
+			name: "manual configuration does not ignore insecure key permissions",
 			setup: func(t *testing.T) config.Config {
-				cfg := config.Config{ConfigDir: t.TempDir(), WebUITLSMode: string(ModeOff)}
+				cfg := config.Config{ConfigDir: t.TempDir()}
 				if err := Save(cfg, Settings{Mode: ModeManual, CertFile: certPath, KeyFile: keyPath}); err != nil {
 					t.Fatal(err)
 				}
@@ -249,9 +623,9 @@ func TestLoadSettingsSourceMatrix(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "malformed managed settings do not fall back to environment",
+			name: "malformed settings do not fall back",
 			setup: func(t *testing.T) config.Config {
-				cfg := config.Config{ConfigDir: t.TempDir(), WebUITLSMode: string(ModeOff)}
+				cfg := config.Config{ConfigDir: t.TempDir()}
 				dir := filepath.Join(cfg.ConfigDir, "tls")
 				if err := os.Mkdir(dir, 0o700); err != nil {
 					t.Fatal(err)
@@ -277,14 +651,92 @@ func TestLoadSettingsSourceMatrix(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if runtime.Settings.Mode != test.wantMode || runtime.Source != test.wantSource {
+			if runtime.Settings.Mode != test.wantMode {
 				t.Fatalf("runtime = %#v", runtime)
 			}
 		})
 	}
 }
 
+func TestLoadIgnoresLegacyTLSEnvironment(t *testing.T) {
+	certPath, keyPath := writeCertificate(t, "panel.example.com", nil)
+	t.Setenv("CONFIG_DIR", t.TempDir())
+	t.Setenv("WEBUI_TLS_MODE", "manual")
+	t.Setenv("WEBUI_TLS_CERT_FILE", certPath)
+	t.Setenv("WEBUI_TLS_KEY_FILE", keyPath)
+
+	cfg, err := config.FromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := Load(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.Status.Mode != ModeOff {
+		t.Fatalf("legacy environment enabled TLS mode %q", runtime.Status.Mode)
+	}
+}
+
+func saveSettings(t *testing.T, cfg config.Config, settings Settings) {
+	t.Helper()
+	if err := Save(cfg, settings); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func startACMEIPRenewal(t *testing.T, state *acmeIPState, cacheDir string) func() {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		state.renew(ctx, cacheDir)
+	}()
+	return func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("ACME IP renewal worker did not stop")
+		}
+	}
+}
+
+func waitForACMEIPStatus(t *testing.T, state *acmeIPState, match func(Status) bool) Status {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		status := state.readStatus()
+		if match(status) {
+			return status
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for ACME IP status: %#v", state.readStatus())
+	return Status{}
+}
+
+func saveSettingsFile(t *testing.T, cfg config.Config, settings Settings) {
+	t.Helper()
+	dir := filepath.Dir(settingsPath(cfg))
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settingsPath(cfg), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func writeCertificate(t *testing.T, dnsName string, ips []net.IP) (string, string) {
+	return writeCertificateWithValidity(t, dnsName, ips, time.Hour)
+}
+
+func writeCertificateWithValidity(t *testing.T, dnsName string, ips []net.IP, validity time.Duration) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
 	if err := os.Chmod(dir, 0o700); err != nil {
@@ -300,7 +752,7 @@ func writeCertificate(t *testing.T, dnsName string, ips []net.IP) (string, strin
 		DNSNames:     []string{dnsName},
 		IPAddresses:  ips,
 		NotBefore:    time.Now().Add(-time.Minute),
-		NotAfter:     time.Now().Add(time.Hour),
+		NotAfter:     time.Now().Add(validity),
 		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}

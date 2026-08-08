@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.18.0 - 2026-08-08
+
+### Added
+
+- Added managed ACME HTTP-01 certificates for a public domain through `awg-forge tls use acme-domain`, including automatic renewal and persisted certificate cache.
+- Added managed ACME HTTP-01 certificates for a public IPv4 or IPv6 address through `awg-forge tls use acme-ip`; the short-lived certificate is renewed by the running service before expiry.
+- Added `awg-forge tls use reverse-proxy` for deployments where a trusted reverse proxy terminates TLS.
+
+### Changed
+
+- Made `CONFIG_DIR/tls/config.json` the sole desired TLS configuration source; `.env` now contains only deployment context such as bind address, session-cookie policy, and trusted-proxy settings.
+- Added TLS configuration and ACME certificate state to encrypted backup validation without including private key material in support output.
+- Updated installation, configuration, diagnostics, and security documentation for managed ACME, reverse proxy, TLS recovery, and public/loopback binding workflows.
+- Publish Docker images for pushes to `develop` as `ghcr.io/astronaut808/awg-forge:develop` in addition to immutable commit tags.
+- Scope local Gitleaks targets to history reachable from the current `HEAD`, so unrelated local branches do not affect security gates.
+- Updated Aislop to v0.14.0 and retained its quality gate in CI with scoped exclusions for legacy file/function-size findings.
+
+### Fixed
+
+- Hardened the ACME HTTP fallback redirect so untrusted HTTP request targets cannot influence its HTTPS `Location` header.
+- Prevented managed ACME IP renewal from retrying immediately when a CA issues a certificate whose lifetime is shorter than the renewal lead time.
+- Fixed Web UI listener construction for IPv6 `WEBUI_HOST` values such as `::`.
+- Show an access URL that matches the configured TLS mode after installation or reconfiguration.
+- Cache client QR previews only in the active Config dialog, so switching QR import modes no longer briefly shows the previous QR.
+
+### Security
+
+- Hardened cached idempotent API responses to remain validated `application/json` output rather than writing cached bytes directly to the response.
+- Reject TLS settings symlinks during backup creation instead of following a replaced path.
+- Mark ACME IP HTTP-01 challenge responses as `nosniff` while preserving their required exact `text/plain` body.
+
 ## v0.17.0 - 2026-07-29
 
 ### Added

@@ -26,10 +26,6 @@ type Config struct {
 	Password               string
 	SessionSecret          string
 	SessionCookieSecure    string
-	WebUITLSMode           string
-	WebUITLSCertFile       string
-	WebUITLSKeyFile        string
-	WebUITLSServerName     string
 	WebUITrustProxyHeaders bool
 	WebUITrustedProxyCIDRs []netip.Prefix
 	ExternalInterface      string
@@ -70,10 +66,6 @@ func FromEnv() (Config, error) {
 		Password:               os.Getenv("PASSWORD"),
 		SessionSecret:          os.Getenv("SESSION_SECRET"),
 		SessionCookieSecure:    getenv("SESSION_COOKIE_SECURE", "auto"),
-		WebUITLSMode:           getenv("WEBUI_TLS_MODE", "off"),
-		WebUITLSCertFile:       os.Getenv("WEBUI_TLS_CERT_FILE"),
-		WebUITLSKeyFile:        os.Getenv("WEBUI_TLS_KEY_FILE"),
-		WebUITLSServerName:     os.Getenv("WEBUI_TLS_SERVER_NAME"),
 		WebUITrustProxyHeaders: getenvBool("WEBUI_TRUST_PROXY_HEADERS", false),
 		ExternalInterface:      getenv("EXTERNAL_INTERFACE", "eth0"),
 		IPv4Subnet:             getenv("IPV4_SUBNET", ""),
