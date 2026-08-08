@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.18.0 - 2026-08-08
 
 ### Added
 
@@ -20,6 +20,7 @@
 ### Fixed
 
 - Hardened the ACME HTTP fallback redirect so untrusted HTTP request targets cannot influence its HTTPS `Location` header.
+- Prevented managed ACME IP renewal from retrying immediately when a CA issues a certificate whose lifetime is shorter than the renewal lead time.
 - Fixed Web UI listener construction for IPv6 `WEBUI_HOST` values such as `::`.
 - Show an access URL that matches the configured TLS mode after installation or reconfiguration.
 - Cache client QR previews only in the active Config dialog, so switching QR import modes no longer briefly shows the previous QR.

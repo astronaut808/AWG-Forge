@@ -1,6 +1,8 @@
 package webtls
 
 import (
+	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -9,6 +11,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"net"
 	"net/http"
@@ -241,6 +244,146 @@ func TestACMEIPRetryScheduleAndInitialAttempt(t *testing.T) {
 		if got := acmeIPRetryDelay(attempt); got != want {
 			t.Fatalf("attempt %d delay = %s, want %s", attempt, got, want)
 		}
+	}
+}
+
+func TestACMEIPShortLivedCertificateSchedulesLaterRenewal(t *testing.T) {
+	now := time.Date(2026, time.August, 2, 12, 0, 0, 0, time.UTC)
+	state := &acmeIPState{
+		cert:   &tls.Certificate{},
+		status: Status{Mode: ModeACMEIP, State: "active", NotAfter: now.Add(time.Hour)},
+	}
+	if got, want := state.nextAttemptDelay(now), 30*time.Minute; got != want {
+		t.Fatalf("short-lived certificate delay = %s, want %s", got, want)
+	}
+}
+
+func TestACMEIPRenewalWorkerRecordsIssuanceFailure(t *testing.T) {
+	cacheDir := filepath.Join(t.TempDir(), "ip")
+	if err := ensurePrivateDirectory(cacheDir); err != nil {
+		t.Fatal(err)
+	}
+	called := make(chan struct{})
+	state := &acmeIPState{
+		status: Status{Mode: ModeACMEIP, IP: "8.8.8.8", State: "pending"},
+		tokens: make(map[string]string),
+		issue: func() (*tls.Certificate, error) {
+			close(called)
+			return nil, errors.New("test issuance failure")
+		},
+	}
+	stopRenewal := startACMEIPRenewal(t, state, cacheDir)
+	defer stopRenewal()
+	<-called
+
+	status := waitForACMEIPStatus(t, state, func(status Status) bool { return status.State == "failed" })
+	if status.Error != "certificate issuance failed" || status.Warning != "" || status.AttemptCount != 1 || status.NextAttempt.IsZero() {
+		t.Fatalf("unexpected issuance failure status: %#v", status)
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		persisted, ok, err := loadACMEIPStatus(cacheDir, netip.MustParseAddr("8.8.8.8"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ok && persisted.State == "failed" && persisted.AttemptCount == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("persisted failure status = %#v, ok=%t", persisted, ok)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestACMEIPRenewalWorkerKeepsActiveCertificateOnFailure(t *testing.T) {
+	cacheDir := filepath.Join(t.TempDir(), "ip")
+	if err := ensurePrivateDirectory(cacheDir); err != nil {
+		t.Fatal(err)
+	}
+	called := make(chan struct{})
+	state := &acmeIPState{
+		cert:   &tls.Certificate{},
+		status: Status{Mode: ModeACMEIP, IP: "8.8.8.8", State: "active", NotAfter: time.Now().UTC().Add(-time.Second)},
+		tokens: make(map[string]string),
+		issue: func() (*tls.Certificate, error) {
+			close(called)
+			return nil, errors.New("test renewal failure")
+		},
+	}
+	stopRenewal := startACMEIPRenewal(t, state, cacheDir)
+	defer stopRenewal()
+	<-called
+
+	status := waitForACMEIPStatus(t, state, func(status Status) bool { return status.Warning != "" })
+	if status.State != "active" || status.Error != "" || status.Warning != "certificate renewal failed" || status.AttemptCount != 1 {
+		t.Fatalf("unexpected renewal failure status: %#v", status)
+	}
+}
+
+func TestACMEIPRenewalWorkerPersistsNewCertificate(t *testing.T) {
+	cacheDir := filepath.Join(t.TempDir(), "ip")
+	if err := ensurePrivateDirectory(cacheDir); err != nil {
+		t.Fatal(err)
+	}
+	ip := netip.MustParseAddr("8.8.8.8")
+	certPath, keyPath := writeCertificateWithValidity(t, "unused.example", []net.IP{net.IP(ip.AsSlice())}, 7*24*time.Hour)
+	pair, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := make(chan struct{})
+	state := &acmeIPState{
+		status: Status{Mode: ModeACMEIP, IP: ip.String(), State: "pending"},
+		tokens: make(map[string]string),
+		issue: func() (*tls.Certificate, error) {
+			close(called)
+			return &pair, nil
+		},
+	}
+	stopRenewal := startACMEIPRenewal(t, state, cacheDir)
+	defer stopRenewal()
+	<-called
+
+	status := waitForACMEIPStatus(t, state, func(status Status) bool { return status.State == "active" })
+	if status.NotAfter.IsZero() || status.AttemptCount != 0 || !status.NextAttempt.IsZero() {
+		t.Fatalf("unexpected successful renewal status: %#v", status)
+	}
+	if _, _, ok, err := loadACMEIPCertificate(cacheDir, ip); err != nil || !ok {
+		t.Fatalf("persisted certificate ok=%t, err=%v", ok, err)
+	}
+}
+
+func TestACMEIPAccountKeyIsPrivateAndReusable(t *testing.T) {
+	cacheDir := filepath.Join(t.TempDir(), "ip")
+	if err := ensurePrivateDirectory(cacheDir); err != nil {
+		t.Fatal(err)
+	}
+	first, err := loadOrCreateACMEAccountKey(cacheDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(cacheDir, "account-key.pem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := info.Mode().Perm(), os.FileMode(0o600); got != want {
+		t.Fatalf("account key permissions = %o, want %o", got, want)
+	}
+	second, err := loadOrCreateACMEAccountKey(cacheDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstPublicKey, err := x509.MarshalPKIXPublicKey(&first.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondPublicKey, err := x509.MarshalPKIXPublicKey(&second.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(firstPublicKey, secondPublicKey) {
+		t.Fatal("cached ACME account key changed")
 	}
 }
 
@@ -542,6 +685,38 @@ func saveSettings(t *testing.T, cfg config.Config, settings Settings) {
 	}
 }
 
+func startACMEIPRenewal(t *testing.T, state *acmeIPState, cacheDir string) func() {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		state.renew(ctx, cacheDir)
+	}()
+	return func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("ACME IP renewal worker did not stop")
+		}
+	}
+}
+
+func waitForACMEIPStatus(t *testing.T, state *acmeIPState, match func(Status) bool) Status {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		status := state.readStatus()
+		if match(status) {
+			return status
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for ACME IP status: %#v", state.readStatus())
+	return Status{}
+}
+
 func saveSettingsFile(t *testing.T, cfg config.Config, settings Settings) {
 	t.Helper()
 	dir := filepath.Dir(settingsPath(cfg))
@@ -558,6 +733,10 @@ func saveSettingsFile(t *testing.T, cfg config.Config, settings Settings) {
 }
 
 func writeCertificate(t *testing.T, dnsName string, ips []net.IP) (string, string) {
+	return writeCertificateWithValidity(t, dnsName, ips, time.Hour)
+}
+
+func writeCertificateWithValidity(t *testing.T, dnsName string, ips []net.IP, validity time.Duration) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
 	if err := os.Chmod(dir, 0o700); err != nil {
@@ -573,7 +752,7 @@ func writeCertificate(t *testing.T, dnsName string, ips []net.IP) (string, strin
 		DNSNames:     []string{dnsName},
 		IPAddresses:  ips,
 		NotBefore:    time.Now().Add(-time.Minute),
-		NotAfter:     time.Now().Add(time.Hour),
+		NotAfter:     time.Now().Add(validity),
 		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}

@@ -151,10 +151,16 @@ func (s *acmeIPState) nextAttemptDelay(now time.Time) time.Duration {
 	if s.cert == nil || s.status.NotAfter.IsZero() {
 		return 0
 	}
-	if delay := s.status.NotAfter.Add(-acmeIPRenewBefore).Sub(now); delay > 0 {
+	remaining := s.status.NotAfter.Sub(now)
+	if remaining <= 0 {
+		return 0
+	}
+	if delay := remaining - acmeIPRenewBefore; delay > 0 {
 		return delay
 	}
-	return 0
+	// A CA can issue a certificate with a lifetime shorter than renew-before.
+	// Retry halfway through the remaining lifetime instead of issuing in a loop.
+	return remaining / 2
 }
 
 func (s *acmeIPState) recordFailure(cacheDir string, now time.Time) {
