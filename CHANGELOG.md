@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.19.0 - 2026-09-05
+
 ### Added
 
 - Added browser regression coverage for authentication, preferences, forms, maintenance, and AWG 2.0/3.x client exports across desktop/mobile layouts, light/dark themes, and English/Russian UI, using isolated no-apply backends in the existing CI job.
