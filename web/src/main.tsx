@@ -26,8 +26,6 @@ import {
   downloadResponse,
   expirationValue,
   formatBytes,
-  isExperimentalProfile,
-  profileTitle,
   relativeTime,
 } from "./utils";
 import "./styles.css";
@@ -384,7 +382,7 @@ function TunnelFirstDashboard({ profiles, tunnels, filter, setFilter, onCreateTu
           <div class="filter-row" aria-label={m.aria.tunnelFilters}>
             <button className={classNames("filter-pill", effectiveFilter === "all" && "active")} type="button" onClick={() => setFilter("all")}><span class="filter-label">{m.common.all}</span><span class="filter-count">{tunnels.length}</span></button>
             {filterProfiles.map((profile) => (
-              <button key={profile.id} className={classNames("filter-pill", effectiveFilter === profile.id && "active")} type="button" onClick={() => setFilter(profile.id)} title={`${profileTitle(profile.id)} · ${m.dashboard.tunnelCount(countFor(profile.id))}`}>
+              <button key={profile.id} className={classNames("filter-pill", effectiveFilter === profile.id && "active")} type="button" onClick={() => setFilter(profile.id)} title={`${profile.name} · ${m.dashboard.tunnelCount(countFor(profile.id))}`}>
                 <span class="filter-label">{profile.tab}</span><span class="filter-count">{countFor(profile.id)}</span>
               </button>
             ))}
@@ -395,7 +393,7 @@ function TunnelFirstDashboard({ profiles, tunnels, filter, setFilter, onCreateTu
       {visibleTunnels.length === 0 ? (
         <Empty
           title={tunnels.length === 0 ? m.dashboard.noTunnelsYet : m.dashboard.noTunnelsInFilter}
-          text={tunnels.length === 0 ? m.dashboard.createFirstTunnel : filteredProfile ? m.dashboard.createTunnelForProfile(profileTitle(filteredProfile.id)) : m.dashboard.createTunnelForSelected}
+          text={tunnels.length === 0 ? m.dashboard.createFirstTunnel : filteredProfile ? m.dashboard.createTunnelForProfile(filteredProfile.name) : m.dashboard.createTunnelForSelected}
           action={<button class="button primary" type="button" onClick={() => onCreateTunnel(filteredProfile)}>{m.common.createTunnel}</button>}
         />
       ) : (
@@ -406,7 +404,7 @@ function TunnelFirstDashboard({ profiles, tunnels, filter, setFilter, onCreateTu
             return (
               <section class="profile-group" key={profile.id}>
                 <div class="profile-group-head">
-                  <div class="profile-group-title"><h3>{profileTitle(profile.id)}</h3>{isExperimentalProfile(profile.id) && <Badge tone="warn">{m.common.experimental}</Badge>}</div>
+                  <div class="profile-group-title"><h3>{profile.name}</h3>{profile.experimental && <Badge tone="warn">{m.common.experimental}</Badge>}</div>
                   <span>{m.dashboard.tunnelCount(group.length)}</span>
                 </div>
                 <div className={classNames("tunnel-grid", group.length === 1 && "single")}>
@@ -540,8 +538,8 @@ function ModalContent({ modal, state, notify, close, reload, runAction }: {
 }) {
   if (modal.kind === "create-tunnel") return <CreateTunnelForm state={state} profile={modal.profile} runAction={runAction} />;
   if (modal.kind === "settings") return <TunnelSettingsForm state={state} tunnel={modal.tunnel} runAction={runAction} />;
-  if (modal.kind === "protocol") return <ProtocolForm tunnel={modal.tunnel} runAction={runAction} />;
-  if (modal.kind === "create-client") return <CreateClientForm tunnel={modal.tunnel} trafficLimitsEnabled={state.database.enabled} runAction={runAction} />;
+  if (modal.kind === "protocol") return <ProtocolForm tunnel={modal.tunnel} profileName={profileDisplayName(state.profiles, modal.tunnel.profile)} runAction={runAction} />;
+  if (modal.kind === "create-client") return <CreateClientForm tunnel={modal.tunnel} profileName={profileDisplayName(state.profiles, modal.tunnel.profile)} trafficLimitsEnabled={state.database.enabled} runAction={runAction} />;
   if (modal.kind === "client-settings") return <ClientSettingsForm client={modal.client} runAction={runAction} />;
   if (modal.kind === "client-config") {
     return <ClientConfigPanel key={modal.client.id} client={modal.client} notify={notify} />;
@@ -615,7 +613,7 @@ function CreateTunnelForm({ state, profile, runAction }: { state: AppState; prof
       ? api.createTunnel({ profile: field(form, "profile"), name: field(form, "name"), port, automatic_port: portMode === "automatic", subnet: field(form, "subnet"), egress_mode: field(form, "egress_mode") })
       : Promise.reject(new Error(m.forms.portSuggestionFailed)), { errorMode: "inline" });
   }}>
-    <label>{m.forms.protocol}<select aria-label={m.forms.protocol} name="profile" value={selected.id} onInput={(event) => setProfileID((event.currentTarget as HTMLSelectElement).value)}>{profiles.map((item) => <option key={item.id} value={item.id}>{profileTitle(item.id)}{isExperimentalProfile(item.id) ? ` · ${m.common.experimental}` : ""}</option>)}</select></label>
+    <label>{m.forms.protocol}<select aria-label={m.forms.protocol} name="profile" value={selected.id} onInput={(event) => setProfileID((event.currentTarget as HTMLSelectElement).value)}>{profiles.map((item) => <option key={item.id} value={item.id}>{item.name}{item.experimental ? ` · ${m.common.experimental}` : ""}</option>)}</select></label>
     <label>{m.forms.nameInterface}<input key={`${selected.id}-name`} aria-label={m.forms.nameInterface} name="name" defaultValue={selected.suggested_name || "awg0"} /></label>
     <label>{m.forms.portSelection}<select aria-label={m.forms.portSelection} value={portMode} onInput={(event) => setPortMode((event.currentTarget as HTMLSelectElement).value as PortSelectionMode)}><option value="automatic">{m.forms.automaticPort}</option><option value="manual">{m.forms.manualPort}</option></select></label>
     <div class="form-field"><span class="field-title">{m.forms.listenPort}</span><span class="port-input-wrap">
@@ -634,10 +632,11 @@ function CreateTunnelForm({ state, profile, runAction }: { state: AppState; prof
 function TunnelSettingsForm({ state, tunnel, runAction }: { state: AppState; tunnel: Tunnel; runAction: RunAction }) {
   const { m } = useI18n();
   const [egressMode, setEgressMode] = useState(tunnel.egress_mode || "wan");
+  const profileName = profileDisplayName(state.profiles, tunnel.profile);
   useEffect(() => {
     setEgressMode(tunnel.egress_mode || "wan");
   }, [tunnel.id, tunnel.egress_mode]);
-  return <Form title={m.forms.tunnelSettingsTitle} subtitle={`${tunnel.name} · ${profileTitle(tunnel.profile)}`} submit={m.common.save} onSubmit={(form) => runAction(m.forms.settingsSaved, () => api.updateTunnel(tunnel.id, {
+  return <Form title={m.forms.tunnelSettingsTitle} subtitle={`${tunnel.name} · ${profileName}`} submit={m.common.save} onSubmit={(form) => runAction(m.forms.settingsSaved, () => api.updateTunnel(tunnel.id, {
     name: field(form, "name"),
     server_host: field(form, "server_host"),
     egress_mode: field(form, "egress_mode"),
@@ -666,9 +665,9 @@ function TunnelSettingsForm({ state, tunnel, runAction }: { state: AppState; tun
   </Form>;
 }
 
-function ProtocolForm({ tunnel, runAction }: { tunnel: Tunnel; runAction: RunAction }) {
+function ProtocolForm({ tunnel, profileName, runAction }: { tunnel: Tunnel; profileName: string; runAction: RunAction }) {
   const { m } = useI18n();
-  return <Form title={m.forms.protocolTitle} subtitle={`${tunnel.name} · ${tunnel.profile}`} submit={m.forms.saveProtocol} secondary={<button class="button" type="button" onClick={() => confirm(m.forms.regenerateConfirm) && void runAction(m.forms.protocolRegenerated, () => api.regenerateProtocol(tunnel.id, tunnel.profile))}>{m.forms.regenerate}</button>} onSubmit={(form) => {
+  return <Form title={m.forms.protocolTitle} subtitle={`${tunnel.name} · ${profileName}`} submit={m.forms.saveProtocol} secondary={<button class="button" type="button" onClick={() => confirm(m.forms.regenerateConfirm) && void runAction(m.forms.protocolRegenerated, () => api.regenerateProtocol(tunnel.id, tunnel.profile))}>{m.forms.regenerate}</button>} onSubmit={(form) => {
     const params: Record<string, string> = {};
     for (const item of tunnel.params) params[item.key] = field(form, item.key).trim();
     return runAction(m.forms.protocolSaved, () => api.updateProtocol(tunnel.id, tunnel.profile, params), { errorMode: "inline" });
@@ -684,9 +683,9 @@ function ProtocolForm({ tunnel, runAction }: { tunnel: Tunnel; runAction: RunAct
   </Form>;
 }
 
-function CreateClientForm({ tunnel, trafficLimitsEnabled, runAction }: { tunnel: Tunnel; trafficLimitsEnabled: boolean; runAction: RunAction }) {
+function CreateClientForm({ tunnel, profileName, trafficLimitsEnabled, runAction }: { tunnel: Tunnel; profileName: string; trafficLimitsEnabled: boolean; runAction: RunAction }) {
   const { m } = useI18n();
-  return <Form title={m.forms.createClientTitle} subtitle={`${tunnel.name} · ${tunnel.profile}`} submit={m.common.createClient} onSubmit={(form) => runAction(m.forms.clientCreatedOpenConfig, async () => {
+  return <Form title={m.forms.createClientTitle} subtitle={`${tunnel.name} · ${profileName}`} submit={m.common.createClient} onSubmit={(form) => runAction(m.forms.clientCreatedOpenConfig, async () => {
     const trafficLimit = trafficLimitsEnabled ? trafficLimitFromForm(form, m.forms.trafficLimitInvalid) : { bytes: null, period: "lifetime" as TrafficLimitPeriod };
     await api.createClient(tunnel.id, field(form, "name"), expirationFromForm(form), trafficLimit.bytes, trafficLimit.period);
   }, { errorMode: "inline" })}>
@@ -1389,6 +1388,10 @@ function field(form: HTMLFormElement, name: string): string {
 
 function defaultCreateProfile(profiles: Profile[], fallback?: Profile): Profile | undefined {
   return profiles.find((profile) => profile.id === "awg_2_0" && profile.available) || profiles.find((profile) => profile.available) || fallback;
+}
+
+function profileDisplayName(profiles: Profile[], profileID: string): string {
+  return profiles.find((profile) => profile.id === profileID)?.name || profileID;
 }
 
 function versionLabel(version: string): string {
