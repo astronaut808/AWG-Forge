@@ -96,17 +96,6 @@ export function dateTimeLocalToISO(value: string): string {
   return date.toISOString();
 }
 
-export function profileTitle(profileID: string): string {
-  if (profileID === "awg_1_5") return "AmneziaWG 1.5";
-  if (profileID === "awg_2_0") return "AmneziaWG 2.0";
-  if (profileID === "awg_3") return "AmneziaWG 3.x";
-  return "AmneziaWG Legacy / 1.0";
-}
-
-export function isExperimentalProfile(profileID: string): boolean {
-  return profileID === "awg_3";
-}
-
 export function classNames(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(" ");
 }

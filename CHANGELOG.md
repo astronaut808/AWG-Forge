@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- Centralized protocol profile registration and parameter catalogs; the browser API and Web UI now consume server-provided profile names and experimental status instead of maintaining independent profile tables.
+
 ## v0.19.0 - 2026-09-05
 
 ### Added

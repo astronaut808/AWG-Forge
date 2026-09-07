@@ -168,3 +168,5 @@ Main areas:
 - `internal/doctor`: diagnostics;
 - `internal/support`: secret-free support bundle generation;
 - `internal/updates`: AmneziaWG upstream update checks.
+
+`internal/protocol` owns the ordered profile registry, profile IDs, display names, versions, editable parameter keys, defaults, validation, and rendering. `internal/server` owns browser-only presentation metadata such as tabs, grouping labels, the experimental marker, and runtime exposure. The frontend consumes profile names and status from `/api/state` and must not maintain its own profile-ID mapping. When adding a profile, register it once in `internal/protocol`, add its server presentation metadata, and extend the registry/catalog completeness tests.
