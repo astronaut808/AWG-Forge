@@ -2,7 +2,7 @@
   "openapi": "3.1.1",
   "info": {
     "title": "AWG-Forge browser control API",
-    "version": "0.19.0-unreleased",
+    "version": "0.19.0",
     "description": "Same-origin control API used by the bundled Web UI. This is not a public remote-management API. It uses the authenticated browser session, does not enable CORS, and the bundled UI supplies an Idempotency-Key for state-changing operations."
   },
   "servers": [{ "url": "/" }],
