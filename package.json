@@ -1,6 +1,6 @@
 {
   "scripts": {
-    "api:contract": "node scripts/check-openapi-contract.mjs",
+    "api:contract": "redocly lint --config redocly.yaml && node scripts/check-openapi-contract.mjs",
     "ui:dev": "vite --host 127.0.0.1 --port 51923 --config web/vite.config.ts",
     "ui:build": "vite build --config web/vite.config.ts",
     "ui:check": "tsc --noEmit -p web/tsconfig.json && tsc --noEmit -p web/tsconfig.tests.json",
@@ -11,9 +11,10 @@
   "devDependencies": {
     "@playwright/test": "1.62.1",
     "@preact/preset-vite": "^2.10.2",
+    "@redocly/cli": "2.51.2",
+    "aislop": "^0.14.0",
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
-    "aislop": "^0.14.0",
     "preact": "^10.26.9",
     "typescript": "^5.8.3",
     "vite": "^6.3.5"

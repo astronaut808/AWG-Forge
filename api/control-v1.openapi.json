@@ -1,0 +1,858 @@
+{
+  "openapi": "3.1.1",
+  "info": {
+    "title": "AWG-Forge node control API",
+    "version": "0.1.0-draft",
+    "description": "Proposed internal controller/node contract. It is not implemented, enabled, or a public operator API. Enrollment uses pinned server TLS and a one-time secret; all other operations require AWG-Forge-managed mutual TLS.",
+    "license": {
+      "name": "MIT",
+      "identifier": "MIT"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://controller.example",
+      "description": "Dedicated AWG-Forge control listener"
+    }
+  ],
+  "security": [
+    {
+      "nodeMTLS": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Enrollment",
+      "description": "Short-lived bootstrap before a node certificate exists."
+    },
+    {
+      "name": "Node",
+      "description": "Authenticated node presence and redacted observations."
+    },
+    {
+      "name": "Operations",
+      "description": "Bounded long-poll delivery and durable idempotent receipts."
+    },
+    {
+      "name": "Certificates",
+      "description": "Node-generated CSR renewal over the existing mTLS identity."
+    }
+  ],
+  "paths": {
+    "/control/v1/enrollments/{invitation_id}/claim": {
+      "post": {
+        "operationId": "claimEnrollmentInvitation",
+        "summary": "Claim a one-time enrollment invitation",
+        "description": "The node verifies the controller CA/SPKI pin before sending this request. The invitation secret is supplied as a bearer value and must never appear in the URL, command arguments, environment, logs, or durable plaintext storage.",
+        "tags": ["Enrollment"],
+        "security": [
+          {
+            "enrollmentSecret": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/InvitationID"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnrollmentClaimRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The CSR is bound to the invitation and awaits explicit controller approval.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnrollmentClaimAccepted"
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/Problem" },
+          "401": { "$ref": "#/components/responses/Problem" },
+          "404": { "$ref": "#/components/responses/Problem" },
+          "409": { "$ref": "#/components/responses/Problem" },
+          "410": { "$ref": "#/components/responses/Problem" },
+          "413": { "$ref": "#/components/responses/Problem" },
+          "429": { "$ref": "#/components/responses/RateLimitedProblem" },
+          "default": { "$ref": "#/components/responses/Problem" }
+        }
+      }
+    },
+    "/control/v1/enrollments/{enrollment_id}": {
+      "get": {
+        "operationId": "getEnrollmentStatus",
+        "summary": "Read enrollment approval status",
+        "description": "The claim token is returned only by the successful claim response and is stored as a digest by the controller. An approved response contains the node certificate but never a private key.",
+        "tags": ["Enrollment"],
+        "security": [
+          {
+            "claimToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/EnrollmentID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current enrollment state.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnrollmentStatus"
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Problem" },
+          "404": { "$ref": "#/components/responses/Problem" },
+          "410": { "$ref": "#/components/responses/Problem" },
+          "429": { "$ref": "#/components/responses/RateLimitedProblem" },
+          "default": { "$ref": "#/components/responses/Problem" }
+        }
+      }
+    },
+    "/control/v1/node/presence": {
+      "put": {
+        "operationId": "putNodePresence",
+        "summary": "Publish authenticated node presence",
+        "description": "Node identity comes from the verified client certificate. A node identifier supplied by a proxy header or request body is never authoritative.",
+        "tags": ["Node"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NodePresence"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Presence accepted and polling guidance returned.",
+            "headers": {
+              "Cache-Control": { "$ref": "#/components/headers/NoStore" },
+              "X-Request-ID": { "$ref": "#/components/headers/RequestID" }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PresenceAccepted"
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Problem" },
+          "403": { "$ref": "#/components/responses/Problem" },
+          "409": { "$ref": "#/components/responses/Problem" },
+          "429": { "$ref": "#/components/responses/RateLimitedProblem" },
+          "default": { "$ref": "#/components/responses/Problem" }
+        }
+      }
+    },
+    "/control/v1/node/snapshot": {
+      "put": {
+        "operationId": "putNodeSnapshot",
+        "summary": "Publish a redacted node snapshot",
+        "description": "The snapshot is an allowlisted observation. It never contains private keys, preshared keys, full configs, QR or vpn:// payloads, WARP credentials, environment values, or raw command output.",
+        "tags": ["Node"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NodeSnapshot"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Snapshot accepted.",
+            "headers": {
+              "Cache-Control": { "$ref": "#/components/headers/NoStore" },
+              "X-Request-ID": { "$ref": "#/components/headers/RequestID" }
+            }
+          },
+          "400": { "$ref": "#/components/responses/Problem" },
+          "401": { "$ref": "#/components/responses/Problem" },
+          "403": { "$ref": "#/components/responses/Problem" },
+          "409": { "$ref": "#/components/responses/Problem" },
+          "413": { "$ref": "#/components/responses/Problem" },
+          "429": { "$ref": "#/components/responses/RateLimitedProblem" },
+          "default": { "$ref": "#/components/responses/Problem" }
+        }
+      }
+    },
+    "/control/v1/node/operations/poll": {
+      "post": {
+        "operationId": "pollNodeOperation",
+        "summary": "Wait for one typed operation",
+        "description": "At most one poll is active for a node. The controller returns one complete operation or 204 after the bounded wait. Delivery is at least once and the node executes idempotently using its durable receipt.",
+        "tags": ["Operations"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperationPollRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "One operation is leased to the node.",
+            "headers": {
+              "Cache-Control": { "$ref": "#/components/headers/NoStore" },
+              "X-Request-ID": { "$ref": "#/components/headers/RequestID" }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationDelivery"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "No operation became available before the bounded wait elapsed.",
+            "headers": {
+              "Cache-Control": { "$ref": "#/components/headers/NoStore" },
+              "X-Request-ID": { "$ref": "#/components/headers/RequestID" }
+            }
+          },
+          "400": { "$ref": "#/components/responses/Problem" },
+          "401": { "$ref": "#/components/responses/Problem" },
+          "403": { "$ref": "#/components/responses/Problem" },
+          "409": { "$ref": "#/components/responses/Problem" },
+          "429": { "$ref": "#/components/responses/RateLimitedProblem" },
+          "default": { "$ref": "#/components/responses/Problem" }
+        }
+      }
+    },
+    "/control/v1/node/operations/{operation_id}/result": {
+      "put": {
+        "operationId": "putNodeOperationResult",
+        "summary": "Publish a durable operation result",
+        "description": "Replaying the same terminal receipt is idempotent. A conflicting terminal result is rejected. Secret client artifacts use a separate ephemeral channel and are never embedded here.",
+        "tags": ["Operations"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OperationID"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperationReceipt"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Terminal result stored or an identical result replay acknowledged.",
+            "headers": {
+              "Cache-Control": { "$ref": "#/components/headers/NoStore" },
+              "X-Request-ID": { "$ref": "#/components/headers/RequestID" }
+            }
+          },
+          "400": { "$ref": "#/components/responses/Problem" },
+          "401": { "$ref": "#/components/responses/Problem" },
+          "403": { "$ref": "#/components/responses/Problem" },
+          "404": { "$ref": "#/components/responses/Problem" },
+          "409": { "$ref": "#/components/responses/Problem" },
+          "413": { "$ref": "#/components/responses/Problem" },
+          "429": { "$ref": "#/components/responses/RateLimitedProblem" },
+          "default": { "$ref": "#/components/responses/Problem" }
+        }
+      }
+    },
+    "/control/v1/node/certificate-renewals": {
+      "post": {
+        "operationId": "renewNodeCertificate",
+        "summary": "Renew the current node certificate",
+        "description": "The node authenticates with its current certificate and proves possession of a newly generated private key by submitting a new CSR.",
+        "tags": ["Certificates"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CertificateRenewalRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A replacement certificate was issued with bounded overlap.",
+            "headers": {
+              "Cache-Control": { "$ref": "#/components/headers/NoStore" },
+              "X-Request-ID": { "$ref": "#/components/headers/RequestID" }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssuedCertificate"
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/Problem" },
+          "401": { "$ref": "#/components/responses/Problem" },
+          "403": { "$ref": "#/components/responses/Problem" },
+          "409": { "$ref": "#/components/responses/Problem" },
+          "429": { "$ref": "#/components/responses/RateLimitedProblem" },
+          "default": { "$ref": "#/components/responses/Problem" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "nodeMTLS": {
+        "type": "mutualTLS",
+        "description": "AWG-Forge-managed node certificate verified by the dedicated control listener and checked against active node and binding state."
+      },
+      "enrollmentSecret": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "opaque one-time invitation secret",
+        "description": "High-entropy single-use enrollment secret entered interactively and accepted only with a verified controller CA/SPKI pin."
+      },
+      "claimToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "opaque enrollment claim token",
+        "description": "Short-lived token returned after the controller atomically binds an invitation to one CSR. Only its digest is stored."
+      }
+    },
+    "parameters": {
+      "InvitationID": {
+        "name": "invitation_id",
+        "in": "path",
+        "required": true,
+        "description": "Non-secret identifier included in the controller-generated command.",
+        "schema": { "$ref": "#/components/schemas/UUID" }
+      },
+      "EnrollmentID": {
+        "name": "enrollment_id",
+        "in": "path",
+        "required": true,
+        "schema": { "$ref": "#/components/schemas/UUID" }
+      },
+      "OperationID": {
+        "name": "operation_id",
+        "in": "path",
+        "required": true,
+        "schema": { "$ref": "#/components/schemas/UUID" }
+      }
+    },
+    "headers": {
+      "NoStore": {
+        "description": "Control responses are never cacheable.",
+        "schema": {
+          "type": "string",
+          "const": "no-store"
+        }
+      },
+      "RequestID": {
+        "description": "Safe correlation identifier for logs and audit events.",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "RetryAfter": {
+        "description": "Seconds before retrying a rate-limited request.",
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600
+        }
+      }
+    },
+    "responses": {
+      "Problem": {
+        "description": "Safe RFC 9457 problem response without internal error details.",
+        "headers": {
+          "Cache-Control": { "$ref": "#/components/headers/NoStore" },
+          "X-Request-ID": { "$ref": "#/components/headers/RequestID" }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": { "$ref": "#/components/schemas/Problem" }
+          }
+        }
+      },
+      "RateLimitedProblem": {
+        "description": "The request exceeded a bounded enrollment, node, or global limit.",
+        "headers": {
+          "Cache-Control": { "$ref": "#/components/headers/NoStore" },
+          "X-Request-ID": { "$ref": "#/components/headers/RequestID" },
+          "Retry-After": { "$ref": "#/components/headers/RetryAfter" }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": { "$ref": "#/components/schemas/Problem" }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "UUID": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "BootID": {
+        "allOf": [
+          { "$ref": "#/components/schemas/UUID" }
+        ],
+        "description": "Random identity generated on every application process start."
+      },
+      "Epoch": {
+        "allOf": [
+          { "$ref": "#/components/schemas/UUID" }
+        ],
+        "description": "Random identity epoch used to fence restored, reset, or cloned state."
+      },
+      "Capabilities": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 128,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "maxLength": 64
+        }
+      },
+      "EnrollmentClaimRequest": {
+        "type": "object",
+        "required": ["requested_name", "csr_pem", "boot_id", "application_version", "contract_versions", "capabilities"],
+        "properties": {
+          "requested_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "csr_pem": {
+            "type": "string",
+            "minLength": 128,
+            "maxLength": 8192,
+            "writeOnly": true,
+            "description": "PEM PKCS#10 CSR. The corresponding private key never leaves the node."
+          },
+          "boot_id": { "$ref": "#/components/schemas/BootID" },
+          "application_version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "contract_versions": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 4,
+            "uniqueItems": true,
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 255
+            }
+          },
+          "capabilities": { "$ref": "#/components/schemas/Capabilities" }
+        },
+        "additionalProperties": false
+      },
+      "EnrollmentClaimAccepted": {
+        "type": "object",
+        "required": ["enrollment_id", "claim_token", "verification_code", "expires_at", "poll_after_seconds"],
+        "properties": {
+          "enrollment_id": { "$ref": "#/components/schemas/UUID" },
+          "claim_token": {
+            "type": "string",
+            "minLength": 43,
+            "maxLength": 256,
+            "readOnly": true,
+            "description": "Short-lived opaque token. The controller stores only a keyed digest."
+          },
+          "verification_code": {
+            "type": "string",
+            "pattern": "^[A-Z0-9]{4}-[A-Z0-9]{4}$"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "poll_after_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 30
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnrollmentStatus": {
+        "type": "object",
+        "oneOf": [
+          { "$ref": "#/components/schemas/EnrollmentPending" },
+          { "$ref": "#/components/schemas/EnrollmentApproved" },
+          { "$ref": "#/components/schemas/EnrollmentRejected" },
+          { "$ref": "#/components/schemas/EnrollmentExpired" }
+        ],
+        "discriminator": {
+          "propertyName": "status"
+        }
+      },
+      "EnrollmentPending": {
+        "type": "object",
+        "required": ["status", "verification_code", "expires_at", "poll_after_seconds"],
+        "properties": {
+          "status": { "type": "string", "const": "pending" },
+          "verification_code": { "type": "string", "pattern": "^[A-Z0-9]{4}-[A-Z0-9]{4}$" },
+          "expires_at": { "type": "string", "format": "date-time" },
+          "poll_after_seconds": { "type": "integer", "minimum": 1, "maximum": 30 }
+        },
+        "additionalProperties": false
+      },
+      "EnrollmentApproved": {
+        "type": "object",
+        "required": ["status", "node_id", "controller_id", "binding_epoch", "certificate", "contract_version"],
+        "properties": {
+          "status": { "type": "string", "const": "approved" },
+          "node_id": { "$ref": "#/components/schemas/UUID" },
+          "controller_id": { "$ref": "#/components/schemas/UUID" },
+          "binding_epoch": { "type": "integer", "minimum": 1 },
+          "certificate": { "$ref": "#/components/schemas/IssuedCertificate" },
+          "contract_version": { "type": "integer", "const": 1 }
+        },
+        "additionalProperties": false
+      },
+      "EnrollmentRejected": {
+        "type": "object",
+        "required": ["status"],
+        "properties": {
+          "status": { "type": "string", "const": "rejected" }
+        },
+        "additionalProperties": false
+      },
+      "EnrollmentExpired": {
+        "type": "object",
+        "required": ["status"],
+        "properties": {
+          "status": { "type": "string", "const": "expired" }
+        },
+        "additionalProperties": false
+      },
+      "NodePresence": {
+        "type": "object",
+        "required": ["boot_id", "application_version", "contract_version", "state_epoch", "binding_epoch", "desired_generation", "capabilities", "observed_at"],
+        "properties": {
+          "boot_id": { "$ref": "#/components/schemas/BootID" },
+          "application_version": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "contract_version": { "type": "integer", "const": 1 },
+          "state_epoch": { "$ref": "#/components/schemas/Epoch" },
+          "binding_epoch": { "type": "integer", "minimum": 1 },
+          "desired_generation": { "type": "integer", "minimum": 0 },
+          "capabilities": { "$ref": "#/components/schemas/Capabilities" },
+          "observed_at": { "type": "string", "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "PresenceAccepted": {
+        "type": "object",
+        "required": ["controller_id", "server_time", "next_poll_seconds", "renew_certificate_after"],
+        "properties": {
+          "controller_id": { "$ref": "#/components/schemas/UUID" },
+          "server_time": { "type": "string", "format": "date-time" },
+          "next_poll_seconds": { "type": "integer", "minimum": 1, "maximum": 300 },
+          "renew_certificate_after": { "type": "string", "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "NodeSnapshot": {
+        "type": "object",
+        "required": ["boot_id", "state_epoch", "binding_epoch", "desired_generation", "observed_at", "service_status", "network", "tunnels"],
+        "properties": {
+          "boot_id": { "$ref": "#/components/schemas/BootID" },
+          "state_epoch": { "$ref": "#/components/schemas/Epoch" },
+          "binding_epoch": { "type": "integer", "minimum": 1 },
+          "desired_generation": { "type": "integer", "minimum": 0 },
+          "observed_at": { "type": "string", "format": "date-time" },
+          "service_status": {
+            "type": "string",
+            "enum": ["ready", "degraded", "unavailable"]
+          },
+          "network": { "$ref": "#/components/schemas/NetworkSnapshot" },
+          "tunnels": {
+            "type": "array",
+            "maxItems": 1024,
+            "items": { "$ref": "#/components/schemas/TunnelSnapshot" }
+          },
+          "findings": {
+            "type": "array",
+            "maxItems": 256,
+            "items": { "$ref": "#/components/schemas/SafeFinding" }
+          }
+        },
+        "additionalProperties": false
+      },
+      "NetworkSnapshot": {
+        "type": "object",
+        "required": ["external_interface_confirmed"],
+        "properties": {
+          "external_interface_confirmed": { "type": "boolean" },
+          "external_interface": { "type": "string", "minLength": 1, "maxLength": 15 },
+          "outbound_ipv4": { "type": "string", "format": "ipv4" },
+          "public_endpoint": { "type": "string", "minLength": 1, "maxLength": 255 }
+        },
+        "additionalProperties": false
+      },
+      "TunnelSnapshot": {
+        "type": "object",
+        "required": ["id", "name", "interface", "profile", "enabled", "runtime_status", "listen_port", "subnet", "egress", "clients_total", "clients_online", "clients"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/ExistingResourceID" },
+          "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "interface": { "type": "string", "minLength": 1, "maxLength": 15 },
+          "profile": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "enabled": { "type": "boolean" },
+          "runtime_status": { "type": "string", "enum": ["up", "down", "degraded", "unknown"] },
+          "listen_port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+          "subnet": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "egress": { "type": "string", "enum": ["wan", "warp"] },
+          "clients_total": { "type": "integer", "minimum": 0 },
+          "clients_online": { "type": "integer", "minimum": 0 },
+          "clients": {
+            "type": "array",
+            "maxItems": 65535,
+            "items": { "$ref": "#/components/schemas/ClientSnapshot" }
+          }
+        },
+        "additionalProperties": false
+      },
+      "ExistingResourceID": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[A-Za-z0-9._-]+$",
+        "description": "Existing node-local resource identifier. Current installations use 16-character hexadecimal IDs, and migration must preserve them."
+      },
+      "ClientSnapshot": {
+        "type": "object",
+        "required": ["id", "name", "enabled", "runtime_status", "rx_bytes", "tx_bytes"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/ExistingResourceID" },
+          "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "enabled": { "type": "boolean" },
+          "runtime_status": { "type": "string", "enum": ["online", "offline", "never_connected", "unknown"] },
+          "last_seen_at": { "type": ["string", "null"], "format": "date-time" },
+          "expires_at": { "type": ["string", "null"], "format": "date-time" },
+          "rx_bytes": { "type": "integer", "minimum": 0 },
+          "tx_bytes": { "type": "integer", "minimum": 0 }
+        },
+        "additionalProperties": false
+      },
+      "SafeFinding": {
+        "type": "object",
+        "required": ["category", "level", "code"],
+        "properties": {
+          "category": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "level": { "type": "string", "enum": ["ok", "warn", "fail"] },
+          "code": { "type": "string", "pattern": "^[a-z0-9_]+$", "maxLength": 64 },
+          "subject": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:/ -]+$",
+            "description": "Optional safe resource identifier. The controller maps the finding code to user-facing text."
+          }
+        },
+        "additionalProperties": false
+      },
+      "OperationPollRequest": {
+        "type": "object",
+        "required": ["boot_id", "state_epoch", "binding_epoch", "desired_generation", "wait_seconds"],
+        "properties": {
+          "boot_id": { "$ref": "#/components/schemas/BootID" },
+          "state_epoch": { "$ref": "#/components/schemas/Epoch" },
+          "binding_epoch": { "type": "integer", "minimum": 1 },
+          "desired_generation": { "type": "integer", "minimum": 0 },
+          "cursor": {
+            "type": ["string", "null"],
+            "maxLength": 512,
+            "description": "Opaque controller-issued delivery cursor."
+          },
+          "wait_seconds": { "type": "integer", "minimum": 5, "maximum": 60 }
+        },
+        "additionalProperties": false
+      },
+      "OperationDelivery": {
+        "type": "object",
+        "required": ["cursor", "lease_expires_at", "operation"],
+        "properties": {
+          "cursor": { "type": "string", "minLength": 1, "maxLength": 512 },
+          "lease_expires_at": { "type": "string", "format": "date-time" },
+          "operation": { "$ref": "#/components/schemas/OperationEnvelope" }
+        },
+        "additionalProperties": false
+      },
+      "OperationEnvelope": {
+        "type": "object",
+        "required": ["operation_id", "idempotency_key", "issued_at", "expires_at", "expected_state_epoch", "expected_binding_epoch", "expected_desired_generation", "operation"],
+        "properties": {
+          "operation_id": { "$ref": "#/components/schemas/UUID" },
+          "idempotency_key": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "issued_at": { "type": "string", "format": "date-time" },
+          "expires_at": { "type": "string", "format": "date-time" },
+          "expected_state_epoch": { "$ref": "#/components/schemas/Epoch" },
+          "expected_binding_epoch": { "type": "integer", "minimum": 1 },
+          "expected_desired_generation": { "type": "integer", "minimum": 0 },
+          "operation": { "$ref": "#/components/schemas/TypedOperation" }
+        },
+        "additionalProperties": false
+      },
+      "TypedOperation": {
+        "type": "object",
+        "oneOf": [
+          { "$ref": "#/components/schemas/SnapshotRefreshOperation" }
+        ],
+        "discriminator": {
+          "propertyName": "kind"
+        }
+      },
+      "SnapshotRefreshOperation": {
+        "type": "object",
+        "required": ["kind", "schema_version", "payload"],
+        "properties": {
+          "kind": { "type": "string", "const": "snapshot.refresh" },
+          "schema_version": { "type": "integer", "const": 1 },
+          "payload": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "OperationReceipt": {
+        "type": "object",
+        "oneOf": [
+          { "$ref": "#/components/schemas/OperationSucceededReceipt" },
+          { "$ref": "#/components/schemas/OperationFailedReceipt" }
+        ],
+        "discriminator": {
+          "propertyName": "status"
+        }
+      },
+      "OperationSucceededReceipt": {
+        "type": "object",
+        "required": ["status", "boot_id", "state_epoch", "binding_epoch", "desired_generation", "completed_at", "result"],
+        "properties": {
+          "status": { "type": "string", "const": "succeeded" },
+          "boot_id": { "$ref": "#/components/schemas/BootID" },
+          "state_epoch": { "$ref": "#/components/schemas/Epoch" },
+          "binding_epoch": { "type": "integer", "minimum": 1 },
+          "desired_generation": { "type": "integer", "minimum": 0 },
+          "completed_at": { "type": "string", "format": "date-time" },
+          "result": { "$ref": "#/components/schemas/SnapshotRefreshResult" }
+        },
+        "additionalProperties": false
+      },
+      "SnapshotRefreshResult": {
+        "type": "object",
+        "required": ["snapshot_accepted"],
+        "properties": {
+          "snapshot_accepted": { "type": "boolean", "const": true }
+        },
+        "additionalProperties": false
+      },
+      "OperationFailedReceipt": {
+        "type": "object",
+        "required": ["status", "boot_id", "state_epoch", "binding_epoch", "desired_generation", "completed_at", "problem"],
+        "properties": {
+          "status": { "type": "string", "enum": ["failed", "conflict", "rejected", "expired"] },
+          "boot_id": { "$ref": "#/components/schemas/BootID" },
+          "state_epoch": { "$ref": "#/components/schemas/Epoch" },
+          "binding_epoch": { "type": "integer", "minimum": 1 },
+          "desired_generation": { "type": "integer", "minimum": 0 },
+          "completed_at": { "type": "string", "format": "date-time" },
+          "problem": { "$ref": "#/components/schemas/Problem" }
+        },
+        "additionalProperties": false
+      },
+      "CertificateRenewalRequest": {
+        "type": "object",
+        "required": ["boot_id", "current_serial", "csr_pem"],
+        "properties": {
+          "boot_id": { "$ref": "#/components/schemas/BootID" },
+          "current_serial": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "csr_pem": {
+            "type": "string",
+            "minLength": 128,
+            "maxLength": 8192,
+            "writeOnly": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "IssuedCertificate": {
+        "type": "object",
+        "required": ["certificate_pem", "chain_pem", "serial", "not_before", "not_after"],
+        "properties": {
+          "certificate_pem": { "type": "string", "minLength": 128, "maxLength": 16384, "readOnly": true },
+          "chain_pem": { "type": "string", "minLength": 128, "maxLength": 32768, "readOnly": true },
+          "serial": { "type": "string", "minLength": 1, "maxLength": 128, "readOnly": true },
+          "not_before": { "type": "string", "format": "date-time", "readOnly": true },
+          "not_after": { "type": "string", "format": "date-time", "readOnly": true }
+        },
+        "additionalProperties": false
+      },
+      "Problem": {
+        "type": "object",
+        "required": ["type", "title", "status", "code"],
+        "properties": {
+          "type": { "type": "string", "format": "uri", "maxLength": 512 },
+          "title": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "status": { "type": "integer", "minimum": 400, "maximum": 599 },
+          "detail": { "type": "string", "maxLength": 1024, "description": "Safe actionable detail without stack traces, commands, paths, or secret material." },
+          "instance": { "type": "string", "format": "uri-reference", "maxLength": 512 },
+          "code": { "type": "string", "pattern": "^[a-z0-9_]+$", "maxLength": 64 }
+        },
+        "additionalProperties": false
+      }
+    }
+  }
+}
