@@ -6,7 +6,7 @@ require (
 	github.com/boombuler/barcode v1.1.0
 	github.com/eggsampler/acme/v3 v3.8.2
 	golang.org/x/crypto v0.55.0
-	modernc.org/sqlite v1.56.0
+	modernc.org/sqlite v1.57.0
 )
 
 require (
