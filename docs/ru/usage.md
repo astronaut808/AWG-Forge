@@ -88,16 +88,22 @@ Doctor может предупреждать о клиентах, у котор�
 
 ## CLI в Docker
 
-После restore перезапусти контейнер, чтобы загрузить все восстановленные настройки, включая TLS и состояние базы данных. При `APPLY_CONFIG=true` запуск применяет включенные туннели и согласует runtime WARP. Перезапуска только туннеля недостаточно. Перед остальными проверками дождись запуска сервиса.
+Restore должен выполняться при остановленном основном контейнере. Одноразовый
+restore-контейнер использует тот же data volume, а последующий запуск сервиса
+загружает восстановленный desired state и TLS assets. Encrypted backup пока не
+включает SQLite operational history. При `APPLY_CONFIG=true` запуск применяет
+включенные туннели и согласует runtime WARP. Перед остальными проверками дождись
+запуска сервиса.
 
 ```bash
 docker exec awg-forge awg-forge doctor
 docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge backup /tmp/awg-forge.afbackup
 docker cp awg-forge:/tmp/awg-forge.afbackup ./awg-forge-backup-YYYYMMDD-HHMMSS.afbackup
-docker cp ./<backup-file>.afbackup awg-forge:/tmp/backup.afbackup
-docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore verify /tmp/backup.afbackup
-docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore /tmp/backup.afbackup
-docker restart awg-forge
+cp ./<backup-file>.afbackup ./data/backup.afbackup
+docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore verify /etc/awg-forge/backup.afbackup
+docker compose stop awg-forge
+docker compose run --rm -e BACKUP_PASSWORD='long-random-backup-password' awg-forge restore /etc/awg-forge/backup.afbackup
+docker compose up -d awg-forge
 docker exec awg-forge awg-forge firewall repair
 docker exec awg-forge awg-forge firewall check
 docker exec awg-forge awg-forge support-bundle
@@ -115,6 +121,9 @@ docker exec awg-forge awg-forge tunnel create awg_1_5 awg15 51825 10.15.0.0/24
 
 ## Локальный CLI
 
+Перед локальным restore останови процесс `awg-forge serve`, использующий тот же
+config directory. Блокировка state directory отклонит online restore.
+
 ```bash
 awg-forge init --server-host vpn.example.com --external-interface eth0 --profile awg_2_0 --tunnel-name awg20 --listen-port 51830 --ipv4-subnet 10.20.0.0/24
 awg-forge serve
@@ -130,7 +139,8 @@ awg-forge updates
 awg-forge logs
 ```
 
-После локального restore перезапусти работающий процесс awg-forge, чтобы загрузить восстановленные настройки.
+Правила restore для managed-ноды и явный recovery-флаг
+`--detach-managed-node` описаны в разделе [Диагностика](diagnostics.md#encrypted-backup--restore).
 
 ## Импорт конфига клиента
 

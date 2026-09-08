@@ -14,10 +14,14 @@ The node-local transaction foundation is implemented but dormant:
   same atomic `state.json` replacement as the desired state;
 - a root-private, secret-free recovery journal lets startup reconcile runtime
   after interruption between apply and final state persistence.
+- backup restore preserves a managed identity only on an exact in-place match;
+  transfer to a new or different installation and mode transitions require
+  explicit local detach;
+- `boot_id` is generated once per process and is never persisted.
 
-Enrollment, controller activation, the control listener, operation delivery,
-receipt acknowledgement, and receipt pruning are not implemented yet. No
-ordinary install or upgrade enables managed mode.
+Enrollment, controller activation, identity replacement/rebind, the control
+listener, operation delivery, receipt acknowledgement, and receipt pruning are
+not implemented yet. No ordinary install or upgrade enables managed mode.
 
 Before enrollment is enabled, every existing local desired-state mutation must
 either use this same commit boundary or be rejected while in managed node mode.
@@ -130,6 +134,24 @@ Use distinct identifiers for distinct failure domains:
 - `controller_id`: stable identity preserved by encrypted controller backup;
 - `binding_epoch`: fences operations from a previous controller binding;
 - `boot_id`: random process-start identity used to confirm restart/reconnect.
+
+Encrypted restore treats identity metadata as a security boundary. A managed
+identity is preserved automatically only when the target installation has the
+exact same node, controller, state epoch, binding epoch, generation, and receipt
+metadata. Every other managed/standalone transition requires an explicit local
+detach. Detach keeps tunnels and clients but removes controller authority and
+operation replay metadata; a later enrollment must establish fresh identity and
+binding state. Restore is an offline operation: the server holds an exclusive
+state-directory lock for its lifetime, and restore fails while that lock is
+held. This prevents generation or receipt changes between the identity check
+and restore. The restored `state.json` is committed last with an atomic rename,
+so an interrupted restore cannot activate partial controller authority.
+
+This local check cannot distinguish the original data directory from a raw,
+byte-for-byte clone because the clone contains the same node key and identity
+metadata. Such a clone must remain offline until a local detach is completed.
+Duplicate active identity detection and certificate revocation require the
+future controller session layer.
 
 Existing per-client `ConfigRevision` remains independent. It continues to mean
 that a previously exported client configuration may be stale; it must not be
