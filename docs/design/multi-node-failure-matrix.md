@@ -20,7 +20,8 @@ test before the corresponding capability can be released.
 | Controller restored with same identity | Nodes reconnect after endpoint recovery | Restored controller ID/CA | No re-enrollment; redelivered operations do not execute twice |
 | Controller restored twice | Duplicate identity is detected operationally; automatic leader behavior is absent | Operator-controlled restore | Documentation and Doctor warn; no split-brain claim |
 | Controller lost without backup | Nodes continue locally and require explicit root-authorized rebind | Node old binding | Old controller cannot remotely transfer nodes |
-| Node data directory cloned | Duplicate identity is surfaced and one incarnation is replaced | Node ID/state epoch | New epoch fences old operations and certificate |
+| Managed backup restored onto a different installation | Restore rejects the identity mismatch; local root may explicitly detach before reuse and later enrollment establishes a new identity | Target node identity plus restored local configuration | Rejected restore writes no state; detached state has no controller authority |
+| Node data directory cloned byte for byte | Clone remains offline until local root detaches it; controller later detects duplicate active identity and revokes/re-enrolls one side | Copied node identity until detach | Local code cannot identify a complete clone without controller evidence; never run both copies as managed nodes |
 | Operation delivered twice before execution | Second delivery observes accepted/leased operation state | Node SQLite | Application service executes once per active operation |
 | Crash before operation acceptance is durable | Redelivery is safe and starts execution once | Controller queued operation | No local mutation occurred |
 | Crash after acceptance before candidate build | Resume the same accepted operation | Node SQLite | No mutation and no duplicate resource |

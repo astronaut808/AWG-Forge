@@ -5,10 +5,16 @@
 ### Added
 
 - Added a dormant managed-node desired-state commit foundation with epoch and generation fencing, bounded idempotent success receipts, and startup recovery for interrupted runtime changes. Multi-node enrollment and control remain unavailable until later implementation phases.
+- Added a process-lifetime `boot_id` foundation for future restart confirmation without persisting it in node state.
 
 ### Changed
 
 - Centralized protocol profile registration and parameter catalogs; the browser API and Web UI now consume server-provided profile names and experimental status instead of maintaining independent profile tables.
+- Updated the Aislop development quality gate from v0.14 to v0.16 and revalidated the project against its recalibrated scoring model.
+
+### Security
+
+- Fence backup restores across managed-node identities: only an exact in-place identity match is preserved automatically; backup transfer to a new or different installation and managed/standalone transitions require explicit local detachment while retaining tunnel configuration without controller authority. Restore now requires the server to be stopped and holds an exclusive state-directory lock for the complete operation.
 
 ## v0.19.0 - 2026-09-05
 
