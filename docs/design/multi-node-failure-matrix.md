@@ -27,15 +27,15 @@ test before the corresponding capability can be released.
 | Validation or capability check fails | Typed terminal failure; no render, save, or runtime apply | Node SQLite failure receipt | Stable problem code returned on replay |
 | Candidate render fails | Current state/runtime remain unchanged | Existing node state | Rollback is not needed because apply did not start |
 | Runtime apply fails | Existing runtime and state are restored | Existing node state | Doctor reports failure without generation increment |
-| Crash after runtime apply before final state save | Startup restores runtime from persisted desired state | Existing node state | Operation remains unknown/reconcilable, never successful |
-| Final state save fails | Runtime rollback restores previous configuration | Existing node state | No generation increment or success result |
+| Crash after runtime apply before final state save | Startup restores runtime from persisted desired state | Existing node state; secret-free pending journal is recovery evidence only | Operation remains unknown/reconcilable, never successful; journal is removed only after convergence |
+| Final state save fails | Runtime rollback restores previous configuration | Existing node state; secret-free pending journal is recovery evidence only | No generation increment or success result; failed rollback leaves the journal for startup recovery |
 | Crash after state and receipt commit before result upload | Replay returns durable result without reapplying | New node state plus receipt | Resource ID and generation are unchanged |
 | Controller crashes after receiving result before acknowledgement | Node resubmits the same result | `state.json` success receipt or SQLite non-mutating receipt | Controller stores one terminal transition |
 | Stale expected generation | Operation fails with conflict and requests fresh snapshot | Node `state.json` | No last-write-wins mutation |
 | State epoch or binding epoch mismatch | Operation is rejected as stale authority | Node identity/binding | No mutation even if operation ID is new |
 | Operation expires while node is offline | Operation becomes expired and is never delivered | Controller operation row | Reconnect does not execute it |
 | Controller SQLite unavailable | Controller auth and mutations fail closed; nodes keep forwarding | Node state/runtime | No fallback auth or in-memory mutation queue |
-| Node SQLite unavailable | Remote mutation does not start because receipt cannot be durable | Node `state.json` | Local standalone operation remains diagnosable |
+| Node SQLite unavailable | Remote delivery and acceptance pause; committed success replay remains available from node state | Node `state.json` success receipts | No mutation starts without its durable acceptance path; local standalone operation remains diagnosable |
 | Snapshot contains unknown/new fields | Compatible controller ignores allowed additive fields | Node remains authority | Current/previous contract compatibility test passes |
 | Node lacks requested capability | Controller disables action and node rejects forged request | Advertised capabilities | No fallback to generic command execution |
 | Secret artifact generated, then controller crashes | Artifact is lost and must be regenerated | Node state only | No secret exists in operation DB or logs |

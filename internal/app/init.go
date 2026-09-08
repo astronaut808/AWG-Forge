@@ -40,9 +40,17 @@ func (s *Service) initLocked() (config.State, error) {
 
 func (s *Service) initWithOptionsLocked(options InitOptions) (config.State, error) {
 	if state, err := s.store.Load(); err == nil {
+		if err := s.recoverPendingDesiredStateCommitLocked(state); err != nil {
+			return config.State{}, fmt.Errorf("recover pending desired-state commit: %w", err)
+		}
 		return s.repairLoadedState(state)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return config.State{}, err
+	}
+	if _, err := s.store.LoadPendingDesiredStateCommit(); err == nil {
+		return config.State{}, errors.New("cannot initialize state while a desired-state commit journal exists")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return config.State{}, fmt.Errorf("load desired-state commit journal: %w", err)
 	}
 
 	return s.createInitialState(options)

@@ -38,6 +38,7 @@ type Service struct {
 	mu         sync.Mutex
 	cfg        config.Config
 	store      storage.Store
+	saveState  func(config.State) error
 	audit      audit.Logger
 	runtime    *observability.Logger
 	runtimeOps runtimeOperations
@@ -127,6 +128,7 @@ func New(cfg config.Config) *Service {
 
 func NewWithRuntimeLog(cfg config.Config, runtimeLog *observability.Logger) *Service {
 	service := &Service{cfg: cfg, store: storage.New(cfg.ConfigDir), audit: audit.New(cfg), runtime: runtimeLog}
+	service.saveState = service.store.Save
 	service.runtimeOps = runtimeOperations{
 		applyTunnel:   service.apply,
 		removeTunnel:  service.removeTunnelRuntime,

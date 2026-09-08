@@ -5,13 +5,13 @@ go 1.26.7
 require (
 	github.com/boombuler/barcode v1.1.0
 	github.com/eggsampler/acme/v3 v3.8.2
+	github.com/google/uuid v1.6.0
 	golang.org/x/crypto v0.55.0
 	modernc.org/sqlite v1.57.0
 )
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
