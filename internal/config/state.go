@@ -3,14 +3,35 @@ package config
 import "time"
 
 type State struct {
-	SchemaVersion     int       `json:"schema_version"`
-	SessionSecret     string    `json:"session_secret"`
-	ServerHost        string    `json:"server_host"`
-	ExternalInterface string    `json:"external_interface"`
-	Warp              Warp      `json:"warp,omitempty"`
-	Tunnels           []Tunnel  `json:"tunnels"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
+	SchemaVersion     int               `json:"schema_version"`
+	SessionSecret     string            `json:"session_secret"`
+	ServerHost        string            `json:"server_host"`
+	ExternalInterface string            `json:"external_interface"`
+	ManagedNode       *ManagedNodeState `json:"managed_node,omitempty"`
+	Warp              Warp              `json:"warp,omitempty"`
+	Tunnels           []Tunnel          `json:"tunnels"`
+	CreatedAt         time.Time         `json:"created_at"`
+	UpdatedAt         time.Time         `json:"updated_at"`
+}
+
+// ManagedNodeState exists only after explicit controller enrollment.
+// DesiredGeneration is independent from per-tunnel ConfigRevision.
+type ManagedNodeState struct {
+	NodeID             string                `json:"node_id"`
+	ControllerID       string                `json:"controller_id"`
+	StateEpoch         string                `json:"state_epoch"`
+	BindingEpoch       uint64                `json:"binding_epoch"`
+	DesiredGeneration  uint64                `json:"desired_generation"`
+	SuccessfulReceipts []DesiredStateReceipt `json:"successful_receipts,omitempty"`
+}
+
+// DesiredStateReceipt proves that one operation and its desired-state change
+// were committed together. The idempotency key is stored only as a hash.
+type DesiredStateReceipt struct {
+	OperationID        string    `json:"operation_id"`
+	IdempotencyKeyHash string    `json:"idempotency_key_hash"`
+	DesiredGeneration  uint64    `json:"desired_generation"`
+	CompletedAt        time.Time `json:"completed_at"`
 }
 
 type ProtocolParams map[string]string

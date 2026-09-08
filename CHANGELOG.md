@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Added a dormant managed-node desired-state commit foundation with epoch and generation fencing, bounded idempotent success receipts, and startup recovery for interrupted runtime changes. Multi-node enrollment and control remain unavailable until later implementation phases.
+
 ### Changed
 
 - Centralized protocol profile registration and parameter catalogs; the browser API and Web UI now consume server-provided profile names and experimental status instead of maintaining independent profile tables.

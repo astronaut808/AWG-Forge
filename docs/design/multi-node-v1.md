@@ -1,7 +1,29 @@
 # Multi-node control plane v1
 
-Status: proposed. This document defines implementation constraints; it does not
-describe functionality available in the current release.
+Status: in progress. This document defines implementation constraints; it does
+not describe functionality available in the current release.
+
+## Implementation status
+
+The node-local transaction foundation is implemented but dormant:
+
+- standalone state omits all managed-node metadata and keeps existing behavior;
+- explicit managed state carries `state_epoch`, `binding_epoch`, and
+  `desired_generation` independently from `ConfigRevision`;
+- a successful managed mutation commits its bounded idempotency receipt in the
+  same atomic `state.json` replacement as the desired state;
+- a root-private, secret-free recovery journal lets startup reconcile runtime
+  after interruption between apply and final state persistence.
+
+Enrollment, controller activation, the control listener, operation delivery,
+receipt acknowledgement, and receipt pruning are not implemented yet. No
+ordinary install or upgrade enables managed mode.
+
+Before enrollment is enabled, every existing local desired-state mutation must
+either use this same commit boundary or be rejected while in managed node mode.
+This preserves a single writer and prevents local UI or CLI changes from
+bypassing `desired_generation` fencing. Root-authorized detach and recovery use
+explicit epoch or binding transitions rather than ordinary tunnel mutations.
 
 ## Goal
 
@@ -148,6 +170,7 @@ Delivery is at least once; execution is idempotent.
 
 - Serialize mutations per node. Read-only reporting may run concurrently.
 - Controller assigns immutable operation IDs and deterministic resource IDs.
+- A node rejects reuse of an idempotency key under a different operation ID.
 - Every mutation carries `state_epoch`, `binding_epoch`, and
   `expected_desired_generation`.
 - Node records acceptance before execution. For a successful mutation, it
