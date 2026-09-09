@@ -25,6 +25,7 @@ func TestManagedNodeStateJSONRoundTrip(t *testing.T) {
 			ControllerID:      "22222222-2222-4222-8222-222222222222",
 			StateEpoch:        "33333333-3333-4333-8333-333333333333",
 			BindingEpoch:      2,
+			BootSequence:      3,
 			DesiredGeneration: 4,
 			SuccessfulReceipts: []DesiredStateReceipt{{
 				OperationID:        "44444444-4444-4444-8444-444444444444",
@@ -42,7 +43,7 @@ func TestManagedNodeStateJSONRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(encoded, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if decoded.ManagedNode == nil || decoded.ManagedNode.DesiredGeneration != 4 {
+	if decoded.ManagedNode == nil || decoded.ManagedNode.BootSequence != 3 || decoded.ManagedNode.DesiredGeneration != 4 {
 		t.Fatalf("managed-node metadata did not round-trip: %#v", decoded.ManagedNode)
 	}
 	if len(decoded.ManagedNode.SuccessfulReceipts) != 1 || decoded.ManagedNode.SuccessfulReceipts[0].OperationID != state.ManagedNode.SuccessfulReceipts[0].OperationID {

@@ -96,18 +96,41 @@ type FileMeta struct {
 	SHA256 string `json:"sha256"`
 }
 
-func Create(ctx context.Context, cfg config.Config, service *app.Service, password string, opts Options) (Archive, error) {
+func Create(ctx context.Context, cfg config.Config, service *app.Service, password string, opts Options) (archive Archive, err error) {
 	_ = ctx
+	if err := validatePassword(password); err != nil {
+		return Archive{}, err
+	}
+	if _, err := service.Init(); err != nil {
+		return Archive{}, err
+	}
+	mutationLock, err := storage.AcquireStateMutationLock(cfg.ConfigDir)
+	if err != nil {
+		return Archive{}, err
+	}
+	defer func() {
+		err = errors.Join(err, mutationLock.Close())
+	}()
+	store := storage.New(cfg.ConfigDir)
+	if _, err := store.LoadPendingDesiredStateCommit(); err == nil {
+		return Archive{}, errors.New("cannot create backup while a desired-state commit journal exists")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return Archive{}, fmt.Errorf("load desired-state commit journal: %w", err)
+	}
+	state, err := store.Load()
+	if err != nil {
+		return Archive{}, err
+	}
+	return createFromState(cfg, state, password, opts)
+}
+
+func createFromState(cfg config.Config, state config.State, password string, opts Options) (Archive, error) {
 	if err := validatePassword(password); err != nil {
 		return Archive{}, err
 	}
 	now := opts.Now
 	if now.IsZero() {
 		now = time.Now().UTC()
-	}
-	state, err := service.Init()
-	if err != nil {
-		return Archive{}, err
 	}
 	plain, err := createPlainZip(cfg, state, now)
 	if err != nil {
@@ -158,6 +181,13 @@ func RestoreWithOptions(ctx context.Context, cfg config.Config, password, path s
 	defer func() {
 		err = errors.Join(err, stateLock.Close())
 	}()
+	mutationLock, err := storage.AcquireStateMutationLock(cfg.ConfigDir)
+	if err != nil {
+		return RestoreResult{}, err
+	}
+	defer func() {
+		err = errors.Join(err, mutationLock.Close())
+	}()
 
 	currentState, currentExists, err := loadRestoreTargetState(cfg.ConfigDir)
 	if err != nil {
@@ -180,9 +210,11 @@ func RestoreWithOptions(ctx context.Context, cfg config.Config, password, path s
 			return RestoreResult{}, err
 		}
 	}
-	if preRestore, ok, err := preRestoreBackupFile(ctx, cfg, password); err != nil {
-		return RestoreResult{}, err
-	} else if ok {
+	if currentExists {
+		preRestore, err := preRestoreBackupFile(cfg, currentState, password)
+		if err != nil {
+			return RestoreResult{}, err
+		}
 		validated.Files = append(validated.Files, preRestore)
 	}
 	if err := restoreFiles(cfg.ConfigDir, validated.Files); err != nil {

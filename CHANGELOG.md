@@ -15,6 +15,7 @@
 ### Security
 
 - Fence backup restores across managed-node identities: only an exact in-place identity match is preserved automatically; backup transfer to a new or different installation and managed/standalone transitions require explicit local detachment while retaining tunnel configuration without controller authority. Restore now requires the server to be stopped and holds an exclusive state-directory lock for the complete operation.
+- Keep enrolled nodes locally manageable while making the node the sole commit authority: Web UI, CLI, autonomous policy, and future controller transactions are serialized across processes; successful `state.json` tunnel, client, protocol, WARP, automatic repair, and traffic-limit enforcement changes advance `desired_generation`, so the controller can refresh from the node and stale remote operations fail instead of overwriting newer local state.
 
 ## v0.19.0 - 2026-09-05
 

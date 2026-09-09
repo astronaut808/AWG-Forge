@@ -181,7 +181,7 @@
       "put": {
         "operationId": "putNodeSnapshot",
         "summary": "Publish a redacted node snapshot",
-        "description": "The snapshot is an allowlisted observation. It never contains private keys, preshared keys, full configs, QR or vpn:// payloads, WARP credentials, environment values, or raw command output.",
+        "description": "The snapshot is an allowlisted observation from the authoritative node state. A newer desired_generation refreshes the controller's desired-state projection; a same-generation snapshot may refresh runtime observations when its snapshot_sequence is newer for the active boot_id. The controller never overwrites node state from its cache. The snapshot never contains private keys, preshared keys, full configs, QR or vpn:// payloads, WARP credentials, environment values, or raw command output.",
         "tags": ["Node"],
         "requestBody": {
           "required": true,
@@ -578,9 +578,14 @@
       },
       "NodePresence": {
         "type": "object",
-        "required": ["boot_id", "application_version", "contract_version", "state_epoch", "binding_epoch", "desired_generation", "capabilities", "observed_at"],
+        "required": ["boot_id", "boot_sequence", "application_version", "contract_version", "state_epoch", "binding_epoch", "desired_generation", "capabilities", "observed_at"],
         "properties": {
           "boot_id": { "$ref": "#/components/schemas/BootID" },
+          "boot_sequence": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Persisted monotonic process-start sequence within one state_epoch. The controller accepts a replacement session only from a greater sequence; the same sequence may renew only the matching boot_id."
+          },
           "application_version": { "type": "string", "minLength": 1, "maxLength": 64 },
           "contract_version": { "type": "integer", "const": 1 },
           "state_epoch": { "$ref": "#/components/schemas/Epoch" },
@@ -593,9 +598,16 @@
       },
       "PresenceAccepted": {
         "type": "object",
-        "required": ["controller_id", "server_time", "next_poll_seconds", "renew_certificate_after"],
+        "required": ["controller_id", "session_id", "session_expires_at", "server_time", "next_poll_seconds", "renew_certificate_after"],
         "properties": {
           "controller_id": { "$ref": "#/components/schemas/UUID" },
+          "session_id": {
+            "allOf": [
+              { "$ref": "#/components/schemas/UUID" }
+            ],
+            "description": "Controller-issued node session bound to the authenticated certificate, boot_id, boot_sequence, state_epoch, and binding_epoch."
+          },
+          "session_expires_at": { "type": "string", "format": "date-time" },
           "server_time": { "type": "string", "format": "date-time" },
           "next_poll_seconds": { "type": "integer", "minimum": 1, "maximum": 300 },
           "renew_certificate_after": { "type": "string", "format": "date-time" }
@@ -604,9 +616,25 @@
       },
       "NodeSnapshot": {
         "type": "object",
-        "required": ["boot_id", "state_epoch", "binding_epoch", "desired_generation", "observed_at", "service_status", "network", "tunnels"],
+        "required": ["session_id", "boot_id", "boot_sequence", "snapshot_sequence", "state_epoch", "binding_epoch", "desired_generation", "observed_at", "service_status", "network", "tunnels"],
         "properties": {
+          "session_id": {
+            "allOf": [
+              { "$ref": "#/components/schemas/UUID" }
+            ],
+            "description": "Active controller-issued session; snapshots from superseded or expired sessions are rejected."
+          },
           "boot_id": { "$ref": "#/components/schemas/BootID" },
+          "boot_sequence": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Process-start sequence accepted when the active session was established."
+          },
+          "snapshot_sequence": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Monotonic snapshot sequence within one boot_id; resets after process restart."
+          },
           "state_epoch": { "$ref": "#/components/schemas/Epoch" },
           "binding_epoch": { "type": "integer", "minimum": 1 },
           "desired_generation": { "type": "integer", "minimum": 0 },

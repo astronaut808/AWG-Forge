@@ -3,6 +3,7 @@ package app_test
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"maps"
 	"os"
@@ -1520,6 +1521,20 @@ func TestInitRepairsOutOfRangePersistedProtocolParams(t *testing.T) {
 	}
 	if len(matches) != 1 {
 		t.Fatalf("repair backups = %d, want 1", len(matches))
+	}
+	backupBytes, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var backupState config.State
+	if err := json.Unmarshal(backupBytes, &backupState); err != nil {
+		t.Fatal(err)
+	}
+	if got := backupState.Tunnels[0].ProtocolParams["Jc"]; got != "11" {
+		t.Fatalf("backup Jc = %q, want pre-repair value 11", got)
+	}
+	if got := backupState.Tunnels[0].ProtocolParams["S1"]; got != "142" {
+		t.Fatalf("backup S1 = %q, want pre-repair value 142", got)
 	}
 }
 

@@ -52,6 +52,8 @@ controlAjv.addSchema({
 });
 
 const enrollmentClaim = requireSchema(controlAjv, "EnrollmentClaimRequest");
+const nodePresence = requireSchema(controlAjv, "NodePresence");
+const presenceAccepted = requireSchema(controlAjv, "PresenceAccepted");
 const nodeSnapshot = requireSchema(controlAjv, "NodeSnapshot");
 const operationEnvelope = requireSchema(controlAjv, "OperationEnvelope");
 const problem = requireSchema(controlAjv, "Problem");
@@ -60,7 +62,53 @@ const ids = {
   boot: "103354a0-e154-4d4c-bfde-f71dbbc7394f",
   epoch: "7238def3-36b3-4cdd-896a-7dd05571bd26",
   operation: "4c0fb636-e234-4726-85d5-38d95de9029f",
+  session: "7e11fcbf-21fa-4b74-aa41-b0f62aee4e39",
 };
+const redactedSnapshot = {
+  session_id: ids.session,
+  boot_id: ids.boot,
+  boot_sequence: 7,
+  snapshot_sequence: 1,
+  state_epoch: ids.epoch,
+  binding_epoch: 1,
+  desired_generation: 3,
+  observed_at: "2026-09-08T00:00:00Z",
+  service_status: "ready",
+  network: { external_interface_confirmed: false },
+  tunnels: [
+    {
+      id: "7d774c16b2c92872",
+      name: "AWG 2",
+      interface: "awg20",
+      profile: "awg_2_0",
+      enabled: true,
+      runtime_status: "up",
+      listen_port: 49411,
+      subnet: "10.28.0.0/24",
+      egress: "wan",
+      clients_total: 1,
+      clients_online: 1,
+      clients: [
+        {
+          id: "12a6acf567ffb5ae",
+          name: "phone",
+          enabled: true,
+          runtime_status: "online",
+          last_seen_at: "2026-09-08T00:00:00Z",
+          expires_at: null,
+          rx_bytes: 1024,
+          tx_bytes: 2048,
+        },
+      ],
+    },
+  ],
+  findings: [],
+};
+const snapshotWithoutSequence = structuredClone(redactedSnapshot);
+delete snapshotWithoutSequence.snapshot_sequence;
+const snapshotWithoutSession = structuredClone(redactedSnapshot);
+delete snapshotWithoutSession.session_id;
+
 const controlCases = [
   [
     "valid enrollment claim",
@@ -90,59 +138,72 @@ const controlCases = [
     false,
   ],
   [
-    "redacted snapshot",
-    nodeSnapshot,
+    "presence carries a monotonic boot sequence",
+    nodePresence,
     {
       boot_id: ids.boot,
+      boot_sequence: 7,
+      application_version: "0.20.0-unreleased",
+      contract_version: 1,
       state_epoch: ids.epoch,
       binding_epoch: 1,
       desired_generation: 3,
+      capabilities: ["snapshot.read"],
       observed_at: "2026-09-08T00:00:00Z",
-      service_status: "ready",
-      network: { external_interface_confirmed: false },
-      tunnels: [
-        {
-          id: "7d774c16b2c92872",
-          name: "AWG 2",
-          interface: "awg20",
-          profile: "awg_2_0",
-          enabled: true,
-          runtime_status: "up",
-          listen_port: 49411,
-          subnet: "10.28.0.0/24",
-          egress: "wan",
-          clients_total: 1,
-          clients_online: 1,
-          clients: [
-            {
-              id: "12a6acf567ffb5ae",
-              name: "phone",
-              enabled: true,
-              runtime_status: "online",
-              last_seen_at: "2026-09-08T00:00:00Z",
-              expires_at: null,
-              rx_bytes: 1024,
-              tx_bytes: 2048,
-            },
-          ],
-        },
-      ],
-      findings: [],
     },
     true,
+  ],
+  [
+    "presence rejects a missing boot sequence",
+    nodePresence,
+    {
+      boot_id: ids.boot,
+      application_version: "0.20.0-unreleased",
+      contract_version: 1,
+      state_epoch: ids.epoch,
+      binding_epoch: 1,
+      desired_generation: 3,
+      capabilities: ["snapshot.read"],
+      observed_at: "2026-09-08T00:00:00Z",
+    },
+    false,
+  ],
+  [
+    "presence acceptance establishes a node session",
+    presenceAccepted,
+    {
+      controller_id: "0e23d194-5036-4b4f-af38-e0a4fbeb6198",
+      session_id: ids.session,
+      session_expires_at: "2026-09-08T00:05:00Z",
+      server_time: "2026-09-08T00:00:00Z",
+      next_poll_seconds: 10,
+      renew_certificate_after: "2026-10-08T00:00:00Z",
+    },
+    true,
+  ],
+  [
+    "redacted snapshot",
+    nodeSnapshot,
+    redactedSnapshot,
+    true,
+  ],
+  [
+    "snapshot requires per-boot ordering",
+    nodeSnapshot,
+    snapshotWithoutSequence,
+    false,
+  ],
+  [
+    "snapshot requires the active controller session",
+    nodeSnapshot,
+    snapshotWithoutSession,
+    false,
   ],
   [
     "snapshot rejects secret-shaped additions",
     nodeSnapshot,
     {
-      boot_id: ids.boot,
-      state_epoch: ids.epoch,
-      binding_epoch: 1,
-      desired_generation: 3,
-      observed_at: "2026-09-08T00:00:00Z",
-      service_status: "ready",
-      network: { external_interface_confirmed: false },
-      tunnels: [],
+      ...redactedSnapshot,
       private_key: "must-not-cross-the-boundary",
     },
     false,

@@ -48,6 +48,10 @@ Status: proposed. This threat model applies to the design in
 - Controller snapshots are allowlists and contain no secret material.
 - A mutating success is reported only after the desired state and its operation
   receipt are durably committed together.
+- Managed-node desired state has one commit authority: the node serializes
+  local UI, CLI, automatic repair, autonomous policy, and controller-requested
+  mutations across processes and advances one monotonic generation for every
+  durable change.
 - Existing forwarding never depends on controller availability.
 - Standalone authentication and behavior do not change before explicit
   controller activation or node enrollment.
@@ -68,6 +72,8 @@ Status: proposed. This threat model applies to the design in
 | Malicious or compromised node | Per-node identity; strict node-to-resource mapping; bounded schemas; snapshots treated as untrusted observations | Controller UI may display false health information from that node |
 | Operation replay | Immutable operation ID, idempotency key, expiry, expected generation, and a success receipt committed with desired state | Database restore may reintroduce old queued work; generation and receipts must reject duplicate execution |
 | Out-of-order mutation | One mutation lease per node; expected generation conflict; no blind last-write-wins | Long-running operations may delay later work |
+| Concurrent local CLI, browser, policy, and controller mutations overwrite each other | Node holds one cross-process mutation lock through read, runtime apply, commit, or rollback; both remote control surfaces use expected generation; stale controller work is rejected and refreshed from the node | A future local browser API must send its observed generation before enrollment is enabled |
+| Delayed presence or snapshots roll back controller observations | Presence replaces a session only for a greater persisted `boot_sequence`, or renews the matching `boot_id` at the same sequence; snapshots require the active certificate-bound `session_id` and an increasing per-boot `snapshot_sequence`; desired state additionally requires a nondecreasing generation | A compromised node can still report false observations for itself |
 | Crash between runtime apply and state save | Explicit commit protocol and startup reconciliation to persisted desired state | Brief runtime divergence before reconciliation |
 | Secret artifact logged or retained | Dedicated in-memory TTL store, no-store response, redaction tests, no durable operation payload | Secret exists in controller memory while being relayed |
 | Offline destructive command surprises operator | No implicit offline queue; explicit **Run when online**, visible expiry, cancellation | Operator can still intentionally queue a harmful action |

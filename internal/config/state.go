@@ -21,6 +21,7 @@ type ManagedNodeState struct {
 	ControllerID       string                `json:"controller_id"`
 	StateEpoch         string                `json:"state_epoch"`
 	BindingEpoch       uint64                `json:"binding_epoch"`
+	BootSequence       uint64                `json:"boot_sequence,omitempty"`
 	DesiredGeneration  uint64                `json:"desired_generation"`
 	SuccessfulReceipts []DesiredStateReceipt `json:"successful_receipts,omitempty"`
 }

@@ -29,8 +29,10 @@ func (s *Service) Init() (config.State, error) {
 }
 
 func (s *Service) InitWithOptions(options InitOptions) (config.State, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lockStateMutation(); err != nil {
+		return config.State{}, err
+	}
+	defer s.unlockStateMutation()
 	return s.initWithOptionsLocked(options)
 }
 
@@ -186,7 +188,15 @@ func validateInitialTunnelOptions(options InitOptions, spec tunnelSpec) error {
 }
 
 func (s *Service) repairLoadedState(state config.State) (config.State, error) {
-	originalState := state
+	if state.ManagedNode != nil {
+		if err := validateManagedNodeState(state.ManagedNode); err != nil {
+			return config.State{}, err
+		}
+	}
+	originalState, err := cloneState(state)
+	if err != nil {
+		return config.State{}, fmt.Errorf("clone state before repair: %w", err)
+	}
 	changed := false
 	protocolRepaired := false
 	if state.SchemaVersion < config.CurrentStateSchemaVersion {
@@ -267,7 +277,7 @@ func (s *Service) repairLoadedState(state config.State) (config.State, error) {
 				return config.State{}, err
 			}
 		}
-		if err := s.store.Save(state); err != nil {
+		if err := s.saveLocalDesiredState(&state); err != nil {
 			return config.State{}, err
 		}
 	}
