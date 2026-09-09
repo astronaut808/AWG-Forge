@@ -34,21 +34,27 @@ type WarpRuntimeStatus struct {
 }
 
 func (s *Service) RegisterWarp(ctx context.Context) (config.Warp, error) {
-	privateKey, publicKey, err := keys.PrivateKey()
-	if err != nil {
+	if err := s.lockStateMutation(); err != nil {
 		return config.Warp{}, err
 	}
-	registered, err := registerWarp(ctx, privateKey, publicKey)
-	if err != nil {
-		return config.Warp{}, err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.unlockStateMutation()
 	state, err := s.initLocked()
 	if err != nil {
 		return config.Warp{}, err
 	}
 	previous, err := cloneState(state)
+	if err != nil {
+		return config.Warp{}, err
+	}
+	// Reject invalid or exhausted managed state before external registration.
+	if err := advanceLocalDesiredGeneration(&state); err != nil {
+		return config.Warp{}, err
+	}
+	privateKey, publicKey, err := keys.PrivateKey()
+	if err != nil {
+		return config.Warp{}, err
+	}
+	registered, err := registerWarp(ctx, privateKey, publicKey)
 	if err != nil {
 		return config.Warp{}, err
 	}
@@ -93,13 +99,15 @@ func (s *Service) RegisterWarp(ctx context.Context) (config.Warp, error) {
 }
 
 func (s *Service) ImportWarpConfig(text string) (config.Warp, error) {
-	parsed, err := warp.ParseWireGuardConfig(text)
+	if err := s.lockStateMutation(); err != nil {
+		return config.Warp{}, err
+	}
+	defer s.unlockStateMutation()
+	state, err := s.initLocked()
 	if err != nil {
 		return config.Warp{}, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	state, err := s.initLocked()
+	parsed, err := warp.ParseWireGuardConfig(text)
 	if err != nil {
 		return config.Warp{}, err
 	}
@@ -111,7 +119,7 @@ func (s *Service) ImportWarpConfig(text string) (config.Warp, error) {
 	parsed.UpdatedAt = now
 	state.Warp = parsed
 	state.UpdatedAt = now
-	if err := s.store.Save(state); err != nil {
+	if err := s.saveLocalDesiredState(&state); err != nil {
 		return config.Warp{}, err
 	}
 	if s.cfg.ApplyConfig {
@@ -144,8 +152,10 @@ func (s *Service) ImportWarpConfig(text string) (config.Warp, error) {
 }
 
 func (s *Service) DeleteWarpConfig(ctx context.Context) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lockStateMutation(); err != nil {
+		return err
+	}
+	defer s.unlockStateMutation()
 	state, err := s.initLocked()
 	if err != nil {
 		return err
@@ -156,6 +166,10 @@ func (s *Service) DeleteWarpConfig(ctx context.Context) error {
 		}
 	}
 	unregister := state.Warp.Registered()
+	// Reject invalid or exhausted managed state before external unregistration.
+	if err := advanceLocalDesiredGeneration(&state); err != nil {
+		return err
+	}
 	if unregister {
 		if err := warp.Unregister(ctx, state.Warp); err != nil {
 			s.log("warn", "warp.unregister.failed", "WARP unregister failed", warpAuditFields(state.Warp, state), err)
@@ -176,8 +190,10 @@ func (s *Service) DeleteWarpConfig(ctx context.Context) error {
 }
 
 func (s *Service) RestartWarp() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lockStateMutation(); err != nil {
+		return err
+	}
+	defer s.unlockStateMutation()
 	state, err := s.initLocked()
 	if err != nil {
 		return err

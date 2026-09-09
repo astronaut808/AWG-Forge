@@ -33,6 +33,31 @@ var (
 	ErrOperationReceiptCapacity   = errors.New("successful operation receipt capacity reached")
 )
 
+// advanceLocalDesiredGeneration prepares a node-local desired-state commit so
+// its eventual save can fence stale remote operations.
+func advanceLocalDesiredGeneration(state *config.State) error {
+	if state.ManagedNode == nil {
+		return nil
+	}
+	if err := validateManagedNodeState(state.ManagedNode); err != nil {
+		return err
+	}
+	if state.ManagedNode.DesiredGeneration == math.MaxUint64 {
+		return ErrDesiredGenerationExhausted
+	}
+	state.ManagedNode.DesiredGeneration++
+	return nil
+}
+
+// saveLocalDesiredState persists an ordinary node-originated configuration
+// commit. Callers hold s.mu; rollback and observational saves bypass this path.
+func (s *Service) saveLocalDesiredState(state *config.State) error {
+	if err := advanceLocalDesiredGeneration(state); err != nil {
+		return err
+	}
+	return s.store.Save(*state)
+}
+
 // DesiredStateMutationRequest fences a controller mutation to one node state.
 type DesiredStateMutationRequest struct {
 	OperationID               string
@@ -58,8 +83,10 @@ type desiredStateCommitResult struct {
 // success receipt together. Apply and Rollback must treat the supplied states
 // as immutable and must not persist them.
 func (s *Service) commitDesiredState(mutation desiredStateMutation) (desiredStateCommitResult, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lockStateMutation(); err != nil {
+		return desiredStateCommitResult{}, err
+	}
+	defer s.unlockStateMutation()
 
 	if err := validateDesiredStateMutation(mutation); err != nil {
 		return desiredStateCommitResult{}, err

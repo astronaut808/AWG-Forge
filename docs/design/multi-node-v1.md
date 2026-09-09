@@ -17,17 +17,35 @@ The node-local transaction foundation is implemented but dormant:
 - backup restore preserves a managed identity only on an exact in-place match;
   transfer to a new or different installation and mode transitions require
   explicit local detach;
-- `boot_id` is generated once per process and is never persisted.
+- `boot_id` is generated once per process and is never persisted; the dormant
+  control-agent startup primitive atomically persists and reuses one
+  `boot_sequence` for its `Service` instance;
+- local UI and CLI desired-state writes remain available after enrollment and
+  advance `desired_generation` on the node, including tunnel, client, protocol,
+  WARP, and traffic-limit enforcement changes;
+- automatic repair advances the same generation, while runtime-only
+  maintenance and observational status updates do not;
+- a private cross-process mutation lock serializes the Web UI, CLI, autonomous
+  policy, and future controller transactions for the complete read, apply,
+  commit, or rollback boundary.
 
 Enrollment, controller activation, identity replacement/rebind, the control
 listener, operation delivery, receipt acknowledgement, and receipt pruning are
 not implemented yet. No ordinary install or upgrade enables managed mode.
 
-Before enrollment is enabled, every existing local desired-state mutation must
-either use this same commit boundary or be rejected while in managed node mode.
-This preserves a single writer and prevents local UI or CLI changes from
-bypassing `desired_generation` fencing. Root-authorized detach and recovery use
-explicit epoch or binding transitions rather than ordinary tunnel mutations.
+`state.json` on each node is the desired-state source of truth. The controller
+is a secure remote control surface and redacted inventory cache, not an
+independent configuration owner. Local and controller-requested mutations are
+serialized by the node and advance the same `desired_generation`; an operation
+prepared against an older generation is rejected instead of merged or applied
+last-write-wins. Root-authorized detach and recovery are reserved for identity
+or controller-binding transitions, not ordinary local administration.
+
+Traffic-limit policy remains optional SQLite operational data. Automatic
+enable/disable changes participate in desired generation because they change
+client state. Before remote traffic-limit management is enabled, the controller
+snapshot and typed operation must model the policy and its own concurrency
+semantics explicitly rather than treating SQLite as desired-state authority.
 
 ## Goal
 
@@ -133,7 +151,13 @@ Use distinct identifiers for distinct failure domains:
   committed desired-state mutation;
 - `controller_id`: stable identity preserved by encrypted controller backup;
 - `binding_epoch`: fences operations from a previous controller binding;
-- `boot_id`: random process-start identity used to confirm restart/reconnect.
+- `boot_id`: random process-start identity used to confirm restart/reconnect;
+- `boot_sequence`: persisted monotonic process-start counter within one
+  `state_epoch`, atomically allocated once by the control agent before its first
+  presence request and used to order competing or delayed presence requests;
+- `session_id`: controller-issued, expiring connection identity bound to the
+  authenticated node certificate, `boot_id`, `boot_sequence`, and both state
+  epochs.
 
 Encrypted restore treats identity metadata as a security boundary. A managed
 identity is preserved automatically only when the target installation has the
@@ -164,13 +188,40 @@ state. A successful mutating-operation receipt belongs in the same atomic
 `state.json` commit as the resulting desired state; a SQLite row cannot provide
 that cross-store atomicity.
 
+The controller updates its desired-state projection only from an authenticated
+snapshot with matching identity epochs and a newer generation. At an equal
+generation, a newer `snapshot_sequence` for the active `boot_id` refreshes only
+runtime observations such as health, handshakes, and counters. The sequence is
+monotonic within one process start and resets with `boot_id`. Presence carries a
+persisted `boot_sequence`; the controller replaces an active session only for a
+greater sequence, while the same sequence may renew only its matching
+`boot_id`. Presence creates or renews a controller-side session lease;
+snapshots must carry its `session_id`. A newly accepted process start
+supersedes the previous session atomically, and snapshots from an expired or
+superseded session are stale regardless of arrival order. An older generation
+is treated as rollback or stale evidence and is not accepted automatically.
+Local changes are never replayed as controller operations. They become visible
+through the next snapshot, and any queued controller operation based on the
+previous generation fails until explicitly retried against the refreshed state.
+Allocating a boot sequence updates managed identity metadata but does not change
+desired configuration and therefore does not advance `desired_generation`.
+
 ## Desired-state commit boundary
 
 The current application can save state before runtime apply and restore the
 previous state after a failure. A generation counter therefore cannot be added
 to generic `Store.Save` calls.
 
-Remote mutations require an explicit transaction boundary in `internal/app`:
+Local mutations retain their existing render/apply/rollback transactions and
+advance the generation in the first durable candidate-state save. A failed
+candidate save leaves the previous generation; an apply failure follows the
+existing rollback path, and incomplete rollback remains an explicit recovery
+condition. The service holds `.state.mutation.lock` for the complete transaction
+so a separate CLI process cannot read stale state or race runtime application;
+offline restore takes the same lock and never moves it with restored files.
+Remote mutations
+require the stricter explicit transaction boundary in `internal/app` because
+their durable success receipt must be committed with the new state:
 
 1. Validate the typed operation, identity epochs, expected generation, and
    capabilities.

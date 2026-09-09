@@ -54,6 +54,42 @@ func TestBackupRestoreRoundTripEncrypted(t *testing.T) {
 	assertMode(t, restoreCfg.ConfigDir, 0700)
 	assertMode(t, filepath.Join(restoreCfg.ConfigDir, "state.json"), 0600)
 	assertMode(t, filepath.Join(restoreCfg.ConfigDir, storage.StateLockFileName), 0600)
+	assertMode(t, filepath.Join(restoreCfg.ConfigDir, storage.StateMutationLockFileName), 0600)
+}
+
+func TestBackupWaitsForStateMutationTransaction(t *testing.T) {
+	cfg := testConfig(t)
+	svc := app.New(cfg)
+	if _, err := svc.Init(); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := storage.AcquireStateMutationLock(cfg.ConfigDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := Create(context.Background(), cfg, svc, testPassword, Options{})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		_ = lock.Close()
+		t.Fatalf("backup completed during a state mutation transaction: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if err := lock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("backup did not resume after the state mutation transaction")
+	}
 }
 
 func TestBackupIncludesTLSSettings(t *testing.T) {
@@ -543,14 +579,46 @@ func TestRestoreRejectsStateDirectoryInUseBeforeReadingTarget(t *testing.T) {
 
 func TestVerifyRejectsInvalidManagedNodeMetadata(t *testing.T) {
 	cfg := testConfig(t)
-	managed := testManagedBackupState()
-	managed.StateEpoch = "not-a-uuid"
-	svc, _ := managedBackupService(t, cfg, managed)
+	svc, _ := managedBackupService(t, cfg, testManagedBackupState())
 	archive, err := Create(context.Background(), cfg, svc, testPassword, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = Verify(context.Background(), cfg, testPassword, writeTempArchive(t, archive.Data))
+	plain, err := decrypt(archive.Data, testPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mutatedStateJSON []byte
+	mutated := mutatePlainZip(t, plain, func(name string, b []byte) []byte {
+		switch name {
+		case "state.json":
+			var state config.State
+			if err := json.Unmarshal(b, &state); err != nil {
+				t.Fatal(err)
+			}
+			state.ManagedNode.StateEpoch = "not-a-uuid"
+			mutatedStateJSON = mustJSON(t, state)
+			return mutatedStateJSON
+		case "metadata.json":
+			var metadata Metadata
+			if err := json.Unmarshal(b, &metadata); err != nil {
+				t.Fatal(err)
+			}
+			for i := range metadata.Files {
+				if metadata.Files[i].Path == "state.json" {
+					metadata.Files[i] = testFileMeta("state.json", mutatedStateJSON)
+				}
+			}
+			return mustJSON(t, metadata)
+		default:
+			return b
+		}
+	})
+	encrypted, err := encrypt(mutated, testPassword, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Verify(context.Background(), cfg, testPassword, writeTempArchive(t, encrypted))
 	if !errors.Is(err, app.ErrInvalidManagedNodeState) {
 		t.Fatalf("verify error = %v, want %v", err, app.ErrInvalidManagedNodeState)
 	}
@@ -757,6 +825,9 @@ func TestSafeRestorePathStaysUnderRoot(t *testing.T) {
 	}
 	if _, err := safeRestorePath(root, storage.StateLockFileName); err == nil {
 		t.Fatal("expected reserved state lock path to be rejected")
+	}
+	if _, err := safeRestorePath(root, storage.StateMutationLockFileName); err == nil {
+		t.Fatal("expected reserved state mutation lock path to be rejected")
 	}
 }
 

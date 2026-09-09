@@ -1,7 +1,6 @@
 package backup
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/astronaut808/awg-forge/internal/app"
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/storage"
 )
@@ -38,7 +36,7 @@ func safeRestorePath(root, archivePath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if clean == storage.StateLockFileName {
+	if clean == storage.StateLockFileName || clean == storage.StateMutationLockFileName {
 		return "", errors.New("backup contains reserved state lock path")
 	}
 	dst := filepath.Join(root, filepath.FromSlash(clean))
@@ -52,20 +50,13 @@ func safeRestorePath(root, archivePath string) (string, error) {
 	return dst, nil
 }
 
-func preRestoreBackupFile(ctx context.Context, cfg config.Config, password string) (restoreFile, bool, error) {
-	if _, err := os.Stat(filepath.Join(cfg.ConfigDir, "state.json")); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return restoreFile{}, false, nil
-		}
-		return restoreFile{}, false, err
-	}
-	service := app.New(cfg)
-	archive, err := Create(ctx, cfg, service, password, Options{})
+func preRestoreBackupFile(cfg config.Config, state config.State, password string) (restoreFile, error) {
+	archive, err := createFromState(cfg, state, password, Options{})
 	if err != nil {
-		return restoreFile{}, false, err
+		return restoreFile{}, err
 	}
 	path := "backups/pre-restore-" + time.Now().UTC().Format("20060102-150405") + ".afbackup"
-	return restoreFile{Path: path, Data: archive.Data}, true, nil
+	return restoreFile{Path: path, Data: archive.Data}, nil
 }
 
 func loadRestoreTargetState(root string) (config.State, bool, error) {
@@ -143,7 +134,7 @@ func restoreFilesWithRename(root string, files []restoreFile, rename func(string
 	if err := copyPrivateFileIfExists(currentStatePath, filepath.Join(old, stateName)); err != nil {
 		return err
 	}
-	if err := moveRootEntries(root, old, rename, filepath.Base(tmp), filepath.Base(old), storage.StateLockFileName, stateName); err != nil {
+	if err := moveRootEntries(root, old, rename, filepath.Base(tmp), filepath.Base(old), storage.StateLockFileName, storage.StateMutationLockFileName, stateName); err != nil {
 		rollbackErr := moveRootEntries(old, root, rename, stateName)
 		if rollbackErr == nil {
 			_ = os.RemoveAll(tmp)
@@ -153,7 +144,7 @@ func restoreFilesWithRename(root string, files []restoreFile, rename func(string
 		return errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
 	}
 	rollback := func(cause error) error {
-		if cleanupErr := removeRootEntries(root, filepath.Base(tmp), filepath.Base(old), storage.StateLockFileName, stateName); cleanupErr != nil {
+		if cleanupErr := removeRootEntries(root, filepath.Base(tmp), filepath.Base(old), storage.StateLockFileName, storage.StateMutationLockFileName, stateName); cleanupErr != nil {
 			return errors.Join(cause, fmt.Errorf("rollback cleanup failed: %w", cleanupErr))
 		}
 		if rollbackErr := moveRootEntries(old, root, rename, stateName); rollbackErr != nil {

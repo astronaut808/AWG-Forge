@@ -49,6 +49,60 @@ func TestNewBootIDReturnsDistinctIDs(t *testing.T) {
 	}
 }
 
+func TestStartManagedNodeBootPersistsOneSequencePerService(t *testing.T) {
+	service := New(testServiceConfig(t))
+	state, err := service.Init()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.ManagedNode = testManagedNodeState()
+	state.ManagedNode.DesiredGeneration = 9
+	if err := service.store.Save(state); err != nil {
+		t.Fatal(err)
+	}
+
+	boot, err := service.StartManagedNodeBoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := service.StartManagedNodeBoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if boot != again {
+		t.Fatalf("managed boot changed within one service: %#v != %#v", boot, again)
+	}
+	if boot.BootID != processBootID || boot.BootSequence != 1 || boot.StateEpoch != testStateEpoch {
+		t.Fatalf("managed boot = %#v", boot)
+	}
+	persisted, err := service.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.ManagedNode.BootSequence != 1 {
+		t.Fatalf("persisted boot sequence = %d, want 1", persisted.ManagedNode.BootSequence)
+	}
+	if persisted.ManagedNode.DesiredGeneration != 9 {
+		t.Fatalf("desired generation = %d, want 9", persisted.ManagedNode.DesiredGeneration)
+	}
+}
+
+func TestStartManagedNodeBootRejectsSequenceExhaustion(t *testing.T) {
+	service := New(testServiceConfig(t))
+	state, err := service.Init()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.ManagedNode = testManagedNodeState()
+	state.ManagedNode.BootSequence = ^uint64(0)
+	if err := service.store.Save(state); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.StartManagedNodeBoot(); !errors.Is(err, ErrBootSequenceExhausted) {
+		t.Fatalf("error = %v, want %v", err, ErrBootSequenceExhausted)
+	}
+}
+
 func TestPrepareRestoredStatePreservesOnlyMatchingManagedIdentity(t *testing.T) {
 	managed := testManagedNodeState()
 	current := config.State{ManagedNode: managed}
