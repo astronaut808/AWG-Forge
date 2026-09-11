@@ -3,8 +3,10 @@ package storage
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/astronaut808/awg-forge/internal/config"
 )
@@ -72,5 +74,59 @@ func TestSaveWritesLoadableStateWithPrivatePermissions(t *testing.T) {
 	}
 	if len(tmpMatches) != 0 {
 		t.Fatalf("temporary state files left behind: %v", tmpMatches)
+	}
+}
+
+func TestPendingDesiredStateCommitRoundTripUsesPrivatePermissions(t *testing.T) {
+	store := New(t.TempDir())
+	pending := PendingDesiredStateCommit{
+		OperationID:         "44444444-4444-4444-8444-444444444444",
+		IdempotencyKeyHash:  strings.Repeat("a", 64),
+		StateEpoch:          "33333333-3333-4333-8333-333333333333",
+		PreviousGeneration:  7,
+		CandidateGeneration: 8,
+		CandidateRuntimeTunnels: []PendingRuntimeTunnel{{
+			ID:            "tunnel-id",
+			Name:          "awg-next",
+			InterfaceName: "awg-next",
+			EgressMode:    config.EgressWAN,
+			ListenPort:    51825,
+			IPv4Subnet:    "10.25.0.0/24",
+		}},
+		CreatedAt: time.Date(2026, time.September, 8, 8, 0, 0, 0, time.UTC),
+	}
+
+	if err := store.SavePendingDesiredStateCommit(pending); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(store.PendingDesiredStateCommitPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0600 {
+		t.Fatalf("journal permissions = %v, want 0600", got)
+	}
+	loaded, err := store.LoadPendingDesiredStateCommit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(loaded, pending) {
+		t.Fatalf("loaded journal = %#v, want %#v", loaded, pending)
+	}
+	tmpMatches, err := filepath.Glob(filepath.Join(filepath.Dir(store.PendingDesiredStateCommitPath()), ".desired-state-commit-*.tmp"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tmpMatches) != 0 {
+		t.Fatalf("temporary journal files left behind: %v", tmpMatches)
+	}
+	if err := store.DeletePendingDesiredStateCommit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeletePendingDesiredStateCommit(); err != nil {
+		t.Fatalf("second journal deletion is not idempotent: %v", err)
+	}
+	if _, err := store.LoadPendingDesiredStateCommit(); !os.IsNotExist(err) {
+		t.Fatalf("journal remains after deletion: %v", err)
 	}
 }

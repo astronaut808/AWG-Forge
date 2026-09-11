@@ -15,6 +15,9 @@ type AWG20 struct{}
 func (AWG20) ID() string          { return "awg_2_0" }
 func (AWG20) DisplayName() string { return "AmneziaWG 2.0" }
 func (AWG20) Version() string     { return "2" }
+func (AWG20) ParameterKeys() []string {
+	return cloneParameterKeys(awg20Keys)
+}
 
 func (AWG20) GenerateDefaults() (config.ProtocolParams, error) {
 	params, err := defaultLegacyParams()
@@ -69,7 +72,7 @@ func (AWG20) Validate(params config.ProtocolParams) error {
 	if err := validateHeaderRanges(params); err != nil {
 		return err
 	}
-	for _, k := range []string{"I1", "I2", "I3", "I4", "I5"} {
+	for _, k := range signatureKeys {
 		if err := validateSignatureParam(k, params[k]); err != nil {
 			return err
 		}

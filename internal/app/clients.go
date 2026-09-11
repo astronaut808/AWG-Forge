@@ -40,8 +40,10 @@ func (s *Service) AddClientToTunnel(tunnelID, name string) (config.Client, error
 }
 
 func (s *Service) AddClientToTunnelWithOptions(tunnelID, name string, opts ClientCreateOptions) (config.Client, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lockStateMutation(); err != nil {
+		return config.Client{}, err
+	}
+	defer s.unlockStateMutation()
 	if opts.Persist != nil && opts.RollbackPersist == nil {
 		return config.Client{}, errors.New("client persistence requires a rollback")
 	}
@@ -97,7 +99,7 @@ func (s *Service) AddClientToTunnelWithOptions(tunnelID, name string, opts Clien
 	state.Tunnels[idx].Clients = append(state.Tunnels[idx].Clients, client)
 	state.Tunnels[idx].UpdatedAt = now
 	state.UpdatedAt = now
-	if err := s.store.Save(state); err != nil {
+	if err := s.saveLocalDesiredState(&state); err != nil {
 		return config.Client{}, rollbackPersist(err)
 	}
 	if err := s.renderTunnelLocked(state.Tunnels[idx].ID, true); err != nil {
@@ -112,8 +114,10 @@ func (s *Service) AddClientToTunnelWithOptions(tunnelID, name string, opts Clien
 }
 
 func (s *Service) RemoveClient(id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lockStateMutation(); err != nil {
+		return err
+	}
+	defer s.unlockStateMutation()
 	state, err := s.initLocked()
 	if err != nil {
 		return err
@@ -138,7 +142,7 @@ func (s *Service) RemoveClient(id string) error {
 			state.Tunnels[ti].Clients = clients
 			state.Tunnels[ti].UpdatedAt = time.Now().UTC()
 			state.UpdatedAt = state.Tunnels[ti].UpdatedAt
-			if err := s.store.Save(state); err != nil {
+			if err := s.saveLocalDesiredState(&state); err != nil {
 				return err
 			}
 			if err := s.renderTunnelLocked(state.Tunnels[ti].ID, true); err != nil {
@@ -156,8 +160,10 @@ func (s *Service) RemoveClient(id string) error {
 }
 
 func (s *Service) SetClientEnabled(id string, enabled bool) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lockStateMutation(); err != nil {
+		return err
+	}
+	defer s.unlockStateMutation()
 	return s.setClientEnabledLocked(id, enabled, nil)
 }
 
@@ -168,8 +174,10 @@ type trafficLimitDisable struct {
 }
 
 func (s *Service) DisableClientForTrafficLimit(id string, totalBytes, limitBytes uint64, period string) (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lockStateMutation(); err != nil {
+		return false, err
+	}
+	defer s.unlockStateMutation()
 	enabled, err := s.clientEnabledLocked(id)
 	if err != nil || !enabled {
 		return false, err
@@ -181,8 +189,10 @@ func (s *Service) DisableClientForTrafficLimit(id string, totalBytes, limitBytes
 }
 
 func (s *Service) EnableClientForTrafficLimitRelease(id, period string) (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lockStateMutation(); err != nil {
+		return false, err
+	}
+	defer s.unlockStateMutation()
 	state, err := s.initLocked()
 	if err != nil {
 		return false, err
@@ -239,7 +249,7 @@ func (s *Service) setClientEnabledLocked(id string, enabled bool, trafficLimit *
 				state.Tunnels[ti].Clients[ci].UpdatedAt = now
 				state.Tunnels[ti].UpdatedAt = now
 				state.UpdatedAt = now
-				if err := s.store.Save(state); err != nil {
+				if err := s.saveLocalDesiredState(&state); err != nil {
 					return err
 				}
 				if err := s.renderTunnelLocked(state.Tunnels[ti].ID, true); err != nil {
@@ -281,8 +291,10 @@ func (s *Service) UpdateClientSettings(id, name, notes string) (config.Client, e
 }
 
 func (s *Service) UpdateClientSettingsWithOptions(id string, update ClientSettingsUpdate) (config.Client, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lockStateMutation(); err != nil {
+		return config.Client{}, err
+	}
+	defer s.unlockStateMutation()
 	name := update.Name
 	name = strings.TrimSpace(name)
 	if !clientNameRE.MatchString(name) {
@@ -312,7 +324,7 @@ func (s *Service) UpdateClientSettingsWithOptions(id string, update ClientSettin
 				state.Tunnels[ti].Clients[ci].UpdatedAt = now
 				state.Tunnels[ti].UpdatedAt = now
 				state.UpdatedAt = now
-				if err := s.store.Save(state); err != nil {
+				if err := s.saveLocalDesiredState(&state); err != nil {
 					return config.Client{}, err
 				}
 				if expirationChanged {
@@ -404,8 +416,10 @@ func (s *Service) ClientImportKey(id string) (string, config.Client, error) {
 }
 
 func (s *Service) EnforceExpiredClients() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lockStateMutation(); err != nil {
+		return err
+	}
+	defer s.unlockStateMutation()
 	state, err := s.initLocked()
 	if err != nil {
 		return err
@@ -433,8 +447,10 @@ func (s *Service) EnforceExpiredClients() error {
 }
 
 func (s *Service) markClientConfigDelivered(id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lockStateMutation(); err != nil {
+		return err
+	}
+	defer s.unlockStateMutation()
 	state, err := s.initLocked()
 	if err != nil {
 		return err

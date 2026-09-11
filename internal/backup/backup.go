@@ -21,6 +21,7 @@ import (
 	"github.com/astronaut808/awg-forge/internal/buildinfo"
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/render"
+	"github.com/astronaut808/awg-forge/internal/storage"
 	"github.com/astronaut808/awg-forge/internal/warp"
 	"github.com/astronaut808/awg-forge/internal/webtls"
 )
@@ -44,6 +45,17 @@ type Archive struct {
 
 type Options struct {
 	Now time.Time
+}
+
+// RestoreOptions controls identity handling for an encrypted restore.
+type RestoreOptions struct {
+	DetachManagedNode bool
+	Now               time.Time
+}
+
+// RestoreResult reports security-relevant transformations applied by restore.
+type RestoreResult struct {
+	ManagedNodeDetached bool
 }
 
 type Metadata struct {
@@ -84,18 +96,41 @@ type FileMeta struct {
 	SHA256 string `json:"sha256"`
 }
 
-func Create(ctx context.Context, cfg config.Config, service *app.Service, password string, opts Options) (Archive, error) {
+func Create(ctx context.Context, cfg config.Config, service *app.Service, password string, opts Options) (archive Archive, err error) {
 	_ = ctx
+	if err := validatePassword(password); err != nil {
+		return Archive{}, err
+	}
+	if _, err := service.Init(); err != nil {
+		return Archive{}, err
+	}
+	mutationLock, err := storage.AcquireStateMutationLock(cfg.ConfigDir)
+	if err != nil {
+		return Archive{}, err
+	}
+	defer func() {
+		err = errors.Join(err, mutationLock.Close())
+	}()
+	store := storage.New(cfg.ConfigDir)
+	if _, err := store.LoadPendingDesiredStateCommit(); err == nil {
+		return Archive{}, errors.New("cannot create backup while a desired-state commit journal exists")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return Archive{}, fmt.Errorf("load desired-state commit journal: %w", err)
+	}
+	state, err := store.Load()
+	if err != nil {
+		return Archive{}, err
+	}
+	return createFromState(cfg, state, password, opts)
+}
+
+func createFromState(cfg config.Config, state config.State, password string, opts Options) (Archive, error) {
 	if err := validatePassword(password); err != nil {
 		return Archive{}, err
 	}
 	now := opts.Now
 	if now.IsZero() {
 		now = time.Now().UTC()
-	}
-	state, err := service.Init()
-	if err != nil {
-		return Archive{}, err
 	}
 	plain, err := createPlainZip(cfg, state, now)
 	if err != nil {
@@ -126,16 +161,66 @@ func WriteFile(ctx context.Context, cfg config.Config, service *app.Service, pas
 }
 
 func Restore(ctx context.Context, cfg config.Config, password, path string) error {
+	_, err := RestoreWithOptions(ctx, cfg, password, path, RestoreOptions{})
+	return err
+}
+
+// RestoreWithOptions validates identity fencing before writing target files.
+func RestoreWithOptions(ctx context.Context, cfg config.Config, password, path string, opts RestoreOptions) (result RestoreResult, err error) {
 	validated, err := loadAndValidate(password, path)
 	if err != nil {
-		return err
+		return RestoreResult{}, err
 	}
-	if preRestore, ok, err := preRestoreBackupFile(ctx, cfg, password); err != nil {
-		return err
-	} else if ok {
+	stateLock, err := storage.AcquireStateLock(cfg.ConfigDir)
+	if err != nil {
+		if errors.Is(err, storage.ErrStateDirectoryInUse) {
+			return RestoreResult{}, fmt.Errorf("%w: stop the AWG-Forge server before restoring", err)
+		}
+		return RestoreResult{}, err
+	}
+	defer func() {
+		err = errors.Join(err, stateLock.Close())
+	}()
+	mutationLock, err := storage.AcquireStateMutationLock(cfg.ConfigDir)
+	if err != nil {
+		return RestoreResult{}, err
+	}
+	defer func() {
+		err = errors.Join(err, mutationLock.Close())
+	}()
+
+	currentState, currentExists, err := loadRestoreTargetState(cfg.ConfigDir)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("load restore target identity: %w", err)
+	}
+	var current *config.State
+	if currentExists {
+		current = &currentState
+	}
+	prepared, changed, err := app.PrepareRestoredState(current, validated.State, opts.DetachManagedNode, opts.Now)
+	if err != nil {
+		if errors.Is(err, app.ErrManagedNodeRestoreIdentityConflict) {
+			return RestoreResult{}, fmt.Errorf("%w: use --detach-managed-node to restore local configuration without the controller binding", err)
+		}
+		return RestoreResult{}, fmt.Errorf("validate managed-node restore identity: %w", err)
+	}
+	if changed {
+		validated.Files, err = replaceRestoredState(validated.Files, prepared)
+		if err != nil {
+			return RestoreResult{}, err
+		}
+	}
+	if currentExists {
+		preRestore, err := preRestoreBackupFile(cfg, currentState, password)
+		if err != nil {
+			return RestoreResult{}, err
+		}
 		validated.Files = append(validated.Files, preRestore)
 	}
-	return restoreFiles(cfg.ConfigDir, validated.Files)
+	if err := restoreFiles(cfg.ConfigDir, validated.Files); err != nil {
+		return RestoreResult{}, err
+	}
+	return RestoreResult{ManagedNodeDetached: changed}, nil
 }
 
 func Verify(ctx context.Context, cfg config.Config, password, path string) (VerifyReport, error) {
@@ -348,6 +433,11 @@ func loadAndValidate(password, archivePath string) (validatedBackup, error) {
 }
 
 func validateStateSanity(state config.State) error {
+	if state.ManagedNode != nil {
+		if err := app.ValidateManagedNodeState(state.ManagedNode); err != nil {
+			return fmt.Errorf("backup validation failed: %w", err)
+		}
+	}
 	if state.Warp.Configured() {
 		if err := warp.Validate(state.Warp); err != nil {
 			return fmt.Errorf("backup validation failed: WARP config is invalid: %w", err)
