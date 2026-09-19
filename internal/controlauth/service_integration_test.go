@@ -63,6 +63,9 @@ func TestControllerAuthLifecycle(t *testing.T) {
 	if _, err := service.ValidateSession(context.Background(), authentication.Token, loginAt.Add(2*time.Minute)); !errors.Is(err, controlauth.ErrSessionNotFound) {
 		t.Fatalf("revoked session error = %v", err)
 	}
+	if err := service.RevokeSession(context.Background(), "malformed-token", loginAt.Add(2*time.Minute)); err != nil {
+		t.Fatalf("revoke malformed session token error = %v", err)
+	}
 
 	recoveryAuth, err := service.AuthenticateRecovery(context.Background(), testUsername, testPassword, enrollment.RecoveryCodes[0], "192.0.2.10", loginAt)
 	if err != nil {

@@ -349,9 +349,12 @@ func (s *Service) RevokeSession(ctx context.Context, token string, now time.Time
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	digest, valid := sessionDigestForRevoke(s.keys, token)
-	if !valid {
-		return nil
+	digest, err := s.keys.SessionDigest(token)
+	if errors.Is(err, ErrInvalidSessionToken) {
+		return nil //nolint:nilerr // Session revocation is idempotent for malformed tokens.
+	}
+	if err != nil {
+		return fmt.Errorf("digest controller session token: %w", err)
 	}
 	return s.store.RevokeControllerSession(ctx, digest, now.UTC())
 }
@@ -466,11 +469,6 @@ func NormalizeUsername(username string) (string, error) {
 		}
 	}
 	return username, nil
-}
-
-func sessionDigestForRevoke(keys *Keys, token string) (Digest, bool) {
-	digest, err := keys.SessionDigest(token)
-	return digest, err == nil
 }
 
 func boundedPassword(password string) string {
