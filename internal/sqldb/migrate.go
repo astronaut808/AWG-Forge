@@ -53,30 +53,35 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
     version INTEGER PRIMARY KEY,
     checksum TEXT NOT NULL,
     applied_at TEXT NOT NULL
-)`); err != nil {
+	)`); err != nil {
 		return err
 	}
+	tx, err := db.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var newest sql.NullInt64
+	if err := tx.QueryRowContext(ctx, "SELECT max(version) FROM schema_migrations").Scan(&newest); err != nil {
+		return err
+	}
+	if newest.Valid && newest.Int64 > int64(migrations[len(migrations)-1].version) {
+		return fmt.Errorf("database schema version %d is newer than supported version %d", newest.Int64, migrations[len(migrations)-1].version)
+	}
 	for _, migration := range migrations {
-		applied, err := db.appliedMigration(ctx, migration.version)
-		if err != nil {
+		if err := applyMigrationInTx(ctx, tx, migration); err != nil {
 			return err
 		}
-		if applied != "" {
-			if applied != migration.checksum {
-				return fmt.Errorf("migration %06d checksum mismatch", migration.version)
-			}
-			continue
-		}
-		if err := db.applyMigration(ctx, migration); err != nil {
-			return err
-		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
 	}
 	return chmodIfExists(db.path, 0600)
 }
 
-func (db *DB) appliedMigration(ctx context.Context, version int) (string, error) {
+func appliedMigration(ctx context.Context, tx *sql.Tx, version int) (string, error) {
 	var checksum string
-	err := db.sql.QueryRowContext(ctx, "SELECT checksum FROM schema_migrations WHERE version = ?", version).Scan(&checksum)
+	err := tx.QueryRowContext(ctx, "SELECT checksum FROM schema_migrations WHERE version = ?", version).Scan(&checksum)
 	if err == nil {
 		return checksum, nil
 	}
@@ -92,6 +97,23 @@ func (db *DB) applyMigration(ctx context.Context, migration migration) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := applyMigrationInTx(ctx, tx, migration); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func applyMigrationInTx(ctx context.Context, tx *sql.Tx, migration migration) error {
+	applied, err := appliedMigration(ctx, tx, migration.version)
+	if err != nil {
+		return err
+	}
+	if applied != "" {
+		if applied != migration.checksum {
+			return fmt.Errorf("migration %06d checksum mismatch", migration.version)
+		}
+		return nil
+	}
 	for _, statement := range splitStatements(migration.sql) {
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("apply migration %s: %w", migration.name, err)
@@ -100,7 +122,7 @@ func (db *DB) applyMigration(ctx context.Context, migration migration) error {
 	if _, err := tx.ExecContext(ctx, "INSERT INTO schema_migrations (version, checksum, applied_at) VALUES (?, ?, datetime('now'))", migration.version, migration.checksum); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
 }
 
 func loadSQLiteMigrations() ([]migration, error) {

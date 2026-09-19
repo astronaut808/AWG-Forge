@@ -13,7 +13,7 @@
     "@preact/preset-vite": "^2.10.2",
     "@redocly/cli": "2.51.2",
     "@types/node": "24.13.3",
-    "aislop": "^0.16.0",
+    "aislop": "^0.16.1",
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
     "preact": "^10.26.9",
@@ -21,6 +21,6 @@
     "vite": "^6.3.5"
   },
   "overrides": {
-    "adm-zip": "0.6.0"
+    "adm-zip": "0.6.1"
   }
 }

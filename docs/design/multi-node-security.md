@@ -111,9 +111,36 @@ certificates.
 - Session rotation invalidates the previous token; logout and administrator
   recovery revoke all selected sessions.
 
-Exact lifetimes and Argon2id parameters are implementation decisions that must
-be benchmarked and documented with the code. They are not hard-coded in this
-design document.
+The dormant controller-auth foundation uses versioned Argon2id PHC verifiers
+with `m=65536` KiB, `t=3`, `p=4`, a 16-byte salt, and a 32-byte result. Its PHC
+decoder rejects unsupported versions and caps attacker-controlled parameters at
+256 MiB, 10 iterations, and 16 lanes before allocating. The service admits at
+most two concurrent password hashes by default. A one-iteration benchmark on an
+Apple M4 Pro measured about 39.7 ms and 67.1 MB per hash; supported deployment
+targets still require their own benchmark before controller activation.
+
+TOTP uses a 30-second period, accepts the current or immediately previous time
+step, accepts no future step, and atomically advances a per-user last-used step
+with session creation. Recovery-code consumption and session creation are also
+one transaction. Session and recovery bearer values are represented in SQLite
+only by domain-separated HMAC-SHA-256 digests. The TOTP secret is encrypted with
+AES-256-GCM using the controller user ID as associated data; encryption and
+digest keys live in the root-private `controller-auth.keys` file outside
+SQLite. The key file is published atomically without replacing an existing
+file; loading requires an exact `0600` regular file under an exact `0700`,
+non-symlink parent directory.
+
+Default authentication limits are five failed attempts per account in five
+minutes, 20 failed attempts per source in five minutes, and 100 total attempts
+per minute. Reservations are persisted before password verification so process
+restart cannot clear them. Successful attempt completion, one-time-factor
+consumption, and session issuance share one SQLite transaction. Authentication
+connections use WAL with `synchronous=FULL`, immediate write transactions,
+foreign-key enforcement, and the configured busy timeout on every pooled
+connection. Expired sessions are removed during subsequent authentication.
+Controller sessions expire after 30 minutes and the recent-auth window is five
+minutes. These defaults remain dormant until the controller-auth HTTP and
+activation flow is implemented.
 
 ## Logging and support bundles
 
