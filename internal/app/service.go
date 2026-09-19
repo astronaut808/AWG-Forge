@@ -157,6 +157,8 @@ func (s *Service) lockStateMutation() error {
 		return fmt.Errorf("lock state mutation: %w", err)
 	}
 	s.stateMutationLock = lock
+	// The paired mutation method owns the lock until unlockStateMutation.
+	// nosemgrep: trailofbits.go.missing-unlock-before-return.missing-unlock-before-return
 	return nil
 }
 

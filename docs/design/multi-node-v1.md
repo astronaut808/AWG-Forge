@@ -27,11 +27,18 @@ The node-local transaction foundation is implemented but dormant:
   maintenance and observational status updates do not;
 - a private cross-process mutation lock serializes the Web UI, CLI, autonomous
   policy, and future controller transactions for the complete read, apply,
-  commit, or rollback boundary.
+  commit, or rollback boundary;
+- a dormant controller-auth service persists one controller administrator,
+  replay-protected TOTP state, one-time recovery codes, opaque sessions, and
+  account/source/global rate-limit attempts in SQLite. TOTP secrets are
+  encrypted with a root-private key outside SQLite; bearer values and rate-limit
+  identities are stored only as keyed digests.
 
-Enrollment, controller activation, identity replacement/rebind, the control
-listener, operation delivery, receipt acknowledgement, and receipt pruning are
-not implemented yet. No ordinary install or upgrade enables managed mode.
+Controller-auth HTTP routes, enrollment activation, controller activation,
+identity replacement/rebind, the control listener, operation delivery, receipt
+acknowledgement, and receipt pruning are not implemented yet. The dormant auth
+service is not instantiated by the current server, so standalone authentication
+and every ordinary install or upgrade keep existing behavior.
 
 `state.json` on each node is the desired-state source of truth. The controller
 is a secure remote control surface and redacted inventory cache, not an
