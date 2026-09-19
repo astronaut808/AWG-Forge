@@ -79,13 +79,9 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 	return chmodIfExists(db.path, 0600)
 }
 
-type migrationQuerier interface {
-	QueryRowContext(context.Context, string, ...any) *sql.Row
-}
-
-func appliedMigration(ctx context.Context, querier migrationQuerier, version int) (string, error) {
+func appliedMigration(ctx context.Context, tx *sql.Tx, version int) (string, error) {
 	var checksum string
-	err := querier.QueryRowContext(ctx, "SELECT checksum FROM schema_migrations WHERE version = ?", version).Scan(&checksum)
+	err := tx.QueryRowContext(ctx, "SELECT checksum FROM schema_migrations WHERE version = ?", version).Scan(&checksum)
 	if err == nil {
 		return checksum, nil
 	}
