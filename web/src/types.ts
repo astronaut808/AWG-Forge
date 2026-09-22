@@ -2,8 +2,10 @@ export type Level = "ok" | "warn" | "fail" | "bad" | "neutral";
 
 export type Profile = {
   id: string;
+  name: string;
   tab: string;
   label: string;
+  experimental: boolean;
   available: boolean;
   suggested_name: string;
   suggested_port: number;

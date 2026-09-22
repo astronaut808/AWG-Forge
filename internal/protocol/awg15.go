@@ -17,11 +17,17 @@ const defaultRandomNoiseI5 = "<r 32>"
 const maxSignaturePacketSize = 1232
 const maxRandomSignatureTokenSize = 999
 
+var signatureKeys = []string{"I1", "I2", "I3", "I4", "I5"}
+
 type AWG15 struct{}
 
 func (AWG15) ID() string          { return "awg_1_5" }
 func (AWG15) DisplayName() string { return "AmneziaWG 1.5" }
 func (AWG15) Version() string     { return "1.5" }
+func (AWG15) ParameterKeys() []string {
+	keys := cloneParameterKeys(legacyKeys)
+	return append(keys, signatureKeys...)
+}
 
 func (AWG15) GenerateDefaults() (config.ProtocolParams, error) {
 	params, err := defaultLegacyParams()
@@ -40,7 +46,7 @@ func (AWG15) Validate(params config.ProtocolParams) error {
 	if err := validateLegacyParams(params); err != nil {
 		return err
 	}
-	for _, k := range []string{"I1", "I2", "I3", "I4", "I5"} {
+	for _, k := range signatureKeys {
 		if err := validateSignatureParam(k, params[k]); err != nil {
 			return err
 		}
@@ -67,7 +73,7 @@ func (p AWG15) RenderClientInterface(ctx RenderContext, client config.Client) ([
 	if err != nil {
 		return nil, err
 	}
-	for _, k := range []string{"I1", "I2", "I3", "I4", "I5"} {
+	for _, k := range signatureKeys {
 		if ctx.Tunnel.ProtocolParams[k] != "" {
 			lines = append(lines, ConfigLine{k, ctx.Tunnel.ProtocolParams[k]})
 		}

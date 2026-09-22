@@ -38,6 +38,9 @@ type AWG3 struct{}
 func (AWG3) ID() string          { return "awg_3" }
 func (AWG3) DisplayName() string { return "AmneziaWG 3.x" }
 func (AWG3) Version() string     { return "3.x" }
+func (AWG3) ParameterKeys() []string {
+	return cloneParameterKeys(awg3Keys)
+}
 
 func (AWG3) GenerateDefaults() (config.ProtocolParams, error) {
 	i1, err := defaultQUICLikeI1()
@@ -139,7 +142,7 @@ func (AWG3) Validate(params config.ProtocolParams) error {
 	if err := validateHeaderRanges(params); err != nil {
 		return err
 	}
-	for _, key := range []string{"I1", "I2", "I3", "I4", "I5"} {
+	for _, key := range signatureKeys {
 		if err := validateSignatureParam(key, params[key]); err != nil {
 			return err
 		}
@@ -181,7 +184,7 @@ func (p AWG3) RenderServerInterface(ctx RenderContext) ([]ConfigLine, error) {
 		lines = append(lines, ConfigLine{key, strings.ToLower(strings.TrimSpace(ctx.Tunnel.ProtocolParams[key]))})
 	}
 	lines = append(lines, ConfigLine{"HeaderProtectionKey", ctx.Tunnel.ProtocolSecrets.HeaderProtectionKey})
-	for _, key := range []string{"I1", "I2", "I3", "I4", "I5"} {
+	for _, key := range signatureKeys {
 		if value := ctx.Tunnel.ProtocolParams[key]; value != "" {
 			lines = append(lines, ConfigLine{"# " + key, value})
 		}

@@ -39,6 +39,7 @@ import (
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/firewall"
 	"github.com/astronaut808/awg-forge/internal/observability"
+	"github.com/astronaut808/awg-forge/internal/protocol"
 	"github.com/astronaut808/awg-forge/internal/sqldb"
 	"github.com/astronaut808/awg-forge/internal/storage"
 	"github.com/astronaut808/awg-forge/internal/webtls"
@@ -159,6 +160,61 @@ func TestPublicStateExposesAWG3OnlyWithLaboratoryRuntime(t *testing.T) {
 	buildinfo.AWG3Runtime = "true"
 	if !hasProfile(w.publicState(context.Background(), config.State{}), "awg_3") {
 		t.Fatal("laboratory runtime did not expose the AWG 3.x profile")
+	}
+}
+
+func TestPublicStateProfileCatalogMatchesProtocolRegistry(t *testing.T) {
+	previousRuntime := buildinfo.AWG3Runtime
+	buildinfo.AWG3Runtime = "true"
+	t.Cleanup(func() { buildinfo.AWG3Runtime = previousRuntime })
+
+	cfg := config.Config{
+		ConfigDir:         t.TempDir(),
+		ServerHost:        "vpn.example.com",
+		ExternalInterface: "eth0",
+	}
+	w := &web{cfg: cfg, service: app.New(cfg)}
+	payload := w.publicState(context.Background(), config.State{})
+	got, ok := payload["profiles"].([]map[string]any)
+	if !ok {
+		t.Fatalf("profiles has type %T", payload["profiles"])
+	}
+	want := protocol.All()
+	if len(got) != len(want) {
+		t.Fatalf("profiles = %d, want %d", len(got), len(want))
+	}
+	wantLabels := map[string]string{
+		"awg_legacy_1_0": "Legacy",
+		"awg_1_5":        "Modern",
+		"awg_2_0":        "Modern",
+		"awg_3":          "Experimental",
+	}
+	wantTabs := map[string]string{
+		"awg_legacy_1_0": "1.0",
+		"awg_1_5":        "1.5",
+		"awg_2_0":        "2.0",
+		"awg_3":          "3.x",
+	}
+	wantExperimental := map[string]bool{"awg_3": true}
+	for idx, profile := range want {
+		if got[idx]["id"] != profile.ID() {
+			t.Errorf("profile %d ID = %v, want %q", idx, got[idx]["id"], profile.ID())
+		}
+		if got[idx]["tab"] != wantTabs[profile.ID()] {
+			t.Errorf("profile %q tab = %v, want %q", profile.ID(), got[idx]["tab"], wantTabs[profile.ID()])
+		}
+		if got[idx]["label"] != wantLabels[profile.ID()] {
+			t.Errorf("profile %q label = %v, want %q", profile.ID(), got[idx]["label"], wantLabels[profile.ID()])
+		}
+		if got[idx]["name"] != profile.DisplayName() {
+			t.Errorf("profile %q name = %v, want %q", profile.ID(), got[idx]["name"], profile.DisplayName())
+		}
+		if got[idx]["experimental"] != wantExperimental[profile.ID()] {
+			t.Errorf("profile %q experimental = %v, want %t", profile.ID(), got[idx]["experimental"], wantExperimental[profile.ID()])
+		}
+		if got[idx]["available"] != true {
+			t.Errorf("profile %q available = %v, want true", profile.ID(), got[idx]["available"])
+		}
 	}
 }
 

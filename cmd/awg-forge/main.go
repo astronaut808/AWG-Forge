@@ -20,6 +20,7 @@ import (
 	"github.com/astronaut808/awg-forge/internal/firewall"
 	"github.com/astronaut808/awg-forge/internal/server"
 	"github.com/astronaut808/awg-forge/internal/sqldb"
+	"github.com/astronaut808/awg-forge/internal/storage"
 	"github.com/astronaut808/awg-forge/internal/support"
 	"github.com/astronaut808/awg-forge/internal/updates"
 	"github.com/astronaut808/awg-forge/internal/webtls"
@@ -45,18 +46,7 @@ func run(args []string) error {
 	}
 	switch args[0] {
 	case "serve":
-		tlsRuntime, err := webtls.Load(cfg)
-		if err != nil {
-			return err
-		}
-		svc := app.New(cfg)
-		if _, err := svc.Init(); err != nil {
-			return err
-		}
-		if err := svc.RenderAll(); err != nil {
-			return err
-		}
-		return server.Serve(cfg, svc, tlsRuntime)
+		return runServe(cfg)
 	}
 
 	svc := app.New(cfg)
@@ -88,6 +78,29 @@ func run(args []string) error {
 	default:
 		return usage()
 	}
+}
+
+func runServe(cfg config.Config) (err error) {
+	stateLock, err := storage.AcquireStateLock(cfg.ConfigDir)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		err = errors.Join(err, stateLock.Close())
+	}()
+
+	tlsRuntime, err := webtls.Load(cfg)
+	if err != nil {
+		return err
+	}
+	svc := app.New(cfg)
+	if _, err := svc.Init(); err != nil {
+		return err
+	}
+	if err := svc.RenderAll(); err != nil {
+		return err
+	}
+	return server.Serve(cfg, svc, tlsRuntime)
 }
 
 func runInit(cfg config.Config, svc *app.Service, args []string) error {
@@ -435,8 +448,13 @@ func runRestore(cfg config.Config, args []string) error {
 	if len(args) == 2 && args[0] == "verify" {
 		return runRestoreVerify(cfg, args[1])
 	}
-	if len(args) != 1 {
-		return errors.New("usage: BACKUP_PASSWORD=... awg-forge restore <backup.afbackup> | restore verify <backup.afbackup>")
+	flags := flag.NewFlagSet("restore", flag.ContinueOnError)
+	detachManagedNode := flags.Bool("detach-managed-node", false, "restore local configuration without the controller binding")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 1 {
+		return errors.New("usage: BACKUP_PASSWORD=... awg-forge restore [--detach-managed-node] <backup.afbackup> | restore verify <backup.afbackup>")
 	}
 	password := os.Getenv("BACKUP_PASSWORD")
 	if password == "" {
@@ -444,11 +462,20 @@ func runRestore(cfg config.Config, args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := backup.Restore(ctx, cfg, password, args[0]); err != nil {
-		audit.New(cfg).Log(context.Background(), audit.Event{Level: "error", Event: "restore.failed", Message: "encrypted backup restore failed", Fields: map[string]any{"path": args[0]}, Error: audit.Error(err)})
+	path := flags.Arg(0)
+	auditFields := map[string]any{"path": path}
+	if *detachManagedNode {
+		auditFields["detach_managed_node_requested"] = true
+	}
+	result, err := backup.RestoreWithOptions(ctx, cfg, password, path, backup.RestoreOptions{DetachManagedNode: *detachManagedNode})
+	if err != nil {
+		audit.New(cfg).Log(context.Background(), audit.Event{Level: "error", Event: "restore.failed", Message: "encrypted backup restore failed", Fields: auditFields, Error: audit.Error(err)})
 		return err
 	}
-	audit.New(cfg).Log(context.Background(), audit.Event{Level: "info", Event: "restore.completed", Message: "encrypted backup restored", Fields: map[string]any{"path": args[0]}})
+	if result.ManagedNodeDetached {
+		auditFields["managed_node_detached"] = true
+	}
+	audit.New(cfg).Log(context.Background(), audit.Event{Level: "info", Event: "restore.completed", Message: "encrypted backup restored", Fields: auditFields})
 	return nil
 }
 

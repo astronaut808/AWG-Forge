@@ -15,6 +15,9 @@ type Legacy10 struct{}
 func (Legacy10) ID() string          { return "awg_legacy_1_0" }
 func (Legacy10) DisplayName() string { return "AmneziaWG Legacy / 1.0" }
 func (Legacy10) Version() string     { return "1.0" }
+func (Legacy10) ParameterKeys() []string {
+	return cloneParameterKeys(legacyKeys)
+}
 
 func (Legacy10) GenerateDefaults() (config.ProtocolParams, error) {
 	jc, err := randomInt(4, 10)

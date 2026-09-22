@@ -5,9 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
-	"time"
+	"strconv"
 
 	"github.com/astronaut808/awg-forge/internal/config"
 
@@ -20,7 +21,7 @@ const (
 	ModeSQLite   = "sqlite"
 	ModePostgres = "postgres"
 
-	CurrentSchemaVersion = 4
+	CurrentSchemaVersion = 5
 )
 
 var (
@@ -116,7 +117,7 @@ func openSQLite(ctx context.Context, cfg config.Config) (*DB, error) {
 	if err := os.Chmod(filepath.Dir(cfg.DatabasePath), 0700); err != nil {
 		return nil, err
 	}
-	sqlDB, err := sql.Open("sqlite", cfg.DatabasePath)
+	sqlDB, err := sql.Open("sqlite", sqliteDSN(cfg))
 	if err != nil {
 		return nil, err
 	}
@@ -139,24 +140,21 @@ func openSQLite(ctx context.Context, cfg config.Config) (*DB, error) {
 func (db *DB) configure(ctx context.Context, cfg config.Config) error {
 	ctx, cancel := context.WithTimeout(ctx, cfg.DatabaseQueryTimeout)
 	defer cancel()
-	if _, err := db.sql.ExecContext(ctx, "PRAGMA journal_mode=WAL"); err != nil {
-		return fmt.Errorf("set sqlite journal_mode: %w", err)
-	}
-	pragmas := []string{
-		"PRAGMA synchronous=NORMAL",
-		fmt.Sprintf("PRAGMA busy_timeout=%d", int(cfg.DatabaseBusyTimeout/time.Millisecond)),
-		"PRAGMA foreign_keys=ON",
-		"PRAGMA temp_store=MEMORY",
-	}
-	for _, pragma := range pragmas {
-		if _, err := db.sql.ExecContext(ctx, pragma); err != nil {
-			return fmt.Errorf("set sqlite pragma %q: %w", pragma, err)
-		}
-	}
 	if err := db.sql.PingContext(ctx); err != nil {
 		return err
 	}
 	return nil
+}
+
+func sqliteDSN(cfg config.Config) string {
+	query := url.Values{}
+	query.Set("_busy_timeout", strconv.FormatInt(cfg.DatabaseBusyTimeout.Milliseconds(), 10))
+	query.Set("_foreign_keys", "on")
+	query.Set("_journal_mode", "wal")
+	query.Set("_synchronous", "full")
+	query.Set("_txlock", "immediate")
+	query.Set("_pragma", "temp_store(MEMORY)")
+	return (&url.URL{Scheme: "file", Path: cfg.DatabasePath, RawQuery: query.Encode()}).String()
 }
 
 func (db *DB) fillStatus(ctx context.Context, status *Status) error {

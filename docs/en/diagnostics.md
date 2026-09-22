@@ -188,27 +188,54 @@ docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge
 docker cp awg-forge:/tmp/awg-forge.afbackup ./awg-forge-backup-YYYYMMDD-HHMMSS.afbackup
 ```
 
-Restore requires the same password:
-
-```bash
-docker cp ./<backup-file>.afbackup awg-forge:/tmp/backup.afbackup
-docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore verify /tmp/backup.afbackup
-docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore /tmp/backup.afbackup
-```
-
-`docker exec` can only see files inside the container filesystem. If the backup is on the host, copy it into the container with `docker cp` first, as shown above. Alternatively, place it in the mounted volume:
+Verify the backup with the same password while the server is running:
 
 ```bash
 cp ./<backup-file>.afbackup ./data/backup.afbackup
 docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore verify /etc/awg-forge/backup.afbackup
-docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore /etc/awg-forge/backup.afbackup
 ```
+
+Actual restore is an offline operation. Stop the server, run restore in a
+one-shot container with the same mounted data directory, and start the server
+again:
+
+```bash
+docker compose stop awg-forge
+docker compose run --rm -e BACKUP_PASSWORD='long-random-backup-password' awg-forge restore /etc/awg-forge/backup.afbackup
+docker compose up -d awg-forge
+```
+
+The server holds the state-directory lock while running, so an online restore
+fails before reading or changing the current state. `docker exec` can only see
+the target container filesystem; placing the archive in the mounted `./data`
+directory also makes it available to the one-shot restore container.
 
 `restore verify` decrypts and validates the backup, renders server and client configs in memory, and prints a redacted summary. It does not write to the config directory, create a pre-restore backup, restart tunnels, or change runtime state.
 
 In the UI, open `Maintenance` -> `Backup & restore` to upload an `.afbackup` file and run the same verification as a dry-run. Actual restore remains CLI-only.
 
 Before replacing the current config directory, restore keeps an encrypted pre-restore backup in `backups/` inside the restored config directory.
+
+Managed-node identity is preserved automatically only for an exact in-place
+identity match. Restoring a managed backup onto a new or different installation,
+or restoring a standalone backup over a managed installation, fails closed. To
+keep the local tunnels and clients while removing the controller binding, run
+the restore explicitly as local root:
+
+```bash
+docker compose stop awg-forge
+docker compose run --rm -e BACKUP_PASSWORD='long-random-backup-password' awg-forge restore --detach-managed-node /etc/awg-forge/backup.afbackup
+docker compose up -d awg-forge
+```
+
+This option does not enroll or rebind the restored installation. Multi-node
+enrollment remains unavailable until a later implementation phase.
+
+A byte-for-byte copy of the complete data directory also copies the managed
+node key and identity metadata, so it cannot be recognized locally as a clone.
+Do not start both copies. Keep the clone offline and use detached restore before
+reuse; duplicate-session detection and certificate revocation belong to the
+future controller implementation.
 
 Restore checks:
 
@@ -219,10 +246,15 @@ Restore checks:
 - valid `state.json`;
 - server config rendering.
 
-Restore does not apply runtime automatically. Restart the container to reload all restored settings, including TLS and database state. With `APPLY_CONFIG=true`, startup applies enabled tunnels and then reconciles WARP. `awg-forge tunnel restart` restarts only the first tunnel and does not reload the running service's settings or reconcile WARP. After startup, repair managed firewall rules and check the system:
+Restore does not apply runtime automatically. Starting the server afterwards
+loads the restored desired state and TLS assets. Encrypted backups do not
+currently include SQLite operational history. With `APPLY_CONFIG=true`, startup
+applies enabled tunnels and then reconciles WARP. `awg-forge tunnel restart`
+restarts only the first tunnel and does not reload the running service's
+settings or reconcile WARP. After startup, repair managed firewall rules and
+check the system:
 
 ```bash
-docker restart awg-forge
 docker exec awg-forge awg-forge firewall repair
 docker exec awg-forge awg-forge doctor
 ```
