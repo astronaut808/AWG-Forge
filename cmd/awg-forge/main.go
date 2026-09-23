@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/astronaut808/awg-forge/internal/audit"
 	"github.com/astronaut808/awg-forge/internal/backup"
 	"github.com/astronaut808/awg-forge/internal/config"
+	"github.com/astronaut808/awg-forge/internal/controlauth"
 	"github.com/astronaut808/awg-forge/internal/doctor"
 	"github.com/astronaut808/awg-forge/internal/firewall"
 	"github.com/astronaut808/awg-forge/internal/server"
@@ -94,13 +96,60 @@ func runServe(cfg config.Config) (err error) {
 		return err
 	}
 	svc := app.New(cfg)
-	if _, err := svc.Init(); err != nil {
+	state, err := svc.Init()
+	if err != nil {
 		return err
 	}
 	if err := svc.RenderAll(); err != nil {
 		return err
 	}
-	return server.Serve(cfg, svc, tlsRuntime)
+	controllerAuth, controllerDB, err := loadControllerAuth(cfg, state)
+	if err != nil {
+		return err
+	}
+	if controllerDB != nil {
+		defer func() { err = errors.Join(err, controllerDB.Close()) }()
+	}
+	return server.Serve(cfg, svc, tlsRuntime, controllerAuth)
+}
+
+func loadControllerAuth(cfg config.Config, state config.State) (*controlauth.Service, *sqldb.DB, error) {
+	if state.EffectiveMode() != config.ModeController {
+		return nil, nil, nil
+	}
+	if cfg.DatabaseMode != sqldb.ModeSQLite {
+		return nil, nil, app.ErrControllerActivationRequiresDB
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.DatabaseQueryTimeout)
+	defer cancel()
+	db, err := sqldb.Open(ctx, cfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open controller authentication database: %w", err)
+	}
+	if err := db.Migrate(ctx); err != nil {
+		_ = db.Close()
+		return nil, nil, fmt.Errorf("migrate controller authentication database: %w", err)
+	}
+	initialized, err := db.ControllerAuthInitialized(ctx)
+	if err != nil {
+		_ = db.Close()
+		return nil, nil, fmt.Errorf("inspect controller authentication: %w", err)
+	}
+	if !initialized {
+		_ = db.Close()
+		return nil, nil, errors.New("controller mode has no initialized administrator")
+	}
+	keys, err := controlauth.LoadKeys(filepath.Join(cfg.ConfigDir, controlauth.KeyFileName))
+	if err != nil {
+		_ = db.Close()
+		return nil, nil, fmt.Errorf("load controller authentication keys: %w", err)
+	}
+	auth, err := controlauth.NewService(db, keys, controlauth.Options{})
+	if err != nil {
+		_ = db.Close()
+		return nil, nil, fmt.Errorf("initialize controller authentication: %w", err)
+	}
+	return auth, db, nil
 }
 
 func runInit(cfg config.Config, svc *app.Service, args []string) error {

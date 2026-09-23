@@ -8,12 +8,24 @@ import (
 )
 
 func TestStandaloneStateJSONOmitsManagedNodeMetadata(t *testing.T) {
-	encoded, err := json.Marshal(State{SchemaVersion: CurrentStateSchemaVersion})
+	encoded, err := json.Marshal(State{SchemaVersion: CurrentStateSchemaVersion, Mode: ModeStandalone})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(encoded), "managed_node") {
 		t.Fatalf("standalone state unexpectedly contains managed-node metadata: %s", encoded)
+	}
+}
+
+func TestLegacyStateModeInference(t *testing.T) {
+	if got := (State{}).EffectiveMode(); got != ModeStandalone {
+		t.Fatalf("legacy standalone mode = %q", got)
+	}
+	if got := (State{ManagedNode: &ManagedNodeState{}}).EffectiveMode(); got != ModeNode {
+		t.Fatalf("legacy managed mode = %q", got)
+	}
+	if got := (State{Mode: ModeController}).EffectiveMode(); got != ModeController {
+		t.Fatalf("explicit controller mode = %q", got)
 	}
 }
 

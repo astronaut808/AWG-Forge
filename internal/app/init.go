@@ -45,6 +45,9 @@ func (s *Service) initWithOptionsLocked(options InitOptions) (config.State, erro
 		if err := s.recoverPendingDesiredStateCommitLocked(state); err != nil {
 			return config.State{}, fmt.Errorf("recover pending desired-state commit: %w", err)
 		}
+		if err := s.recoverControllerActivationLocked(state); err != nil {
+			return config.State{}, fmt.Errorf("recover controller activation: %w", err)
+		}
 		return s.repairLoadedState(state)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return config.State{}, err
@@ -82,6 +85,7 @@ func (s *Service) createInitialState(options InitOptions) (config.State, error) 
 	tunnel.MTU = initialTunnelMTU(spec.ProfileID, options.MTU)
 	state := config.State{
 		SchemaVersion:     config.CurrentStateSchemaVersion,
+		Mode:              config.ModeStandalone,
 		SessionSecret:     secret,
 		ServerHost:        options.ServerHost,
 		ExternalInterface: options.ExternalInterface,
@@ -188,17 +192,19 @@ func validateInitialTunnelOptions(options InitOptions, spec tunnelSpec) error {
 }
 
 func (s *Service) repairLoadedState(state config.State) (config.State, error) {
-	if state.ManagedNode != nil {
-		if err := validateManagedNodeState(state.ManagedNode); err != nil {
-			return config.State{}, err
-		}
-	}
 	originalState, err := cloneState(state)
 	if err != nil {
 		return config.State{}, fmt.Errorf("clone state before repair: %w", err)
 	}
 	changed := false
 	protocolRepaired := false
+	if state.Mode == "" {
+		state.Mode = state.EffectiveMode()
+		changed = true
+	}
+	if err := validateStateMode(state); err != nil {
+		return config.State{}, err
+	}
 	if state.SchemaVersion < config.CurrentStateSchemaVersion {
 		state.SchemaVersion = config.CurrentStateSchemaVersion
 		changed = true

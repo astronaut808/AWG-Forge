@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base32"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,8 +11,91 @@ import (
 
 	"github.com/astronaut808/awg-forge/internal/app"
 	"github.com/astronaut808/awg-forge/internal/config"
+	"github.com/astronaut808/awg-forge/internal/controlauth"
 	"github.com/astronaut808/awg-forge/internal/sqldb"
+	"github.com/pquerna/otp/totp"
 )
+
+func TestLoadControllerAuthFailsClosedAndLoadsPreparedRuntime(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Config{
+		ConfigDir:            dir,
+		DatabaseMode:         sqldb.ModeSQLite,
+		DatabasePath:         filepath.Join(dir, "awg-forge.db"),
+		DatabaseBusyTimeout:  time.Second,
+		DatabaseQueryTimeout: time.Second,
+		DatabaseMaxOpenConns: 1,
+		DatabaseMaxIdleConns: 1,
+	}
+	standalone := config.State{Mode: config.ModeStandalone}
+	auth, db, err := loadControllerAuth(cfg, standalone)
+	if err != nil || auth != nil || db != nil {
+		t.Fatalf("standalone controller auth = (%v, %v, %v)", auth, db, err)
+	}
+
+	controller := config.State{
+		Mode: config.ModeController,
+		Controller: &config.ControllerState{
+			ControllerID: "11111111-1111-4111-8111-111111111111",
+			ActivatedAt:  time.Unix(1_800_000_015, 0).UTC(),
+		},
+	}
+	if _, _, err := loadControllerAuth(cfg, controller); err == nil || !strings.Contains(err.Error(), "no initialized administrator") {
+		t.Fatalf("uninitialized controller error = %v", err)
+	}
+
+	setupDB, err := sqldb.Open(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := setupDB.Migrate(context.Background()); err != nil {
+		_ = setupDB.Close()
+		t.Fatal(err)
+	}
+	keys, err := controlauth.LoadOrCreateKeys(filepath.Join(dir, controlauth.KeyFileName), nil)
+	if err != nil {
+		_ = setupDB.Close()
+		t.Fatal(err)
+	}
+	setupAuth, err := controlauth.NewService(setupDB, keys, controlauth.Options{
+		PasswordParams: controlauth.PasswordParams{Memory: 64, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32},
+	})
+	if err != nil {
+		_ = setupDB.Close()
+		t.Fatal(err)
+	}
+	now := controller.Controller.ActivatedAt
+	secret := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString([]byte("cmd-controller-auth-test"))
+	code, err := totp.GenerateCode(secret, now)
+	if err != nil {
+		_ = setupDB.Close()
+		t.Fatal(err)
+	}
+	if _, err := setupAuth.EnrollAdmin(context.Background(), "admin", "correct horse battery staple", secret, code, now); err != nil {
+		_ = setupDB.Close()
+		t.Fatal(err)
+	}
+	if err := setupDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	auth, db, err = loadControllerAuth(cfg, controller)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if auth == nil || db == nil {
+		t.Fatal("controller authentication runtime was not loaded")
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := controlauth.RemoveKeyFile(filepath.Join(dir, controlauth.KeyFileName)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := loadControllerAuth(cfg, controller); err == nil || !strings.Contains(err.Error(), "load controller authentication keys") {
+		t.Fatalf("missing key error = %v", err)
+	}
+}
 
 func TestRunClientEnableRejectsExceededTrafficLimit(t *testing.T) {
 	dir := t.TempDir()

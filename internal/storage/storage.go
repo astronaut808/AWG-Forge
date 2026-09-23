@@ -1,9 +1,11 @@
 package storage
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +13,15 @@ import (
 
 	"github.com/astronaut808/awg-forge/internal/config"
 )
+
+const ControllerActivationJournalFileName = ".controller-activation.json"
+
+// ControllerActivationJournal is secret-free recovery metadata for the
+// prepare-before-mode-switch controller activation transaction.
+type ControllerActivationJournal struct {
+	ControllerID string    `json:"controller_id"`
+	StartedAt    time.Time `json:"started_at"`
+}
 
 type Store struct {
 	dir string
@@ -47,6 +58,9 @@ func New(dir string) Store {
 func (s Store) StatePath() string { return filepath.Join(s.dir, "state.json") }
 func (s Store) PendingDesiredStateCommitPath() string {
 	return filepath.Join(s.dir, ".desired-state-commit.json")
+}
+func (s Store) ControllerActivationJournalPath() string {
+	return filepath.Join(s.dir, ControllerActivationJournalFileName)
 }
 func (s Store) TunnelDir(tunnel string) string {
 	return filepath.Join(s.dir, "tunnels", tunnel)
@@ -108,6 +122,44 @@ func (s Store) LoadPendingDesiredStateCommit() (PendingDesiredStateCommit, error
 
 func (s Store) DeletePendingDesiredStateCommit() error {
 	err := os.Remove(s.PendingDesiredStateCommitPath())
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
+func (s Store) SaveControllerActivationJournal(journal ControllerActivationJournal) error {
+	return s.savePrivateJSON(s.ControllerActivationJournalPath(), ".controller-activation-*.tmp", journal)
+}
+
+func (s Store) LoadControllerActivationJournal() (ControllerActivationJournal, error) {
+	path := s.ControllerActivationJournalPath()
+	info, err := os.Lstat(path)
+	if err != nil {
+		return ControllerActivationJournal{}, err
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm() != 0600 {
+		return ControllerActivationJournal{}, errors.New("invalid controller activation journal")
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return ControllerActivationJournal{}, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	var journal ControllerActivationJournal
+	if err := decoder.Decode(&journal); err != nil {
+		return ControllerActivationJournal{}, errors.New("invalid controller activation journal")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return ControllerActivationJournal{}, errors.New("invalid controller activation journal")
+	}
+	return journal, nil
+}
+
+func (s Store) DeleteControllerActivationJournal() error {
+	err := os.Remove(s.ControllerActivationJournalPath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}

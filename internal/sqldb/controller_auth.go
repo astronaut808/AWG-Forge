@@ -10,6 +10,37 @@ import (
 	"github.com/astronaut808/awg-forge/internal/controlauth"
 )
 
+func (db *DB) ControllerAuthInitialized(ctx context.Context) (bool, error) {
+	var count int
+	if err := db.sql.QueryRowContext(ctx, "SELECT count(*) FROM controller_users").Scan(&count); err != nil {
+		return false, err
+	}
+	return count != 0, nil
+}
+
+// ResetControllerAuth removes only controller authentication state. It keeps
+// operational history and every non-authentication table intact so an
+// interrupted activation can roll back to standalone safely.
+func (db *DB) ResetControllerAuth(ctx context.Context) error {
+	tx, err := db.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, statement := range []string{
+		"DELETE FROM controller_sessions",
+		"DELETE FROM controller_recovery_codes",
+		"DELETE FROM controller_users",
+		"DELETE FROM controller_auth_attempts",
+		"UPDATE controller_auth_gate SET sequence = 0 WHERE singleton = 1",
+	} {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (db *DB) CreateControllerUser(ctx context.Context, user controlauth.User, recoveryDigests []controlauth.Digest) error {
 	tx, err := db.sql.BeginTx(ctx, nil)
 	if err != nil {

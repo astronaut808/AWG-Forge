@@ -60,6 +60,39 @@ func TestControllerAuthStoreLifecycle(t *testing.T) {
 	}
 }
 
+func TestResetControllerAuthRemovesOnlyAuthenticationState(t *testing.T) {
+	db := openControllerAuthTestDB(t)
+	now := time.Date(2026, 9, 23, 8, 0, 0, 0, time.UTC)
+	user := controllerAuthTestUser(now)
+	if err := db.CreateControllerUser(context.Background(), user, []controlauth.Digest{controllerAuthTestDigest(1)}); err != nil {
+		t.Fatal(err)
+	}
+	initialized, err := db.ControllerAuthInitialized(context.Background())
+	if err != nil || !initialized {
+		t.Fatalf("initialized = %v, error = %v", initialized, err)
+	}
+	if _, err := db.sql.ExecContext(context.Background(), `INSERT INTO audit_events (time, level, event, message, fields_json) VALUES (?, 'info', 'test', 'keep', '{}')`, formatTime(now)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ResetControllerAuth(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	initialized, err = db.ControllerAuthInitialized(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if initialized {
+		t.Fatal("controller user remains after reset")
+	}
+	var auditCount int
+	if err := db.sql.QueryRowContext(context.Background(), "SELECT count(*) FROM audit_events").Scan(&auditCount); err != nil {
+		t.Fatal(err)
+	}
+	if auditCount != 1 {
+		t.Fatalf("audit rows after auth reset = %d", auditCount)
+	}
+}
+
 func TestControllerTOTPUpdateRollsBackWhenSessionInsertFails(t *testing.T) {
 	db := openControllerAuthTestDB(t)
 	now := time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)

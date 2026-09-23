@@ -28,17 +28,27 @@ The node-local transaction foundation is implemented but dormant:
 - a private cross-process mutation lock serializes the Web UI, CLI, autonomous
   policy, and future controller transactions for the complete read, apply,
   commit, or rollback boundary;
-- a dormant controller-auth service persists one controller administrator,
+- a controller-auth service persists one controller administrator,
   replay-protected TOTP state, one-time recovery codes, opaque sessions, and
   account/source/global rate-limit attempts in SQLite. TOTP secrets are
   encrypted with a root-private key outside SQLite; bearer values and rate-limit
-  identities are stored only as keyed digests.
+  identities are stored only as keyed digests;
+- `state.json` persists an explicit `standalone`, `controller`, or `node` role.
+  Controller activation prepares a recovery journal, migrates SQLite, creates
+  `controller-auth.keys`, and enrolls the first administrator before the atomic
+  mode switch. A failed or interrupted pre-switch activation removes only
+  controller-auth data and preserves operational SQLite history and tunnel state;
+- controller-mode startup loads the existing SQLite administrator and key file
+  without creating replacements. Missing controller authentication fails startup,
+  and the legacy `PASSWORD` login/session path is never used as a fallback.
 
-Controller-auth HTTP routes, enrollment activation, controller activation,
-identity replacement/rebind, the control listener, operation delivery, receipt
-acknowledgement, and receipt pruning are not implemented yet. The dormant auth
-service is not instantiated by the current server, so standalone authentication
-and every ordinary install or upgrade keep existing behavior.
+The controller activation service is not exposed through CLI or HTTP yet.
+Controller-auth login/setup routes, recovery, enrollment activation, identity
+replacement/rebind, the control listener, operation delivery, receipt
+acknowledgement, and receipt pruning are not implemented yet. Standalone
+authentication and every ordinary install or upgrade keep existing behavior.
+Until controller backup includes the controller identity, authentication database,
+and key material atomically, backup creation and restore reject controller state.
 
 `state.json` on each node is the desired-state source of truth. The controller
 is a secure remote control surface and redacted inventory cache, not an

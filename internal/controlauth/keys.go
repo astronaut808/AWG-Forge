@@ -49,7 +49,7 @@ func LoadOrCreateKeys(path string, random io.Reader) (*Keys, error) {
 		return nil, ErrInvalidKeyFile
 	}
 	if _, err := os.Lstat(path); err == nil {
-		return loadKeys(path)
+		return LoadKeys(path)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
@@ -74,14 +74,16 @@ func LoadOrCreateKeys(path string, random io.Reader) (*Keys, error) {
 	body = append(body, '\n')
 	if err := createPrivateFile(path, body); err != nil {
 		if errors.Is(err, os.ErrExist) {
-			return loadKeys(path)
+			return LoadKeys(path)
 		}
 		return nil, err
 	}
 	return keys, nil
 }
 
-func loadKeys(path string) (*Keys, error) {
+// LoadKeys loads existing controller authentication keys without ever creating
+// replacements. Controller startup uses this fail-closed path.
+func LoadKeys(path string) (*Keys, error) {
 	if err := validatePrivateDirectory(filepath.Dir(path)); err != nil {
 		return nil, err
 	}
@@ -118,6 +120,35 @@ func loadKeys(path string) (*Keys, error) {
 	copy(keys.encryption[:], encryption)
 	copy(keys.digest[:], digest)
 	return keys, nil
+}
+
+// RemoveKeyFile removes only a validated regular key file from a validated
+// private directory. It never follows a symlink.
+func RemoveKeyFile(path string) error {
+	if path == "" {
+		return ErrInvalidKeyFile
+	}
+	if err := validatePrivateDirectory(filepath.Dir(path)); err != nil {
+		return err
+	}
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm() != 0600 {
+		return ErrInvalidKeyFile
+	}
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	if parent, err := os.Open(filepath.Dir(path)); err == nil {
+		_ = parent.Sync()
+		_ = parent.Close()
+	}
+	return nil
 }
 
 func ensureJSONEnd(decoder *json.Decoder) error {
