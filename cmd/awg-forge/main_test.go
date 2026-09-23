@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/base32"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,8 +14,41 @@ import (
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/controlauth"
 	"github.com/astronaut808/awg-forge/internal/sqldb"
+	"github.com/astronaut808/awg-forge/internal/storage"
 	"github.com/pquerna/otp/totp"
 )
+
+func TestControllerRecoveryRequiresRootAndStoppedServer(t *testing.T) {
+	cfg := config.Config{ConfigDir: t.TempDir()}
+	args := []string{"recover-admin", "--input-file", "/root/recovery.json"}
+	if err := runControllerWithAuthority(cfg, app.New(cfg), args, "linux", 1000); err == nil || !strings.Contains(err.Error(), "Linux root") {
+		t.Fatalf("non-root recovery error = %v", err)
+	}
+	lock, err := storage.AcquireStateLock(cfg.ConfigDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lock.Close() }()
+	if err := runControllerWithAuthority(cfg, app.New(cfg), args, "linux", 0); !errors.Is(err, storage.ErrStateDirectoryInUse) {
+		t.Fatalf("online recovery error = %v", err)
+	}
+}
+
+func TestControllerRecoveryRejectsMissingDatabase(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Config{ConfigDir: dir, DatabaseMode: sqldb.ModeSQLite, DatabasePath: filepath.Join(dir, "missing.db"), DatabaseQueryTimeout: time.Second}
+	state := config.State{Mode: config.ModeController, Controller: &config.ControllerState{ControllerID: "00000000-0000-4000-8000-000000000001", ActivatedAt: time.Now().UTC()}}
+	if err := storage.New(dir).Save(state); err != nil {
+		t.Fatal(err)
+	}
+	err := runControllerWithAuthority(cfg, app.New(cfg), []string{"recover-admin", "--input-file", "/missing-input"}, "linux", 0)
+	if err == nil || !strings.Contains(err.Error(), "existing controller database required") {
+		t.Fatalf("missing database error = %v", err)
+	}
+	if _, statErr := os.Stat(cfg.DatabasePath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("missing database was created: %v", statErr)
+	}
+}
 
 func TestLoadControllerAuthFailsClosedAndLoadsPreparedRuntime(t *testing.T) {
 	dir := t.TempDir()
@@ -85,6 +119,18 @@ func TestLoadControllerAuthFailsClosedAndLoadsPreparedRuntime(t *testing.T) {
 	}
 	if auth == nil || db == nil {
 		t.Fatal("controller authentication runtime was not loaded")
+	}
+	loginAt := now.Add(30 * time.Second)
+	loginCode, err := totp.GenerateCode(secret, loginAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	login, err := auth.Authenticate(context.Background(), "admin", "correct horse battery staple", loginCode, "127.0.0.1", loginAt)
+	if err != nil {
+		t.Fatalf("controller login after restart: %v", err)
+	}
+	if _, err := auth.ValidateSession(context.Background(), login.Token, loginAt); err != nil {
+		t.Fatalf("controller session after restart: %v", err)
 	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)

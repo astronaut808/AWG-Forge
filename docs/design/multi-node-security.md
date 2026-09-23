@@ -141,12 +141,23 @@ connection. Expired sessions are removed during subsequent authentication.
 Controller sessions expire after 30 minutes and the recent-auth window is five
 minutes.
 
-Controller activation prepares the database, key file, and first administrator
-before committing the explicit controller role. A secret-free recovery journal
-rolls an interrupted pre-commit activation back to standalone; once controller
-mode is committed, startup requires the existing database and key file and never
-falls back to the standalone `PASSWORD`. The activation and login flows remain
-unreachable until their HTTP/UI entry points are implemented.
+Controller activation prepares the database, key file, first administrator,
+recovery codes, and initial opaque session before committing the explicit role.
+The HTTP auth barrier rejects new standalone requests, drains authorized requests
+(including event streams), and only then begins activation. A secret-free journal
+rolls an interrupted pre-commit activation back to standalone. After commit, the
+server opens a persistent SQLite/auth runtime and switches cookie validation to
+opaque controller sessions under the same barrier. If runtime loading fails, it
+stays closed to the legacy `PASSWORD`; restart loads the committed controller.
+The confirmation TOTP step is consumed at enrollment. Reauthentication consumes
+a new factor and atomically replaces the old session. Recovery-code rotation is
+atomic and requires a session authenticated within five minutes.
+
+The local `controller recover-admin` command requires Linux root and the
+exclusive state lock, so the server must be stopped. It reads a root-owned `0600`
+JSON input file, replaces password/TOTP/recovery codes and revokes every session
+in one SQLite transaction. It preserves `controller_id`. A missing SQLite file
+or `controller-auth.keys` stops recovery without creating replacements.
 
 ## Logging and support bundles
 

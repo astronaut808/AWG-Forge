@@ -42,6 +42,14 @@ func (db *DB) ResetControllerAuth(ctx context.Context) error {
 }
 
 func (db *DB) CreateControllerUser(ctx context.Context, user controlauth.User, recoveryDigests []controlauth.Digest) error {
+	return db.createControllerUser(ctx, user, recoveryDigests, nil)
+}
+
+func (db *DB) CreateControllerUserWithSession(ctx context.Context, user controlauth.User, recoveryDigests []controlauth.Digest, session controlauth.Session) error {
+	return db.createControllerUser(ctx, user, recoveryDigests, &session)
+}
+
+func (db *DB) createControllerUser(ctx context.Context, user controlauth.User, recoveryDigests []controlauth.Digest, session *controlauth.Session) error {
 	tx, err := db.sql.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -76,7 +84,27 @@ VALUES (?, ?, ?, '')`, user.ID, digest[:], formatTime(user.CreatedAt)); err != n
 			return fmt.Errorf("insert controller recovery code: %w", err)
 		}
 	}
+	if session != nil {
+		if session.UserID != user.ID {
+			return errors.New("initial session user mismatch")
+		}
+		if err := insertControllerSession(ctx, tx, *session); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
+}
+
+func (db *DB) FindControllerAdmin(ctx context.Context) (controlauth.User, error) {
+	var username string
+	err := db.sql.QueryRowContext(ctx, "SELECT username FROM controller_users WHERE singleton = 1").Scan(&username)
+	if errors.Is(err, sql.ErrNoRows) {
+		return controlauth.User{}, controlauth.ErrInvalidCredentials
+	}
+	if err != nil {
+		return controlauth.User{}, err
+	}
+	return db.FindControllerUser(ctx, username)
 }
 
 func (db *DB) FindControllerUser(ctx context.Context, username string) (controlauth.User, error) {
@@ -177,6 +205,144 @@ WHERE user_id = ? AND code_digest = ? AND used_at = ''
 	}
 	if err := finishControllerAuthAttempt(ctx, tx, attemptID, true, "", session.AuthenticatedAt); err != nil {
 		return err
+	}
+	return tx.Commit()
+}
+
+func (db *DB) RotateControllerTOTP(ctx context.Context, oldDigest controlauth.Digest, userID string, step int64, session controlauth.Session, attemptID int64, now time.Time) error {
+	tx, err := db.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := consumeControllerSession(ctx, tx, oldDigest, userID, now); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE controller_users SET totp_last_step = ?, updated_at = ? WHERE id = ? AND disabled_at = '' AND totp_last_step < ?`, step, formatTime(now), userID, step)
+	if err != nil {
+		return err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed != 1 {
+		return controlauth.ErrCredentialConsumed
+	}
+	if err := insertControllerSession(ctx, tx, session); err != nil {
+		return err
+	}
+	if err := finishControllerAuthAttempt(ctx, tx, attemptID, true, "", now); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (db *DB) RotateControllerRecoveryCode(ctx context.Context, oldDigest controlauth.Digest, userID string, recoveryDigest controlauth.Digest, session controlauth.Session, attemptID int64, now time.Time) error {
+	tx, err := db.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := consumeControllerSession(ctx, tx, oldDigest, userID, now); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE controller_recovery_codes SET used_at = ? WHERE user_id = ? AND code_digest = ? AND used_at = ''`, formatTime(now), userID, recoveryDigest[:])
+	if err != nil {
+		return err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed != 1 {
+		return controlauth.ErrCredentialConsumed
+	}
+	if err := insertControllerSession(ctx, tx, session); err != nil {
+		return err
+	}
+	if err := finishControllerAuthAttempt(ctx, tx, attemptID, true, "", now); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func consumeControllerSession(ctx context.Context, tx *sql.Tx, digest controlauth.Digest, userID string, now time.Time) error {
+	result, err := tx.ExecContext(ctx, `DELETE FROM controller_sessions WHERE token_digest = ? AND user_id = ? AND expires_at_unix_ms > ? AND revoked_at = ''`, digest[:], userID, now.UnixMilli())
+	if err != nil {
+		return err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed != 1 {
+		return controlauth.ErrSessionNotFound
+	}
+	return nil
+}
+
+func (db *DB) ReplaceControllerRecoveryCodes(ctx context.Context, sessionDigest controlauth.Digest, userID string, digests []controlauth.Digest, now time.Time, recentTTL time.Duration) error {
+	tx, err := db.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, "UPDATE controller_auth_gate SET sequence = sequence + 1 WHERE singleton = 1"); err != nil {
+		return err
+	}
+	var authenticatedAt, revokedAt string
+	err = tx.QueryRowContext(ctx, `SELECT authenticated_at, revoked_at FROM controller_sessions WHERE token_digest = ? AND user_id = ? AND expires_at_unix_ms > ?`, sessionDigest[:], userID, now.UnixMilli()).Scan(&authenticatedAt, &revokedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return controlauth.ErrSessionNotFound
+	}
+	if err != nil {
+		return err
+	}
+	authTime, err := parseStoredTime(authenticatedAt)
+	if err != nil {
+		return err
+	}
+	if revokedAt != "" || now.Before(authTime) || now.Sub(authTime) > recentTTL {
+		return controlauth.ErrRecentAuthRequired
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM controller_recovery_codes WHERE user_id = ?", userID); err != nil {
+		return err
+	}
+	for _, digest := range digests {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO controller_recovery_codes (user_id, code_digest, created_at, used_at) VALUES (?, ?, ?, '')", userID, digest[:], formatTime(now)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (db *DB) RecoverControllerAdmin(ctx context.Context, user controlauth.User, digests []controlauth.Digest) error {
+	tx, err := db.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx, `UPDATE controller_users SET username = ?, password_hash = ?, totp_secret_ciphertext = ?, totp_last_step = -1, updated_at = ?, disabled_at = '' WHERE id = ? AND singleton = 1`, user.Username, user.PasswordHash, user.TOTPSecretCiphertext, formatTime(user.UpdatedAt), user.ID)
+	if err != nil {
+		return err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed != 1 {
+		return controlauth.ErrInvalidCredentials
+	}
+	for _, statement := range []string{"DELETE FROM controller_sessions", "DELETE FROM controller_recovery_codes", "DELETE FROM controller_auth_attempts", "UPDATE controller_auth_gate SET sequence = 0 WHERE singleton = 1"} {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return err
+		}
+	}
+	for _, digest := range digests {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO controller_recovery_codes (user_id, code_digest, created_at, used_at) VALUES (?, ?, ?, '')", user.ID, digest[:], formatTime(user.UpdatedAt)); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }

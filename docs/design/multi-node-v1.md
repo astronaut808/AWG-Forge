@@ -42,11 +42,17 @@ The node-local transaction foundation is implemented but dormant:
   without creating replacements. Missing controller authentication fails startup,
   and the legacy `PASSWORD` login/session path is never used as a fallback.
 
-The controller activation service is not exposed through CLI or HTTP yet.
-Controller-auth login/setup routes, recovery, enrollment activation, identity
-replacement/rebind, the control listener, operation delivery, receipt
-acknowledgement, and receipt pruning are not implemented yet. Standalone
-authentication and every ordinary install or upgrade keep existing behavior.
+Controller setup, activation, TOTP/recovery login, session rotation, and
+recovery-code replacement are available through the same-origin `/api` browser
+surface. The Maintenance Controller wizard displays the TOTP QR and recovery
+codes in no-store responses. The offline `controller recover-admin` command
+replaces administrator credentials under Linux root and the exclusive state
+lock. Activation drains existing authenticated requests and switches to opaque
+sessions without a server restart. Standalone and DB-off behavior remain
+unchanged until explicit activation.
+
+Node enrollment, identity replacement/rebind, the control listener, operation
+delivery, receipt acknowledgement, and receipt pruning are not implemented yet.
 Until controller backup includes the controller identity, authentication database,
 and key material atomically, backup creation and restore reject controller state.
 

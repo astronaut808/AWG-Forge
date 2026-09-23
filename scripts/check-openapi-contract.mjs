@@ -16,7 +16,16 @@ addFormats(ajv);
 const createClient = ajv.compile(schemas.CreateClientRequest);
 const updateClient = ajv.compile(schemas.UpdateClientSettingsRequest);
 const profile = ajv.compile(schemas.Profile);
+const controllerActivation = ajv.compile(schemas.ControllerActivationRequest);
+const controllerLogin = ajv.compile(schemas.ControllerLoginRequest);
+const schemaPassword = "p".repeat(16);
+const schemaTOTPSecret = "A".repeat(32);
+const schemaCode = "1".repeat(6);
 const cases = [
+  ["controller activation requires MFA confirmation", controllerActivation, { username: "admin", password: schemaPassword, totp_secret: schemaTOTPSecret, confirmation_code: schemaCode }, true],
+  ["controller activation rejects missing MFA confirmation", controllerActivation, { username: "admin", password: schemaPassword, totp_secret: schemaTOTPSecret }, false],
+  ["controller login requires the second factor", controllerLogin, { username: "admin", password: schemaPassword, code: schemaCode }, true],
+  ["controller login rejects a token in the body", controllerLogin, { username: "admin", password: schemaPassword, code: schemaCode, token: "x".repeat(8) }, false],
   ["create without expiration", createClient, { tunnel_id: "tunnel-1", name: "phone" }, true],
   ["create with empty expiration", createClient, { tunnel_id: "tunnel-1", name: "phone", expires_at: "" }, true],
   ["create with RFC3339 expiration", createClient, { tunnel_id: "tunnel-1", name: "phone", expires_at: "2026-09-05T12:00:00Z" }, true],

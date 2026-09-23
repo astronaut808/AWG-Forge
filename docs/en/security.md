@@ -27,6 +27,16 @@ Reverse-proxy mode requires a Web UI password, `WEBUI_TRUST_PROXY_HEADERS=true`,
 
 UI sessions expire after 30 minutes.
 
+In controller mode, sign-in requires the administrator password and a current
+TOTP code or a one-time recovery code. Controller sessions are opaque and held
+server-side in SQLite. The first session is issued during activation; the
+confirmation TOTP code cannot be reused. Reauthentication rotates the session
+cookie and opens a five-minute recent-auth window for recovery-code replacement.
+Logout revokes the server-side session. Root recovery revokes every session.
+During activation, previously signed standalone cookies and `PASSWORD` stop
+working without a restart. SQLite and `controller-auth.keys` are required at
+controller startup; missing material fails closed.
+
 `SESSION_SECRET` can be omitted. If absent, awg-forge creates and stores it in `state.json`.
 
 By default `SESSION_COOKIE_SECURE=auto`: non-`Secure` cookies are allowed only for loopback HTTP (`127.0.0.1`, `localhost`, `::1`), while external hosts use `Secure`. For plain HTTP on an external host, explicitly set `SESSION_COOKIE_SECURE=false`; doctor will warn about this. Use that mode only on a trusted network or behind separate protection.
@@ -46,6 +56,7 @@ Do not log:
 - private keys;
 - preshared keys;
 - passwords;
+- TOTP secrets and recovery codes;
 - session secrets;
 - backup passwords;
 - full client configs;

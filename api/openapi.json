@@ -13,13 +13,37 @@
         "operationId": "login",
         "security": [],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LoginRequest" } } } },
-        "responses": { "200": { "$ref": "#/components/responses/OK" }, "401": { "$ref": "#/components/responses/APIError" }, "429": { "$ref": "#/components/responses/APIError" } }
+        "responses": { "200": { "$ref": "#/components/responses/AuthOK" }, "401": { "$ref": "#/components/responses/AuthError" }, "429": { "$ref": "#/components/responses/AuthError" } }
       }
+    },
+    "/api/auth/status": {
+      "get": { "operationId": "getAuthStatus", "security": [], "description": "Public login mode only. No credentials or session details. Cache-Control: no-store.", "responses": { "200": { "description": "Current browser login mode.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AuthStatus" } } } } } }
+    },
+    "/api/auth/session": {
+      "get": { "operationId": "getAuthSession", "responses": { "200": { "description": "Current session status without the token.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AuthSession" } } } }, "401": { "$ref": "#/components/responses/AuthError" } } }
+    },
+    "/api/controller/setup": {
+      "post": { "operationId": "prepareControllerMFA", "description": "Requires a signed standalone session and SQLite. TOTP secret and QR data are shown once in a no-store response.", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ControllerSetupRequest" } } } }, "responses": { "200": { "description": "One-time MFA enrollment material.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ControllerSetup" } } } }, "401": { "$ref": "#/components/responses/AuthError" }, "default": { "$ref": "#/components/responses/AuthError" } } }
+    },
+    "/api/controller/activate": {
+      "post": { "operationId": "activateController", "description": "Requires a signed standalone session and SQLite. Commits an initial opaque session and returns recovery codes once; the token is only in an HttpOnly cookie.", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ControllerActivationRequest" } } } }, "responses": { "200": { "description": "Controller activated.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ControllerActivation" } } } }, "401": { "$ref": "#/components/responses/AuthError" }, "default": { "$ref": "#/components/responses/AuthError" } } }
+    },
+    "/api/controller/login": {
+      "post": { "operationId": "controllerLogin", "security": [], "description": "Password and TOTP login. Invalid usernames and credentials share one response. Rate limit returns 429.", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ControllerLoginRequest" } } } }, "responses": { "200": { "$ref": "#/components/responses/AuthOK" }, "401": { "$ref": "#/components/responses/AuthError" }, "429": { "$ref": "#/components/responses/AuthError" } } }
+    },
+    "/api/controller/login/recovery": {
+      "post": { "operationId": "controllerRecoveryLogin", "security": [], "description": "Password and one-time recovery-code login. A consumed code cannot be reused.", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ControllerLoginRequest" } } } }, "responses": { "200": { "$ref": "#/components/responses/AuthOK" }, "401": { "$ref": "#/components/responses/AuthError" }, "429": { "$ref": "#/components/responses/AuthError" } } }
+    },
+    "/api/controller/reauth": {
+      "post": { "operationId": "controllerReauthenticate", "description": "Verify password plus TOTP or a recovery code, atomically replace the session, and refresh recent-auth.", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ControllerReauthRequest" } } } }, "responses": { "200": { "$ref": "#/components/responses/AuthOK" }, "401": { "$ref": "#/components/responses/AuthError" }, "429": { "$ref": "#/components/responses/AuthError" } } }
+    },
+    "/api/controller/recovery-codes": {
+      "post": { "operationId": "replaceControllerRecoveryCodes", "description": "Requires recent-auth. Revokes all old recovery codes and returns new codes only once.", "responses": { "200": { "description": "One-time replacement codes.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RecoveryCodes" } } } }, "401": { "$ref": "#/components/responses/AuthError" }, "403": { "$ref": "#/components/responses/AuthError" } } }
     },
     "/api/logout": {
       "post": {
         "operationId": "logout",
-        "responses": { "200": { "$ref": "#/components/responses/OK" }, "default": { "$ref": "#/components/responses/APIError" } }
+        "responses": { "200": { "$ref": "#/components/responses/AuthOK" }, "default": { "$ref": "#/components/responses/AuthError" } }
       }
     },
     "/api/state": {
@@ -130,21 +154,32 @@
     }
   },
   "components": {
-    "securitySchemes": { "sessionCookie": { "type": "apiKey", "in": "cookie", "name": "awg_forge_session", "description": "Signed, HttpOnly browser session cookie. It cannot be supplied by JavaScript clients." } },
+    "securitySchemes": { "sessionCookie": { "type": "apiKey", "in": "cookie", "name": "awg_forge_session", "description": "HttpOnly browser session cookie: signed in standalone mode and opaque in controller mode. It cannot be supplied by JavaScript clients." } },
     "parameters": {
       "IdempotencyKey": { "name": "Idempotency-Key", "in": "header", "required": false, "schema": { "type": "string", "minLength": 1, "maxLength": 128 }, "description": "The bundled UI sends a unique key for each logical mutation. Reusing a key with a different request body returns 409." },
       "TunnelID": { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
       "ClientID": { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
     },
-    "headers": { "RequestID": { "description": "Correlation ID for runtime logs and support.", "schema": { "type": "string" } } },
+    "headers": { "RequestID": { "description": "Correlation ID for runtime logs and support.", "schema": { "type": "string" } }, "NoStore": { "description": "Sensitive response is never cached.", "schema": { "type": "string", "const": "no-store" } } },
     "responses": {
       "OK": { "description": "Operation completed.", "headers": { "X-Request-ID": { "$ref": "#/components/headers/RequestID" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OK" } } } },
+      "AuthOK": { "description": "Authentication operation completed without a cacheable response.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OK" } } } },
+      "AuthError": { "description": "Safe non-cacheable authentication error.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/APIError" } } } },
       "APIError": { "description": "Safe API error. Exact internal details are recorded only in the audit and runtime logs.", "headers": { "X-Request-ID": { "$ref": "#/components/headers/RequestID" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/APIError" } } } }
     },
     "schemas": {
       "OK": { "type": "object", "required": ["ok"], "properties": { "ok": { "type": "boolean", "const": true } } },
       "APIError": { "type": "object", "required": ["error", "code"], "properties": { "error": { "type": "string" }, "code": { "type": "string", "pattern": "^[a-z0-9_]+$" } } },
-      "LoginRequest": { "type": "object", "required": ["password"], "properties": { "password": { "type": "string", "writeOnly": true } } },
+      "LoginRequest": { "type": "object", "required": ["password"], "properties": { "password": { "type": "string", "writeOnly": true }, "username": { "type": "string" }, "code": { "type": "string", "writeOnly": true } } },
+      "AuthStatus": { "type": "object", "required": ["mode"], "properties": { "mode": { "type": "string", "enum": ["standalone", "activating", "controller"] } }, "additionalProperties": false },
+      "AuthSession": { "type": "object", "required": ["mode", "authenticated"], "properties": { "mode": { "type": "string", "enum": ["standalone", "controller"] }, "authenticated": { "type": "boolean", "const": true }, "username": { "type": "string" }, "recent_auth": { "type": "boolean" }, "expires_at": { "type": "string", "format": "date-time" } }, "additionalProperties": false },
+      "ControllerSetupRequest": { "type": "object", "required": ["username"], "properties": { "username": { "type": "string" } }, "additionalProperties": false },
+      "ControllerSetup": { "type": "object", "required": ["totp_secret", "qr_png"], "properties": { "totp_secret": { "type": "string", "readOnly": true }, "qr_png": { "type": "string", "readOnly": true, "description": "PNG data URL in the no-store response; never an HTTP URL query." } }, "additionalProperties": false },
+      "ControllerActivationRequest": { "type": "object", "required": ["username", "password", "totp_secret", "confirmation_code"], "properties": { "username": { "type": "string" }, "password": { "type": "string", "writeOnly": true }, "totp_secret": { "type": "string", "writeOnly": true }, "confirmation_code": { "type": "string", "writeOnly": true } }, "additionalProperties": false },
+      "ControllerActivation": { "type": "object", "required": ["mode", "username", "recovery_codes"], "properties": { "mode": { "type": "string", "const": "controller" }, "username": { "type": "string" }, "recovery_codes": { "type": "array", "items": { "type": "string" }, "readOnly": true } }, "additionalProperties": false },
+      "ControllerLoginRequest": { "type": "object", "required": ["username", "password", "code"], "properties": { "username": { "type": "string" }, "password": { "type": "string", "writeOnly": true }, "code": { "type": "string", "writeOnly": true } }, "additionalProperties": false },
+      "ControllerReauthRequest": { "type": "object", "required": ["password", "code"], "properties": { "password": { "type": "string", "writeOnly": true }, "code": { "type": "string", "writeOnly": true }, "recovery": { "type": "boolean", "default": false } }, "additionalProperties": false },
+      "RecoveryCodes": { "type": "object", "required": ["recovery_codes"], "properties": { "recovery_codes": { "type": "array", "items": { "type": "string" }, "readOnly": true } }, "additionalProperties": false },
       "State": { "type": "object", "description": "Current safe control-plane state. Sensitive keys, raw client configurations, and QR payloads are excluded.", "required": ["profiles"], "properties": { "profiles": { "type": "array", "items": { "$ref": "#/components/schemas/Profile" } } }, "additionalProperties": true },
       "Profile": { "type": "object", "required": ["id", "name", "tab", "label", "experimental", "available", "suggested_name", "suggested_port", "suggested_subnet"], "properties": { "id": { "type": "string" }, "name": { "type": "string" }, "tab": { "type": "string" }, "label": { "type": "string" }, "experimental": { "type": "boolean" }, "available": { "type": "boolean" }, "suggested_name": { "type": "string" }, "suggested_port": { "type": "integer", "minimum": 1, "maximum": 65535 }, "suggested_subnet": { "type": "string" } }, "additionalProperties": false },
       "CreateTunnelRequest": { "type": "object", "required": ["profile", "name", "egress_mode", "subnet"], "properties": { "profile": { "type": "string" }, "name": { "type": "string" }, "egress_mode": { "type": "string", "enum": ["wan", "warp"] }, "port": { "type": "integer", "minimum": 1, "maximum": 65535 }, "automatic_port": { "type": "boolean" }, "subnet": { "type": "string" } } },

@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -43,6 +44,10 @@ type web struct {
 	cfg            config.Config
 	service        *app.Service
 	controllerAuth *controlauth.Service
+	controllerDB   *sqldb.DB
+	authMu         sync.RWMutex
+	activating     atomic.Bool
+	activationStop chan struct{}
 	sessions       []byte
 	shutdown       context.Context
 	tls            webtls.Runtime
@@ -84,6 +89,7 @@ func ServeContext(ctx context.Context, cfg config.Config, service *app.Service, 
 	serverContext, stopServer := context.WithCancel(context.Background())
 	defer stopServer()
 	w := newWeb(serverContext, cfg, service, secret, tlsRuntime, controllerAuth)
+	defer w.closeControllerDB()
 	server := newHTTPServer(webUIAddress(cfg.WebUIHost, cfg.WebUIPort), newHandler(w))
 	listener, err := net.Listen("tcp", server.Addr)
 	if err != nil {
@@ -160,7 +166,7 @@ func ServeContext(ctx context.Context, cfg config.Config, service *app.Service, 
 }
 
 func newWeb(shutdown context.Context, cfg config.Config, service *app.Service, secret string, tlsRuntime webtls.Runtime, controllerAuth *controlauth.Service) *web {
-	return &web{cfg: cfg, service: service, controllerAuth: controllerAuth, sessions: []byte(secret), shutdown: shutdown, tls: tlsRuntime, limits: map[string][]time.Time{}, idem: map[string]*idempotencyEntry{}}
+	return &web{cfg: cfg, service: service, controllerAuth: controllerAuth, activationStop: make(chan struct{}), sessions: []byte(secret), shutdown: shutdown, tls: tlsRuntime, limits: map[string][]time.Time{}, idem: map[string]*idempotencyEntry{}}
 }
 
 func newHTTPServer(addr string, handler http.Handler) *http.Server {
@@ -183,6 +189,14 @@ func newHandler(w *web) http.Handler {
 	mux.Handle("/static/", w.securityHandler(http.FileServer(http.FS(staticFiles))))
 	mux.HandleFunc("/", w.security(w.index))
 	mux.HandleFunc("/api/login", w.security(w.loginAPI))
+	mux.HandleFunc("/api/controller/login", w.security(w.loginAPI))
+	mux.HandleFunc("/api/controller/login/recovery", w.security(w.controllerRecoveryLoginAPI))
+	mux.HandleFunc("/api/auth/status", w.security(w.authStatusAPI))
+	mux.HandleFunc("/api/auth/session", w.security(w.requireAuth(w.authSessionAPI)))
+	mux.HandleFunc("/api/controller/setup", w.security(w.requireAuth(w.controllerSetupAPI)))
+	mux.HandleFunc("/api/controller/activate", w.security(w.controllerActivateAPI))
+	mux.HandleFunc("/api/controller/reauth", w.security(w.requireAuth(w.controllerReauthAPI)))
+	mux.HandleFunc("/api/controller/recovery-codes", w.security(w.requireAuth(w.controllerRecoveryCodesAPI)))
 	mux.HandleFunc("/api/logout", w.security(w.requireAuth(w.logoutAPI)))
 	mux.HandleFunc("/api/state", w.security(w.requireAuth(w.stateAPI)))
 	mux.HandleFunc("/api/events", w.security(w.requireAuth(w.eventsAPI)))
@@ -346,13 +360,19 @@ func (w *web) index(rw http.ResponseWriter, r *http.Request) {
 }
 
 func (w *web) loginAPI(rw http.ResponseWriter, r *http.Request) {
+	w.authMu.RLock()
+	defer w.authMu.RUnlock()
+	noStore(rw)
 	if r.Method != http.MethodPost || !w.validOrigin(r) {
 		writeError(rw, http.StatusForbidden, "forbidden")
 		return
 	}
 	if w.controllerAuth != nil {
-		noStore(rw)
-		writeOperationError(rw, http.StatusServiceUnavailable, "controller_login_unavailable", "controller login is not available yet")
+		w.controllerLoginAPI(rw, r)
+		return
+	}
+	if w.activating.Load() {
+		writeOperationError(rw, http.StatusServiceUnavailable, "auth_transition", "authentication is changing")
 		return
 	}
 	var req loginRequest
@@ -383,6 +403,7 @@ func (w *web) loginAPI(rw http.ResponseWriter, r *http.Request) {
 }
 
 func (w *web) logoutAPI(rw http.ResponseWriter, r *http.Request) {
+	noStore(rw)
 	if r.Method != http.MethodPost || !w.validOrigin(r) {
 		writeError(rw, http.StatusForbidden, "forbidden")
 		return
@@ -424,8 +445,7 @@ func (w *web) eventsAPI(rw http.ResponseWriter, r *http.Request) {
 		writeError(rw, http.StatusInternalServerError, "streaming unsupported")
 		return
 	}
-	// SSE is long-lived; retain the server-wide write timeout for ordinary responses.
-	_ = http.NewResponseController(rw).SetWriteDeadline(time.Time{})
+	// Bound each write so a stalled event client cannot hold the activation barrier forever.
 
 	noStore(rw)
 	rw.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
@@ -433,6 +453,7 @@ func (w *web) eventsAPI(rw http.ResponseWriter, r *http.Request) {
 	rw.Header().Set("X-Accel-Buffering", "no")
 
 	writeStateEvent := func() bool {
+		_ = http.NewResponseController(rw).SetWriteDeadline(time.Now().Add(webWriteTimeout))
 		state, err := w.service.State()
 		if err != nil {
 			writeServerSentEvent(rw, "error", []byte(`{"error":"state unavailable"}`))
@@ -460,11 +481,14 @@ func (w *web) eventsAPI(rw http.ResponseWriter, r *http.Request) {
 	if w.shutdown != nil {
 		shutdown = w.shutdown.Done()
 	}
+	activationStop := w.activationStop
 	for {
 		select {
 		case <-r.Context().Done():
 			return
 		case <-shutdown:
+			return
+		case <-activationStop:
 			return
 		case <-ticker.C:
 			if !writeStateEvent() {
