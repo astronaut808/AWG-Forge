@@ -83,6 +83,14 @@ func (s *Service) StartManagedNodeBoot() (ManagedNodeBoot, error) {
 // requires an explicit detach, which preserves local configuration while
 // removing controller authority and replay metadata.
 func PrepareRestoredState(current *config.State, restored config.State, detachManagedNode bool, now time.Time) (config.State, bool, error) {
+	if err := validateStateMode(restored); err != nil {
+		return config.State{}, false, err
+	}
+	if current != nil {
+		if err := validateStateMode(*current); err != nil {
+			return config.State{}, false, err
+		}
+	}
 	if restored.ManagedNode != nil {
 		if err := validateManagedNodeState(restored.ManagedNode); err != nil {
 			return config.State{}, false, err
@@ -108,6 +116,7 @@ func PrepareRestoredState(current *config.State, restored config.State, detachMa
 	}
 
 	restored.ManagedNode = nil
+	restored.Mode = config.ModeStandalone
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}

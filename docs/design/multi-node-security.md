@@ -111,7 +111,7 @@ certificates.
 - Session rotation invalidates the previous token; logout and administrator
   recovery revoke all selected sessions.
 
-The dormant controller-auth foundation uses versioned Argon2id PHC verifiers
+The controller-auth foundation uses versioned Argon2id PHC verifiers
 with `m=65536` KiB, `t=3`, `p=4`, a 16-byte salt, and a 32-byte result. Its PHC
 decoder rejects unsupported versions and caps attacker-controlled parameters at
 256 MiB, 10 iterations, and 16 lanes before allocating. The service admits at
@@ -139,8 +139,14 @@ connections use WAL with `synchronous=FULL`, immediate write transactions,
 foreign-key enforcement, and the configured busy timeout on every pooled
 connection. Expired sessions are removed during subsequent authentication.
 Controller sessions expire after 30 minutes and the recent-auth window is five
-minutes. These defaults remain dormant until the controller-auth HTTP and
-activation flow is implemented.
+minutes.
+
+Controller activation prepares the database, key file, and first administrator
+before committing the explicit controller role. A secret-free recovery journal
+rolls an interrupted pre-commit activation back to standalone; once controller
+mode is committed, startup requires the existing database and key file and never
+falls back to the standalone `PASSWORD`. The activation and login flows remain
+unreachable until their HTTP/UI entry points are implemented.
 
 ## Logging and support bundles
 

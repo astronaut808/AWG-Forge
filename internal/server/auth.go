@@ -17,6 +17,14 @@ const sessionTTL = 30 * time.Minute
 
 func (w *web) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
+		if w.controllerAuth != nil {
+			if w.hasSession(r) {
+				next(rw, r)
+				return
+			}
+			writeError(rw, http.StatusUnauthorized, "unauthorized")
+			return
+		}
 		if w.cfg.Password == "" || w.hasSession(r) {
 			next(rw, r)
 			return
@@ -259,6 +267,10 @@ func (w *web) hasSession(r *http.Request) bool {
 	c, err := r.Cookie("awg_forge_session")
 	if err != nil {
 		return false
+	}
+	if w.controllerAuth != nil {
+		_, err := w.controllerAuth.ValidateSession(r.Context(), c.Value, time.Now().UTC())
+		return err == nil
 	}
 	parts := strings.Split(c.Value, ".")
 	if len(parts) != 2 || !subtleCompare(w.sign(parts[0]), parts[1]) {

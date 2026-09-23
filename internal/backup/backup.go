@@ -128,6 +128,9 @@ func createFromState(cfg config.Config, state config.State, password string, opt
 	if err := validatePassword(password); err != nil {
 		return Archive{}, err
 	}
+	if state.EffectiveMode() == config.ModeController {
+		return Archive{}, errors.New("controller backup is unavailable until controller identity and authentication data can be archived together")
+	}
 	now := opts.Now
 	if now.IsZero() {
 		now = time.Now().UTC()
@@ -433,6 +436,9 @@ func loadAndValidate(password, archivePath string) (validatedBackup, error) {
 }
 
 func validateStateSanity(state config.State) error {
+	if state.EffectiveMode() == config.ModeController {
+		return errors.New("backup validation failed: controller backup requires controller identity and authentication data")
+	}
 	if state.ManagedNode != nil {
 		if err := app.ValidateManagedNodeState(state.ManagedNode); err != nil {
 			return fmt.Errorf("backup validation failed: %w", err)

@@ -268,6 +268,7 @@ func TestManagedNodeLocalMutationRejectsGenerationExhaustion(t *testing.T) {
 func TestManagedNodeFailedLocalMutationRestoresGeneration(t *testing.T) {
 	service, state := runtimeTransactionService(t)
 	state.ManagedNode = testManagedNodeState()
+	state.Mode = config.ModeNode
 	if err := service.store.Save(state); err != nil {
 		t.Fatal(err)
 	}
@@ -294,6 +295,7 @@ func TestManagedNodeFailedLocalMutationRestoresGeneration(t *testing.T) {
 func TestManagedNodeFailedWarpMutationRestoresGeneration(t *testing.T) {
 	service, state := runtimeTransactionService(t)
 	state.ManagedNode = testManagedNodeState()
+	state.Mode = config.ModeNode
 	if err := service.store.Save(state); err != nil {
 		t.Fatal(err)
 	}
@@ -454,6 +456,7 @@ func managedMutationTestService(t *testing.T) (*Service, config.State, string, s
 		t.Fatal(err)
 	}
 	state.ManagedNode = testManagedNodeState()
+	state.Mode = config.ModeNode
 	if err := service.store.Save(state); err != nil {
 		t.Fatal(err)
 	}

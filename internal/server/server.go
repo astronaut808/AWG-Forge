@@ -27,6 +27,7 @@ import (
 	"github.com/astronaut808/awg-forge/internal/backup"
 	"github.com/astronaut808/awg-forge/internal/buildinfo"
 	"github.com/astronaut808/awg-forge/internal/config"
+	"github.com/astronaut808/awg-forge/internal/controlauth"
 	"github.com/astronaut808/awg-forge/internal/doctor"
 	"github.com/astronaut808/awg-forge/internal/sqldb"
 	"github.com/astronaut808/awg-forge/internal/support"
@@ -39,14 +40,15 @@ import (
 var staticFiles embed.FS
 
 type web struct {
-	cfg      config.Config
-	service  *app.Service
-	sessions []byte
-	shutdown context.Context
-	tls      webtls.Runtime
-	limits   map[string][]time.Time
-	idem     map[string]*idempotencyEntry
-	mu       sync.Mutex
+	cfg            config.Config
+	service        *app.Service
+	controllerAuth *controlauth.Service
+	sessions       []byte
+	shutdown       context.Context
+	tls            webtls.Runtime
+	limits         map[string][]time.Time
+	idem           map[string]*idempotencyEntry
+	mu             sync.Mutex
 }
 
 const idempotencyTTL = 10 * time.Minute
@@ -68,20 +70,20 @@ type idempotencyEntry struct {
 	ready       chan struct{}
 }
 
-func Serve(cfg config.Config, service *app.Service, tlsRuntime webtls.Runtime) error {
+func Serve(cfg config.Config, service *app.Service, tlsRuntime webtls.Runtime, controllerAuth *controlauth.Service) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return ServeContext(ctx, cfg, service, tlsRuntime)
+	return ServeContext(ctx, cfg, service, tlsRuntime, controllerAuth)
 }
 
-func ServeContext(ctx context.Context, cfg config.Config, service *app.Service, tlsRuntime webtls.Runtime) error {
+func ServeContext(ctx context.Context, cfg config.Config, service *app.Service, tlsRuntime webtls.Runtime, controllerAuth *controlauth.Service) error {
 	secret, err := service.SessionSecret()
 	if err != nil {
 		return err
 	}
 	serverContext, stopServer := context.WithCancel(context.Background())
 	defer stopServer()
-	w := newWeb(serverContext, cfg, service, secret, tlsRuntime)
+	w := newWeb(serverContext, cfg, service, secret, tlsRuntime, controllerAuth)
 	server := newHTTPServer(webUIAddress(cfg.WebUIHost, cfg.WebUIPort), newHandler(w))
 	listener, err := net.Listen("tcp", server.Addr)
 	if err != nil {
@@ -157,8 +159,8 @@ func ServeContext(ctx context.Context, cfg config.Config, service *app.Service, 
 	}
 }
 
-func newWeb(shutdown context.Context, cfg config.Config, service *app.Service, secret string, tlsRuntime webtls.Runtime) *web {
-	return &web{cfg: cfg, service: service, sessions: []byte(secret), shutdown: shutdown, tls: tlsRuntime, limits: map[string][]time.Time{}, idem: map[string]*idempotencyEntry{}}
+func newWeb(shutdown context.Context, cfg config.Config, service *app.Service, secret string, tlsRuntime webtls.Runtime, controllerAuth *controlauth.Service) *web {
+	return &web{cfg: cfg, service: service, controllerAuth: controllerAuth, sessions: []byte(secret), shutdown: shutdown, tls: tlsRuntime, limits: map[string][]time.Time{}, idem: map[string]*idempotencyEntry{}}
 }
 
 func newHTTPServer(addr string, handler http.Handler) *http.Server {
@@ -348,6 +350,11 @@ func (w *web) loginAPI(rw http.ResponseWriter, r *http.Request) {
 		writeError(rw, http.StatusForbidden, "forbidden")
 		return
 	}
+	if w.controllerAuth != nil {
+		noStore(rw)
+		writeOperationError(rw, http.StatusServiceUnavailable, "controller_login_unavailable", "controller login is not available yet")
+		return
+	}
 	var req loginRequest
 	if err := readJSON(rw, r, &req); err != nil {
 		writeError(rw, http.StatusBadRequest, "invalid json")
@@ -379,6 +386,15 @@ func (w *web) logoutAPI(rw http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost || !w.validOrigin(r) {
 		writeError(rw, http.StatusForbidden, "forbidden")
 		return
+	}
+	if w.controllerAuth != nil {
+		cookie, err := r.Cookie("awg_forge_session")
+		if err == nil {
+			if err := w.controllerAuth.RevokeSession(r.Context(), cookie.Value, time.Now().UTC()); err != nil {
+				writeOperationError(rw, http.StatusInternalServerError, "logout_failed", "logout failed")
+				return
+			}
+		}
 	}
 	http.SetCookie(rw, sessionCookie(r, "", -1, w.sessionCookieSecure(r)))
 	w.audit("info", "logout", "logout", nil, nil)

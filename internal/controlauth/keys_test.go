@@ -50,6 +50,36 @@ func TestKeyFileRoundTripAndPermissions(t *testing.T) {
 	}
 }
 
+func TestRemoveKeyFileRejectsSymlinkAndRemovesRegularFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, KeyFileName)
+	if _, err := LoadOrCreateKeys(path, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveKeyFile(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("removed key stat error = %v", err)
+	}
+	target := filepath.Join(dir, "target")
+	if err := os.WriteFile(target, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveKeyFile(path); !errors.Is(err, ErrInvalidKeyFile) {
+		t.Fatalf("symlink removal error = %v", err)
+	}
+	if body, err := os.ReadFile(target); err != nil || string(body) != "keep" {
+		t.Fatalf("symlink target changed: %q, %v", body, err)
+	}
+}
+
 func TestTOTPSecretUsesUserBoundAuthenticatedEncryption(t *testing.T) {
 	keys, err := LoadOrCreateKeys(filepath.Join(t.TempDir(), KeyFileName), nil)
 	if err != nil {

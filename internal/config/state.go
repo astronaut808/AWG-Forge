@@ -4,14 +4,42 @@ import "time"
 
 type State struct {
 	SchemaVersion     int               `json:"schema_version"`
+	Mode              string            `json:"mode"`
 	SessionSecret     string            `json:"session_secret"`
 	ServerHost        string            `json:"server_host"`
 	ExternalInterface string            `json:"external_interface"`
+	Controller        *ControllerState  `json:"controller,omitempty"`
 	ManagedNode       *ManagedNodeState `json:"managed_node,omitempty"`
 	Warp              Warp              `json:"warp,omitempty"`
 	Tunnels           []Tunnel          `json:"tunnels"`
 	CreatedAt         time.Time         `json:"created_at"`
 	UpdatedAt         time.Time         `json:"updated_at"`
+}
+
+const (
+	ModeStandalone = "standalone"
+	ModeController = "controller"
+	ModeNode       = "node"
+)
+
+// EffectiveMode preserves compatibility with state written before explicit
+// roles were persisted. Managed metadata was already authoritative for the
+// dormant node role; every other legacy state is standalone.
+func (s State) EffectiveMode() string {
+	if s.Mode != "" {
+		return s.Mode
+	}
+	if s.ManagedNode != nil {
+		return ModeNode
+	}
+	return ModeStandalone
+}
+
+// ControllerState is created only by an explicit, completed controller
+// activation. Authentication secrets remain outside state.json.
+type ControllerState struct {
+	ControllerID string    `json:"controller_id"`
+	ActivatedAt  time.Time `json:"activated_at"`
 }
 
 // ManagedNodeState exists only after explicit controller enrollment.

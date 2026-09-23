@@ -18,6 +18,7 @@ import (
 
 	"github.com/astronaut808/awg-forge/internal/audit"
 	"github.com/astronaut808/awg-forge/internal/config"
+	"github.com/astronaut808/awg-forge/internal/controlauth"
 	"github.com/astronaut808/awg-forge/internal/firewall"
 	"github.com/astronaut808/awg-forge/internal/observability"
 	"github.com/astronaut808/awg-forge/internal/protocol"
@@ -36,15 +37,16 @@ var serverHostRE = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0
 var transferRE = regexp.MustCompile(`^transfer:\s+(.+?) received,\s+(.+?) sent$`)
 
 type Service struct {
-	mu                sync.Mutex
-	stateMutationLock *storage.StateLock
-	managedBoot       *ManagedNodeBoot
-	cfg               config.Config
-	store             storage.Store
-	saveState         func(config.State) error
-	audit             audit.Logger
-	runtime           *observability.Logger
-	runtimeOps        runtimeOperations
+	mu                    sync.Mutex
+	stateMutationLock     *storage.StateLock
+	managedBoot           *ManagedNodeBoot
+	cfg                   config.Config
+	store                 storage.Store
+	saveState             func(config.State) error
+	audit                 audit.Logger
+	runtime               *observability.Logger
+	runtimeOps            runtimeOperations
+	controllerAuthOptions controlauth.Options
 }
 
 type runtimeOperations struct {

@@ -56,6 +56,7 @@ func TestStartManagedNodeBootPersistsOneSequencePerService(t *testing.T) {
 		t.Fatal(err)
 	}
 	state.ManagedNode = testManagedNodeState()
+	state.Mode = config.ModeNode
 	state.ManagedNode.DesiredGeneration = 9
 	if err := service.store.Save(state); err != nil {
 		t.Fatal(err)
@@ -94,6 +95,7 @@ func TestStartManagedNodeBootRejectsSequenceExhaustion(t *testing.T) {
 		t.Fatal(err)
 	}
 	state.ManagedNode = testManagedNodeState()
+	state.Mode = config.ModeNode
 	state.ManagedNode.BootSequence = ^uint64(0)
 	if err := service.store.Save(state); err != nil {
 		t.Fatal(err)
@@ -162,6 +164,9 @@ func TestPrepareRestoredStateDetachPreservesConfiguration(t *testing.T) {
 	}
 	if prepared.ManagedNode != nil {
 		t.Fatalf("managed identity remains after detach: %#v", prepared.ManagedNode)
+	}
+	if prepared.Mode != config.ModeStandalone {
+		t.Fatalf("mode after detach = %q, want %q", prepared.Mode, config.ModeStandalone)
 	}
 	if len(prepared.Tunnels) != 1 || prepared.Tunnels[0].ID != restored.Tunnels[0].ID {
 		t.Fatalf("local configuration changed during detach: %#v", prepared.Tunnels)

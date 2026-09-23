@@ -397,6 +397,26 @@ func TestRestoreKeepsEncryptedPreRestoreBackup(t *testing.T) {
 	assertMode(t, matches[0], 0600)
 }
 
+func TestCreateRejectsControllerStateUntilControllerSecretsCanBeArchivedAtomically(t *testing.T) {
+	cfg := testConfig(t)
+	svc := app.New(cfg)
+	state, err := svc.Init()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.Mode = config.ModeController
+	state.Controller = &config.ControllerState{
+		ControllerID: "11111111-1111-4111-8111-111111111111",
+		ActivatedAt:  time.Date(2026, 9, 23, 8, 0, 0, 0, time.UTC),
+	}
+	if err := storage.New(cfg.ConfigDir).Save(state); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Create(context.Background(), cfg, svc, testPassword, Options{}); err == nil || !strings.Contains(err.Error(), "controller backup is unavailable") {
+		t.Fatalf("controller backup error = %v", err)
+	}
+}
+
 func TestRestoreManagedBackupRequiresExplicitDetachOnNewInstallation(t *testing.T) {
 	sourceCfg := testConfig(t)
 	sourceSvc, sourceState := managedBackupService(t, sourceCfg, testManagedBackupState())
@@ -1020,6 +1040,7 @@ func managedBackupService(t *testing.T, cfg config.Config, managed *config.Manag
 		t.Fatal(err)
 	}
 	state.ManagedNode = managed
+	state.Mode = config.ModeNode
 	if err := storage.New(cfg.ConfigDir).Save(state); err != nil {
 		t.Fatal(err)
 	}

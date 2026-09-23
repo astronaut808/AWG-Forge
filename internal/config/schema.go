@@ -1,3 +1,3 @@
 package config
 
-const CurrentStateSchemaVersion = 3
+const CurrentStateSchemaVersion = 4

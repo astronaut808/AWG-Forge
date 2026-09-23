@@ -1011,6 +1011,7 @@ func managedStateService(t *testing.T) (*Service, config.State) {
 		StateEpoch:   testStateEpoch,
 		BindingEpoch: 1,
 	}
+	state.Mode = config.ModeNode
 	if err := svc.store.Save(state); err != nil {
 		t.Fatal(err)
 	}
