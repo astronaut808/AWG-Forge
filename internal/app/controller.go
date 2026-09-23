@@ -30,9 +30,10 @@ type ControllerActivationRequest struct {
 }
 
 type ControllerActivationResult struct {
-	ControllerID  string
-	Username      string
-	RecoveryCodes []string
+	ControllerID   string
+	Username       string
+	RecoveryCodes  []string
+	Authentication controlauth.Authentication
 }
 
 func (s *Service) ActivateController(ctx context.Context, request ControllerActivationRequest) (ControllerActivationResult, error) {
@@ -133,10 +134,36 @@ func (s *Service) ActivateController(ctx context.Context, request ControllerActi
 	}
 	s.log("info", "controller.activation.completed", "controller mode activated", map[string]any{"controller_id": controllerID.String()}, nil)
 	return ControllerActivationResult{
-		ControllerID:  controllerID.String(),
-		Username:      enrollment.Username,
-		RecoveryCodes: enrollment.RecoveryCodes,
+		ControllerID:   controllerID.String(),
+		Username:       enrollment.Username,
+		RecoveryCodes:  enrollment.RecoveryCodes,
+		Authentication: enrollment.Authentication,
 	}, nil
+}
+
+// RecoverControllerAdmin changes only controller credentials and auth state.
+// The offline CLI owns the exclusive state-directory lock before this call.
+func (s *Service) RecoverControllerAdmin(ctx context.Context, auth *controlauth.Service, username, password string) (controlauth.Recovery, error) {
+	if auth == nil {
+		return controlauth.Recovery{}, errors.New("controller authentication unavailable")
+	}
+	if err := s.lockStateMutation(); err != nil {
+		return controlauth.Recovery{}, err
+	}
+	defer s.unlockStateMutation()
+	state, err := s.store.Load()
+	if err != nil {
+		return controlauth.Recovery{}, err
+	}
+	if state.EffectiveMode() != config.ModeController || state.Controller == nil {
+		return controlauth.Recovery{}, ErrInvalidStateMode
+	}
+	result, err := auth.RecoverAdmin(ctx, username, password, time.Now().UTC())
+	if err != nil {
+		return controlauth.Recovery{}, err
+	}
+	s.log("warn", "controller.admin.recovered", "controller administrator recovered locally", map[string]any{"controller_id": state.Controller.ControllerID}, nil)
+	return result, nil
 }
 
 func (s *Service) recoverControllerActivationLocked(state config.State) error {

@@ -65,6 +65,49 @@ func TestControllerActivationCommitsModeLastAndSurvivesRestart(t *testing.T) {
 	}
 }
 
+func TestOfflineAdminRecoveryPreservesControllerIdentityAndRevokesInitialSession(t *testing.T) {
+	cfg := controllerTestConfig(t)
+	svc := newFastControllerTestService(cfg)
+	if _, err := svc.Init(); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_800_000_015, 0).UTC()
+	activated, err := svc.ActivateController(context.Background(), controllerTestActivationRequest(t, now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := sqldb.Open(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	keys, err := controlauth.LoadKeys(filepath.Join(cfg.ConfigDir, controlauth.KeyFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth, err := controlauth.NewService(db, keys, fastControllerAuthOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := svc.RecoverControllerAdmin(context.Background(), auth, "restored-admin", "new correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.TOTPSecret == "" || len(recovered.RecoveryCodes) != controlauth.DefaultRecoveryCodeCount {
+		t.Fatal("recovery material incomplete")
+	}
+	state, err := storage.New(cfg.ConfigDir).Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Controller == nil || state.Controller.ControllerID != activated.ControllerID {
+		t.Fatal("controller identity changed during admin recovery")
+	}
+	if _, err := auth.ValidateSession(context.Background(), activated.Authentication.Token, time.Now().UTC()); !errors.Is(err, controlauth.ErrSessionNotFound) {
+		t.Fatalf("initial session after recovery: %v", err)
+	}
+}
+
 func TestInitMigratesLegacyStandaloneStateToExplicitMode(t *testing.T) {
 	cfg := controllerTestConfig(t)
 	svc := newFastControllerTestService(cfg)

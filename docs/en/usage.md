@@ -40,6 +40,23 @@ Maintenance actions are available through the `Maintenance` button:
 - `Traffic`: aggregate traffic history when SQLite is enabled.
 - `Audit log`: inspect recent safe audit events. The panel auto-refreshes while the Audit log tab is open and shows newest events first.
 - `Support`: download a support bundle without secrets and view the safe runtime, database, TLS, and version summary.
+- `Controller`: with SQLite enabled, create the administrator, scan the MFA QR, confirm a TOTP code, and save the recovery codes before finishing. In controller mode, reauthenticate and replace recovery codes here.
+
+After activation, log in with username, password, and TOTP. The login page has a
+separate recovery-code option; each recovery code works once. Store replacement
+codes when they are displayed because they cannot be retrieved later.
+
+For offline administrator recovery, stop `awg-forge serve` first. As Linux root,
+prepare a root-owned regular JSON file with mode `0600` containing `username`
+and `password`, then run:
+
+```bash
+awg-forge controller recover-admin --input-file /etc/awg-forge/recovery-input.json
+```
+
+The command prints a new TOTP secret and recovery codes once and revokes all
+browser sessions. Remove the input file after use. Missing SQLite or
+`controller-auth.keys` is an error; do not create replacement files.
 
 ## Stale Configs
 

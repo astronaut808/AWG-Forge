@@ -40,7 +40,7 @@ type Modal =
   | { kind: "delete-tunnel"; tunnel: Tunnel }
   | { kind: "maintenance" };
 
-type MaintenanceTab = "overview" | "doctor" | "warp" | "backup" | "support" | "logs" | "traffic";
+type MaintenanceTab = "overview" | "doctor" | "warp" | "backup" | "support" | "logs" | "traffic" | "controller";
 type QRImportMode = "amneziavpn" | "amneziawg";
 type ExpandedQR = { mode: QRImportMode; chunk: number };
 type TrafficLimitUnit = "mib" | "gib" | "tib";
@@ -71,7 +71,9 @@ function useI18n() {
 function App() {
   const [state, setState] = useState<AppState | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
+  const [authMode, setAuthMode] = useState<api.AuthMode>("standalone");
   const [modal, setModal] = useState<Modal | null>(null);
+  const [recoveryCodesPending, setRecoveryCodesPending] = useState(false);
   const [toast, setToast] = useState("");
   const [theme, setTheme] = useState(initialTheme);
   const [locale, setLocale] = useState<Locale>(initialLocale);
@@ -84,6 +86,8 @@ function App() {
 
   const load = useCallback(async (options: { quiet?: boolean } = {}): Promise<LoadResult> => {
     try {
+      const auth = await api.authStatus();
+      setAuthMode(auth.mode);
       const next = await api.state();
       authenticatedRef.current = true;
       setState(next);
@@ -95,6 +99,7 @@ function App() {
         const wasAuthenticated = authenticatedRef.current;
         authenticatedRef.current = false;
         setModal(null);
+        setRecoveryCodesPending(false);
         setState(null);
         if (wasAuthenticated) notify(messagesRef.current.common.sessionExpired);
         return "unauthorized";
@@ -181,7 +186,7 @@ function App() {
   if (!state) {
     return (
       <I18nContext.Provider value={i18n}>
-        <Login onLogin={() => load()} notify={notify} {...shellProps} />
+        <Login mode={authMode} onLogin={() => load()} notify={notify} {...shellProps} />
         <Toast message={toast} />
       </I18nContext.Provider>
     );
@@ -228,8 +233,8 @@ function App() {
         renderTunnel={renderTunnel}
       />
       {modal && (
-        <Dialog onClose={() => setModal(null)}>
-          <ModalContent modal={modal} state={state} notify={notify} close={() => setModal(null)} reload={async () => { await load({ quiet: true }); }} runAction={runAction} />
+        <Dialog onClose={() => { if (recoveryCodesPending) notify(m.controller.codesNote); else setModal(null); }}>
+          <ModalContent modal={modal} state={state} notify={notify} close={() => setModal(null)} reload={async () => { await load({ quiet: true }); }} runAction={runAction} recoveryCodesPending={recoveryCodesPending} setRecoveryCodesPending={setRecoveryCodesPending} />
           <Toast message={toast} />
         </Dialog>
       )}
@@ -239,9 +244,12 @@ function App() {
   );
 }
 
-function Login({ onLogin, notify, theme, setTheme, locale, setLocale }: { onLogin: () => Promise<LoadResult>; notify: (message: string) => void; theme: string; setTheme: (theme: string) => void; locale: Locale; setLocale: (locale: Locale) => void }) {
+function Login({ mode, onLogin, notify, theme, setTheme, locale, setLocale }: { mode: api.AuthMode; onLogin: () => Promise<LoadResult>; notify: (message: string) => void; theme: string; setTheme: (theme: string) => void; locale: Locale; setLocale: (locale: Locale) => void }) {
   const { m } = useI18n();
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
+  const [recovery, setRecovery] = useState(false);
   const [busy, setBusy] = useState(false);
   const [secureCookieRejected, setSecureCookieRejected] = useState(false);
   const documentationURL = `https://github.com/astronaut808/awg-forge/blob/master/docs/${locale}/configuration.md`;
@@ -257,7 +265,8 @@ function Login({ onLogin, notify, theme, setTheme, locale, setLocale }: { onLogi
               setBusy(true);
               setSecureCookieRejected(false);
               try {
-                await api.login(password);
+                if (mode === "controller") await api.controllerLogin(username, password, code, recovery);
+                else await api.login(password);
                 if (await onLogin() === "unauthorized") setSecureCookieRejected(true);
               } catch (err) {
                 notify(errorMessage(err, m.common.requestFailed));
@@ -266,8 +275,14 @@ function Login({ onLogin, notify, theme, setTheme, locale, setLocale }: { onLogi
               }
             }}
           >
-            <label>{m.login.password}<input aria-label={m.login.password} type="password" autocomplete="current-password" value={password} onInput={(event) => setPassword((event.currentTarget as HTMLInputElement).value)} /></label>
-            <button class="button primary wide" disabled={busy} type="submit">{busy ? m.login.loggingIn : m.login.logIn}</button>
+            {mode === "controller" && <label>{m.controller.username}<input aria-label={m.controller.username} autocomplete="username" value={username} onInput={(event) => setUsername((event.currentTarget as HTMLInputElement).value)} required /></label>}
+            <label>{mode === "controller" ? m.controller.password : m.login.password}<input aria-label={mode === "controller" ? m.controller.password : m.login.password} type="password" autocomplete="current-password" value={password} onInput={(event) => setPassword((event.currentTarget as HTMLInputElement).value)} required={mode === "controller"} /></label>
+            {mode === "controller" && <>
+              <label>{recovery ? m.controller.recoveryCode : m.controller.code}<input aria-label={recovery ? m.controller.recoveryCode : m.controller.code} autocomplete="one-time-code" value={code} onInput={(event) => setCode((event.currentTarget as HTMLInputElement).value)} required /></label>
+              <button class="button" type="button" onClick={() => { setRecovery(!recovery); setCode(""); }}>{recovery ? m.controller.useAuthenticator : m.controller.useRecovery}</button>
+            </>}
+            {mode === "activating" && <p role="status">{m.controller.unavailable}</p>}
+            <button class="button primary wide" disabled={busy || mode === "activating"} type="submit">{busy ? m.login.loggingIn : m.login.logIn}</button>
             {secureCookieRejected && (
               <div class="notice login-notice" role="alert">
                 <p>{m.login.secureCookieRejected}</p>
@@ -528,13 +543,15 @@ function Fact({ label, value, extra }: { label: string; value: string; extra?: s
   return <div class="fact"><span>{label}</span><strong class="mono">{value}</strong>{extra && <em>{extra}</em>}</div>;
 }
 
-function ModalContent({ modal, state, notify, close, reload, runAction }: {
+function ModalContent({ modal, state, notify, close, reload, runAction, recoveryCodesPending, setRecoveryCodesPending }: {
   modal: Modal;
   state: AppState;
   notify: (message: string) => void;
   close: () => void;
   reload: () => Promise<void>;
   runAction: RunAction;
+  recoveryCodesPending: boolean;
+  setRecoveryCodesPending: (pending: boolean) => void;
 }) {
   if (modal.kind === "create-tunnel") return <CreateTunnelForm state={state} profile={modal.profile} runAction={runAction} />;
   if (modal.kind === "settings") return <TunnelSettingsForm state={state} tunnel={modal.tunnel} runAction={runAction} />;
@@ -545,7 +562,7 @@ function ModalContent({ modal, state, notify, close, reload, runAction }: {
     return <ClientConfigPanel key={modal.client.id} client={modal.client} notify={notify} />;
   }
   if (modal.kind === "delete-tunnel") return <DeleteTunnelConfirmation tunnel={modal.tunnel} close={close} runAction={runAction} />;
-  return <MaintenanceCenter state={state} notify={notify} close={close} reload={reload} />;
+  return <MaintenanceCenter state={state} notify={notify} close={close} reload={reload} recoveryCodesPending={recoveryCodesPending} setRecoveryCodesPending={setRecoveryCodesPending} />;
 }
 
 function DeleteTunnelConfirmation({ tunnel, close, runAction }: { tunnel: Tunnel; close: () => void; runAction: RunAction }) {
@@ -987,7 +1004,7 @@ function ClientConfigPanel({ client, notify }: { client: Client; notify: (messag
   </PanelTitle>;
 }
 
-function MaintenanceCenter({ state, notify, reload }: { state: AppState; notify: (message: string) => void; close: () => void; reload: () => Promise<void> }) {
+function MaintenanceCenter({ state, notify, reload, close, recoveryCodesPending, setRecoveryCodesPending }: { state: AppState; notify: (message: string) => void; close: () => void; reload: () => Promise<void>; recoveryCodesPending: boolean; setRecoveryCodesPending: (pending: boolean) => void }) {
   const { m } = useI18n();
   const [tab, setTab] = useState<MaintenanceTab>("overview");
   const [doctorResults, setDoctorResults] = useState<DoctorResult[] | null>(null);
@@ -1057,7 +1074,7 @@ function MaintenanceCenter({ state, notify, reload }: { state: AppState; notify:
   const repairableFirewallIssue = state.apply_enabled && Boolean(doctorResults?.some((result) => result.category === "firewall" && result.level !== "ok"));
 
   return <PanelTitle title={m.maintenance.title} subtitle={m.maintenance.subtitle}>
-    <nav class="subtabs">{(["overview", "doctor", "warp", "backup", "traffic", "logs", "support"] as MaintenanceTab[]).map((item) => <button key={item} className={classNames("button", tab === item && "active")} type="button" onClick={() => setTab(item)}>{m.maintenance.tabs[item]}</button>)}</nav>
+    <nav class="subtabs">{(["overview", "doctor", "warp", "backup", "traffic", "logs", "support", "controller"] as MaintenanceTab[]).map((item) => <button key={item} className={classNames("button", tab === item && "active")} type="button" disabled={recoveryCodesPending && item !== "controller"} onClick={() => setTab(item)}>{m.maintenance.tabs[item]}</button>)}</nav>
     {tab === "overview" && <MaintenanceOverview state={state} />}
     {tab === "doctor" && <div class="stack"><button class="button primary" disabled={Boolean(busyAction)} type="button" onClick={() => action("doctor", m.maintenance.doctorCompleted, async () => { const report = await api.doctor(); setDoctorResults(report.results); setFirewall(null); })}><ButtonContent busy={busyAction === "doctor"}>{m.maintenance.runDoctor}</ButtonContent></button><ResultList results={doctorResults} />{repairableFirewallIssue && <section class="stack maintenance-action"><div><h3>{m.maintenance.firewall}</h3><p class="note">{m.maintenance.firewallNote}</p></div><button class="button primary" disabled={Boolean(busyAction)} type="button" onClick={() => action("firewall", m.maintenance.firewallRepaired, async () => setFirewall((await api.firewallRepair()).firewall))}><ButtonContent busy={busyAction === "firewall"}>{m.maintenance.repairFirewall}</ButtonContent></button>{firewall && <ResultList results={firewall.results.map((item) => ({ level: item.status === "ok" ? "ok" : item.status === "duplicate" ? "warn" : "fail", area: `${item.tunnel}/${item.name}`, message: item.message || item.rule }))} />}</section>}</div>}
     {tab === "warp" && <WarpPanel state={state} action={action} busyAction={busyAction} />}
@@ -1065,7 +1082,81 @@ function MaintenanceCenter({ state, notify, reload }: { state: AppState; notify:
     {tab === "support" && <SupportPanel state={state} action={action} busyAction={busyAction} />}
     {tab === "logs" && <div class="stack"><p class="note">{m.maintenance.auditAutoRefresh}</p><div class="list">{events.length === 0 ? <div class="empty compact">{m.maintenance.noAuditEvents}</div> : events.map((event) => <div class="row" key={`${event.time}-${event.event}`}><strong>{event.event}</strong><p>{event.time} · {event.level} · {event.message}{event.error ? ` · ${event.error}` : ""}</p></div>)}</div></div>}
     {tab === "traffic" && <TrafficPanel state={state} traffic={traffic} reload={async () => setTraffic(await api.trafficSummary())} />}
+    {tab === "controller" && <ControllerPanel state={state} notify={notify} reload={reload} close={close} setRecoveryCodesPending={setRecoveryCodesPending} />}
   </PanelTitle>;
+}
+
+function ControllerPanel({ state, notify, reload, close, setRecoveryCodesPending }: { state: AppState; notify: (message: string) => void; reload: () => Promise<void>; close: () => void; setRecoveryCodesPending: (pending: boolean) => void }) {
+  const { m } = useI18n();
+  const [mode, setMode] = useState<api.AuthMode | null>(null);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
+  const [enrollment, setEnrollment] = useState<{ totp_secret: string; qr_png: string } | null>(null);
+  const [codes, setCodes] = useState<string[]>([]);
+  const [saved, setSaved] = useState(false);
+  const [recent, setRecent] = useState(false);
+  const [recovery, setRecovery] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    void api.authStatus().then(async (status) => {
+      if (!alive) return;
+      setMode(status.mode);
+      if (status.mode === "controller") {
+        const session = await api.authSession();
+        if (alive) setRecent(Boolean(session.recent_auth));
+      }
+    }).catch((err) => { if (alive) notify(errorMessage(err, m.common.requestFailed)); });
+    return () => { alive = false; };
+  }, []);
+
+  async function perform(fn: () => Promise<void>) {
+    setBusy(true);
+    try { await fn(); } catch (err) { notify(errorMessage(err, m.common.requestFailed)); }
+    finally { setBusy(false); }
+  }
+
+  if (mode === null) return <p role="status">{m.common.loading}</p>;
+  if (mode === "activating") return <p role="status">{m.controller.unavailable}</p>;
+  if (codes.length > 0) return <section class="stack controller-panel" aria-label={m.controller.codesTitle}>
+    <h3>{m.controller.codesTitle}</h3>
+    <p class="note">{m.controller.codesNote}</p>
+    <ol class="controller-codes">{codes.map((item) => <li key={item}><code>{item}</code></li>)}</ol>
+    <label class="check-label"><input type="checkbox" checked={saved} onChange={(event) => setSaved((event.currentTarget as HTMLInputElement).checked)} />{m.controller.codesSaved}</label>
+    <button class="button primary" type="button" disabled={!saved} onClick={() => { setCodes([]); setSaved(false); setRecoveryCodesPending(false); close(); }}>{m.controller.finish}</button>
+  </section>;
+  if (mode === "standalone") return <section class="stack controller-panel" aria-label={m.controller.title}>
+    <h3>{m.controller.title}</h3><p class="note">{m.controller.subtitle}</p>
+    {state.database.mode !== "sqlite" ? <p role="alert">{m.controller.dbRequired}</p> : !enrollment ? <form class="form single" onSubmit={(event) => { event.preventDefault(); void perform(async () => { setEnrollment(await api.controllerSetup(username)); }); }}>
+      <label>{m.controller.username}<input autocomplete="username" value={username} onInput={(event) => setUsername((event.currentTarget as HTMLInputElement).value)} required /></label>
+      <label>{m.controller.password}<input type="password" autocomplete="new-password" minLength={12} value={password} onInput={(event) => setPassword((event.currentTarget as HTMLInputElement).value)} required /></label>
+      <button class="button primary" type="submit" disabled={busy}>{m.controller.generateMFA}</button>
+    </form> : <form class="form single" onSubmit={(event) => { event.preventDefault(); void perform(async () => {
+      const result = await api.controllerActivate({ username, password, totp_secret: enrollment.totp_secret, confirmation_code: code });
+      setPassword(""); setCode(""); setEnrollment(null); setCodes(result.recovery_codes); setRecoveryCodesPending(true); setMode("controller"); setRecent(true); await reload();
+    }); }}>
+      <p>{m.controller.scanQR}</p>
+      <img class="controller-qr" src={enrollment.qr_png} alt={m.controller.scanQR} />
+      <label>{m.controller.secret}<code class="controller-secret">{enrollment.totp_secret}</code></label>
+      <label>{m.controller.code}<input autocomplete="one-time-code" inputMode="numeric" value={code} onInput={(event) => setCode((event.currentTarget as HTMLInputElement).value)} required /></label>
+      <button class="button primary" type="submit" disabled={busy}>{busy ? m.controller.activating : m.controller.activate}</button>
+    </form>}
+  </section>;
+  return <section class="stack controller-panel" aria-label={m.controller.title}>
+    <h3>{m.controller.active}</h3>
+    {!recent && <p class="note">{m.controller.recentRequired}</p>}
+    <form class="form single" onSubmit={(event) => { event.preventDefault(); void perform(async () => {
+      await api.controllerReauth(password, code, recovery); setPassword(""); setCode(""); setRecent(true);
+    }); }}>
+      <label>{m.controller.password}<input type="password" autocomplete="current-password" value={password} onInput={(event) => setPassword((event.currentTarget as HTMLInputElement).value)} required /></label>
+      <label>{recovery ? m.controller.recoveryCode : m.controller.code}<input autocomplete="one-time-code" value={code} onInput={(event) => setCode((event.currentTarget as HTMLInputElement).value)} required /></label>
+      <button class="button" type="button" onClick={() => { setRecovery(!recovery); setCode(""); }}>{recovery ? m.controller.useAuthenticator : m.controller.useRecovery}</button>
+      <button class="button" type="submit" disabled={busy}>{m.controller.reauth}</button>
+    </form>
+    <button class="button primary" type="button" disabled={!recent || busy} onClick={() => void perform(async () => { const result = await api.controllerRotateRecoveryCodes(); setCodes(result.recovery_codes); setRecoveryCodesPending(true); setRecent(true); })}>{m.controller.rotateCodes}</button>
+  </section>;
 }
 
 function MaintenanceOverview({ state }: { state: AppState }) {

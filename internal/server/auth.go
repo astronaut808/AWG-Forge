@@ -17,11 +17,19 @@ const sessionTTL = 30 * time.Minute
 
 func (w *web) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
+		w.authMu.RLock()
+		defer w.authMu.RUnlock()
+		if w.controllerAuth == nil && w.activating.Load() {
+			noStore(rw)
+			writeOperationError(rw, http.StatusServiceUnavailable, "auth_transition", "authentication is changing")
+			return
+		}
 		if w.controllerAuth != nil {
 			if w.hasSession(r) {
 				next(rw, r)
 				return
 			}
+			noStore(rw)
 			writeError(rw, http.StatusUnauthorized, "unauthorized")
 			return
 		}
@@ -29,6 +37,7 @@ func (w *web) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			next(rw, r)
 			return
 		}
+		noStore(rw)
 		writeError(rw, http.StatusUnauthorized, "unauthorized")
 	}
 }

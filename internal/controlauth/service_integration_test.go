@@ -127,6 +127,93 @@ func TestConcurrentTOTPUseCreatesOneSession(t *testing.T) {
 	}
 }
 
+func TestControllerSessionRotationRecoveryCodesAndOfflineRecovery(t *testing.T) {
+	service, closeDB := newControllerAuthService(t)
+	defer closeDB()
+	ctx := context.Background()
+	now := time.Unix(1_800_000_015, 0).UTC()
+	enrollment, err := service.EnrollAdmin(ctx, testUsername, testPassword, testTOTPSecret, mustTOTPCode(t, now), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enrollment.Authentication.Token == "" {
+		t.Fatal("initial session was not created")
+	}
+	if _, err := service.ValidateSession(ctx, enrollment.Authentication.Token, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Authenticate(ctx, testUsername, testPassword, mustTOTPCode(t, now), "192.0.2.1", now); !errors.Is(err, controlauth.ErrInvalidCredentials) {
+		t.Fatalf("confirmation replay: %v", err)
+	}
+
+	late := now.Add(6 * time.Minute)
+	if _, err := service.RotateRecoveryCodes(ctx, enrollment.Authentication.Token, late); !errors.Is(err, controlauth.ErrRecentAuthRequired) {
+		t.Fatalf("expired recent auth: %v", err)
+	}
+	rotated, err := service.Reauthenticate(ctx, enrollment.Authentication.Token, testPassword, mustTOTPCode(t, late), "192.0.2.1", false, late)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rotated.Token == enrollment.Authentication.Token {
+		t.Fatal("session token did not rotate")
+	}
+	if _, err := service.ValidateSession(ctx, enrollment.Authentication.Token, late); !errors.Is(err, controlauth.ErrSessionNotFound) {
+		t.Fatalf("old session: %v", err)
+	}
+	codes, err := service.RotateRecoveryCodes(ctx, rotated.Token, late)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(codes) != controlauth.DefaultRecoveryCodeCount {
+		t.Fatalf("new recovery code count = %d", len(codes))
+	}
+	if _, err := service.AuthenticateRecovery(ctx, testUsername, testPassword, enrollment.RecoveryCodes[0], "192.0.2.1", late); !errors.Is(err, controlauth.ErrInvalidCredentials) {
+		t.Fatalf("revoked recovery code: %v", err)
+	}
+	if _, err := service.AuthenticateRecovery(ctx, testUsername, testPassword, codes[0], "192.0.2.1", late); err != nil {
+		t.Fatal(err)
+	}
+
+	recovered, err := service.RecoverAdmin(ctx, "new-admin", "new correct horse battery staple", late.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.TOTPSecret == "" || len(recovered.RecoveryCodes) != controlauth.DefaultRecoveryCodeCount {
+		t.Fatal("incomplete recovery")
+	}
+	if _, err := service.ValidateSession(ctx, rotated.Token, late.Add(time.Minute)); !errors.Is(err, controlauth.ErrSessionNotFound) {
+		t.Fatalf("recovery kept old session: %v", err)
+	}
+	if _, err := service.AuthenticateRecovery(ctx, "new-admin", "new correct horse battery staple", codes[1], "192.0.2.1", late.Add(time.Minute)); !errors.Is(err, controlauth.ErrInvalidCredentials) {
+		t.Fatalf("recovery kept old code: %v", err)
+	}
+	newCode, err := totp.GenerateCode(recovered.TOTPSecret, late.Add(90*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Authenticate(ctx, "new-admin", "new correct horse battery staple", newCode, "192.0.2.1", late.Add(90*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCancelledRecoveryKeepsExistingAdministrator(t *testing.T) {
+	service, closeDB := newControllerAuthService(t)
+	defer closeDB()
+	now := time.Unix(1_800_000_015, 0).UTC()
+	enrollment, err := service.EnrollAdmin(context.Background(), testUsername, testPassword, testTOTPSecret, mustTOTPCode(t, now), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := service.RecoverAdmin(ctx, "new-admin", "new correct horse battery staple", now.Add(time.Minute)); err == nil {
+		t.Fatal("cancelled recovery succeeded")
+	}
+	if _, err := service.ValidateSession(context.Background(), enrollment.Authentication.Token, now.Add(time.Minute)); err != nil {
+		t.Fatalf("cancelled recovery revoked original session: %v", err)
+	}
+}
+
 func newControllerAuthService(t *testing.T) (*controlauth.Service, func()) {
 	t.Helper()
 	dir := t.TempDir()

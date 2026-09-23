@@ -2,6 +2,8 @@ package controlauth
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base32"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -25,6 +27,7 @@ var (
 	ErrInvalidUsername    = errors.New("invalid controller username")
 	ErrRateLimited        = errors.New("controller authentication rate limited")
 	ErrSessionNotFound    = errors.New("controller session not found")
+	ErrRecentAuthRequired = errors.New("recent controller authentication required")
 )
 
 type RateLimitPolicy struct {
@@ -70,9 +73,15 @@ type Session struct {
 
 type Store interface {
 	CreateControllerUser(context.Context, User, []Digest) error
+	CreateControllerUserWithSession(context.Context, User, []Digest, Session) error
 	FindControllerUser(context.Context, string) (User, error)
+	FindControllerAdmin(context.Context) (User, error)
 	UseControllerTOTP(context.Context, string, int64, Session, int64) error
 	UseControllerRecoveryCode(context.Context, string, Digest, Session, int64) error
+	RotateControllerTOTP(context.Context, Digest, string, int64, Session, int64, time.Time) error
+	RotateControllerRecoveryCode(context.Context, Digest, string, Digest, Session, int64, time.Time) error
+	ReplaceControllerRecoveryCodes(context.Context, Digest, string, []Digest, time.Time, time.Duration) error
+	RecoverControllerAdmin(context.Context, User, []Digest) error
 	FindControllerSession(context.Context, Digest, time.Time) (Session, error)
 	RevokeControllerSession(context.Context, Digest, time.Time) error
 	ReserveControllerAuthAttempt(context.Context, Digest, Digest, time.Time, RateLimitPolicy) (int64, error)
@@ -103,8 +112,14 @@ type Service struct {
 }
 
 type Enrollment struct {
-	UserID        string
-	Username      string
+	UserID         string
+	Username       string
+	RecoveryCodes  []string
+	Authentication Authentication
+}
+
+type Recovery struct {
+	TOTPSecret    string
 	RecoveryCodes []string
 }
 
@@ -127,6 +142,7 @@ type authenticationRequest struct {
 	source       string
 	now          time.Time
 	recovery     bool
+	oldToken     string
 }
 
 func NewService(store Store, keys *Keys, options Options) (*Service, error) {
@@ -225,10 +241,19 @@ func (s *Service) EnrollAdmin(ctx context.Context, username, password, totpSecre
 		CreatedAt:            now,
 		UpdatedAt:            now,
 	}
-	if err := s.store.CreateControllerUser(ctx, user, recoveryDigests); err != nil {
+	token, err := NewSessionToken(s.random)
+	if err != nil {
 		return Enrollment{}, err
 	}
-	return Enrollment{UserID: userID, Username: username, RecoveryCodes: recoveryCodes}, nil
+	digest, err := s.keys.SessionDigest(token)
+	if err != nil {
+		return Enrollment{}, err
+	}
+	session := Session{Digest: digest, UserID: userID, CreatedAt: now, ExpiresAt: now.Add(s.sessionTTL), AuthenticatedAt: now}
+	if err := s.store.CreateControllerUserWithSession(ctx, user, recoveryDigests, session); err != nil {
+		return Enrollment{}, err
+	}
+	return Enrollment{UserID: userID, Username: username, RecoveryCodes: recoveryCodes, Authentication: Authentication{Token: token, ExpiresAt: session.ExpiresAt}}, nil
 }
 
 func (s *Service) Authenticate(ctx context.Context, username, password, code, source string, now time.Time) (Authentication, error) {
@@ -250,6 +275,14 @@ func (s *Service) AuthenticateRecovery(ctx context.Context, username, password, 
 		now:          now,
 		recovery:     true,
 	})
+}
+
+func (s *Service) Reauthenticate(ctx context.Context, token, password, code, source string, recovery bool, now time.Time) (Authentication, error) {
+	principal, err := s.ValidateSession(ctx, token, now)
+	if err != nil {
+		return Authentication{}, err
+	}
+	return s.authenticate(ctx, authenticationRequest{username: principal.Username, password: password, secondFactor: code, source: source, now: now, recovery: recovery, oldToken: token})
 }
 
 func (s *Service) authenticate(ctx context.Context, request authenticationRequest) (authentication Authentication, returnErr error) {
@@ -308,7 +341,7 @@ func (s *Service) authenticate(ctx context.Context, request authenticationReques
 		if err != nil {
 			return Authentication{}, ErrInvalidCredentials
 		}
-		authentication, returnErr = s.createSession(ctx, user.ID, 0, &digest, attemptID, now)
+		authentication, returnErr = s.createSession(ctx, user.ID, 0, &digest, attemptID, now, request.oldToken)
 		attemptFinished = returnErr == nil
 		return authentication, returnErr
 	}
@@ -320,7 +353,7 @@ func (s *Service) authenticate(ctx context.Context, request authenticationReques
 	if err != nil {
 		return Authentication{}, ErrInvalidCredentials
 	}
-	authentication, returnErr = s.createSession(ctx, user.ID, step, nil, attemptID, now)
+	authentication, returnErr = s.createSession(ctx, user.ID, step, nil, attemptID, now, request.oldToken)
 	attemptFinished = returnErr == nil
 	return authentication, returnErr
 }
@@ -359,7 +392,99 @@ func (s *Service) RevokeSession(ctx context.Context, token string, now time.Time
 	return s.store.RevokeControllerSession(ctx, digest, now.UTC())
 }
 
-func (s *Service) createSession(ctx context.Context, userID string, totpStep int64, recoveryDigest *Digest, attemptID int64, now time.Time) (Authentication, error) {
+func NewTOTPSecret(random io.Reader) (string, error) {
+	if random == nil {
+		random = rand.Reader
+	}
+	buf := make([]byte, 20)
+	if _, err := io.ReadFull(random, buf); err != nil {
+		return "", err
+	}
+	return base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(buf), nil
+}
+
+func (s *Service) RotateRecoveryCodes(ctx context.Context, token string, now time.Time) ([]string, error) {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	principal, err := s.ValidateSession(ctx, token, now)
+	if err != nil {
+		return nil, err
+	}
+	if !principal.RecentAuth {
+		return nil, ErrRecentAuthRequired
+	}
+	codes, digests, err := s.newRecoveryCodes(principal.UserID)
+	if err != nil {
+		return nil, err
+	}
+	sessionDigest, err := s.keys.SessionDigest(token)
+	if err != nil {
+		return nil, ErrSessionNotFound
+	}
+	if err := s.store.ReplaceControllerRecoveryCodes(ctx, sessionDigest, principal.UserID, digests, now.UTC(), s.recentAuthTTL); err != nil {
+		return nil, err
+	}
+	return codes, nil
+}
+
+func (s *Service) RecoverAdmin(ctx context.Context, username, password string, now time.Time) (Recovery, error) {
+	username, err := NormalizeUsername(username)
+	if err != nil {
+		return Recovery{}, err
+	}
+	if err := ValidateNewPassword(password); err != nil {
+		return Recovery{}, err
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	user, err := s.store.FindControllerAdmin(ctx)
+	if err != nil {
+		return Recovery{}, err
+	}
+	secret, err := NewTOTPSecret(s.random)
+	if err != nil {
+		return Recovery{}, err
+	}
+	sealed, err := s.keys.SealTOTP(user.ID, secret, s.random)
+	if err != nil {
+		return Recovery{}, err
+	}
+	hash, err := s.hashPassword(ctx, password)
+	if err != nil {
+		return Recovery{}, err
+	}
+	codes, digests, err := s.newRecoveryCodes(user.ID)
+	if err != nil {
+		return Recovery{}, err
+	}
+	user.Username, user.PasswordHash, user.TOTPSecretCiphertext = username, hash, sealed
+	user.TOTPLastStep = -1
+	user.UpdatedAt = now.UTC()
+	if err := s.store.RecoverControllerAdmin(ctx, user, digests); err != nil {
+		return Recovery{}, err
+	}
+	return Recovery{TOTPSecret: secret, RecoveryCodes: codes}, nil
+}
+
+func (s *Service) newRecoveryCodes(userID string) ([]string, []Digest, error) {
+	codes, err := NewRecoveryCodes(s.recoveryCodeCount, s.random)
+	if err != nil {
+		return nil, nil, err
+	}
+	digests := make([]Digest, 0, len(codes))
+	for _, code := range codes {
+		digest, err := s.keys.RecoveryDigest(userID, code)
+		if err != nil {
+			return nil, nil, err
+		}
+		digests = append(digests, digest)
+	}
+	return codes, digests, nil
+}
+
+func (s *Service) createSession(ctx context.Context, userID string, totpStep int64, recoveryDigest *Digest, attemptID int64, now time.Time, oldToken string) (Authentication, error) {
 	token, err := NewSessionToken(s.random)
 	if err != nil {
 		return Authentication{}, err
@@ -376,7 +501,17 @@ func (s *Service) createSession(ctx context.Context, userID string, totpStep int
 		ExpiresAt:       now.Add(s.sessionTTL),
 		AuthenticatedAt: now,
 	}
-	if recoveryDigest != nil {
+	if oldToken != "" {
+		oldDigest, digestErr := s.keys.SessionDigest(oldToken)
+		if digestErr != nil {
+			return Authentication{}, ErrSessionNotFound
+		}
+		if recoveryDigest != nil {
+			err = s.store.RotateControllerRecoveryCode(ctx, oldDigest, userID, *recoveryDigest, session, attemptID, now)
+		} else {
+			err = s.store.RotateControllerTOTP(ctx, oldDigest, userID, totpStep, session, attemptID, now)
+		}
+	} else if recoveryDigest != nil {
 		err = s.store.UseControllerRecoveryCode(ctx, userID, *recoveryDigest, session, attemptID)
 	} else {
 		err = s.store.UseControllerTOTP(ctx, userID, totpStep, session, attemptID)
