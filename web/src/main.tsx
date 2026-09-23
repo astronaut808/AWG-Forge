@@ -82,18 +82,24 @@ function App() {
   const m = messages[locale];
   const messagesRef = useRef(m);
   const authenticatedRef = useRef(false);
+  const authGenerationRef = useRef(0);
+  const controllerActivationPendingRef = useRef(false);
   messagesRef.current = m;
 
   const load = useCallback(async (options: { quiet?: boolean } = {}): Promise<LoadResult> => {
+    const generation = authGenerationRef.current;
     try {
       const auth = await api.authStatus();
+      if (generation !== authGenerationRef.current) return "failed";
       setAuthMode(auth.mode);
       const next = await api.state();
+      if (generation !== authGenerationRef.current) return "failed";
       authenticatedRef.current = true;
       setState(next);
       setAuthChecked(true);
       return "ok";
     } catch (err) {
+      if (generation !== authGenerationRef.current || controllerActivationPendingRef.current) return "failed";
       setAuthChecked(true);
       if (err instanceof api.APIError && err.status === 401) {
         const wasAuthenticated = authenticatedRef.current;
@@ -123,6 +129,31 @@ function App() {
     initParallax();
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!authChecked || liveUpdatesEnabled) return undefined;
+    let cancelled = false;
+    let timer: ReturnType<typeof globalThis.setTimeout>;
+    const refreshMode = async () => {
+      try {
+        const auth = await api.authStatus();
+        if (!cancelled) setAuthMode(auth.mode);
+      } catch {
+        // Keep the login form available during a temporary status failure.
+      }
+      if (!cancelled) timer = globalThis.setTimeout(refreshMode, authMode === "activating" ? 1000 : 5000);
+    };
+    timer = globalThis.setTimeout(refreshMode, authMode === "activating" ? 1000 : 5000);
+    return () => {
+      cancelled = true;
+      globalThis.clearTimeout(timer);
+    };
+  }, [authChecked, liveUpdatesEnabled, authMode]);
+
+  function setControllerActivationPending(pending: boolean) {
+    controllerActivationPendingRef.current = pending;
+    authGenerationRef.current += 1;
+  }
 
   useEffect(() => {
     if (!liveUpdatesEnabled) return undefined;
@@ -234,7 +265,7 @@ function App() {
       />
       {modal && (
         <Dialog onClose={() => { if (recoveryCodesPending) notify(m.controller.codesNote); else setModal(null); }}>
-          <ModalContent modal={modal} state={state} notify={notify} close={() => setModal(null)} reload={async () => { await load({ quiet: true }); }} runAction={runAction} recoveryCodesPending={recoveryCodesPending} setRecoveryCodesPending={setRecoveryCodesPending} />
+          <ModalContent modal={modal} state={state} notify={notify} close={() => setModal(null)} reload={async () => { await load({ quiet: true }); }} runAction={runAction} recoveryCodesPending={recoveryCodesPending} setRecoveryCodesPending={setRecoveryCodesPending} setControllerActivationPending={setControllerActivationPending} />
           <Toast message={toast} />
         </Dialog>
       )}
@@ -543,7 +574,7 @@ function Fact({ label, value, extra }: { label: string; value: string; extra?: s
   return <div class="fact"><span>{label}</span><strong class="mono">{value}</strong>{extra && <em>{extra}</em>}</div>;
 }
 
-function ModalContent({ modal, state, notify, close, reload, runAction, recoveryCodesPending, setRecoveryCodesPending }: {
+function ModalContent({ modal, state, notify, close, reload, runAction, recoveryCodesPending, setRecoveryCodesPending, setControllerActivationPending }: {
   modal: Modal;
   state: AppState;
   notify: (message: string) => void;
@@ -552,6 +583,7 @@ function ModalContent({ modal, state, notify, close, reload, runAction, recovery
   runAction: RunAction;
   recoveryCodesPending: boolean;
   setRecoveryCodesPending: (pending: boolean) => void;
+  setControllerActivationPending: (pending: boolean) => void;
 }) {
   if (modal.kind === "create-tunnel") return <CreateTunnelForm state={state} profile={modal.profile} runAction={runAction} />;
   if (modal.kind === "settings") return <TunnelSettingsForm state={state} tunnel={modal.tunnel} runAction={runAction} />;
@@ -562,7 +594,7 @@ function ModalContent({ modal, state, notify, close, reload, runAction, recovery
     return <ClientConfigPanel key={modal.client.id} client={modal.client} notify={notify} />;
   }
   if (modal.kind === "delete-tunnel") return <DeleteTunnelConfirmation tunnel={modal.tunnel} close={close} runAction={runAction} />;
-  return <MaintenanceCenter state={state} notify={notify} close={close} reload={reload} recoveryCodesPending={recoveryCodesPending} setRecoveryCodesPending={setRecoveryCodesPending} />;
+  return <MaintenanceCenter state={state} notify={notify} close={close} reload={reload} recoveryCodesPending={recoveryCodesPending} setRecoveryCodesPending={setRecoveryCodesPending} setControllerActivationPending={setControllerActivationPending} />;
 }
 
 function DeleteTunnelConfirmation({ tunnel, close, runAction }: { tunnel: Tunnel; close: () => void; runAction: RunAction }) {
@@ -1004,7 +1036,7 @@ function ClientConfigPanel({ client, notify }: { client: Client; notify: (messag
   </PanelTitle>;
 }
 
-function MaintenanceCenter({ state, notify, reload, close, recoveryCodesPending, setRecoveryCodesPending }: { state: AppState; notify: (message: string) => void; close: () => void; reload: () => Promise<void>; recoveryCodesPending: boolean; setRecoveryCodesPending: (pending: boolean) => void }) {
+function MaintenanceCenter({ state, notify, reload, close, recoveryCodesPending, setRecoveryCodesPending, setControllerActivationPending }: { state: AppState; notify: (message: string) => void; close: () => void; reload: () => Promise<void>; recoveryCodesPending: boolean; setRecoveryCodesPending: (pending: boolean) => void; setControllerActivationPending: (pending: boolean) => void }) {
   const { m } = useI18n();
   const [tab, setTab] = useState<MaintenanceTab>("overview");
   const [doctorResults, setDoctorResults] = useState<DoctorResult[] | null>(null);
@@ -1082,11 +1114,11 @@ function MaintenanceCenter({ state, notify, reload, close, recoveryCodesPending,
     {tab === "support" && <SupportPanel state={state} action={action} busyAction={busyAction} />}
     {tab === "logs" && <div class="stack"><p class="note">{m.maintenance.auditAutoRefresh}</p><div class="list">{events.length === 0 ? <div class="empty compact">{m.maintenance.noAuditEvents}</div> : events.map((event) => <div class="row" key={`${event.time}-${event.event}`}><strong>{event.event}</strong><p>{event.time} · {event.level} · {event.message}{event.error ? ` · ${event.error}` : ""}</p></div>)}</div></div>}
     {tab === "traffic" && <TrafficPanel state={state} traffic={traffic} reload={async () => setTraffic(await api.trafficSummary())} />}
-    {tab === "controller" && <ControllerPanel state={state} notify={notify} reload={reload} close={close} setRecoveryCodesPending={setRecoveryCodesPending} />}
+    {tab === "controller" && <ControllerPanel state={state} notify={notify} reload={reload} close={close} setRecoveryCodesPending={setRecoveryCodesPending} setControllerActivationPending={setControllerActivationPending} />}
   </PanelTitle>;
 }
 
-function ControllerPanel({ state, notify, reload, close, setRecoveryCodesPending }: { state: AppState; notify: (message: string) => void; reload: () => Promise<void>; close: () => void; setRecoveryCodesPending: (pending: boolean) => void }) {
+function ControllerPanel({ state, notify, reload, close, setRecoveryCodesPending, setControllerActivationPending }: { state: AppState; notify: (message: string) => void; reload: () => Promise<void>; close: () => void; setRecoveryCodesPending: (pending: boolean) => void; setControllerActivationPending: (pending: boolean) => void }) {
   const { m } = useI18n();
   const [mode, setMode] = useState<api.AuthMode | null>(null);
   const [username, setUsername] = useState("");
@@ -1134,7 +1166,13 @@ function ControllerPanel({ state, notify, reload, close, setRecoveryCodesPending
       <label>{m.controller.password}<input type="password" autocomplete="new-password" minLength={12} value={password} onInput={(event) => setPassword((event.currentTarget as HTMLInputElement).value)} required /></label>
       <button class="button primary" type="submit" disabled={busy}>{m.controller.generateMFA}</button>
     </form> : <form class="form single" onSubmit={(event) => { event.preventDefault(); void perform(async () => {
-      const result = await api.controllerActivate({ username, password, totp_secret: enrollment.totp_secret, confirmation_code: code });
+      setControllerActivationPending(true);
+      let result: Awaited<ReturnType<typeof api.controllerActivate>>;
+      try {
+        result = await api.controllerActivate({ username, password, totp_secret: enrollment.totp_secret, confirmation_code: code });
+      } finally {
+        setControllerActivationPending(false);
+      }
       setPassword(""); setCode(""); setEnrollment(null); setCodes(result.recovery_codes); setRecoveryCodesPending(true); setMode("controller"); setRecent(true); await reload();
     }); }}>
       <p>{m.controller.scanQR}</p>

@@ -1,10 +1,10 @@
 import { createHmac } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
-import { expect, test } from "@playwright/test";
+import { expect, test, type BrowserContext } from "@playwright/test";
 import { messages } from "../src/i18n";
 
-test("controller activation, TOTP login, recovery, reauthentication and mobile layout", async ({ page }, testInfo) => {
+test("controller activation, TOTP login, recovery, reauthentication and mobile layout", async ({ page, browser }, testInfo) => {
   test.setTimeout(180_000);
   const m = messages[testInfo.project.use.locale?.startsWith("ru") ? "ru" : "en"];
   const port = await freePort();
@@ -15,13 +15,32 @@ test("controller activation, TOTP login, recovery, reauthentication and mobile l
     stdio: ["ignore", "pipe", "pipe"],
   });
   let startupOutput = "";
+  let observerContext: BrowserContext | null = null;
   child.stderr?.on("data", (chunk: Buffer) => { startupOutput = (startupOutput + chunk.toString()).slice(-4000); });
   try {
     await waitForServer(origin, child, () => startupOutput);
+    let statusRequests = 0;
+    await page.route("**/api/auth/status", async (route) => {
+      statusRequests++;
+      if (statusRequests === 1) {
+        await route.fulfill({ status: 200, contentType: "application/json", body: '{"mode":"activating"}' });
+      } else {
+        await route.continue();
+      }
+    });
     await page.goto(origin);
+    await expect(page.getByRole("button", { name: m.login.logIn, exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: m.login.logIn, exact: true })).toBeEnabled({ timeout: 10_000 });
+    expect(statusRequests).toBeGreaterThan(1);
+    await page.unroute("**/api/auth/status");
     await page.getByLabel(m.login.password, { exact: true }).fill("browser-test-only");
     await page.getByRole("button", { name: m.login.logIn, exact: true }).click();
     await expect(page.getByRole("button", { name: m.common.logOut, exact: true })).toBeVisible();
+    observerContext = await browser.newContext({ locale: testInfo.project.use.locale || "en-US" });
+    const observer = await observerContext.newPage();
+    await observer.goto(origin);
+    await expect(observer.getByLabel(m.login.password, { exact: true })).toBeVisible();
+    await expect(observer.getByLabel(m.controller.username, { exact: true })).toHaveCount(0);
 
     await page.getByRole("button", { name: m.common.maintenance, exact: true }).click();
     let dialog = page.getByRole("dialog");
@@ -35,8 +54,20 @@ test("controller activation, TOTP login, recovery, reauthentication and mobile l
     await waitForSafeTOTPStep();
     const confirmationStep = Math.floor(Date.now() / 30_000) - 1;
     await dialog.getByLabel(m.controller.code, { exact: true }).fill(totp(secret, confirmationStep));
+    await page.route("**/api/controller/activate", async (route) => {
+      const request = route.request();
+      const response = await fetch(request.url(), {
+        method: request.method(),
+        headers: request.headers(),
+        body: request.postData(),
+      });
+      const body = await response.text();
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await route.fulfill({ status: response.status, headers: Object.fromEntries(response.headers), body });
+    });
     await dialog.getByRole("button", { name: m.controller.activate }).click();
     await expect(dialog.locator(".controller-codes code")).toHaveCount(10);
+    await expect(observer.getByLabel(m.controller.username, { exact: true })).toBeVisible({ timeout: 10_000 });
     const firstCodes = await dialog.locator(".controller-codes code").allTextContents();
     expect(firstCodes).toHaveLength(10);
     await dialog.getByRole("button", { name: m.common.close }).click();
@@ -80,6 +111,7 @@ test("controller activation, TOTP login, recovery, reauthentication and mobile l
     await expect(page.getByRole("button", { name: m.common.logOut, exact: true })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
   } finally {
+    await observerContext?.close();
     await stopServer(child);
   }
 });
