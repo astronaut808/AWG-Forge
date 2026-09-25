@@ -144,12 +144,16 @@ is the only route that accepts a request without an AWG-Forge node certificate.
 Nodes initiate bounded HTTPS long polls. This works through ordinary NAT and
 common HTTP proxies without opening an inbound management port on a node.
 
-The dedicated listener always uses verified TLS. Controller initialization
-creates an internal control CA and a server certificate; the generated join
-workflow pins that CA before enrollment. Public ACME or Web UI HTTPS remains an
-independent option, so connecting nodes does not require exposing the browser UI
-or obtaining a public certificate. Plain HTTP and an `--insecure` fallback are
-not supported.
+The dedicated listener always uses verified TLS. Explicit node-management
+preparation creates an internal control CA and a server certificate; the
+generated join workflow pins that CA before enrollment. Public ACME or Web UI
+HTTPS remains an independent option, so connecting nodes does not require
+exposing the browser UI or obtaining a public certificate. Plain HTTP and an
+`--insecure` fallback are not supported.
+
+The phase-5 architecture and delivery gates are specified in
+[`control-tls-pki-plan.md`](control-tls-pki-plan.md). Controller-auth activation
+alone does not create a control CA or open the control listener.
 
 - one outstanding poll per node;
 - complete HTTP response on operation delivery or timeout;
@@ -364,6 +368,11 @@ Controller recovery is explicit:
 - without backup: initialize a new controller and rebind each node locally;
 - never: run two controllers with the same restored identity or automatically
   elect a replacement.
+
+Restoring an older snapshot can undo later session/code use and node-certificate
+revocations. The [control TLS/PKI plan](control-tls-pki-plan.md) requires
+fail-closed recovery and a proven replay fence before seamless node reconnect
+can be promised. Otherwise affected nodes require explicit local re-enrollment.
 
 ## Secret client artifacts
 
