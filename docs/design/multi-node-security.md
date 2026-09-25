@@ -3,6 +3,10 @@
 Status: proposed. This threat model applies to the design in
 [`multi-node-v1.md`](multi-node-v1.md).
 
+The control TLS/PKI phase has a concrete trust boundary and delivery plan in
+[`control-tls-pki-plan.md`](control-tls-pki-plan.md). The control listener remains
+disabled until explicit setup and recoverable controller backup exist.
+
 ## Protected assets
 
 - node and controller private identity keys;

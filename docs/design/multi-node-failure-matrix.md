@@ -5,6 +5,15 @@ test before the corresponding capability can be released.
 
 | Failure point | Required observable outcome | Persistent authority | Recovery/test assertion |
 | --- | --- | --- | --- |
+| Control identity is absent after controller-auth activation | No control port is opened and no CA is created at startup | Existing controller `state.json` and auth files | Standalone/DB-off and controller browser behavior are unchanged |
+| Control CA, server key, or SQLite is missing after explicit control setup | Control listener stays closed; no replacement identity is generated | Committed controller identity generation | Browser administrator can see a safe failure; node traffic never falls back to HTTP or Web UI TLS |
+| Control setup crashes before or after state commit | Pre-commit stage is removed or recoverable; post-commit identity is loaded exactly | `state.json` plus secret-free setup journal | No orphan listener, partial key pair, or silent identity replacement |
+| Bootstrap reaches a node-only path without a client certificate | Request is rejected even though the TLS handshake may omit a client certificate | Exact route allowlist and node certificate registry | Browser cookie and forwarded certificate headers cannot authorize a control request |
+| Server hostname or CA pin is wrong | Node refuses the TLS connection before sending an invitation secret or node data | Node-pinned CA and advertised endpoint | No insecure verification fallback or secret-bearing retry |
+| Node certificate is revoked on an existing keep-alive connection | Next request is denied; an awakened poll is rechecked | SQLite certificate and binding status | Revocation is enforced per request, not only at TLS handshake |
+| Server leaf or CA rotation is interrupted | Last confirmed trust and server identity remain usable until an explicit switch | Versioned key files and staged trust state | No partial key/cert pair or automatic CA regeneration |
+| Controller backup predates a session/code use or node-certificate revocation | Restore does not silently reactivate the old authority | Restored snapshot plus explicit recovery state | Browser sessions/codes are invalidated; node certificate policy is resolved before enrollment release |
+| Controller restore crashes after replacing SQLite but before `state.json` | Startup remains closed to both browser and node authority | Durable restore-pending marker outside the file move set | Marker survives every crash point and is cleared only after verified recovery or complete rollback |
 | Controller unavailable at node startup | Node starts local UI and tunnels; control worker backs off | Node `state.json` | Existing handshakes continue; no restart loop or busy poll |
 | Controller stops during normal forwarding | Data plane is unaffected | Node runtime and `state.json` | Traffic continues while presence becomes offline |
 | Node unavailable | Controller marks presence stale without inventing tunnel failure | Last redacted snapshot | No hidden retry storm; queued work follows explicit expiry policy |
@@ -17,7 +26,7 @@ test before the corresponding capability can be released.
 | Node fails after certificate fetch before binding save | Previous binding remains active; enrollment restarts with a new invitation if its in-memory claim credential is lost | Atomic binding files | No mixed old/new controller files |
 | Certificate expires during controller outage | Tunnels continue; control becomes unavailable; local recovery remains | Node state/runtime | Re-enrollment does not modify tunnels |
 | Controller CA rotation interrupted | Old trust remains valid until new trust and certificates are confirmed | Staged trust bundle | No fleet-wide simultaneous lockout |
-| Controller restored with same identity | Nodes reconnect after endpoint recovery | Restored controller ID/CA | No re-enrollment; redelivered operations do not execute twice |
+| Controller restored with same identity | Control stays closed until restored certificate revocations and replay state are reconciled | Restored controller ID/CA plus recovery state | Seamless reconnect requires a proven replay fence; otherwise affected nodes re-enroll locally |
 | Controller restored twice | Duplicate identity is detected operationally; automatic leader behavior is absent | Operator-controlled restore | Documentation and Doctor warn; no split-brain claim |
 | Controller lost without backup | Nodes continue locally and require explicit root-authorized rebind | Node old binding | Old controller cannot remotely transfer nodes |
 | Managed backup restored onto a different installation | Restore rejects the identity mismatch; local root may explicitly detach before reuse and later enrollment establishes a new identity | Target node identity plus restored local configuration | Rejected restore writes no state; detached state has no controller authority |
