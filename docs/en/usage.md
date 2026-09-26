@@ -107,8 +107,9 @@ In `serve` mode, awg-forge periodically enforces expired clients and re-renders 
 
 Restore must run while the server container is stopped. The one-shot restore
 container uses the same data volume; starting the service afterwards loads the
-restored desired state and TLS assets. Encrypted backups do not currently
-include SQLite operational history. With `APPLY_CONFIG=true`, startup applies
+restored desired state and TLS assets. Standalone and managed-node backups do
+not include SQLite operational history. Controller backups include the
+authentication database snapshot and its key file. With `APPLY_CONFIG=true`, startup applies
 enabled tunnels and reconciles WARP. Wait for startup before running the
 remaining checks.
 
@@ -159,6 +160,8 @@ awg-forge logs
 
 Managed-node restore fencing and the explicit `--detach-managed-node` recovery
 option are described in [Diagnostics](diagnostics.md#encrypted-backup--restore).
+Controller restore has additional identity, archive-location, and offline
+administrator-recovery requirements in the same section.
 
 ## Client Config Import
 

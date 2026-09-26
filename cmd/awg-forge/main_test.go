@@ -18,6 +18,17 @@ import (
 	"github.com/pquerna/otp/totp"
 )
 
+func TestControllerRestoreCrashGate(t *testing.T) {
+	cfg := config.Config{ConfigDir: t.TempDir()}
+	store := storage.New(cfg.ConfigDir)
+	if err := store.BeginRestorePending("controller-test-id"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runServe(cfg); !errors.Is(err, storage.ErrRestorePending) {
+		t.Fatalf("runServe with restore marker = %v", err)
+	}
+}
+
 func TestControllerRecoveryRequiresRootAndStoppedServer(t *testing.T) {
 	cfg := config.Config{ConfigDir: t.TempDir()}
 	args := []string{"recover-admin", "--input-file", "/root/recovery.json"}

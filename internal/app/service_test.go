@@ -100,6 +100,32 @@ func TestFreshInitDefaultsToAWG20(t *testing.T) {
 	}
 }
 
+func TestInitRejectsPendingControllerRestoreBeforeStateRepair(t *testing.T) {
+	cfg := testConfig(t)
+	svc := app.New(cfg)
+	if _, err := svc.Init(); err != nil {
+		t.Fatal(err)
+	}
+	statePath := storage.New(cfg.ConfigDir).StatePath()
+	before, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.New(cfg.ConfigDir).BeginRestorePending("11111111-1111-4111-8111-111111111111"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.New(cfg).Init(); !errors.Is(err, storage.ErrRestorePending) {
+		t.Fatalf("init with pending restore error = %v", err)
+	}
+	after, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("Init changed state while a controller restore was pending")
+	}
+}
+
 func TestInitRejectsUnsafeLoadedInterfaceNames(t *testing.T) {
 	for _, name := range []string{"../escape", "awg/escape", `awg\\escape`, "awg..escape"} {
 		t.Run(name, func(t *testing.T) {

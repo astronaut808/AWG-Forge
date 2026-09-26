@@ -92,6 +92,9 @@ func runServe(cfg config.Config) (err error) {
 	defer func() {
 		err = errors.Join(err, stateLock.Close())
 	}()
+	if err := storage.New(cfg.ConfigDir).CheckRestorePending(); err != nil {
+		return err
+	}
 
 	tlsRuntime, err := webtls.Load(cfg)
 	if err != nil {

@@ -34,6 +34,9 @@ func runControllerWithAuthority(cfg config.Config, service *app.Service, args []
 		return fmt.Errorf("controller recovery requires a stopped server: %w", err)
 	}
 	defer func() { _ = lock.Close() }()
+	if err := storage.New(cfg.ConfigDir).CheckRestorePending(); err != nil {
+		return err
+	}
 	state, err := storage.New(cfg.ConfigDir).Load()
 	if err != nil {
 		return fmt.Errorf("load existing controller state: %w", err)

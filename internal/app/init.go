@@ -41,6 +41,9 @@ func (s *Service) initLocked() (config.State, error) {
 }
 
 func (s *Service) initWithOptionsLocked(options InitOptions) (config.State, error) {
+	if err := s.store.CheckRestorePending(); err != nil {
+		return config.State{}, err
+	}
 	if state, err := s.store.Load(); err == nil {
 		if err := s.recoverPendingDesiredStateCommitLocked(state); err != nil {
 			return config.State{}, fmt.Errorf("recover pending desired-state commit: %w", err)

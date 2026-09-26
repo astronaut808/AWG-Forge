@@ -107,8 +107,9 @@ Doctor может предупреждать о клиентах, у котор�
 
 Restore должен выполняться при остановленном основном контейнере. Одноразовый
 restore-контейнер использует тот же data volume, а последующий запуск сервиса
-загружает восстановленный desired state и TLS assets. Encrypted backup пока не
-включает SQLite operational history. При `APPLY_CONFIG=true` запуск применяет
+загружает восстановленный desired state и TLS assets. Backup standalone и
+managed-ноды не включает SQLite operational history. Backup контроллера
+включает снимок БД аутентификации и файл ключей. При `APPLY_CONFIG=true` запуск применяет
 включенные туннели и согласует runtime WARP. Перед остальными проверками дождись
 запуска сервиса.
 
@@ -158,6 +159,8 @@ awg-forge logs
 
 Правила restore для managed-ноды и явный recovery-флаг
 `--detach-managed-node` описаны в разделе [Диагностика](diagnostics.md#encrypted-backup--restore).
+Для контроллера там же описаны дополнительные требования к identity, размещению
+архива и офлайн-восстановлению администратора.
 
 ## Импорт конфига клиента
 

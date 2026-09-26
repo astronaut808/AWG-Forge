@@ -9,23 +9,24 @@ authenticated node transport; enrollment and fleet features remain later work.
 Controller authentication is implemented. `runServe` currently starts the Web UI
 and optional ACME HTTP-01 listener, but no control listener. Controller mode has
 an administrator and `controller_id` in `state.json`; it does not have a control
-CA or node registry. The `/control/v1` OpenAPI file is a design contract. Current
-controller backup creation and restore deliberately reject controller state.
+CA or node registry. The `/control/v1` OpenAPI file is a design contract.
+Controller backup now includes the auth key and a verified SQLite snapshot;
+cold restore requires the same existing controller identity and offline admin
+recovery.
 
 This is a future implementation risk, not a currently reachable controller
 TLS/PKI vulnerability: the product has no control listener, enrollment routes,
-or issued node certificates. `backup.Create` rejects controller mode, backup
-validation rejects controller archives, and restore into an existing controller
-fails while creating the required pre-restore backup. The existing multi-file
-restore procedure does create a crash-consistency problem **if** controller
-backup/restore support is added without a fail-closed recovery gate.
+or issued node certificates. Controller restore uses a durable startup gate to
+block a partially restored file set; the remaining PKI files and node registry
+will join this archive before any control listener is exposed.
 
 The goal of this phase is a tested control identity, dedicated TLS listener,
 certificate issuance and renewal primitives, and a fail-closed authorization
 boundary. No ordinary install or upgrade may create a CA, open a control port,
 enroll a node, or change Web UI TLS. The first externally reachable control
-listener is gated on explicit node-management setup and recoverable controller
-backup. Those gates can be completed before node enrollment begins.
+listener is gated on explicit node-management setup, recoverable controller
+backup, and an implemented enrollment route. The prerequisites can be completed
+and tested on loopback before node enrollment begins.
 
 ## Trust boundaries and ownership
 
@@ -35,7 +36,7 @@ backup. Those gates can be completed before node enrollment begins.
 | Node `/control/v1` | Use a separate `net.Listener`, `http.Server`, route table, TLS configuration, and request log policy. Never mount `/api` or static assets there. |
 | Enrollment bootstrap | The only future routes allowed without a client certificate are an exact allowlist of invitation claim/status routes. A valid server certificate and pinned controller CA are still mandatory. This phase does not expose these routes. |
 | Established node | TLS verifies the client chain and client-auth usage. On **every request**, the application resolves the presented issuer/serial to an active node certificate, `controller_id`, `node_id`, and `binding_epoch` in SQLite. Headers, URL/body IDs, subject CN, and proxy assertions do not establish identity. |
-| Controller to node | The node verifies the server hostname/IP SAN using normal TLS verification against its pinned CA, and checks the expected CA public-key pin. Never set `InsecureSkipVerify` or fall back to Web UI/ACME trust. |
+| Controller to node | The node verifies the server hostname/IP SAN using normal TLS verification against its pinned CA certificate and checks the SHA-256 fingerprint of that CA's SubjectPublicKeyInfo. The join command and node state use this one pin format. Never set `InsecureSkipVerify` or fall back to Web UI/ACME trust. |
 
 ```mermaid
 flowchart LR
@@ -101,7 +102,7 @@ requests; it never grants a cached identity or falls back to a browser cookie.
    atomic state replacement, then clear the journal. A pre-commit failure
    removes only newly staged files. Restart loads the committed identity
    without starting a listener; it never generates replacement keys.
-4. `enabled`: require a newly created and verified encrypted backup of the
+4. `enabled`: after an enrollment route is implemented, require a newly created and verified encrypted backup of the
    committed identity. A one-use backup receipt is bound to the prepared
    identity generation and administrator session; a restart before enablement
    requires a new backup. Hold the proposed socket open, establish an auth barrier,
@@ -115,10 +116,10 @@ requests; it never grants a cached identity or falls back to a browser cookie.
    deletes identity or node records.
 5. `rotating`: stage and verify a new server leaf, then atomically change the
    active generation. Keep the previous leaf only for a bounded overlap. CA
-   rotation is a separate staged trust migration: distribute new trust over
-   authenticated channels, confirm adoption, switch serving/issuance, then
-   retire old trust. An interruption preserves the old valid path until the
-   switch is confirmed. Do not automate CA replacement on expiry or key loss.
+   rotation later requires a separate staged trust migration: distribute new
+   trust over authenticated channels, confirm adoption, switch serving/issuance,
+   then retire old trust. Phase 5 records this contract but does not implement
+   fleet CA rotation. Do not automate CA replacement on expiry or key loss.
 
 Destructive identity reset is a separate root-authorized recovery operation.
 
@@ -163,15 +164,18 @@ certificate registry, and later enrollment state. The operator must then
 create and verify an encrypted backup containing the newly committed CA before
 enabling the listener, and explicitly confirm they saved the downloaded archive
 off host. Software can verify archive integrity and generation but cannot prove
-that the operator retained an external copy. The current controller-backup
-rejection must stay in place until that work is verified. Restore is cold and
+that the operator retained an external copy. The current controller backup
+only covers the existing auth identity; adding PKI material to it is a gate
+before control exposure. Restore is cold and
 explicit; it must not start a second active controller with the same identity.
 Missing key files or SQLite fail closed. A restore on a different installation
 must preserve the complete controller identity or require explicit new-controller
 and node-rebind recovery. For an online backup, hold the application mutation
 lock while collecting the immutable key generations and use SQLite `VACUUM INTO`
-in a private staging directory for a consistent database snapshot. Encrypt and
-verify the combined archive before publishing it; delete incomplete staging on
+in a private staging directory for a consistent database snapshot. Slice 0
+must verify the configured database path, snapshot size, and the current
+64 MiB in-memory archive limit; an oversized snapshot fails before publication.
+Encrypt and verify the combined archive before publishing it; delete incomplete staging on
 failure. Authentication session writes may continue because the auth key does
 not rotate during the snapshot. Do not copy a live database/WAL pair directly.
 
@@ -221,8 +225,8 @@ the standalone or DB-off default.
 | 1. Control identity store | `internal/controlpki`, `internal/config`, `internal/storage`, `internal/app` | Generate/load/validate versioned CA and server leaf with safe filesystem rules and secret-free journal. Tests cover interrupted preparation, missing/corrupt keys, symlinks, permissions, wrong SAN/pin and no startup auto-creation. |
 | 2. Dedicated TLS runtime | `internal/controlserver`, `cmd/awg-forge`, narrow lifecycle wiring in `internal/server` | Separate server and mux, optional verified client cert at handshake, exact-route authorization gate, bounded resources and graceful shutdown. Real loopback TLS tests cover wrong CA/host, missing/invalid client cert, forwarded-header forgery, revocation on keep-alive and SQLite outage. Production listener remains disabled without explicit setup. |
 | 3. Issuance and lifecycle | `internal/controlpki`, `internal/sqldb`, `internal/app` | Signed CSR validation; durable serial registry; renewal overlap, expiry, revocation, rebind fencing and server leaf rotation. Inject clock/failure points; run concurrency/race tests. No public enrollment route yet. |
-| 4. Controller backup prerequisite | `internal/backup`, `internal/app`, `internal/sqldb`, docs EN/RU | Consistent encrypted backup/restore of controller identity, auth and PKI; durable pre-restore fail-closed marker, identity-match fencing, cold restore, auth replay reset and canary-secret tests. Inject crashes at every file switch and marker boundary. Restore keeps control closed pending the node-certificate rollback policy. Only after this slice may the explicit non-loopback enable flow be considered. |
-| 5. Explicit enablement integration | `internal/app`, `internal/server`, `cmd/awg-forge`, installer tests | Recent-auth protected preparation and enable/disable, endpoint/bind preflight, verified post-preparation backup and reversible runtime transition. No auto-enable on install/upgrade. Do not add claim/approval or fleet UI here; those are phase 6/7. |
+| 4. Controller backup prerequisite | `internal/backup`, `internal/app`, `internal/sqldb`, docs EN/RU | First make the existing controller identity and auth recoverable, then include PKI generations before any control exposure. Use a durable pre-restore fail-closed marker, identity-match fencing, cold restore, auth replay reset and canary-secret tests. Inject crashes at every file switch and marker boundary. |
+| 5. Enablement integration | `internal/app`, `internal/server`, `cmd/awg-forge`, installer tests | Test recent-auth protected preparation, endpoint/bind preflight, verified post-preparation backup and reversible runtime transition on loopback. Keep non-loopback enablement unavailable until phase-6 enrollment routes and their security tests are ready. No auto-enable on install/upgrade. |
 
 For every code slice: targeted Go tests during development, then `make ci`,
 `make quality`, `make security-fast`, and `go test -race ./...` for the final
@@ -245,19 +249,19 @@ unverified, not passed.
   separate bind IP and advertised DNS name or IP plus port;
   reject schemes, paths, userinfo, ambiguous names, wildcard advertised hosts,
   and port collisions. Keep `/api/v1` out of scope.
-- Prototype `VACUUM INTO` with the pinned SQLite driver and existing database
-  settings; verify snapshot integrity and permissions under concurrent auth
-  writes before implementing controller backup.
+- Keep the `VACUUM INTO` controller backup snapshot verified with the pinned
+  SQLite driver, including integrity, permissions, size and concurrent auth
+  writes. Recheck these properties when PKI tables join the archive.
 - Use `(issuer generation, serial)` as the unique certificate key. Store public
-  certificate DER and the CSR public-key fingerprint with the issuance row so an
+  certificate DER and a digest of the full CSR DER with the issuance row so an
   exact renewal retry can return the original certificate without issuing a
-  second one; a different CSR against the same old serial conflicts. Extend the
+  second one; a different CSR, including one using the same key, conflicts. Extend the
   draft `/control/v1` renewal contract accordingly.
 - Persist CA trust-adoption acknowledgement per enrolled node before retiring
   old trust. An unacknowledged node blocks automatic retirement; a timed-out
   transition stays in an operator-visible staged state. Until phase 6 provides
-  authenticated node acknowledgement, CA rotation remains a tested primitive,
-  not an automatically enabled fleet operation.
+  authenticated node acknowledgement, CA rotation remains design-only, not an
+  automatically enabled fleet operation.
 - Settle the restore/revocation trade-off before phase 6: the existing ADR says
   nodes reconnect seamlessly after same-identity restore, while a stale backup
   can undo later certificate revocations. Default to fail-closed re-enrollment

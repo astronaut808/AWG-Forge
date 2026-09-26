@@ -93,6 +93,38 @@ func TestResetControllerAuthRemovesOnlyAuthenticationState(t *testing.T) {
 	}
 }
 
+func TestDisableControllerAuthAfterRestoreRequiresOfflineRecovery(t *testing.T) {
+	db := openControllerAuthTestDB(t)
+	ctx := context.Background()
+	now := time.Date(2026, 9, 23, 8, 0, 0, 0, time.UTC)
+	user := controllerAuthTestUser(now)
+	recovery := controllerAuthTestDigest(1)
+	session := controllerAuthTestSession(user.ID, controllerAuthTestDigest(2), now)
+	if err := db.CreateControllerUserWithSession(ctx, user, []controlauth.Digest{recovery}, session); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.DisableControllerAuthAfterRestore(ctx, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.FindControllerSession(ctx, session.Digest, now.Add(time.Minute)); err == nil {
+		t.Fatal("restored session remains valid")
+	}
+	stored, err := db.FindControllerUser(ctx, user.Username)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.DisabledAt.IsZero() {
+		t.Fatal("restored administrator remains enabled")
+	}
+	var codeCount int
+	if err := db.sql.QueryRowContext(ctx, "SELECT count(*) FROM controller_recovery_codes").Scan(&codeCount); err != nil {
+		t.Fatal(err)
+	}
+	if codeCount != 0 {
+		t.Fatalf("restored recovery codes = %d", codeCount)
+	}
+}
+
 func TestControllerTOTPUpdateRollsBackWhenSessionInsertFails(t *testing.T) {
 	db := openControllerAuthTestDB(t)
 	now := time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)
