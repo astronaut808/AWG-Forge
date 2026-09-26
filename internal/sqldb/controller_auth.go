@@ -347,6 +347,41 @@ func (db *DB) RecoverControllerAdmin(ctx context.Context, user controlauth.User,
 	return tx.Commit()
 }
 
+// DisableControllerAuthAfterRestore prevents an older database snapshot from
+// resurrecting browser sessions, used recovery codes, or TOTP steps. The
+// offline root recovery command is the only path that reenables the admin.
+func (db *DB) DisableControllerAuthAfterRestore(ctx context.Context, now time.Time) error {
+	if now.IsZero() {
+		return errors.New("restore time is required")
+	}
+	tx, err := db.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx, "UPDATE controller_users SET disabled_at = ?, updated_at = ? WHERE singleton = 1", formatTime(now), formatTime(now))
+	if err != nil {
+		return err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed != 1 {
+		return errors.New("controller administrator is missing in restored database")
+	}
+	for _, query := range []string{
+		"DELETE FROM controller_sessions",
+		"DELETE FROM controller_recovery_codes",
+		"DELETE FROM controller_auth_attempts",
+	} {
+		if _, err := tx.ExecContext(ctx, query); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (db *DB) FindControllerSession(ctx context.Context, digest controlauth.Digest, now time.Time) (controlauth.Session, error) {
 	var session controlauth.Session
 	var storedDigest []byte

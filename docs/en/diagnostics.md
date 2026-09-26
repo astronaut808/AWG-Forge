@@ -215,6 +215,35 @@ directory also makes it available to the one-shot restore container.
 In the UI, open `Maintenance` -> `Backup & restore` to upload an `.afbackup` file and run the same verification as a dry-run. Actual restore remains CLI-only.
 
 Before replacing the current config directory, restore keeps an encrypted pre-restore backup in `backups/` inside the restored config directory.
+Existing `backups/` archives and the configured audit log with its rotations
+are preserved. Other files under `CONFIG_DIR` are replaced; keep unrelated
+files outside this application-owned directory. If a custom audit path shares
+a top-level directory with restored data, move it to a separate private
+directory before restore.
+
+Controller backups also contain `controller-auth.keys` and a consistent SQLite
+snapshot. Restore is allowed only onto the stopped installation with the same
+`controller_id`. Keep the archive outside `CONFIG_DIR`; for Docker, mount the
+host copy at a separate path in the one-shot container. Preserve any external
+`DATABASE_PATH` mount and environment setting for that container.
+
+```bash
+docker compose stop awg-forge
+docker compose run --rm -v "$PWD/<backup-file>.afbackup:/restore/controller.afbackup:ro" -e BACKUP_PASSWORD='long-random-backup-password' awg-forge restore /restore/controller.afbackup
+```
+
+Restore invalidates browser sessions and recovery codes and disables the
+restored administrator. Before starting `serve`, run the offline root
+`controller recover-admin` command described in [Usage](usage.md), save the new
+TOTP secret and recovery codes, then start the service. A controller archive
+cannot create a second controller installation or replace a different
+`controller_id`.
+
+If restore is interrupted, `.restore-pending.json` blocks server startup,
+administrator recovery, and new backups. Keep the server stopped. Preserve the
+archive and any `.restore-old-*` or external `.awg-restore-old-db-*` staging
+directories for offline inspection and recovery; never remove the marker merely
+to force startup.
 
 Managed-node identity is preserved automatically only for an exact in-place
 identity match. Restoring a managed backup onto a new or different installation,

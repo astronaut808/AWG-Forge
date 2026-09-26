@@ -215,6 +215,33 @@ restore-контейнеру.
 В UI открой `Maintenance` -> `Backup и restore`, загрузи `.afbackup` и запусти такую же проверку в dry-run режиме. Настоящий restore остается CLI-only.
 
 Перед заменой текущего config directory restore сохраняет encrypted pre-restore backup в `backups/` внутри восстановленного config directory.
+Существующие архивы в `backups/`, настроенный audit log и его ротации
+сохраняются. Остальные файлы внутри `CONFIG_DIR` заменяются; сторонние файлы
+держи вне каталога приложения. Если пользовательский путь audit log делит
+верхний каталог с восстанавливаемыми данными, до restore перенеси журнал в
+отдельный приватный каталог.
+
+Backup контроллера также содержит `controller-auth.keys` и согласованный снимок
+SQLite. Восстановление допускается только на остановленной установке с тем же
+`controller_id`. Храни архив вне `CONFIG_DIR`; для Docker подключи его в
+одноразовый контейнер по отдельному пути. Если `DATABASE_PATH` находится вне
+`CONFIG_DIR`, сохрани тот же mount и переменную окружения.
+
+```bash
+docker compose stop awg-forge
+docker compose run --rm -v "$PWD/<backup-file>.afbackup:/restore/controller.afbackup:ro" -e BACKUP_PASSWORD='long-random-backup-password' awg-forge restore /restore/controller.afbackup
+```
+
+Restore отзывает браузерные сессии и коды восстановления и отключает
+восстановленного администратора. Перед запуском `serve` выполни офлайн-команду
+`controller recover-admin` от root из раздела [Использование](usage.md), сохрани
+новый секрет TOTP и коды восстановления, затем запусти сервис. Архив контроллера
+не создаёт вторую установку и не заменяет другой `controller_id`.
+
+Если restore прервался, `.restore-pending.json` блокирует запуск сервера,
+восстановление администратора и новые backup. Оставь сервер остановленным.
+Сохрани архив и каталоги `.restore-old-*` или внешние
+`.awg-restore-old-db-*` для офлайн-разбора; не удаляй маркер только ради запуска.
 
 Managed identity автоматически сохраняется только при точном совпадении с
 identity текущей установки. Restore managed backup на новую или другую
