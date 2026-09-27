@@ -47,6 +47,7 @@ type Service struct {
 	runtime               *observability.Logger
 	runtimeOps            runtimeOperations
 	controllerAuthOptions controlauth.Options
+	controlIdentityStep   func(string) error
 }
 
 type runtimeOperations struct {

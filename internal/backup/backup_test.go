@@ -661,6 +661,12 @@ func TestControllerRestoreInterruptedBeforeStateCommitStaysFailClosed(t *testing
 	}); err != nil {
 		t.Fatal(err)
 	}
+	prepared, err := svc.PrepareControlIdentity(context.Background(), app.ControlIdentityRequest{
+		BindIP: "127.0.0.1", Advertised: "control.example.com", Port: 8443,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	archive, err := Create(context.Background(), cfg, svc, testPassword, Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -698,6 +704,9 @@ func TestControllerRestoreInterruptedBeforeStateCommitStaysFailClosed(t *testing
 	}
 	if !errors.Is(storage.New(cfg.ConfigDir).CheckRestorePending(), storage.ErrRestorePending) {
 		t.Fatal("interrupted controller restore did not block startup")
+	}
+	if _, err := storage.New(cfg.ConfigDir).LoadControlIdentity(prepared.CAGeneration, prepared.ServerGeneration); err != nil {
+		t.Fatalf("interrupted restore lost staged control identity: %v", err)
 	}
 	if err := mutationLock.Close(); err != nil {
 		t.Fatal(err)
@@ -1454,8 +1463,12 @@ func testManagedBackupState() *config.ManagedNodeState {
 
 func testConfig(t *testing.T) config.Config {
 	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	return config.Config{
-		ConfigDir:           t.TempDir(),
+		ConfigDir:           dir,
 		TunnelName:          "awg0",
 		ServerHost:          "vpn.example.com",
 		ListenPort:          51820,

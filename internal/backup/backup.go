@@ -21,6 +21,7 @@ import (
 	"github.com/astronaut808/awg-forge/internal/buildinfo"
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/controlauth"
+	"github.com/astronaut808/awg-forge/internal/controlpki"
 	"github.com/astronaut808/awg-forge/internal/render"
 	"github.com/astronaut808/awg-forge/internal/sqldb"
 	"github.com/astronaut808/awg-forge/internal/storage"
@@ -107,6 +108,13 @@ func Create(ctx context.Context, cfg config.Config, service *app.Service, passwo
 	if err := storage.New(cfg.ConfigDir).CheckRestorePending(); err != nil {
 		return Archive{}, err
 	}
+	// Init may recover and remove a preparation journal. A backup request must
+	// report the in-progress identity instead of silently changing that state.
+	if _, err := os.Lstat(storage.New(cfg.ConfigDir).ControlIdentityJournalPath()); err == nil {
+		return Archive{}, errors.New("cannot create backup while control identity preparation is pending")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return Archive{}, errors.New("cannot inspect control identity preparation journal")
+	}
 	if _, err := service.Init(); err != nil {
 		return Archive{}, err
 	}
@@ -126,6 +134,11 @@ func Create(ctx context.Context, cfg config.Config, service *app.Service, passwo
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return Archive{}, fmt.Errorf("load desired-state commit journal: %w", err)
 	}
+	if _, err := store.LoadControlIdentityJournal(); err == nil {
+		return Archive{}, errors.New("cannot create backup while control identity preparation is pending")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return Archive{}, errors.New("cannot inspect control identity preparation journal")
+	}
 	state, err := store.Load()
 	if err != nil {
 		return Archive{}, err
@@ -136,6 +149,11 @@ func Create(ctx context.Context, cfg config.Config, service *app.Service, passwo
 func createFromState(ctx context.Context, cfg config.Config, state config.State, password string, opts Options) (Archive, error) {
 	if err := validatePassword(password); err != nil {
 		return Archive{}, err
+	}
+	if state.Controller != nil && state.Controller.Control != nil {
+		if err := validateStoredControlIdentity(cfg, state.Controller.Control, true); err != nil {
+			return Archive{}, errors.New("committed control identity is invalid")
+		}
 	}
 	var snapshotPath string
 	if state.EffectiveMode() == config.ModeController {
@@ -230,6 +248,11 @@ func RestoreWithOptions(ctx context.Context, cfg config.Config, password, path s
 		if !currentExists || currentState.EffectiveMode() != config.ModeController {
 			return RestoreResult{}, errors.New("controller restore requires the existing stopped controller with the same identity")
 		}
+		if validated.State.Controller.Control != nil {
+			if err := app.ValidateControlIdentityState(validated.State.Controller.Control, cfg.WebUIPort); err != nil {
+				return RestoreResult{}, errors.New("restored control endpoint conflicts with the target Web UI configuration")
+			}
+		}
 		if err := requireControllerArchiveOutsideConfig(cfg.ConfigDir, path); err != nil {
 			return RestoreResult{}, err
 		}
@@ -306,6 +329,17 @@ func createPlainZip(cfg config.Config, state config.State, now time.Time, snapsh
 		}
 		if err := addFileAtPath(zw, snapshotPath, controllerSnapshotArchivePath, &metas); err != nil {
 			return nil, err
+		}
+		if state.Controller != nil && state.Controller.Control != nil {
+			paths, err := storage.ControlIdentityRelativePaths(state.Controller.Control.CAGeneration, state.Controller.Control.ServerGeneration)
+			if err != nil {
+				return nil, err
+			}
+			for _, rel := range paths {
+				if err := addExistingFile(zw, cfg.ConfigDir, rel, &metas); err != nil {
+					return nil, err
+				}
+			}
 		}
 	}
 	if err := addOptionalExistingFile(zw, cfg.ConfigDir, webtls.SettingsRelativePath, &metas); err != nil {
@@ -508,7 +542,9 @@ func addJSON(zw *zip.Writer, name string, v any) error {
 }
 
 func addBytes(zw *zip.Writer, name string, b []byte) error {
-	w, err := zw.Create(name)
+	header := &zip.FileHeader{Name: name, Method: zip.Deflate}
+	header.SetMode(0600)
+	w, err := zw.CreateHeader(header)
 	if err != nil {
 		return err
 	}
@@ -572,8 +608,14 @@ func validateBackupData(ctx context.Context, password string, data []byte) (vali
 		return validatedBackup{}, err
 	}
 	if state.EffectiveMode() == config.ModeController {
-		if err := validateControllerArchive(ctx, files); err != nil {
+		if err := validateControllerArchive(ctx, files, state); err != nil {
 			return validatedBackup{}, err
+		}
+	} else {
+		for _, file := range files {
+			if strings.HasPrefix(file.Path, "control/") {
+				return validatedBackup{}, errors.New("backup validation failed: control files require controller state")
+			}
 		}
 	}
 	for _, tunnel := range state.Tunnels {
@@ -686,10 +728,22 @@ func validateStateSanity(state config.State) error {
 	return nil
 }
 
-func validateControllerArchive(ctx context.Context, files []restoreFile) error {
+func validateControllerArchive(ctx context.Context, files []restoreFile, state config.State) error {
 	var keyData, snapshotData []byte
+	var controlPaths []string
+	if state.Controller != nil && state.Controller.Control != nil {
+		if err := app.ValidateControlIdentityState(state.Controller.Control, 0); err != nil {
+			return errors.New("backup validation failed: invalid control identity state")
+		}
+		var err error
+		controlPaths, err = storage.ControlIdentityRelativePaths(state.Controller.Control.CAGeneration, state.Controller.Control.ServerGeneration)
+		if err != nil {
+			return err
+		}
+	}
+	controlData := make(map[string][]byte)
 	for _, file := range files {
-		if !allowedControllerBackupPath(file.Path) {
+		if !allowedControllerBackupPath(file.Path, controlPaths) {
 			return fmt.Errorf("backup validation failed: controller file path %q is not allowed", file.Path)
 		}
 		switch file.Path {
@@ -697,10 +751,28 @@ func validateControllerArchive(ctx context.Context, files []restoreFile) error {
 			keyData = file.Data
 		case controllerSnapshotArchivePath:
 			snapshotData = file.Data
+		default:
+			for _, path := range controlPaths {
+				if file.Path == path {
+					controlData[path] = file.Data
+				}
+			}
 		}
 	}
 	if len(keyData) == 0 || len(snapshotData) == 0 {
 		return errors.New("backup validation failed: controller keys and SQLite snapshot are required")
+	}
+	if len(controlPaths) != 0 {
+		for _, path := range controlPaths {
+			if len(controlData[path]) == 0 {
+				return errors.New("backup validation failed: referenced control identity file is missing")
+			}
+		}
+		control := state.Controller.Control
+		material := controlpki.Material{CAKey: controlData[controlPaths[0]], CACert: controlData[controlPaths[1]], ServerKey: controlData[controlPaths[2]], ServerCert: controlData[controlPaths[3]]}
+		if err := controlpki.Validate(material, controlpki.Endpoint{BindIP: control.BindIP, Advertised: control.Advertised, Port: control.Port}, control.CAPin, time.Now().UTC(), true); err != nil {
+			return errors.New("backup validation failed: control identity is invalid")
+		}
 	}
 	stage, err := os.MkdirTemp("", "awg-forge-controller-verify-")
 	if err != nil {
@@ -724,7 +796,12 @@ func validateControllerArchive(ctx context.Context, files []restoreFile) error {
 	return nil
 }
 
-func allowedControllerBackupPath(path string) bool {
+func allowedControllerBackupPath(path string, controlPaths []string) bool {
+	for _, allowed := range controlPaths {
+		if path == allowed {
+			return true
+		}
+	}
 	switch path {
 	case "state.json", controlauth.KeyFileName, controllerSnapshotArchivePath, webtls.SettingsRelativePath:
 		return true
@@ -733,6 +810,17 @@ func allowedControllerBackupPath(path string) bool {
 		return true
 	}
 	return strings.HasPrefix(path, "tunnels/") && strings.HasSuffix(path, ".conf")
+}
+
+func validateStoredControlIdentity(cfg config.Config, control *config.ControlIdentityState, allowExpired bool) error {
+	if err := app.ValidateControlIdentityState(control, cfg.WebUIPort); err != nil {
+		return err
+	}
+	material, err := storage.New(cfg.ConfigDir).LoadControlIdentity(control.CAGeneration, control.ServerGeneration)
+	if err != nil {
+		return err
+	}
+	return controlpki.Validate(material, controlpki.Endpoint{BindIP: control.BindIP, Advertised: control.Advertised, Port: control.Port}, control.CAPin, time.Now().UTC(), allowExpired)
 }
 
 func verifyReport(metadata Metadata, state config.State) VerifyReport {
@@ -780,7 +868,13 @@ func readPlainZip(data []byte) ([]restoreFile, Metadata, config.State, error) {
 			return nil, Metadata{}, config.State{}, err
 		}
 		if file.FileInfo().IsDir() {
+			if strings.HasPrefix(name, "control/") {
+				return nil, Metadata{}, config.State{}, errors.New("backup contains unexpected control directory entry")
+			}
 			continue
+		}
+		if strings.HasPrefix(name, "control/") && (!file.FileInfo().Mode().IsRegular() || file.Mode().Perm() != 0600) {
+			return nil, Metadata{}, config.State{}, errors.New("backup control identity file must be private and regular")
 		}
 		if file.UncompressedSize64 > uint64(maxPlainBackupBytes-totalSize) {
 			return nil, Metadata{}, config.State{}, errors.New("backup contents exceed the 64 MiB plaintext limit")

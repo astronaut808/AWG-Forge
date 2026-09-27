@@ -38,8 +38,21 @@ func (s State) EffectiveMode() string {
 // ControllerState is created only by an explicit, completed controller
 // activation. Authentication secrets remain outside state.json.
 type ControllerState struct {
-	ControllerID string    `json:"controller_id"`
-	ActivatedAt  time.Time `json:"activated_at"`
+	ControllerID string                `json:"controller_id"`
+	ActivatedAt  time.Time             `json:"activated_at"`
+	Control      *ControlIdentityState `json:"control,omitempty"`
+}
+
+// ControlIdentityState is public, disabled preparation metadata. Private keys
+// are stored only in protected generation files under CONFIG_DIR/control.
+type ControlIdentityState struct {
+	Enabled          bool   `json:"enabled"`
+	BindIP           string `json:"bind_ip"`
+	Advertised       string `json:"advertised"`
+	Port             int    `json:"port"`
+	CAGeneration     string `json:"ca_generation"`
+	ServerGeneration string `json:"server_generation"`
+	CAPin            string `json:"ca_pin"`
 }
 
 // ManagedNodeState exists only after explicit controller enrollment.

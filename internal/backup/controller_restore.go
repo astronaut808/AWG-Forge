@@ -10,8 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/astronaut808/awg-forge/internal/app"
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/controlauth"
+	"github.com/astronaut808/awg-forge/internal/controlpki"
 	"github.com/astronaut808/awg-forge/internal/sqldb"
 	"github.com/astronaut808/awg-forge/internal/storage"
 )
@@ -127,7 +129,7 @@ func checkRestoreStagingAbsent(root string) error {
 		if strings.HasPrefix(entry.Name(), ".restore-tmp-") || strings.HasPrefix(entry.Name(), ".restore-old-") {
 			return errors.New("existing restore staging directory requires offline inspection before controller restore")
 		}
-		if entry.Name() == ".desired-state-commit.json" || entry.Name() == storage.ControllerActivationJournalFileName {
+		if entry.Name() == ".desired-state-commit.json" || entry.Name() == storage.ControllerActivationJournalFileName || entry.Name() == storage.ControlIdentityJournalFileName {
 			return errors.New("pending state mutation journal requires recovery before controller restore")
 		}
 	}
@@ -248,6 +250,19 @@ func verifyRestoredController(ctx context.Context, cfg config.Config, controller
 	}
 	if _, err := controlauth.LoadKeys(filepath.Join(cfg.ConfigDir, controlauth.KeyFileName)); err != nil {
 		return err
+	}
+	if state.Controller.Control != nil {
+		control := state.Controller.Control
+		if err := app.ValidateControlIdentityState(control, cfg.WebUIPort); err != nil {
+			return errors.New("restored control identity state is invalid")
+		}
+		material, err := storage.New(cfg.ConfigDir).LoadControlIdentity(control.CAGeneration, control.ServerGeneration)
+		if err != nil {
+			return errors.New("restored control identity files are invalid")
+		}
+		if err := controlpki.Validate(material, controlpki.Endpoint{BindIP: control.BindIP, Advertised: control.Advertised, Port: control.Port}, control.CAPin, time.Now().UTC(), true); err != nil {
+			return errors.New("restored control identity is invalid")
+		}
 	}
 	if err := sqldb.VerifyControllerSnapshot(ctx, cfg.DatabasePath); err != nil {
 		return err
