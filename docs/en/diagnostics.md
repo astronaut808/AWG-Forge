@@ -226,6 +226,14 @@ snapshot. Restore is allowed only onto the stopped installation with the same
 `controller_id`. Keep the archive outside `CONFIG_DIR`; for Docker, mount the
 host copy at a separate path in the one-shot container. Preserve any external
 `DATABASE_PATH` mount and environment setting for that container.
+If a disabled control identity has been prepared, the encrypted archive also
+contains its exact CA and server certificate generations. Restore keeps it
+disabled. An expired identity remains recoverable, but cannot be used for control
+TLS until a future explicit renewal. This checkpoint has no control listener.
+If the currently committed identity files are damaged, restore stops before
+changing files because it cannot create a verified pre-restore backup. Keep the
+valid encrypted archive and inspect or repair the current files offline; do not
+remove a restore marker to work around a failed restore.
 
 ```bash
 docker compose stop awg-forge

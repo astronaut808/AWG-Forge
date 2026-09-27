@@ -17,6 +17,23 @@ func TestStandaloneStateJSONOmitsManagedNodeMetadata(t *testing.T) {
 	}
 }
 
+func TestLegacyControllerStateOmitsOptionalControlIdentity(t *testing.T) {
+	var state State
+	if err := json.Unmarshal([]byte(`{"schema_version":4,"mode":"controller","controller":{"controller_id":"11111111-1111-4111-8111-111111111111","activated_at":"2026-09-26T00:00:00Z"}}`), &state); err != nil {
+		t.Fatal(err)
+	}
+	if state.Controller == nil || state.Controller.Control != nil || state.SchemaVersion != CurrentStateSchemaVersion {
+		t.Fatalf("legacy controller state changed meaning: %#v", state.Controller)
+	}
+	encoded, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), `"control"`) {
+		t.Fatal("absent control identity was serialized as prepared")
+	}
+}
+
 func TestLegacyStateModeInference(t *testing.T) {
 	if got := (State{}).EffectiveMode(); got != ModeStandalone {
 		t.Fatalf("legacy standalone mode = %q", got)

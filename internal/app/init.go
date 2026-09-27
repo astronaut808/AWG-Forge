@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/astronaut808/awg-forge/internal/config"
+	"github.com/astronaut808/awg-forge/internal/controlpki"
 	"github.com/astronaut808/awg-forge/internal/protocol"
 )
 
@@ -50,6 +51,20 @@ func (s *Service) initWithOptionsLocked(options InitOptions) (config.State, erro
 		}
 		if err := s.recoverControllerActivationLocked(state); err != nil {
 			return config.State{}, fmt.Errorf("recover controller activation: %w", err)
+		}
+		if state.Controller != nil {
+			if err := s.recoverControlIdentityLocked(state); err != nil {
+				s.log("warn", "control.identity.recovery_failed", "control identity needs offline inspection", nil, nil)
+			}
+			if state.Controller.Control != nil {
+				if err := s.validateControlIdentityLocked(state.Controller.Control, time.Time{}, false); err != nil {
+					if errors.Is(err, controlpki.ErrExpired) {
+						s.log("warn", "control.identity.expired", "control identity expired; explicit renewal is required before use", nil, nil)
+					} else {
+						s.log("warn", "control.identity.unusable", "committed control identity is unusable", nil, nil)
+					}
+				}
+			}
 		}
 		return s.repairLoadedState(state)
 	} else if !errors.Is(err, os.ErrNotExist) {

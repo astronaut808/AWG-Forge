@@ -36,7 +36,7 @@ and tested on loopback before node enrollment begins.
 | Node `/control/v1` | Use a separate `net.Listener`, `http.Server`, route table, TLS configuration, and request log policy. Never mount `/api` or static assets there. |
 | Enrollment bootstrap | The only future routes allowed without a client certificate are an exact allowlist of invitation claim/status routes. A valid server certificate and pinned controller CA are still mandatory. This phase does not expose these routes. |
 | Established node | TLS verifies the client chain and client-auth usage. On **every request**, the application resolves the presented issuer/serial to an active node certificate, `controller_id`, `node_id`, and `binding_epoch` in SQLite. Headers, URL/body IDs, subject CN, and proxy assertions do not establish identity. |
-| Controller to node | The node verifies the server hostname/IP SAN using normal TLS verification against its pinned CA certificate and checks the SHA-256 fingerprint of that CA's SubjectPublicKeyInfo. The join command and node state use this one pin format. Never set `InsecureSkipVerify` or fall back to Web UI/ACME trust. |
+| Controller to node | The node verifies the server hostname/IP SAN using normal TLS verification against its pinned CA certificate and checks the SHA-256 fingerprint of that CA's SubjectPublicKeyInfo, encoded as `sha256:` plus 64 lowercase hex characters. The join command and node state use this one pin format. Never set `InsecureSkipVerify` or fall back to Web UI/ACME trust. |
 
 ```mermaid
 flowchart LR
@@ -94,9 +94,9 @@ requests; it never grants a cached identity or falls back to a browser cookie.
 
 1. `absent`: controller auth may be active, but no control identity or port exists.
 2. `preparing`: under the application mutation lock, validate controller mode,
-   SQLite, endpoint and port separation. Stage
-   and sync new identity files. Record a secret-free recovery journal with only
-   generation IDs. Do not bind an external socket yet.
+   SQLite, endpoint and port separation. Durably record a secret-free recovery
+   journal with generation IDs **before** writing new identity files, then stage
+   and sync those files. Do not bind an external socket yet.
 3. `prepared`: validate certificate chain, key match, SAN, validity, pin, and
    database schema. Persist the disabled control identity and endpoint in one
    atomic state replacement, then clear the journal. A pre-commit failure
@@ -218,6 +218,10 @@ These are review checkpoints, not a requirement for separate branches or PRs.
 They may be implemented in one feature branch from current `develop`; later
 slices depend on earlier ones, and each needs focused tests. No slice changes
 the standalone or DB-off default.
+
+The bounded execution plan for the next feature branch is in
+[control-identity-next-session.md](control-identity-next-session.md). It pairs
+the prepared identity store with backup/restore coverage before any listener.
 
 | Slice | Main ownership | Deliverable and acceptance evidence |
 | --- | --- | --- |

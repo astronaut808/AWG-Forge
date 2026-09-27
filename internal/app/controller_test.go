@@ -333,6 +333,10 @@ func fastControllerAuthOptions() controlauth.Options {
 func controllerTestConfig(t *testing.T) config.Config {
 	t.Helper()
 	dir := t.TempDir()
+	dir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return config.Config{
 		ConfigDir:            dir,
 		TunnelName:           "awg0",
