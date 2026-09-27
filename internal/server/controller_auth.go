@@ -179,9 +179,7 @@ func (w *web) controllerActivateAPI(rw http.ResponseWriter, r *http.Request) {
 		writeOperationError(rw, http.StatusServiceUnavailable, "activation_failed", "controller activation failed")
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), w.cfg.DatabaseQueryTimeout)
-	defer cancel()
-	auth, db, err := openControllerAuthRuntime(ctx, w.cfg)
+	auth, db, err := openControllerAuthRuntime(w.cfg)
 	if err != nil {
 		// The state has committed. Keep legacy authentication closed; restart can load the runtime.
 		writeOperationError(rw, http.StatusServiceUnavailable, "auth_runtime_unavailable", "controller authentication is unavailable")
@@ -192,19 +190,26 @@ func (w *web) controllerActivateAPI(rw http.ResponseWriter, r *http.Request) {
 	writeJSON(rw, http.StatusOK, map[string]any{"mode": "controller", "username": result.Username, "recovery_codes": result.RecoveryCodes})
 }
 
-func openControllerAuthRuntime(ctx context.Context, cfg config.Config) (*controlauth.Service, *sqldb.DB, error) {
+func openControllerAuthRuntime(cfg config.Config) (*controlauth.Service, *sqldb.DB, error) {
 	if cfg.DatabaseMode != sqldb.ModeSQLite {
 		return nil, nil, app.ErrControllerActivationRequiresDB
 	}
-	db, err := sqldb.Open(ctx, cfg)
+	openCtx, cancel := context.WithTimeout(context.Background(), cfg.DatabaseQueryTimeout)
+	db, err := sqldb.Open(openCtx, cfg)
+	cancel()
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := db.Migrate(ctx); err != nil {
+	migrateCtx, cancel := context.WithTimeout(context.Background(), sqldb.MigrationTimeout(cfg.DatabaseQueryTimeout))
+	err = db.Migrate(migrateCtx)
+	cancel()
+	if err != nil {
 		_ = db.Close()
 		return nil, nil, err
 	}
-	initialized, err := db.ControllerAuthInitialized(ctx)
+	inspectCtx, cancel := context.WithTimeout(context.Background(), cfg.DatabaseQueryTimeout)
+	initialized, err := db.ControllerAuthInitialized(inspectCtx)
+	cancel()
 	if err != nil || !initialized {
 		_ = db.Close()
 		return nil, nil, errors.New("controller administrator unavailable")

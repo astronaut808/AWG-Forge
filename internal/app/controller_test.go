@@ -2,8 +2,10 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"encoding/base32"
 	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -213,6 +215,58 @@ func TestInitRecoversInterruptedControllerActivation(t *testing.T) {
 		t.Fatalf("recovered mode = %q", state.EffectiveMode())
 	}
 	assertControllerActivationArtifactsRemoved(t, cfg)
+}
+
+func TestInitRecoversActivationAfterSlowMigration(t *testing.T) {
+	cfg := controllerTestConfig(t)
+	cfg.DatabaseQueryTimeout = time.Second
+	if _, err := newFastControllerTestService(cfg).Init(); err != nil {
+		t.Fatal(err)
+	}
+	store := storage.New(cfg.ConfigDir)
+	if err := store.SaveControllerActivationJournal(storage.ControllerActivationJournal{
+		ControllerID: "11111111-1111-4111-8111-111111111111", StartedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sqldb.Migrate(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	filename := (&url.URL{Scheme: "file", Path: cfg.DatabasePath, RawQuery: "_busy_timeout=5000&_journal_mode=wal"}).String()
+	locker, err := sql.Open("sqlite", filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = locker.Close() }()
+	conn, err := locker.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.ExecContext(context.Background(), "BEGIN IMMEDIATE"); err != nil {
+		t.Fatal(err)
+	}
+	released := make(chan error, 1)
+	go func() {
+		time.Sleep(3 * time.Second)
+		_, releaseErr := conn.ExecContext(context.Background(), "COMMIT")
+		released <- releaseErr
+	}()
+	started := time.Now()
+	_, initErr := newFastControllerTestService(cfg).Init()
+	elapsed := time.Since(started)
+	if err := <-released; err != nil {
+		t.Fatal(err)
+	}
+	if elapsed <= cfg.DatabaseQueryTimeout {
+		t.Fatalf("migration did not exercise the startup deadline: %s", elapsed)
+	}
+	if initErr != nil {
+		t.Fatalf("activation recovery after slow migration: %v", initErr)
+	}
+	if _, err := store.LoadControllerActivationJournal(); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("activation journal remains after recovery: %v", err)
+	}
 }
 
 func TestControllerActivationRollbackKeepsJournalUntilDatabaseResetSucceeds(t *testing.T) {

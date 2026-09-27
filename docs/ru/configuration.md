@@ -23,7 +23,7 @@
 - `DATABASE_PATH`: путь к SQLite database. По умолчанию `/etc/awg-forge/awg-forge.db`.
 - `DATABASE_RETENTION_DAYS`: default retention window для operational data. По умолчанию `90`.
 - `DATABASE_BUSY_TIMEOUT`: SQLite busy timeout. По умолчанию `5s`.
-- `DATABASE_QUERY_TIMEOUT`: timeout для database commands/queries. По умолчанию `2s`.
+- `DATABASE_QUERY_TIMEOUT`: таймаут операций с базой данных, для которых задан срок выполнения запроса. По умолчанию `2s`. При запуске контроллера, настройке auth runtime после активации и восстановлении незавершённой активации миграция схемы получает отдельный срок не менее `30s`; в этих путях открытие базы и проверка настройки администратора используют каждый свой таймаут запроса.
 - `DATABASE_MAX_OPEN_CONNS`: лимит database connections. По умолчанию `1`.
 - `DATABASE_MAX_IDLE_CONNS`: лимит idle connections. По умолчанию `1`.
 

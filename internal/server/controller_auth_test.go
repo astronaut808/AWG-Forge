@@ -3,11 +3,13 @@ package server
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/base32"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -24,6 +26,54 @@ import (
 	"github.com/astronaut808/awg-forge/internal/webtls"
 	"github.com/pquerna/otp/totp"
 )
+
+func TestOpenControllerAuthRuntimeInspectsAfterSlowMigration(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Config{
+		ConfigDir:            dir,
+		DatabaseMode:         sqldb.ModeSQLite,
+		DatabasePath:         filepath.Join(dir, "awg-forge.db"),
+		DatabaseBusyTimeout:  5 * time.Second,
+		DatabaseQueryTimeout: time.Second,
+		DatabaseMaxOpenConns: 1,
+		DatabaseMaxIdleConns: 1,
+	}
+	if _, err := sqldb.Migrate(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	filename := (&url.URL{Scheme: "file", Path: cfg.DatabasePath, RawQuery: "_busy_timeout=5000&_journal_mode=wal"}).String()
+	locker, err := sql.Open("sqlite", filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = locker.Close() }()
+	conn, err := locker.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.ExecContext(context.Background(), "BEGIN IMMEDIATE"); err != nil {
+		t.Fatal(err)
+	}
+	released := make(chan error, 1)
+	go func() {
+		time.Sleep(3 * time.Second)
+		_, releaseErr := conn.ExecContext(context.Background(), "COMMIT")
+		released <- releaseErr
+	}()
+	started := time.Now()
+	_, _, authErr := openControllerAuthRuntime(cfg)
+	elapsed := time.Since(started)
+	if err := <-released; err != nil {
+		t.Fatal(err)
+	}
+	if elapsed <= cfg.DatabaseQueryTimeout {
+		t.Fatalf("migration did not exercise the startup deadline: %s", elapsed)
+	}
+	if authErr == nil || !strings.Contains(authErr.Error(), "controller administrator unavailable") {
+		t.Fatalf("auth runtime after slow migration = %v", authErr)
+	}
+}
 
 func TestControllerAuthWiringRejectsLegacyPasswordAndValidatesOpaqueSession(t *testing.T) {
 	auth, closeDB, now := controllerServerTestAuth(t)

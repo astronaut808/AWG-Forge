@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/astronaut808/awg-forge/internal/config"
 )
@@ -25,6 +26,12 @@ type migration struct {
 	path     string
 	sql      string
 	checksum string
+}
+
+// MigrationTimeout gives startup schema work its own bounded deadline. A
+// database query timeout can be too short for an initial or upgraded schema.
+func MigrationTimeout(queryTimeout time.Duration) time.Duration {
+	return max(30*time.Second, queryTimeout)
 }
 
 func Migrate(ctx context.Context, cfg config.Config) (Status, error) {

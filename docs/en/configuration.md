@@ -23,7 +23,7 @@ The main example is [.env.example](../../.env.example).
 - `DATABASE_PATH`: SQLite database path. Defaults to `/etc/awg-forge/awg-forge.db`.
 - `DATABASE_RETENTION_DAYS`: default operational data retention window. Defaults to `90`.
 - `DATABASE_BUSY_TIMEOUT`: SQLite busy timeout. Defaults to `5s`.
-- `DATABASE_QUERY_TIMEOUT`: database command/query timeout. Defaults to `2s`.
+- `DATABASE_QUERY_TIMEOUT`: timeout for database operations where a query deadline is applied. Defaults to `2s`. Controller startup, post-activation authentication runtime setup, and activation recovery give schema migration a separate deadline of at least `30s`; opening the database and checking administrator setup each get their own query timeout in those paths.
 - `DATABASE_MAX_OPEN_CONNS`: database connection limit. Defaults to `1`.
 - `DATABASE_MAX_IDLE_CONNS`: idle connection limit. Defaults to `1`.
 

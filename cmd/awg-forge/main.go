@@ -125,17 +125,23 @@ func loadControllerAuth(cfg config.Config, state config.State) (*controlauth.Ser
 	if cfg.DatabaseMode != sqldb.ModeSQLite {
 		return nil, nil, app.ErrControllerActivationRequiresDB
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), cfg.DatabaseQueryTimeout)
-	defer cancel()
-	db, err := sqldb.Open(ctx, cfg)
+	openCtx, cancel := context.WithTimeout(context.Background(), cfg.DatabaseQueryTimeout)
+	db, err := sqldb.Open(openCtx, cfg)
+	cancel()
 	if err != nil {
 		return nil, nil, fmt.Errorf("open controller authentication database: %w", err)
 	}
-	if err := db.Migrate(ctx); err != nil {
+	// Schema migration is a bounded startup operation, not one database query.
+	migrateCtx, cancel := context.WithTimeout(context.Background(), sqldb.MigrationTimeout(cfg.DatabaseQueryTimeout))
+	err = db.Migrate(migrateCtx)
+	cancel()
+	if err != nil {
 		_ = db.Close()
 		return nil, nil, fmt.Errorf("migrate controller authentication database: %w", err)
 	}
-	initialized, err := db.ControllerAuthInitialized(ctx)
+	inspectCtx, cancel := context.WithTimeout(context.Background(), cfg.DatabaseQueryTimeout)
+	initialized, err := db.ControllerAuthInitialized(inspectCtx)
+	cancel()
 	if err != nil {
 		_ = db.Close()
 		return nil, nil, fmt.Errorf("inspect controller authentication: %w", err)
