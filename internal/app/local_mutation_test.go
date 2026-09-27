@@ -122,7 +122,9 @@ func TestManagedNodeLocalDesiredStateMutationsAdvanceGeneration(t *testing.T) {
 		{
 			name: "disable client for traffic limit",
 			mutate: func(service *Service, _ config.State, clientID, _ string) error {
-				_, err := service.DisableClientForTrafficLimit(clientID, 2, 1, "lifetime")
+				_, err := service.DisableClientForTrafficLimit(clientID, 2, 1, "lifetime", TrafficLimitMarker{
+					Mark: func() (bool, error) { return true, nil }, Clear: func() error { return nil },
+				})
 				return err
 			},
 		},
@@ -174,7 +176,9 @@ func TestManagedNodeTrafficLimitReleaseAdvancesGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	released, err := service.EnableClientForTrafficLimitRelease(clientID, "rolling_30d")
+	released, err := service.EnableClientForTrafficLimitRelease(clientID, "rolling_30d", TrafficLimitReleaseMarker{
+		CanRelease: func() (bool, error) { return true, nil }, Clear: func() error { return nil },
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

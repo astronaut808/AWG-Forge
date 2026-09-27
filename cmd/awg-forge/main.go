@@ -248,20 +248,21 @@ func runClient(cfg config.Config, svc *app.Service, args []string) error {
 		if len(args) != 2 {
 			return errors.New("usage: awg-forge client enable <id>")
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), cfg.DatabaseQueryTimeout)
-		defer cancel()
-		exceeded, found, err := cliTrafficLimitExceededForClient(ctx, cfg, args[1])
+		result, err := svc.EnableClientWithTrafficLimit(context.Background(), args[1])
 		if err != nil {
-			svc.Audit().Log(context.Background(), audit.Event{
-				Level:   "warn",
-				Event:   "client.enabled_state.rejected",
-				Message: "client enabled state request rejected",
-				Fields:  map[string]any{"client_id": args[1], "enabled": true, "reason": "traffic limit check failed"},
-				Error:   audit.Error(err),
-			})
+			if errors.Is(err, app.ErrTrafficLimitCheckUnavailable) {
+				svc.Audit().Log(context.Background(), audit.Event{
+					Level:   "warn",
+					Event:   "client.enabled_state.rejected",
+					Message: "client enabled state request rejected",
+					Fields:  map[string]any{"client_id": args[1], "enabled": true, "reason": "traffic limit check failed"},
+					Error:   audit.Error(err),
+				})
+			}
 			return err
 		}
-		if found {
+		if result.Exceeded != nil {
+			exceeded := result.Exceeded
 			svc.Audit().Log(context.Background(), audit.Event{
 				Level:   "warn",
 				Event:   "client.enabled_state.rejected",
@@ -277,16 +278,13 @@ func runClient(cfg config.Config, svc *app.Service, args []string) error {
 			})
 			return errors.New("traffic limit exceeded; increase or clear the limit before enabling")
 		}
-		if err := svc.SetClientEnabled(args[1], true); err != nil {
-			return err
-		}
-		if err := sqldb.ClearClientTrafficLimitBlock(ctx, cfg, args[1]); err != nil && !errors.Is(err, sqldb.ErrDisabled) && !errors.Is(err, sql.ErrNoRows) {
+		if result.MarkerClearError != nil {
 			svc.Audit().Log(context.Background(), audit.Event{
 				Level:   "warn",
 				Event:   "client.traffic_limit_release_marker.clear_failed",
 				Message: "client traffic limit release marker clear failed",
 				Fields:  map[string]any{"client_id": args[1], "enabled": true},
-				Error:   audit.Error(err),
+				Error:   audit.Error(result.MarkerClearError),
 			})
 		}
 		return nil
@@ -294,9 +292,18 @@ func runClient(cfg config.Config, svc *app.Service, args []string) error {
 		if len(args) != 2 {
 			return errors.New("usage: awg-forge client disable <id>")
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), cfg.DatabaseQueryTimeout)
-		defer cancel()
-		if err := sqldb.ClearClientTrafficLimitBlock(ctx, cfg, args[1]); err != nil && !errors.Is(err, sqldb.ErrDisabled) && !errors.Is(err, sql.ErrNoRows) {
+		if err := svc.DisableClientManually(args[1], func() error {
+			ctx, cancel := context.WithTimeout(context.Background(), cfg.DatabaseQueryTimeout)
+			defer cancel()
+			err := sqldb.ClearClientTrafficLimitBlock(ctx, cfg, args[1])
+			if errors.Is(err, sqldb.ErrDisabled) || errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			return err
+		}); err != nil {
+			if !errors.Is(err, app.ErrTrafficLimitMarkerUnavailable) {
+				return err
+			}
 			svc.Audit().Log(context.Background(), audit.Event{
 				Level:   "warn",
 				Event:   "client.enabled_state.rejected",
@@ -305,9 +312,6 @@ func runClient(cfg config.Config, svc *app.Service, args []string) error {
 				Error:   audit.Error(err),
 			})
 			return fmt.Errorf("traffic limit marker unavailable; retry before disabling: %w", err)
-		}
-		if err := svc.SetClientEnabled(args[1], false); err != nil {
-			return err
 		}
 		return nil
 	case "config":
@@ -325,22 +329,6 @@ func runClient(cfg config.Config, svc *app.Service, args []string) error {
 	}
 }
 
-func cliTrafficLimitExceededForClient(ctx context.Context, cfg config.Config, clientID string) (sqldb.ExceededTrafficLimit, bool, error) {
-	exceeded, err := sqldb.ListExceededTrafficLimits(ctx, cfg, time.Now().UTC())
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, sqldb.ErrDisabled) {
-			return sqldb.ExceededTrafficLimit{}, false, nil
-		}
-		return sqldb.ExceededTrafficLimit{}, false, err
-	}
-	for i := range exceeded {
-		if exceeded[i].ClientID == clientID {
-			return exceeded[i], true, nil
-		}
-	}
-	return sqldb.ExceededTrafficLimit{}, false, nil
-}
-
 func usage() error {
 	return errors.New("usage: awg-forge init|serve|render|doctor|backup|restore|support-bundle|updates|firewall|logs|db|tls|client|tunnel|controller")
 }
@@ -349,14 +337,12 @@ func runDB(cfg config.Config, args []string) error {
 	if len(args) < 1 {
 		return errors.New("usage: awg-forge db status|migrate|retention apply")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), cfg.DatabaseQueryTimeout)
-	defer cancel()
 	switch args[0] {
 	case "status":
 		if len(args) != 1 {
 			return errors.New("usage: awg-forge db status")
 		}
-		status, err := sqldb.Check(ctx, cfg)
+		status, err := sqldb.Check(context.Background(), cfg)
 		if err != nil {
 			return err
 		}
@@ -366,7 +352,7 @@ func runDB(cfg config.Config, args []string) error {
 		if len(args) != 1 {
 			return errors.New("usage: awg-forge db migrate")
 		}
-		status, err := sqldb.Migrate(ctx, cfg)
+		status, err := sqldb.Migrate(context.Background(), cfg)
 		if err != nil {
 			return err
 		}
@@ -376,6 +362,8 @@ func runDB(cfg config.Config, args []string) error {
 		if len(args) != 2 || args[1] != "apply" {
 			return errors.New("usage: awg-forge db retention apply")
 		}
+		ctx, cancel := context.WithTimeout(context.Background(), max(30*time.Second, cfg.DatabaseQueryTimeout))
+		defer cancel()
 		report, err := sqldb.ApplyRetention(ctx, cfg, time.Now().UTC())
 		if err != nil {
 			return err

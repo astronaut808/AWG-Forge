@@ -85,12 +85,17 @@ func Check(ctx context.Context, cfg config.Config) (Status, error) {
 	if wal, err := os.Stat(cfg.DatabasePath + "-wal"); err == nil {
 		status.WALSizeBytes = wal.Size()
 	}
-	db, err := openSQLite(ctx, cfg)
+	openCtx, cancel := context.WithTimeout(ctx, cfg.DatabaseQueryTimeout)
+	db, err := openSQLite(openCtx, cfg)
+	cancel()
 	if err != nil {
 		return status, err
 	}
 	defer func() { _ = db.Close() }()
-	if err := db.fillStatus(ctx, &status); err != nil {
+	statusCtx, cancel := context.WithTimeout(ctx, cfg.DatabaseQueryTimeout)
+	err = db.fillStatus(statusCtx, &status)
+	cancel()
+	if err != nil {
 		return status, err
 	}
 	return status, nil

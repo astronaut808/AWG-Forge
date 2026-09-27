@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -1263,6 +1264,80 @@ func TestTrafficLimitAutoReleasesQuotaBlockedClient(t *testing.T) {
 	}
 }
 
+func TestTrafficLimitMarkerTimeoutDoesNotDisableClient(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Config{
+		ConfigDir:            dir,
+		TunnelName:           "awg0",
+		ServerHost:           "vpn.example.com",
+		ListenPort:           51820,
+		WebUIHost:            "127.0.0.1",
+		WebUIPort:            51821,
+		ExternalInterface:    "eth0",
+		IPv4Subnet:           "10.8.0.0/24",
+		DNS:                  "1.1.1.1",
+		AllowedIPs:           "0.0.0.0/0",
+		ProtocolProfile:      "awg_legacy_1_0",
+		DatabaseMode:         sqldb.ModeSQLite,
+		DatabasePath:         filepath.Join(dir, "awg-forge.db"),
+		DatabaseBusyTimeout:  time.Second,
+		DatabaseQueryTimeout: 200 * time.Millisecond,
+		DatabaseMaxOpenConns: 1,
+		DatabaseMaxIdleConns: 1,
+	}
+	if _, err := sqldb.Migrate(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	svc := app.New(cfg)
+	client, err := svc.AddClient("phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := sqldb.RecordTrafficSamples(context.Background(), cfg, []sqldb.TrafficSample{
+		{SampledAt: now.Add(-time.Minute), TunnelID: client.TunnelID, ClientID: client.ID, Present: true},
+		{SampledAt: now, TunnelID: client.TunnelID, ClientID: client.ID, RxBytes: 6000, Present: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	limit := uint64(5000)
+	if err := sqldb.SetClientTrafficLimitWithPeriod(context.Background(), cfg, client.TunnelID, client.ID, &limit, sqldb.TrafficLimitPeriodLifetime); err != nil {
+		t.Fatal(err)
+	}
+	filename := (&url.URL{Scheme: "file", Path: cfg.DatabasePath, RawQuery: "_busy_timeout=1000&_journal_mode=wal"}).String()
+	locker, err := sql.Open("sqlite", filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = locker.Close() }()
+	conn, err := locker.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.ExecContext(context.Background(), "BEGIN IMMEDIATE"); err != nil {
+		t.Fatal(err)
+	}
+	enforceTrafficLimits(context.Background(), cfg, svc)
+	if _, err := conn.ExecContext(context.Background(), "COMMIT"); err != nil {
+		t.Fatal(err)
+	}
+	state, err := svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.Tunnels[0].Clients[0].Enabled {
+		t.Fatal("client was disabled before its quota block was recorded")
+	}
+	blocks, err := sqldb.ListTrafficLimitBlocks(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocks) != 0 {
+		t.Fatalf("blocks after failed mark = %#v", blocks)
+	}
+}
+
 func TestManualDisableKeepsClientEnabledWhenQuotaBlockCannotBeCleared(t *testing.T) {
 	dir := t.TempDir()
 	cfg := config.Config{
@@ -1290,6 +1365,10 @@ func TestManualDisableKeepsClientEnabledWhenQuotaBlockCannotBeCleared(t *testing
 	svc := app.New(cfg)
 	client, err := svc.AddClient("phone")
 	if err != nil {
+		t.Fatal(err)
+	}
+	limit := uint64(5000)
+	if err := sqldb.SetClientTrafficLimitWithPeriod(context.Background(), cfg, client.TunnelID, client.ID, &limit, sqldb.TrafficLimitPeriodLifetime); err != nil {
 		t.Fatal(err)
 	}
 	if err := sqldb.MarkClientTrafficLimitBlocked(context.Background(), cfg, client.TunnelID, client.ID, time.Now().UTC()); err != nil {
