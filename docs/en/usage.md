@@ -109,7 +109,9 @@ Restore must run while the server container is stopped. The one-shot restore
 container uses the same data volume; starting the service afterwards loads the
 restored desired state and TLS assets. Standalone and managed-node backups do
 not include SQLite operational history. Controller backups include the
-authentication database snapshot and its key file. With `APPLY_CONFIG=true`, startup applies
+authentication database snapshot and its key file. If a disabled control
+identity has been prepared, they also include the private keys and certificates
+of its exact CA and server generations. With `APPLY_CONFIG=true`, startup applies
 enabled tunnels and reconciles WARP. Wait for startup before running the
 remaining checks.
 

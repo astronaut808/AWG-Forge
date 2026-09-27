@@ -41,6 +41,30 @@ func TestGeneratedIdentityValidationAndSerialUniqueness(t *testing.T) {
 	}
 }
 
+func TestGeneratedIdentityHasExactIPSAN(t *testing.T) {
+	for _, advertised := range []string{"192.0.2.10", "2001:db8::10"} {
+		t.Run(advertised, func(t *testing.T) {
+			endpoint, err := NormalizeEndpoint("127.0.0.1", advertised, 8443, 51821)
+			if err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now().UTC()
+			material, pin, err := Generate(endpoint, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := Validate(material, endpoint, pin, now, false); err != nil {
+				t.Fatalf("validate IP SAN: %v", err)
+			}
+			wrong := endpoint
+			wrong.Advertised = "192.0.2.11"
+			if err := Validate(material, wrong, pin, now, false); err == nil {
+				t.Fatal("mismatched IP SAN was accepted")
+			}
+		})
+	}
+}
+
 func TestValidationRejectsMismatchesAndExpiredLiveIdentity(t *testing.T) {
 	endpoint, _ := NormalizeEndpoint("127.0.0.1", "control.example.com", 8443, 51821)
 	now := time.Now().UTC()

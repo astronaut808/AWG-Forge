@@ -1,9 +1,9 @@
 # Next checkpoint: prepared controller control identity
 
-Status: implementation handoff. This is a bounded follow-up to
-`control-tls-pki-plan.md`, not an enabled control-plane feature. Recheck the
-checkout and source at the start of the next session; the observations below
-describe `develop` on 2026-09-26.
+Status: disabled identity checkpoint implemented on the feature branch. This is
+a bounded follow-up to `control-tls-pki-plan.md`, not an enabled control-plane
+feature. The starting point below describes `develop` before this checkpoint
+on 2026-09-26.
 
 ## Outcome and starting point
 
