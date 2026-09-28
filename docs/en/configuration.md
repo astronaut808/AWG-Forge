@@ -23,7 +23,7 @@ The main example is [.env.example](../../.env.example).
 - `DATABASE_PATH`: SQLite database path. Defaults to `/etc/awg-forge/awg-forge.db`.
 - `DATABASE_RETENTION_DAYS`: default operational data retention window. Defaults to `90`.
 - `DATABASE_BUSY_TIMEOUT`: SQLite busy timeout. Defaults to `5s`.
-- `DATABASE_QUERY_TIMEOUT`: database command/query timeout. Defaults to `2s`.
+- `DATABASE_QUERY_TIMEOUT`: timeout for database operations where a query deadline is applied. Defaults to `2s`. Controller startup, post-activation authentication runtime setup, activation recovery, and `db migrate` give schema migration a separate deadline of at least `30s`. Database opening and status or administrator checks use fresh query deadlines; `db retention apply` has an operation deadline of at least `30s`.
 - `DATABASE_MAX_OPEN_CONNS`: database connection limit. Defaults to `1`.
 - `DATABASE_MAX_IDLE_CONNS`: idle connection limit. Defaults to `1`.
 
@@ -416,4 +416,4 @@ When SQLite is enabled, migrated, and `APPLY_CONFIG=true`, awg-forge samples run
 
 Client creation and client settings can store an optional traffic limit when SQLite is enabled. The Web UI accepts MiB, GiB, or TiB. A limit can apply to all recorded traffic (`Lifetime`) or to the previous 30 UTC days (`Rolling 30 days (UTC)`); existing limits remain lifetime limits after migration. Unlimited means no limit row is stored.
 
-When recorded traffic reaches or exceeds the configured limit, awg-forge disables the client through the normal render/apply path and writes an audit event. Re-enable attempts are rejected while the active limit period is exceeded. The rolling window moves forward as daily UTC aggregates age out. awg-forge automatically re-enables only clients it disabled for that quota; a manual disable clears the quota-block marker and is never auto-reversed. The HTTP API returns `409 Conflict`; the CLI returns an error.
+When recorded traffic reaches or exceeds the configured limit, awg-forge records the quota-block marker, disables the client through the normal render/apply path, and writes an audit event. If the marker cannot be recorded, the client stays enabled and enforcement retries on a later pass. Re-enable attempts are rejected while the active limit period is exceeded. The rolling window moves forward as daily UTC aggregates age out. awg-forge automatically re-enables only clients it disabled for that quota; a manual disable clears the quota-block marker and is never auto-reversed. The HTTP API returns `409 Conflict`; the CLI returns an error.

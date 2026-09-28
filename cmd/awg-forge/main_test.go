@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/base32"
 	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,12 +65,14 @@ func TestControllerRecoveryRejectsMissingDatabase(t *testing.T) {
 
 func TestLoadControllerAuthFailsClosedAndLoadsPreparedRuntime(t *testing.T) {
 	dir := t.TempDir()
+	// This test checks auth state, not query latency; race builds can slow the
+	// initial SQLite migration when other packages run concurrently.
 	cfg := config.Config{
 		ConfigDir:            dir,
 		DatabaseMode:         sqldb.ModeSQLite,
 		DatabasePath:         filepath.Join(dir, "awg-forge.db"),
 		DatabaseBusyTimeout:  time.Second,
-		DatabaseQueryTimeout: time.Second,
+		DatabaseQueryTimeout: 10 * time.Second,
 		DatabaseMaxOpenConns: 1,
 		DatabaseMaxIdleConns: 1,
 	}
@@ -151,6 +155,103 @@ func TestLoadControllerAuthFailsClosedAndLoadsPreparedRuntime(t *testing.T) {
 	}
 	if _, _, err := loadControllerAuth(cfg, controller); err == nil || !strings.Contains(err.Error(), "load controller authentication keys") {
 		t.Fatalf("missing key error = %v", err)
+	}
+}
+
+func TestLoadControllerAuthMigrationDoesNotConsumeInspectionTimeout(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Config{
+		ConfigDir:            dir,
+		DatabaseMode:         sqldb.ModeSQLite,
+		DatabasePath:         filepath.Join(dir, "awg-forge.db"),
+		DatabaseBusyTimeout:  5 * time.Second,
+		DatabaseQueryTimeout: time.Second,
+		DatabaseMaxOpenConns: 1,
+		DatabaseMaxIdleConns: 1,
+	}
+	if _, err := sqldb.Migrate(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	filename := (&url.URL{Scheme: "file", Path: cfg.DatabasePath, RawQuery: "_busy_timeout=5000&_journal_mode=wal"}).String()
+	locker, err := sql.Open("sqlite", filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = locker.Close() }()
+	conn, err := locker.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.ExecContext(context.Background(), "BEGIN IMMEDIATE"); err != nil {
+		t.Fatal(err)
+	}
+	released := make(chan error, 1)
+	go func() {
+		time.Sleep(3 * time.Second)
+		_, releaseErr := conn.ExecContext(context.Background(), "COMMIT")
+		released <- releaseErr
+	}()
+	state := config.State{Mode: config.ModeController}
+	started := time.Now()
+	_, _, authErr := loadControllerAuth(cfg, state)
+	elapsed := time.Since(started)
+	if err := <-released; err != nil {
+		t.Fatal(err)
+	}
+	if elapsed <= cfg.DatabaseQueryTimeout {
+		t.Fatalf("migration did not exercise the startup deadline: %s", elapsed)
+	}
+	if authErr == nil || !strings.Contains(authErr.Error(), "no initialized administrator") {
+		t.Fatalf("controller auth after slow migration = %v", authErr)
+	}
+}
+
+func TestRunDBMigrateAllowsSlowMigration(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Config{
+		ConfigDir:            dir,
+		DatabaseMode:         sqldb.ModeSQLite,
+		DatabasePath:         filepath.Join(dir, "awg-forge.db"),
+		DatabaseBusyTimeout:  5 * time.Second,
+		DatabaseQueryTimeout: time.Second,
+		DatabaseMaxOpenConns: 1,
+		DatabaseMaxIdleConns: 1,
+	}
+	if _, err := sqldb.Migrate(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	filename := (&url.URL{Scheme: "file", Path: cfg.DatabasePath, RawQuery: "_busy_timeout=5000&_journal_mode=wal"}).String()
+	locker, err := sql.Open("sqlite", filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = locker.Close() }()
+	conn, err := locker.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.ExecContext(context.Background(), "BEGIN IMMEDIATE"); err != nil {
+		t.Fatal(err)
+	}
+	released := make(chan error, 1)
+	go func() {
+		time.Sleep(2 * time.Second)
+		_, releaseErr := conn.ExecContext(context.Background(), "COMMIT")
+		released <- releaseErr
+	}()
+	started := time.Now()
+	migrateErr := runDB(cfg, []string{"migrate"})
+	elapsed := time.Since(started)
+	if err := <-released; err != nil {
+		t.Fatal(err)
+	}
+	if elapsed <= cfg.DatabaseQueryTimeout {
+		t.Fatalf("migration did not exceed query timeout: %s", elapsed)
+	}
+	if migrateErr != nil {
+		t.Fatalf("db migrate after slow migration: %v", migrateErr)
 	}
 }
 

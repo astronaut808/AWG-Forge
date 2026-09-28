@@ -189,17 +189,23 @@ func (s *Service) recoverControllerActivationLocked(state config.State) error {
 	if s.cfg.DatabaseMode != sqldb.ModeSQLite {
 		return ErrControllerActivationRequiresDB
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), s.cfg.DatabaseQueryTimeout)
-	defer cancel()
-	db, err := sqldb.Open(ctx, s.cfg)
+	openCtx, cancel := context.WithTimeout(context.Background(), s.cfg.DatabaseQueryTimeout)
+	db, err := sqldb.Open(openCtx, s.cfg)
+	cancel()
 	if err != nil {
 		return fmt.Errorf("open controller database for activation recovery: %w", err)
 	}
 	defer func() { _ = db.Close() }()
-	if err := db.Migrate(ctx); err != nil {
+	migrateCtx, cancel := context.WithTimeout(context.Background(), sqldb.MigrationTimeout(s.cfg.DatabaseQueryTimeout))
+	err = db.Migrate(migrateCtx)
+	cancel()
+	if err != nil {
 		return fmt.Errorf("migrate controller database for activation recovery: %w", err)
 	}
-	if err := s.rollbackControllerActivation(ctx, db); err != nil {
+	rollbackCtx, cancel := context.WithTimeout(context.Background(), sqldb.MigrationTimeout(s.cfg.DatabaseQueryTimeout))
+	err = s.rollbackControllerActivation(rollbackCtx, db)
+	cancel()
+	if err != nil {
 		return fmt.Errorf("recover controller activation: %w", err)
 	}
 	s.log("warn", "controller.activation.recovered", "incomplete controller activation rolled back", nil, nil)

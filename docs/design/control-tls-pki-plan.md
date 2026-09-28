@@ -232,6 +232,18 @@ the prepared identity store with backup/restore coverage before any listener.
 | 4. Controller backup prerequisite | `internal/backup`, `internal/app`, `internal/sqldb`, docs EN/RU | First make the existing controller identity and auth recoverable, then include PKI generations before any control exposure. Use a durable pre-restore fail-closed marker, identity-match fencing, cold restore, auth replay reset and canary-secret tests. Inject crashes at every file switch and marker boundary. |
 | 5. Enablement integration | `internal/app`, `internal/server`, `cmd/awg-forge`, installer tests | Test recent-auth protected preparation, endpoint/bind preflight, verified post-preparation backup and reversible runtime transition on loopback. Keep non-loopback enablement unavailable until phase-6 enrollment routes and their security tests are ready. No auto-enable on install/upgrade. |
 
+The loopback transport implementation is isolated in `internal/controlserver`.
+It has no production caller while `ControlIdentityState.Enabled` remains false.
+The `cmd/awg-forge` and `internal/server` lifecycle wiring in slice 2 is
+deliberately deferred to the explicit enablement transition in slice 5: merely
+preparing an identity must not open a socket. Transport tests use a temporary
+test-only SQLite authorizer; the production certificate registry and typed
+node authorization remain slice 3 work. No bootstrap route is registered yet,
+so a certificate-free request cannot reach a handler. The runtime closes its
+listener and existing connections when the active CA or server leaf expires;
+raw TLS handshake diagnostics are suppressed until safe structured transport
+events are defined.
+
 For every code slice: targeted Go tests during development, then `make ci`,
 `make quality`, `make security-fast`, and `go test -race ./...` for the final
 integrated transport. Build the Docker image and run a host-network smoke test

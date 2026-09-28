@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/astronaut808/awg-forge/internal/config"
 )
@@ -27,17 +28,31 @@ type migration struct {
 	checksum string
 }
 
+// MigrationTimeout gives schema work its own bounded deadline. A
+// database query timeout can be too short for an initial or upgraded schema.
+func MigrationTimeout(queryTimeout time.Duration) time.Duration {
+	return max(30*time.Second, queryTimeout)
+}
+
 func Migrate(ctx context.Context, cfg config.Config) (Status, error) {
-	db, err := Open(ctx, cfg)
+	openCtx, cancel := context.WithTimeout(ctx, cfg.DatabaseQueryTimeout)
+	db, err := Open(openCtx, cfg)
+	cancel()
 	if err != nil {
 		return Status{}, err
 	}
 	defer func() { _ = db.Close() }()
-	if err := db.Migrate(ctx); err != nil {
+	migrateCtx, cancel := context.WithTimeout(ctx, MigrationTimeout(cfg.DatabaseQueryTimeout))
+	err = db.Migrate(migrateCtx)
+	cancel()
+	if err != nil {
 		return Status{}, err
 	}
 	status := Status{Enabled: true, Mode: cfg.DatabaseMode, Path: cfg.DatabasePath, Exists: true}
-	if err := db.fillStatus(ctx, &status); err != nil {
+	statusCtx, cancel := context.WithTimeout(ctx, cfg.DatabaseQueryTimeout)
+	err = db.fillStatus(statusCtx, &status)
+	cancel()
+	if err != nil {
 		return status, err
 	}
 	return status, nil
