@@ -40,6 +40,23 @@ Maintenance actions are available through the `Maintenance` button:
 - `Traffic`: aggregate traffic history when SQLite is enabled.
 - `Audit log`: inspect recent safe audit events. The panel auto-refreshes while the Audit log tab is open and shows newest events first.
 - `Support`: download a support bundle without secrets and view the safe runtime, database, TLS, and version summary.
+- `Controller`: with SQLite enabled, create the administrator, scan the MFA QR, confirm a TOTP code, and save the recovery codes before finishing. In controller mode, reauthenticate and replace recovery codes here.
+
+After activation, log in with username, password, and TOTP. The login page has a
+separate recovery-code option; each recovery code works once. Store replacement
+codes when they are displayed because they cannot be retrieved later.
+
+For offline administrator recovery, stop `awg-forge serve` first. As Linux root,
+prepare a root-owned regular JSON file with mode `0600` containing `username`
+and `password`, then run:
+
+```bash
+awg-forge controller recover-admin --input-file /etc/awg-forge/recovery-input.json
+```
+
+The command prints a new TOTP secret and recovery codes once and revokes all
+browser sessions. Remove the input file after use. Missing SQLite or
+`controller-auth.keys` is an error; do not create replacement files.
 
 ## Stale Configs
 
@@ -88,16 +105,25 @@ In `serve` mode, awg-forge periodically enforces expired clients and re-renders 
 
 ## CLI In Docker
 
-After restore, restart the container to reload all restored settings, including TLS and database state. With `APPLY_CONFIG=true`, startup applies enabled tunnels and reconciles WARP. Restarting only a tunnel is not enough. Wait for startup before running the remaining checks.
+Restore must run while the server container is stopped. The one-shot restore
+container uses the same data volume; starting the service afterwards loads the
+restored desired state and TLS assets. Standalone and managed-node backups do
+not include SQLite operational history. Controller backups include the
+authentication database snapshot and its key file. If a disabled control
+identity has been prepared, they also include the private keys and certificates
+of its exact CA and server generations. With `APPLY_CONFIG=true`, startup applies
+enabled tunnels and reconciles WARP. Wait for startup before running the
+remaining checks.
 
 ```bash
 docker exec awg-forge awg-forge doctor
 docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge backup /tmp/awg-forge.afbackup
 docker cp awg-forge:/tmp/awg-forge.afbackup ./awg-forge-backup-YYYYMMDD-HHMMSS.afbackup
-docker cp ./<backup-file>.afbackup awg-forge:/tmp/backup.afbackup
-docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore verify /tmp/backup.afbackup
-docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore /tmp/backup.afbackup
-docker restart awg-forge
+cp ./<backup-file>.afbackup ./data/backup.afbackup
+docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore verify /etc/awg-forge/backup.afbackup
+docker compose stop awg-forge
+docker compose run --rm -e BACKUP_PASSWORD='long-random-backup-password' awg-forge restore /etc/awg-forge/backup.afbackup
+docker compose up -d awg-forge
 docker exec awg-forge awg-forge firewall repair
 docker exec awg-forge awg-forge firewall check
 docker exec awg-forge awg-forge support-bundle
@@ -115,6 +141,10 @@ docker exec awg-forge awg-forge tunnel create awg_1_5 awg15 51825 10.15.0.0/24
 
 ## Local CLI
 
+Stop any `awg-forge serve` process that uses the same config directory before
+running the local restore command. The state-directory lock rejects an online
+restore.
+
 ```bash
 awg-forge init --server-host vpn.example.com --external-interface eth0 --profile awg_2_0 --tunnel-name awg20 --listen-port 51830 --ipv4-subnet 10.20.0.0/24
 awg-forge serve
@@ -130,7 +160,10 @@ awg-forge updates
 awg-forge logs
 ```
 
-After a local restore, restart the running awg-forge process to reload restored settings.
+Managed-node restore fencing and the explicit `--detach-managed-node` recovery
+option are described in [Diagnostics](diagnostics.md#encrypted-backup--restore).
+Controller restore has additional identity, archive-location, and offline
+administrator-recovery requirements in the same section.
 
 ## Client Config Import
 

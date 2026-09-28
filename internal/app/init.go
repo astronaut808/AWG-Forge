@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/astronaut808/awg-forge/internal/config"
+	"github.com/astronaut808/awg-forge/internal/controlpki"
 	"github.com/astronaut808/awg-forge/internal/protocol"
 )
 
@@ -29,8 +30,10 @@ func (s *Service) Init() (config.State, error) {
 }
 
 func (s *Service) InitWithOptions(options InitOptions) (config.State, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lockStateMutation(); err != nil {
+		return config.State{}, err
+	}
+	defer s.unlockStateMutation()
 	return s.initWithOptionsLocked(options)
 }
 
@@ -39,10 +42,38 @@ func (s *Service) initLocked() (config.State, error) {
 }
 
 func (s *Service) initWithOptionsLocked(options InitOptions) (config.State, error) {
+	if err := s.store.CheckRestorePending(); err != nil {
+		return config.State{}, err
+	}
 	if state, err := s.store.Load(); err == nil {
+		if err := s.recoverPendingDesiredStateCommitLocked(state); err != nil {
+			return config.State{}, fmt.Errorf("recover pending desired-state commit: %w", err)
+		}
+		if err := s.recoverControllerActivationLocked(state); err != nil {
+			return config.State{}, fmt.Errorf("recover controller activation: %w", err)
+		}
+		if state.Controller != nil {
+			if err := s.recoverControlIdentityLocked(state); err != nil {
+				s.log("warn", "control.identity.recovery_failed", "control identity needs offline inspection", nil, nil)
+			}
+			if state.Controller.Control != nil {
+				if err := s.validateControlIdentityLocked(state.Controller.Control, time.Time{}, false); err != nil {
+					if errors.Is(err, controlpki.ErrExpired) {
+						s.log("warn", "control.identity.expired", "control identity expired; explicit renewal is required before use", nil, nil)
+					} else {
+						s.log("warn", "control.identity.unusable", "committed control identity is unusable", nil, nil)
+					}
+				}
+			}
+		}
 		return s.repairLoadedState(state)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return config.State{}, err
+	}
+	if _, err := s.store.LoadPendingDesiredStateCommit(); err == nil {
+		return config.State{}, errors.New("cannot initialize state while a desired-state commit journal exists")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return config.State{}, fmt.Errorf("load desired-state commit journal: %w", err)
 	}
 
 	return s.createInitialState(options)
@@ -72,6 +103,7 @@ func (s *Service) createInitialState(options InitOptions) (config.State, error) 
 	tunnel.MTU = initialTunnelMTU(spec.ProfileID, options.MTU)
 	state := config.State{
 		SchemaVersion:     config.CurrentStateSchemaVersion,
+		Mode:              config.ModeStandalone,
 		SessionSecret:     secret,
 		ServerHost:        options.ServerHost,
 		ExternalInterface: options.ExternalInterface,
@@ -178,9 +210,19 @@ func validateInitialTunnelOptions(options InitOptions, spec tunnelSpec) error {
 }
 
 func (s *Service) repairLoadedState(state config.State) (config.State, error) {
-	originalState := state
+	originalState, err := cloneState(state)
+	if err != nil {
+		return config.State{}, fmt.Errorf("clone state before repair: %w", err)
+	}
 	changed := false
 	protocolRepaired := false
+	if state.Mode == "" {
+		state.Mode = state.EffectiveMode()
+		changed = true
+	}
+	if err := validateStateMode(state); err != nil {
+		return config.State{}, err
+	}
 	if state.SchemaVersion < config.CurrentStateSchemaVersion {
 		state.SchemaVersion = config.CurrentStateSchemaVersion
 		changed = true
@@ -259,7 +301,7 @@ func (s *Service) repairLoadedState(state config.State) (config.State, error) {
 				return config.State{}, err
 			}
 		}
-		if err := s.store.Save(state); err != nil {
+		if err := s.saveLocalDesiredState(&state); err != nil {
 			return config.State{}, err
 		}
 	}

@@ -136,6 +136,33 @@ func MarkClientTrafficLimitBlocked(ctx context.Context, cfg config.Config, tunne
 	return db.MarkClientTrafficLimitBlocked(ctx, tunnelID, clientID, blockedAt)
 }
 
+func MarkExceededClientTrafficLimitBlocked(ctx context.Context, cfg config.Config, tunnelID, clientID string, now time.Time) (bool, error) {
+	db, err := OpenExisting(ctx, cfg)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = db.Close() }()
+	return db.MarkExceededClientTrafficLimitBlocked(ctx, tunnelID, clientID, now)
+}
+
+func IsClientTrafficLimitBlocked(ctx context.Context, cfg config.Config, tunnelID, clientID string) (bool, error) {
+	db, err := OpenExisting(ctx, cfg)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = db.Close() }()
+	return db.IsClientTrafficLimitBlocked(ctx, tunnelID, clientID)
+}
+
+func CanReleaseClientTrafficLimitBlock(ctx context.Context, cfg config.Config, tunnelID, clientID string, now time.Time) (bool, error) {
+	db, err := OpenExisting(ctx, cfg)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = db.Close() }()
+	return db.CanReleaseClientTrafficLimitBlock(ctx, tunnelID, clientID, now)
+}
+
 func ClearClientTrafficLimitBlock(ctx context.Context, cfg config.Config, clientID string) error {
 	db, err := OpenExisting(ctx, cfg)
 	if err != nil {
@@ -348,11 +375,84 @@ func (db *DB) MarkClientTrafficLimitBlocked(ctx context.Context, tunnelID, clien
 	if blockedAt.IsZero() {
 		blockedAt = time.Now().UTC()
 	}
-	_, err := db.sql.ExecContext(ctx, `
+	result, err := db.sql.ExecContext(ctx, `
 UPDATE client_traffic_limits
 SET quota_blocked_at = ?, updated_at = ?
 WHERE tunnel_id = ? AND client_id = ?`, formatTime(blockedAt), formatTime(time.Now().UTC()), tunnelID, clientID)
-	return err
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// MarkExceededClientTrafficLimitBlocked checks the current limit and usage in
+// the same statement that records the marker, so a concurrent limit increase
+// cannot disable a client from a stale exceeded-limit snapshot.
+func (db *DB) MarkExceededClientTrafficLimitBlocked(ctx context.Context, tunnelID, clientID string, now time.Time) (bool, error) {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	now = now.UTC()
+	day30d := now.AddDate(0, 0, -29).Format("2006-01-02")
+	result, err := db.sql.ExecContext(ctx, `
+UPDATE client_traffic_limits AS limits
+SET quota_blocked_at = ?, updated_at = ?
+WHERE limits.tunnel_id = ? AND limits.client_id = ?
+  AND limits.limit_bytes > 0
+  AND limits.period IN ('lifetime', 'rolling_30d')
+  AND (
+    SELECT COALESCE(SUM(daily.rx_bytes + daily.tx_bytes), 0)
+    FROM client_traffic_daily AS daily
+    WHERE daily.tunnel_id = limits.tunnel_id
+      AND daily.client_id = limits.client_id
+      AND (limits.period = 'lifetime' OR daily.day >= ?)
+  ) >= limits.limit_bytes`, formatTime(now), formatTime(now), tunnelID, clientID, day30d)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	return rows > 0, err
+}
+
+func (db *DB) IsClientTrafficLimitBlocked(ctx context.Context, tunnelID, clientID string) (bool, error) {
+	var blocked int
+	err := db.sql.QueryRowContext(ctx, `
+SELECT EXISTS (
+    SELECT 1 FROM client_traffic_limits
+    WHERE tunnel_id = ? AND client_id = ? AND quota_blocked_at <> ''
+)`, tunnelID, clientID).Scan(&blocked)
+	return blocked != 0, err
+}
+
+func (db *DB) CanReleaseClientTrafficLimitBlock(ctx context.Context, tunnelID, clientID string, now time.Time) (bool, error) {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	day30d := now.UTC().AddDate(0, 0, -29).Format("2006-01-02")
+	var releasable int
+	err := db.sql.QueryRowContext(ctx, `
+SELECT EXISTS (
+    SELECT 1 FROM client_traffic_limits AS limits
+    WHERE limits.tunnel_id = ? AND limits.client_id = ?
+      AND limits.quota_blocked_at <> ''
+      AND limits.limit_bytes > 0
+      AND limits.period IN ('lifetime', 'rolling_30d')
+      AND (
+        SELECT COALESCE(SUM(daily.rx_bytes + daily.tx_bytes), 0)
+        FROM client_traffic_daily AS daily
+        WHERE daily.tunnel_id = limits.tunnel_id
+          AND daily.client_id = limits.client_id
+          AND (limits.period = 'lifetime' OR daily.day >= ?)
+      ) < limits.limit_bytes
+)`, tunnelID, clientID, day30d).Scan(&releasable)
+	return releasable != 0, err
 }
 
 func (db *DB) ClearClientTrafficLimitBlock(ctx context.Context, clientID string) error {

@@ -5,22 +5,55 @@ import (
 	"time"
 
 	"github.com/astronaut808/awg-forge/internal/app"
+	"github.com/astronaut808/awg-forge/internal/buildinfo"
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/firewall"
+	"github.com/astronaut808/awg-forge/internal/protocol"
 	"github.com/astronaut808/awg-forge/internal/sqldb"
 )
 
-func profileMeta(id, tab, label string, available bool, state config.State) map[string]any {
-	suggestion := app.SuggestedNextTunnelSpec(id, state)
+type profilePresentation struct {
+	Tab          string
+	Label        string
+	Experimental bool
+}
+
+var profilePresentations = map[string]profilePresentation{
+	"awg_legacy_1_0": {Tab: "1.0", Label: "Legacy"},
+	"awg_1_5":        {Tab: "1.5", Label: "Modern"},
+	"awg_2_0":        {Tab: "2.0", Label: "Modern"},
+	"awg_3":          {Tab: "3.x", Label: "Experimental", Experimental: true},
+}
+
+func profileMeta(profile protocol.ProtocolProfile, presentation profilePresentation, state config.State) map[string]any {
+	suggestion := app.SuggestedNextTunnelSpec(profile.ID(), state)
 	return map[string]any{
-		"id":               id,
-		"tab":              tab,
-		"label":            label,
-		"available":        available,
+		"id":               profile.ID(),
+		"name":             profile.DisplayName(),
+		"tab":              presentation.Tab,
+		"label":            presentation.Label,
+		"experimental":     presentation.Experimental,
+		"available":        true,
 		"suggested_name":   suggestion.Name,
 		"suggested_port":   suggestion.ListenPort,
 		"suggested_subnet": suggestion.IPv4Subnet,
 	}
+}
+
+func publicProfiles(state config.State) []map[string]any {
+	registered := protocol.All()
+	profiles := make([]map[string]any, 0, len(registered))
+	for _, profile := range registered {
+		if profile.ID() == "awg_3" && !buildinfo.AWG3RuntimeEnabled() {
+			continue
+		}
+		presentation, ok := profilePresentations[profile.ID()]
+		if !ok {
+			continue
+		}
+		profiles = append(profiles, profileMeta(profile, presentation, state))
+	}
+	return profiles
 }
 
 func publicTunnel(tunnel config.Tunnel, status app.TunnelStatus) map[string]any {
@@ -193,24 +226,15 @@ func publicTime(value time.Time) string {
 }
 
 func orderedParams(profileID string, params config.ProtocolParams) []map[string]string {
-	keys := protocolParamKeys(profileID)
+	profile, ok := protocol.ByID(profileID)
+	if !ok {
+		return nil
+	}
+	keys := profile.ParameterKeys()
+	sort.Strings(keys)
 	out := make([]map[string]string, 0, len(keys))
 	for _, key := range keys {
 		out = append(out, map[string]string{"key": key, "value": params[key]})
 	}
 	return out
-}
-
-func protocolParamKeys(profileID string) []string {
-	keys := []string{"Jc", "Jmin", "Jmax", "S1", "S2", "H1", "H2", "H3", "H4"}
-	switch profileID {
-	case "awg_1_5":
-		keys = append(keys, "I1", "I2", "I3", "I4", "I5")
-	case "awg_2_0":
-		keys = append(keys, "S3", "S4", "I1", "I2", "I3", "I4", "I5")
-	case "awg_3":
-		keys = append(keys, "S3", "S4", "I1", "I2", "I3", "I4", "I5", "ContentPaddingAddition", "RekeyAfterTime", "RekeyTimeout", "RejectAfterTime", "KeepaliveTimeout", "MaxHandshakeAttempts", "PersistentKeepalive", "RandomTrailers", "DisableCookies")
-	}
-	sort.Strings(keys)
-	return keys
 }
