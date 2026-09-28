@@ -6,6 +6,7 @@ released AWG-Forge version.
 - [Multi-node control plane v1](multi-node-v1.md)
 - [Multi-node security model](multi-node-security.md)
 - [Multi-node failure and recovery matrix](multi-node-failure-matrix.md)
+- [Control TLS and PKI delivery plan](control-tls-pki-plan.md)
+- [Control node certificate registry checkpoint](control-node-certificate-registry.md)
 
 Current user behavior remains documented under `docs/en` and `docs/ru`.
-

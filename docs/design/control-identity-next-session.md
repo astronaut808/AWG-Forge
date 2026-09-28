@@ -1,6 +1,6 @@
 # Next checkpoint: prepared controller control identity
 
-Status: disabled identity checkpoint implemented on the feature branch. This is
+Status: historical checkpoint, merged into `develop` in PR #106. This is
 a bounded follow-up to `control-tls-pki-plan.md`, not an enabled control-plane
 feature. The starting point below describes `develop` before this checkpoint
 on 2026-09-26.
@@ -172,11 +172,9 @@ compatibility change belongs in this checkpoint.
 
 ## After this checkpoint
 
-Review this PR and merge it into `develop` only after its gates pass and the
-user authorizes the merge. The next
-checkpoint is a separate loopback-only dedicated TLS runtime with a closed
-default authorization gate. Certificate registry, signed node CSRs, renewal,
-revocation, enrollment, and non-loopback enablement need their own reviewed
+The loopback-only dedicated TLS runtime was merged in PR #107. The current
+checkpoint is the [node certificate registry](control-node-certificate-registry.md).
+Renewal, rebind, enrollment, and non-loopback enablement need their own reviewed
 steps. No non-loopback control listener is enabled before an enrollment route,
 per-request registry authorization, recoverable PKI backup, and the
 restore/revocation decision are implemented and tested.

@@ -34,11 +34,26 @@ const (
 // Authorizer must check the current certificate registry and node binding on
 // every request. An error, including database unavailability, denies access.
 type Authorizer interface {
-	Authorize(context.Context, *x509.Certificate, string) (bool, error)
+	Authorize(context.Context, *x509.Certificate, string) (NodeIdentity, error)
 }
 
-// Route is an exact method/path pair. ID is passed to the authorizer so a
-// certificate cannot gain access to a different node's operation by URL shape.
+// NodeIdentity is the registry-verified authority passed to a typed route.
+// Request headers and CSR subject fields never populate it.
+type NodeIdentity struct {
+	ControllerID string
+	NodeID       string
+	BindingEpoch uint64
+}
+
+type nodeIdentityContextKey struct{}
+
+func IdentityFromContext(ctx context.Context) (NodeIdentity, bool) {
+	identity, ok := ctx.Value(nodeIdentityContextKey{}).(NodeIdentity)
+	return identity, ok && identity.ControllerID != "" && identity.NodeID != "" && identity.BindingEpoch > 0
+}
+
+// Route is an exact method/path pair. ID is passed to the authorizer; handlers
+// must scope node-specific operations to the identity in the request context.
 type Route struct {
 	ID      string
 	Method  string
@@ -216,8 +231,8 @@ func (runtime *Runtime) handler() http.Handler {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
-		allowed, err := runtime.authorizer.Authorize(r.Context(), cert, route.ID)
-		if err != nil || !allowed {
+		identity, err := runtime.authorizer.Authorize(r.Context(), cert, route.ID)
+		if err != nil || identity.ControllerID == "" || identity.NodeID == "" || identity.BindingEpoch == 0 {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -227,6 +242,6 @@ func (runtime *Runtime) handler() http.Handler {
 			return
 		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
-		route.Handler.ServeHTTP(w, r)
+		route.Handler.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), nodeIdentityContextKey{}, identity)))
 	})
 }

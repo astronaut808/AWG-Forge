@@ -29,14 +29,17 @@ type testAuthorizer struct {
 	calls atomic.Int32
 }
 
-func (auth *testAuthorizer) Authorize(_ context.Context, cert *x509.Certificate, route string) (bool, error) {
+func (auth *testAuthorizer) Authorize(_ context.Context, cert *x509.Certificate, route string) (NodeIdentity, error) {
 	auth.calls.Add(1)
 	if cert == nil || route != "node.test" {
-		return false, nil
+		return NodeIdentity{}, nil
 	}
 	var allowed bool
 	err := auth.db.QueryRow("SELECT active FROM test_cert_registry WHERE serial = ?", cert.SerialNumber.String()).Scan(&allowed)
-	return allowed, err
+	if err != nil || !allowed {
+		return NodeIdentity{}, err
+	}
+	return NodeIdentity{ControllerID: "controller", NodeID: "node", BindingEpoch: 1}, nil
 }
 
 func TestRuntimeRealTLSFailClosedAndRevocation(t *testing.T) {

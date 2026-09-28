@@ -6,12 +6,16 @@ authenticated node transport; enrollment and fleet features remain later work.
 
 ## Current boundary and goal
 
-Controller authentication is implemented. `runServe` currently starts the Web UI
-and optional ACME HTTP-01 listener, but no control listener. Controller mode has
-an administrator and `controller_id` in `state.json`; it does not have a control
-CA or node registry. The `/control/v1` OpenAPI file is a design contract.
-Controller backup now includes the auth key and a verified SQLite snapshot;
-cold restore requires the same existing controller identity and offline admin
+Controller authentication and disabled control-identity preparation are
+implemented. `runServe` currently starts the Web UI and optional ACME HTTP-01
+listener, but no control listener. A separate loopback TLS runtime exists
+without a production caller. Controller mode has an administrator,
+`controller_id`, and an optional prepared CA/server identity in `state.json`.
+The node registry and initial issuance are the next internal checkpoint; see
+[control-node-certificate-registry.md](control-node-certificate-registry.md).
+The `/control/v1` OpenAPI file is a design contract. Controller backup includes
+the auth key, prepared control identity and a verified SQLite snapshot; cold
+restore requires the same existing controller identity and offline admin
 recovery.
 
 This is a future implementation risk, not a currently reachable controller
@@ -219,9 +223,10 @@ They may be implemented in one feature branch from current `develop`; later
 slices depend on earlier ones, and each needs focused tests. No slice changes
 the standalone or DB-off default.
 
-The bounded execution plan for the next feature branch is in
-[control-identity-next-session.md](control-identity-next-session.md). It pairs
-the prepared identity store with backup/restore coverage before any listener.
+The prepared identity checkpoint in
+[control-identity-next-session.md](control-identity-next-session.md) is complete.
+The current bounded registry checkpoint is described in
+[control-node-certificate-registry.md](control-node-certificate-registry.md).
 
 | Slice | Main ownership | Deliverable and acceptance evidence |
 | --- | --- | --- |
