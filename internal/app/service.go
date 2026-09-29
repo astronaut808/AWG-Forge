@@ -48,6 +48,7 @@ type Service struct {
 	runtimeOps            runtimeOperations
 	controllerAuthOptions controlauth.Options
 	controlIdentityStep   func(string) error
+	controlRotationStep   func(string) error
 }
 
 type runtimeOperations struct {

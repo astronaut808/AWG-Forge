@@ -38,6 +38,12 @@ func (s *Service) issueInitialNodeCertificate(ctx context.Context, nodeID string
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, errors.New("cannot inspect control identity transition")
 	}
+	if err := s.checkControlMutationJournalsLocked(); err != nil {
+		return nil, err
+	}
+	if err := s.store.CheckNoControlServerRotation(); err != nil {
+		return nil, err
+	}
 	state, err := s.store.Load()
 	if err != nil {
 		return nil, err
@@ -121,6 +127,12 @@ func (s *Service) rebindRevokedNodeCertificate(ctx context.Context, nodeID strin
 		return nil, errors.New("control identity transition is pending")
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, errors.New("cannot inspect control identity transition")
+	}
+	if err := s.checkControlMutationJournalsLocked(); err != nil {
+		return nil, err
+	}
+	if err := s.store.CheckNoControlServerRotation(); err != nil {
+		return nil, err
 	}
 	state, err := s.store.Load()
 	if err != nil {
@@ -217,6 +229,12 @@ func (s *Service) renewNodeCertificate(ctx context.Context, predecessor *x509.Ce
 		return nil, errors.New("control identity transition is pending")
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, errors.New("cannot inspect control identity transition")
+	}
+	if err := s.checkControlMutationJournalsLocked(); err != nil {
+		return nil, err
+	}
+	if err := s.store.CheckNoControlServerRotation(); err != nil {
+		return nil, err
 	}
 	state, err := s.store.Load()
 	if err != nil {

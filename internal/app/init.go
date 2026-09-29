@@ -56,6 +56,9 @@ func (s *Service) initWithOptionsLocked(options InitOptions) (config.State, erro
 			if err := s.recoverControlIdentityLocked(state); err != nil {
 				s.log("warn", "control.identity.recovery_failed", "control identity needs offline inspection", nil, nil)
 			}
+			if err := s.recoverControlServerRotationLocked(state, time.Time{}); err != nil {
+				s.log("warn", "control.server_rotation.recovery_failed", "control server rotation needs offline inspection", nil, nil)
+			}
 			if state.Controller.Control != nil {
 				if err := s.validateControlIdentityLocked(state.Controller.Control, time.Time{}, false); err != nil {
 					if errors.Is(err, controlpki.ErrExpired) {

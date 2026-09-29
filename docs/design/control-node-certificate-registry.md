@@ -1,10 +1,10 @@
 # Control node certificate registry checkpoint
 
-Status: initial registry and internal renewal are merged into `develop` in
-PRs #110 and #112. This document describes internal prerequisites, not an
-enabled node-management feature. The control listener remains closed and no
-enrollment, renewal, or rebind route is registered. The historical
-[renewal handoff plan](control-node-renewal-next-session.md) records that
+Status: initial registry, internal renewal and rebind fencing are merged into
+`develop` in PRs #110, #112 and #113. This document describes internal
+prerequisites, not an enabled node-management feature. The control listener
+remains closed; no enrollment, renewal, or rebind route is registered. The
+historical [renewal handoff plan](control-node-renewal-next-session.md) records that
 checkpoint's bounds.
 
 ## Scope and sequence
@@ -90,9 +90,12 @@ persistence domains. A controller cannot transfer a node remotely.
 
 ## Remaining checkpoints before exposure
 
-1. Add server-leaf rotation with immutable generations, failure injection,
-   and expiry behavior. CA trust rotation remains a later staged operation
-   requiring node acknowledgement.
+1. Internal [server-leaf rotation](control-server-leaf-rotation-next-session.md)
+   now stages immutable generations under the existing CA, commits only the
+   active server generation, closes pre-switch connections, and retires the
+   predecessor through durable journal recovery. No scheduler or production
+   caller exists. CA trust rotation remains a later staged operation requiring
+   node acknowledgement.
 2. Reconcile controller backup/restore with the registry. An old backup
    must not silently undo a revocation: until a replay fence exists, restored
    node certificates require fail-closed re-enrollment. Verify the archived

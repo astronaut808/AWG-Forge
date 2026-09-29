@@ -129,7 +129,7 @@ func checkRestoreStagingAbsent(root string) error {
 		if strings.HasPrefix(entry.Name(), ".restore-tmp-") || strings.HasPrefix(entry.Name(), ".restore-old-") {
 			return errors.New("existing restore staging directory requires offline inspection before controller restore")
 		}
-		if entry.Name() == ".desired-state-commit.json" || entry.Name() == storage.ControllerActivationJournalFileName || entry.Name() == storage.ControlIdentityJournalFileName {
+		if entry.Name() == ".desired-state-commit.json" || entry.Name() == storage.ControllerActivationJournalFileName || entry.Name() == storage.ControlIdentityJournalFileName || entry.Name() == storage.ControlServerRotationJournalFileName {
 			return errors.New("pending state mutation journal requires recovery before controller restore")
 		}
 	}

@@ -63,6 +63,9 @@ func (s *Service) PrepareControlIdentity(ctx context.Context, request ControlIde
 	if err := s.recoverControlIdentityLocked(state); err != nil {
 		return result, errors.New("control identity preparation requires offline inspection")
 	}
+	if err := s.recoverControlServerRotationLocked(state, request.Now); err != nil {
+		return result, errors.New("control server rotation requires offline inspection")
+	}
 	endpoint, err := controlpki.NormalizeEndpoint(request.BindIP, request.Advertised, request.Port, s.cfg.WebUIPort)
 	if err != nil {
 		return result, err
@@ -214,6 +217,9 @@ func (s *Service) recoverControlIdentityLocked(state config.State) error {
 	}
 	if err != nil {
 		return err
+	}
+	if err := s.store.CheckNoControlServerRotation(); err != nil {
+		return errors.New("overlapping control identity transitions")
 	}
 	if _, err := uuid.Parse(journal.ControllerID); err != nil || state.Controller == nil || state.Controller.ControllerID != journal.ControllerID {
 		return errors.New("control identity journal controller mismatch")
