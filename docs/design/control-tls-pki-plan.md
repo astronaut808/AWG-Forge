@@ -11,9 +11,10 @@ implemented. `runServe` currently starts the Web UI and optional ACME HTTP-01
 listener, but no control listener. A separate loopback TLS runtime exists
 without a production caller. Controller mode has an administrator,
 `controller_id`, and an optional prepared CA/server identity in `state.json`.
-The node registry and initial issuance are merged in PR #110. The internal
-[certificate renewal checkpoint](control-node-renewal-next-session.md) is in
-progress on `feature/control-node-cert-renewal` without a production route.
+The node registry and initial issuance are merged in PR #110; internal
+[certificate renewal](control-node-renewal-next-session.md) is merged in PR
+#112. Internal same-controller rebind fencing exists for an already revoked
+binding, but no local node rebind or production route exists.
 The `/control/v1` OpenAPI file is a design contract. Controller backup includes
 the auth key, prepared control identity and a verified SQLite snapshot; cold
 restore requires the same existing controller identity and offline admin
