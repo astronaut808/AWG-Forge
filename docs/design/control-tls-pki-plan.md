@@ -11,18 +11,20 @@ implemented. `runServe` currently starts the Web UI and optional ACME HTTP-01
 listener, but no control listener. A separate loopback TLS runtime exists
 without a production caller. Controller mode has an administrator,
 `controller_id`, and an optional prepared CA/server identity in `state.json`.
-The node registry and initial issuance are the next internal checkpoint; see
-[control-node-certificate-registry.md](control-node-certificate-registry.md).
+The node registry and initial issuance are merged in PR #110. The internal
+[certificate renewal checkpoint](control-node-renewal-next-session.md) is in
+progress on `feature/control-node-cert-renewal` without a production route.
 The `/control/v1` OpenAPI file is a design contract. Controller backup includes
 the auth key, prepared control identity and a verified SQLite snapshot; cold
 restore requires the same existing controller identity and offline admin
 recovery.
 
 This is a future implementation risk, not a currently reachable controller
-TLS/PKI vulnerability: the product has no control listener, enrollment routes,
-or issued node certificates. Controller restore uses a durable startup gate to
-block a partially restored file set; the remaining PKI files and node registry
-will join this archive before any control listener is exposed.
+TLS/PKI vulnerability: the product has no control listener or enrollment routes,
+and no production path issues node certificates. Controller restore uses a
+durable startup gate to block a partially restored file set; the remaining
+PKI files and node registry will join this archive before any control listener
+is exposed.
 
 The goal of this phase is a tested control identity, dedicated TLS listener,
 certificate issuance and renewal primitives, and a fail-closed authorization
@@ -225,8 +227,10 @@ the standalone or DB-off default.
 
 The prepared identity checkpoint in
 [control-identity-next-session.md](control-identity-next-session.md) is complete.
-The current bounded registry checkpoint is described in
+The completed registry checkpoint is described in
 [control-node-certificate-registry.md](control-node-certificate-registry.md).
+The current bounded checkpoint is
+[control-node-renewal-next-session.md](control-node-renewal-next-session.md).
 
 | Slice | Main ownership | Deliverable and acceptance evidence |
 | --- | --- | --- |
@@ -241,11 +245,12 @@ The loopback transport implementation is isolated in `internal/controlserver`.
 It has no production caller while `ControlIdentityState.Enabled` remains false.
 The `cmd/awg-forge` and `internal/server` lifecycle wiring in slice 2 is
 deliberately deferred to the explicit enablement transition in slice 5: merely
-preparing an identity must not open a socket. Transport tests use a temporary
-test-only SQLite authorizer; the production certificate registry and typed
-node authorization remain slice 3 work. No bootstrap route is registered yet,
-so a certificate-free request cannot reach a handler. The runtime closes its
-listener and existing connections when the active CA or server leaf expires;
+preparing an identity must not open a socket. Transport tests originally used a
+temporary test-only SQLite authorizer. The production certificate registry and
+typed node authorizer from PR #110 have no production route. No bootstrap route
+is registered yet, so a certificate-free request cannot reach a handler. The
+runtime closes its listener and existing connections when the active CA or
+server leaf expires;
 raw TLS handshake diagnostics are suppressed until safe structured transport
 events are defined.
 

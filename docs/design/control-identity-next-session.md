@@ -172,9 +172,10 @@ compatibility change belongs in this checkpoint.
 
 ## After this checkpoint
 
-The loopback-only dedicated TLS runtime was merged in PR #107. The current
-checkpoint is the [node certificate registry](control-node-certificate-registry.md).
-Renewal, rebind, enrollment, and non-loopback enablement need their own reviewed
+The loopback-only dedicated TLS runtime was merged in PR #107, and the
+[node certificate registry](control-node-certificate-registry.md) in PR #110.
+The next checkpoint is [internal certificate renewal](control-node-renewal-next-session.md).
+Rebind, enrollment, and non-loopback enablement need their own reviewed
 steps. No non-loopback control listener is enabled before an enrollment route,
 per-request registry authorization, recoverable PKI backup, and the
 restore/revocation decision are implemented and tested.
