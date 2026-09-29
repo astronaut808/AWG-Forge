@@ -1,10 +1,11 @@
 # Control node certificate registry checkpoint
 
-Status: merged into `develop` in PR #110. This document describes internal
-prerequisites, not an enabled node-management feature. The control listener
-remains closed and no enrollment or renewal route is registered. Internal
-renewal is being developed on `feature/control-node-cert-renewal`; the
-[handoff plan](control-node-renewal-next-session.md) defines its bounds.
+Status: initial registry and internal renewal are merged into `develop` in
+PRs #110 and #112. This document describes internal prerequisites, not an
+enabled node-management feature. The control listener remains closed and no
+enrollment, renewal, or rebind route is registered. The historical
+[renewal handoff plan](control-node-renewal-next-session.md) records that
+checkpoint's bounds.
 
 ## Scope and sequence
 
@@ -25,8 +26,8 @@ PR #110 implemented the first bounded part of [PKI slice 3](control-tls-pki-plan
    subject can supply it. SQLite errors deny admission.
 
 The schema reserves a supersession cutoff. Certificate and binding revocation
-are durable primitives here; explicit rebind and renewal routes are not
-exposed. `state.json` still decides whether the
+are durable primitives here; renewal and rebind routes are not exposed.
+`state.json` still decides whether the
 control identity is prepared or enabled, while SQLite stores the certificate
 registry. No tunnel revision or AWG state changes.
 
@@ -51,7 +52,7 @@ record in the current database, corrupt key, or expired CA fails closed. A
 restored backup that predates revocation is handled by the later restore gate
 before any listener is enabled.
 
-## Remaining checkpoints before exposure
+## Internal renewal and rebind fencing
 
 The internal renewal operation verifies the presented predecessor against the
 active CA and current SQLite binding before signing. Its transaction repeats
@@ -67,10 +68,32 @@ of 24 hours after renewal and the predecessor's expiry. Serial revocation
 fences that serial; binding revocation fences both old and new. The operation
 does not change `ControlIdentityState.Enabled` or publish a route.
 
-1. Add explicit rebind fencing and server-leaf rotation with immutable
-   generations, failure injection, and expiry behavior. CA trust rotation
-   remains a later staged operation requiring node acknowledgement.
-2. Reconcile controller backup/restore with the new registry. An old backup
+The internal rebind recovery primitive only advances a **revoked binding on
+the same controller**. A caller supplies the exact old node/controller/epoch
+tuple after separate local recovery authorization; no production caller exists
+yet. The transaction checks that tuple is still the revoked current binding,
+increments the epoch once, clears revocation for the new epoch, and inserts a
+fresh initial certificate. The new public certificate is returned only after
+commit. Old serials retain their recorded epoch and immediately fail the
+per-request binding join, including on keep-alive connections. Migration
+`000008` enforces one initial certificate per node and epoch. An exact full-CSR
+retry against the immediately previous epoch recovers the committed DER while
+the new binding and certificate remain active; a competing CSR or stale epoch
+conflicts. The new key cannot reuse a public key previously certified for that
+node. Failure before commit leaves the previous binding revoked.
+
+This primitive does not transfer a node to another controller, modify node
+`state.json`, install a key or certificate on a node, or authorize a remote
+caller to rebind. Those actions need a local-root-controlled transition and
+authenticated enrollment with explicit recovery across the node and controller
+persistence domains. A controller cannot transfer a node remotely.
+
+## Remaining checkpoints before exposure
+
+1. Add server-leaf rotation with immutable generations, failure injection,
+   and expiry behavior. CA trust rotation remains a later staged operation
+   requiring node acknowledgement.
+2. Reconcile controller backup/restore with the registry. An old backup
    must not silently undo a revocation: until a replay fence exists, restored
    node certificates require fail-closed re-enrollment. Verify the archived
    SQLite schema and PKI files together.
