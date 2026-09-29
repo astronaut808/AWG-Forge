@@ -123,6 +123,167 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	return bytes.Clone(certificate.DER), nil
 }
 
+// RenewNodeCertificate atomically publishes one successor for the exact active
+// predecessor. The caller verifies its chain before signing; this transaction
+// independently rechecks the registry, binding, and renewal window.
+func (db *DB) RenewNodeCertificate(ctx context.Context, controllerID, issuerGeneration string, predecessor *x509.Certificate, successor controlpki.NodeCertificate, now time.Time) ([]byte, error) {
+	der, _, err := db.renewNodeCertificate(ctx, controllerID, issuerGeneration, predecessor, &successor, successor.CSRHash, successor.PublicKeyHash, now)
+	return der, err
+}
+
+// FindRenewedNodeCertificate recovers a previously committed exact CSR retry
+// without asking the CA to sign again. An absent successor is not an error;
+// predecessor authority is still checked inside this transaction.
+func (db *DB) FindRenewedNodeCertificate(ctx context.Context, controllerID, issuerGeneration string, predecessor *x509.Certificate, csrHash, publicKeyHash [32]byte, now time.Time) ([]byte, bool, error) {
+	return db.renewNodeCertificate(ctx, controllerID, issuerGeneration, predecessor, nil, csrHash, publicKeyHash, now)
+}
+
+func (db *DB) renewNodeCertificate(ctx context.Context, controllerID, issuerGeneration string, predecessor *x509.Certificate, successor *controlpki.NodeCertificate, csrHash, publicKeyHash [32]byte, now time.Time) ([]byte, bool, error) {
+	if db == nil || db.sql == nil {
+		return nil, false, ErrDisabled
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	if !validUUID(controllerID) || !validIssuerGeneration(issuerGeneration) || predecessor == nil ||
+		predecessor.SerialNumber == nil || predecessor.SerialNumber.Sign() <= 0 || now.IsZero() ||
+		now.Before(predecessor.NotBefore) || !now.Before(predecessor.NotAfter) {
+		return nil, false, ErrNodeCertificateDenied
+	}
+	var issued *x509.Certificate
+	if successor != nil {
+		var err error
+		issued, err = x509.ParseCertificate(successor.DER)
+		if err != nil || len(successor.DER) == 0 || len(successor.DER) > 16384 ||
+			issued.SerialNumber.String() != successor.Serial ||
+			sha256.Sum256(successor.DER) != successor.CertificateHash ||
+			sha256.Sum256(issued.RawSubjectPublicKeyInfo) != successor.PublicKeyHash ||
+			!issued.NotBefore.Equal(successor.NotBefore) || !issued.NotAfter.Equal(successor.NotAfter) ||
+			issued.IsCA || issued.KeyUsage != x509.KeyUsageDigitalSignature ||
+			len(issued.ExtKeyUsage) != 1 || issued.ExtKeyUsage[0] != x509.ExtKeyUsageClientAuth ||
+			bytes.Equal(issued.RawSubjectPublicKeyInfo, predecessor.RawSubjectPublicKeyInfo) ||
+			!issued.NotBefore.Before(now) || !now.Before(issued.NotAfter) {
+			return nil, false, errors.New("invalid renewed node certificate")
+		}
+	}
+	tx, err := db.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var nodeID, rowControllerID string
+	var epoch, notBefore, notAfter int64
+	var certHash, keyHash []byte
+	err = tx.QueryRowContext(ctx, `SELECT c.node_id, c.controller_id, c.binding_epoch,
+ c.certificate_sha256, c.public_key_sha256, c.not_before_unix_ms, c.not_after_unix_ms
+ FROM control_node_certificates c JOIN control_node_bindings b ON b.node_id = c.node_id
+ WHERE c.issuer_generation = ? AND c.serial = ? AND c.controller_id = ?
+ AND b.controller_id = c.controller_id AND b.binding_epoch = c.binding_epoch
+ AND c.revoked_at_unix_ms IS NULL AND b.revoked_at_unix_ms IS NULL
+ AND (c.superseded_at_unix_ms IS NULL OR c.superseded_at_unix_ms > ?)`,
+		issuerGeneration, predecessor.SerialNumber.String(), controllerID, now.UnixMilli()).
+		Scan(&nodeID, &rowControllerID, &epoch, &certHash, &keyHash, &notBefore, &notAfter)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, ErrNodeCertificateDenied
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	predecessorHash := sha256.Sum256(predecessor.Raw)
+	predecessorKeyHash := sha256.Sum256(predecessor.RawSubjectPublicKeyInfo)
+	if !validUUID(nodeID) || rowControllerID != controllerID || epoch <= 0 ||
+		!bytes.Equal(certHash, predecessorHash[:]) || !bytes.Equal(keyHash, predecessorKeyHash[:]) ||
+		now.UnixMilli() < notBefore || now.UnixMilli() >= notAfter ||
+		predecessor.NotBefore.UnixMilli() != notBefore || predecessor.NotAfter.UnixMilli() != notAfter {
+		return nil, false, ErrNodeCertificateDenied
+	}
+	var existingDER, existingCSRHash, existingHash, existingKeyHash []byte
+	var existingNodeID, existingControllerID string
+	var existingEpoch int64
+	err = tx.QueryRowContext(ctx, `SELECT certificate_der, csr_sha256, certificate_sha256,
+ public_key_sha256, node_id, controller_id, binding_epoch
+ FROM control_node_certificates
+ WHERE predecessor_issuer_generation = ? AND predecessor_serial = ?`,
+		issuerGeneration, predecessor.SerialNumber.String()).
+		Scan(&existingDER, &existingCSRHash, &existingHash, &existingKeyHash,
+			&existingNodeID, &existingControllerID, &existingEpoch)
+	if err == nil {
+		if !bytes.Equal(existingCSRHash, csrHash[:]) || existingNodeID != nodeID ||
+			existingControllerID != controllerID || existingEpoch != epoch ||
+			!bytes.Equal(existingKeyHash, publicKeyHash[:]) {
+			return nil, false, ErrNodeCertificateConflict
+		}
+		stored, parseErr := x509.ParseCertificate(existingDER)
+		storedHash := sha256.Sum256(existingDER)
+		if parseErr != nil || !bytes.Equal(existingHash, storedHash[:]) ||
+			sha256.Sum256(stored.RawSubjectPublicKeyInfo) != publicKeyHash {
+			return nil, false, ErrNodeCertificateDenied
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, false, err
+		}
+		return bytes.Clone(existingDER), true, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return nil, false, err
+	}
+	if successor == nil {
+		return nil, false, nil
+	}
+	// The first renewal may begin at exactly two thirds of the predecessor's
+	// actual validity interval. Retries above are allowed throughout overlap.
+	window := predecessor.NotBefore.Add(predecessor.NotAfter.Sub(predecessor.NotBefore) * 2 / 3)
+	if now.Before(window) {
+		return nil, false, ErrNodeCertificateDenied
+	}
+	var used int
+	err = tx.QueryRowContext(ctx, `SELECT 1 FROM control_node_certificates WHERE csr_sha256 = ?`, csrHash[:]).Scan(&used)
+	if err == nil {
+		return nil, false, ErrNodeCertificateConflict
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return nil, false, err
+	}
+	cutoff := now.Add(24 * time.Hour)
+	if predecessor.NotAfter.Before(cutoff) {
+		cutoff = predecessor.NotAfter
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO control_node_certificates
+ (issuer_generation, serial, node_id, controller_id, binding_epoch,
+ certificate_sha256, public_key_sha256, csr_sha256, certificate_der,
+ not_before_unix_ms, not_after_unix_ms, predecessor_issuer_generation, predecessor_serial)
+ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, issuerGeneration,
+		successor.Serial, nodeID, controllerID, epoch, successor.CertificateHash[:],
+		publicKeyHash[:], csrHash[:], successor.DER,
+		successor.NotBefore.UnixMilli(), successor.NotAfter.UnixMilli(),
+		issuerGeneration, predecessor.SerialNumber.String()); err != nil {
+		return nil, false, fmt.Errorf("record renewed node certificate: %w", err)
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE control_node_certificates
+ SET superseded_at_unix_ms = ? WHERE issuer_generation = ? AND serial = ?
+ AND revoked_at_unix_ms IS NULL AND superseded_at_unix_ms IS NULL`,
+		cutoff.UnixMilli(), issuerGeneration, predecessor.SerialNumber.String())
+	if err != nil {
+		return nil, false, err
+	}
+	if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+		return nil, false, ErrNodeCertificateDenied
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, false, err
+	}
+	return bytes.Clone(successor.DER), true, nil
+}
+
 // FindActiveNodeCertificate resolves only the current binding and exact public
 // certificate. It is called for every request, including keep-alive requests.
 func (db *DB) FindActiveNodeCertificate(ctx context.Context, controllerID, issuerGeneration string, certificate *x509.Certificate, now time.Time) (NodeIdentity, error) {

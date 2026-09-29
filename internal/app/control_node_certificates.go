@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
@@ -91,6 +92,106 @@ func (s *Service) issueInitialNodeCertificate(ctx context.Context, nodeID string
 		stored.PublicKeyAlgorithm != x509.Ed25519 ||
 		!stored.NotBefore.Before(now) || !now.Before(stored.NotAfter) ||
 		!bytes.Equal(stored.RawSubjectPublicKeyInfo, csr.RawSubjectPublicKeyInfo) {
+		return nil, errors.New("stored node certificate is unusable")
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: storedDER}), nil
+}
+
+// renewNodeCertificate is internal until a reviewed node route exists. The
+// predecessor is the actual verified TLS peer leaf, never a body-supplied ID.
+func (s *Service) renewNodeCertificate(ctx context.Context, predecessor *x509.Certificate, csrDER []byte, now time.Time) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if err := s.lockStateMutation(); err != nil {
+		return nil, err
+	}
+	defer s.unlockStateMutation()
+	if err := s.store.CheckRestorePending(); err != nil {
+		return nil, errors.New("controller restore is pending")
+	}
+	if _, err := s.store.LoadControlIdentityJournal(); err == nil {
+		return nil, errors.New("control identity transition is pending")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, errors.New("cannot inspect control identity transition")
+	}
+	state, err := s.store.Load()
+	if err != nil {
+		return nil, err
+	}
+	if state.EffectiveMode() != config.ModeController || state.Controller == nil ||
+		state.Controller.Control == nil || state.Controller.Control.Enabled ||
+		s.cfg.DatabaseMode != sqldb.ModeSQLite {
+		return nil, errors.New("control identity is not prepared")
+	}
+	control := state.Controller.Control
+	if err := s.validateControlIdentityLocked(control, now, false); err != nil {
+		return nil, errors.New("control identity is unusable")
+	}
+	info, err := os.Lstat(s.cfg.DatabasePath)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0600 {
+		return nil, errors.New("controller database is unavailable")
+	}
+	material, err := s.store.LoadControlIdentity(control.CAGeneration, control.ServerGeneration)
+	if err != nil {
+		return nil, errors.New("control identity is unavailable")
+	}
+	db, err := sqldb.Open(ctx, s.cfg)
+	if err != nil {
+		return nil, errors.New("controller database is unavailable")
+	}
+	defer func() { _ = db.Close() }()
+	if err := db.Migrate(ctx); err != nil {
+		return nil, errors.New("controller database migration failed")
+	}
+	initialized, err := db.ControllerAuthInitialized(ctx)
+	if err != nil || !initialized {
+		return nil, errors.New("controller authentication is unavailable")
+	}
+	authorizer, err := NewControlNodeAuthorizer(db, state.Controller.ControllerID, *control, material, func() time.Time { return now })
+	if err != nil {
+		return nil, err
+	}
+	if _, err := authorizer.Authorize(ctx, predecessor, "node.certificate-renewal"); err != nil {
+		return nil, err
+	}
+	csr, csrHash, err := controlpki.ParseNodeCSR(csrDER)
+	if err != nil {
+		return nil, err
+	}
+	if bytes.Equal(csr.RawSubjectPublicKeyInfo, predecessor.RawSubjectPublicKeyInfo) {
+		return nil, errors.New("renewal requires a new node key")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	keyHash := sha256.Sum256(csr.RawSubjectPublicKeyInfo)
+	storedDER, found, err := db.FindRenewedNodeCertificate(ctx, state.Controller.ControllerID, control.CAGeneration, predecessor, csrHash, keyHash, now)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		issued, err := controlpki.IssueNodeCertificate(material, csrDER, now)
+		if err != nil {
+			return nil, err
+		}
+		storedDER, err = db.RenewNodeCertificate(ctx, state.Controller.ControllerID, control.CAGeneration, predecessor, issued, now)
+		if err != nil {
+			return nil, err
+		}
+	}
+	stored, err := x509.ParseCertificate(storedDER)
+	if err != nil || !bytes.Equal(stored.RawSubjectPublicKeyInfo, csr.RawSubjectPublicKeyInfo) ||
+		stored.IsCA || stored.KeyUsage != x509.KeyUsageDigitalSignature ||
+		len(stored.ExtKeyUsage) != 1 || stored.ExtKeyUsage[0] != x509.ExtKeyUsageClientAuth ||
+		now.Before(stored.NotBefore) || !now.Before(stored.NotAfter) {
+		return nil, errors.New("stored node certificate is unusable")
+	}
+	if _, err := stored.Verify(x509.VerifyOptions{Roots: authorizer.roots, CurrentTime: now,
+		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}); err != nil {
 		return nil, errors.New("stored node certificate is unusable")
 	}
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: storedDER}), nil

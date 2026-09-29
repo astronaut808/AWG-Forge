@@ -1,13 +1,14 @@
 # Control node certificate registry checkpoint
 
-Status: implementation checkpoint on `feature/control-node-cert-registry`. This
-document describes internal prerequisites, not an enabled node-management
-feature. The control listener remains closed and no enrollment or renewal route
-is registered.
+Status: merged into `develop` in PR #110. This document describes internal
+prerequisites, not an enabled node-management feature. The control listener
+remains closed and no enrollment or renewal route is registered. Internal
+renewal is being developed on `feature/control-node-cert-renewal`; the
+[handoff plan](control-node-renewal-next-session.md) defines its bounds.
 
 ## Scope and sequence
 
-This branch implements the first bounded part of [PKI slice 3](control-tls-pki-plan.md):
+PR #110 implemented the first bounded part of [PKI slice 3](control-tls-pki-plan.md):
 
 1. Verify a bounded, signed, extension-free Ed25519 PKCS#10 CSR. Ignore all
    applicant-provided identity; issue a 30-day client-auth-only certificate
@@ -23,9 +24,9 @@ This branch implements the first bounded part of [PKI slice 3](control-tls-pki-p
    the resulting typed identity to a handler. No header, URL, body or CSR
    subject can supply it. SQLite errors deny admission.
 
-The schema reserves a supersession cutoff for the next checkpoint. Certificate
-and binding revocation are durable primitives here; explicit rebind and
-renewal policies are not yet exposed. `state.json` still decides whether the
+The schema reserves a supersession cutoff. Certificate and binding revocation
+are durable primitives here; explicit rebind and renewal routes are not
+exposed. `state.json` still decides whether the
 control identity is prepared or enabled, while SQLite stores the certificate
 registry. No tunnel revision or AWG state changes.
 
@@ -52,18 +53,28 @@ before any listener is enabled.
 
 ## Remaining checkpoints before exposure
 
-1. Add renewal with an authenticated current certificate and a fresh CSR.
-   Atomically insert the new serial and set the old serial's cutoff to no more
-   than 24 hours; reject expired/revoked identities and different-CSR replay.
-   Test concurrent retries, restart, and both certificates across the overlap.
-2. Add explicit rebind fencing and server-leaf rotation with immutable
+The internal renewal operation verifies the presented predecessor against the
+active CA and current SQLite binding before signing. Its transaction repeats
+the predecessor and binding check, inserts a linked successor, and sets the
+old serial's cutoff. Migration `000007` adds a unique predecessor link, so
+one original certificate can have at most one successor even across processes.
+The first renewal is eligible at exactly two thirds of the predecessor's
+actual certificate validity interval; there is no recovery exception for an
+expired certificate. An exact full-CSR DER retry returns the stored public DER
+while the predecessor can still authenticate, without extending the cutoff.
+A different CSR conflicts, even with the same new key. The cutoff is the earlier
+of 24 hours after renewal and the predecessor's expiry. Serial revocation
+fences that serial; binding revocation fences both old and new. The operation
+does not change `ControlIdentityState.Enabled` or publish a route.
+
+1. Add explicit rebind fencing and server-leaf rotation with immutable
    generations, failure injection, and expiry behavior. CA trust rotation
    remains a later staged operation requiring node acknowledgement.
-3. Reconcile controller backup/restore with the new registry. An old backup
+2. Reconcile controller backup/restore with the new registry. An old backup
    must not silently undo a revocation: until a replay fence exists, restored
    node certificates require fail-closed re-enrollment. Verify the archived
    SQLite schema and PKI files together.
-4. Only then wire an explicit loopback enablement transition. Non-loopback
+3. Only then wire an explicit loopback enablement transition. Non-loopback
    exposure waits for authenticated enrollment, its backup gate and the
    failure-matrix tests. The existing Web UI, standalone mode and DB-off mode
    remain independent throughout.

@@ -302,7 +302,7 @@
       "post": {
         "operationId": "renewNodeCertificate",
         "summary": "Renew the current node certificate",
-        "description": "The node authenticates with its current certificate and proves possession of a newly generated private key by submitting a new CSR.",
+        "description": "Draft only; no production route is registered. The presented verified mTLS certificate and current registry binding establish identity. The body current_serial must match that peer certificate when a handler is added; boot_id does not establish identity. A signed Ed25519 CSR with a different key may renew at or after two thirds of the predecessor's actual validity interval. One predecessor gets one successor. An exact full-CSR retry from that predecessor returns the committed certificate only while the predecessor remains authorized; a different CSR conflicts. The predecessor overlap ends no later than 24 hours after commit or its own expiry, and revocation can end it earlier.",
         "tags": ["Certificates"],
         "requestBody": {
           "required": true,
@@ -316,7 +316,7 @@
         },
         "responses": {
           "200": {
-            "description": "A replacement certificate was issued with bounded overlap.",
+            "description": "The committed replacement certificate, or the identical certificate from an authorized exact retry.",
             "headers": {
               "Cache-Control": { "$ref": "#/components/headers/NoStore" },
               "X-Request-ID": { "$ref": "#/components/headers/RequestID" }
@@ -846,12 +846,13 @@
         "required": ["boot_id", "current_serial", "csr_pem"],
         "properties": {
           "boot_id": { "$ref": "#/components/schemas/BootID" },
-          "current_serial": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "current_serial": { "type": "string", "minLength": 1, "maxLength": 128, "description": "Must equal the serial of the verified mTLS peer leaf when a handler is implemented; it does not select the renewal identity." },
           "csr_pem": {
             "type": "string",
             "minLength": 128,
             "maxLength": 8192,
-            "writeOnly": true
+            "writeOnly": true,
+            "description": "PEM encoding of the signed CSR. Idempotency is based on the exact decoded full CSR DER, not the key or subject."
           }
         },
         "additionalProperties": false

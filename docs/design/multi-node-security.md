@@ -83,7 +83,7 @@ disabled until explicit setup and recoverable controller backup exist.
 | Offline destructive command surprises operator | No implicit offline queue; explicit **Run when online**, visible expiry, cancellation | Operator can still intentionally queue a harmful action |
 | Long-poll resource exhaustion | One poll per node, body and concurrency limits, server timeouts, jittered reconnect, global quotas | A large legitimate fleet still requires capacity measurement |
 | Reverse proxy impersonates node | Dedicated built-in mTLS listener; ignore forwarded certificate identity | Misconfigured public listener can increase DoS exposure |
-| Expired certificate strands node | Renew before final lifetime third; overlap old/new certs; local re-enrollment path | Long controller outage past expiry requires local recovery |
+| Expired certificate strands node | Renew during the final lifetime third; overlap old/new certs; local re-enrollment path | Long controller outage past expiry requires local recovery |
 | Controller restored twice | Stable controller ID plus documented single-active restore; detect duplicate session patterns | No distributed lease can prove uniqueness during a partition in v1 |
 | TOTP replay or credential stuffing | Mandatory TOTP, last-step replay rejection, Argon2id, account/source/global rate limits, recent-auth checks | Phishing and full browser compromise remain possible |
 | Cross-site browser action | Same-origin cookies, CSRF/origin enforcement, no CORS, secure headers, recent-auth for critical actions | Same-origin XSS would retain controller privileges |
@@ -104,10 +104,16 @@ certificates.
 
 ## Credential lifecycle
 
-- Node certificates are short-lived and renew before the final third of their
-  lifetime.
-- Renewal requires the current valid node identity and a new node-generated CSR.
-- Certificate rotation permits a bounded overlap and revokes superseded serials.
+- Node certificates are short-lived and renew during the final third of their
+  lifetime, beginning at the two-thirds boundary.
+- Internal renewal requires the verified current client certificate, current
+  SQLite binding, and a signed new-key CSR. Eligibility starts at two thirds
+  of that certificate's actual validity interval. A predecessor has only one
+  successor; exact full-CSR retries recover the stored certificate while the
+  predecessor remains authorized, and a different CSR conflicts.
+- The old serial stops authorizing at the earlier of 24 hours after renewal
+  and its own expiry. Revoking a serial fences that serial immediately;
+  revoking the binding fences both old and new certificates.
 - Control CA rotation is staged: distribute old plus new trust, issue new node
   certificates, confirm adoption, then retire old trust.
 - Recovery codes are generated once, displayed once, hashed at rest, and
