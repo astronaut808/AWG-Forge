@@ -215,7 +215,7 @@ func TestRuntimeStopsAtIdentityExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime.expiresAt = time.Now().Add(2 * time.Second)
+	runtime.snapshot.expiresAt = time.Now().Add(2 * time.Second)
 	result := make(chan error, 1)
 	go func() { result <- runtime.Serve(context.Background()) }()
 	roots := x509.NewCertPool()

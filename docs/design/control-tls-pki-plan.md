@@ -121,8 +121,11 @@ requests; it never grants a cached identity or falls back to a browser cookie.
    Disabling closes admission, cancels held polls, drains authorized requests
    with a bound, persists disabled state, then closes the socket. It never
    deletes identity or node records.
-5. `rotating`: stage and verify a new server leaf, then atomically change the
-   active generation. Keep the previous leaf only for a bounded overlap. CA
+5. `rotating`: stage and verify a new server leaf under the existing CA, then
+   durably change only `ServerGeneration`. Close pre-switch connections and
+   publish one immutable TLS snapshot; retire the previous leaf immediately,
+   with no old-leaf handshake overlap. A secret-free rotation journal fences
+   control work until exact cleanup succeeds. CA
    rotation later requires a separate staged trust migration: distribute new
    trust over authenticated channels, confirm adoption, switch serving/issuance,
    then retire old trust. Phase 5 records this contract but does not implement
@@ -230,8 +233,12 @@ The prepared identity checkpoint in
 [control-identity-next-session.md](control-identity-next-session.md) is complete.
 The completed registry checkpoint is described in
 [control-node-certificate-registry.md](control-node-certificate-registry.md).
-The current bounded checkpoint is
+The completed renewal handoff is
 [control-node-renewal-next-session.md](control-node-renewal-next-session.md).
+The internal server-leaf rotation checkpoint is implemented in
+[control-server-leaf-rotation-next-session.md](control-server-leaf-rotation-next-session.md).
+It has no scheduler, production runtime owner or route. The next checkpoint
+reconciles controller backup/restore with certificate revocation and replay state.
 
 | Slice | Main ownership | Deliverable and acceptance evidence |
 | --- | --- | --- |
@@ -250,8 +257,12 @@ preparing an identity must not open a socket. Transport tests originally used a
 temporary test-only SQLite authorizer. The production certificate registry and
 typed node authorizer from PR #110 have no production route. No bootstrap route
 is registered yet, so a certificate-free request cannot reach a handler. The
-runtime closes its listener and existing connections when the active CA or
-server leaf expires;
+runtime uses `GetCertificate` with no fixed fallback certificate. Reload closes
+all pre-switch sockets, including unfinished handshakes, and refreshes the
+expiry watch without rebinding. An invalid pre-commit candidate leaves the
+current snapshot intact; failed publication after state commit permanently
+closes that runtime until restart loads the committed generation. It closes
+its listener and existing connections when the active CA or server leaf expires;
 raw TLS handshake diagnostics are suppressed until safe structured transport
 events are defined.
 

@@ -115,6 +115,9 @@ func Create(ctx context.Context, cfg config.Config, service *app.Service, passwo
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return Archive{}, errors.New("cannot inspect control identity preparation journal")
 	}
+	if err := storage.New(cfg.ConfigDir).CheckNoControlServerRotation(); err != nil {
+		return Archive{}, err
+	}
 	if _, err := service.Init(); err != nil {
 		return Archive{}, err
 	}
@@ -138,6 +141,9 @@ func Create(ctx context.Context, cfg config.Config, service *app.Service, passwo
 		return Archive{}, errors.New("cannot create backup while control identity preparation is pending")
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return Archive{}, errors.New("cannot inspect control identity preparation journal")
+	}
+	if err := store.CheckNoControlServerRotation(); err != nil {
+		return Archive{}, err
 	}
 	state, err := store.Load()
 	if err != nil {
@@ -233,6 +239,9 @@ func RestoreWithOptions(ctx context.Context, cfg config.Config, password, path s
 	}()
 
 	if err := storage.New(cfg.ConfigDir).CheckRestorePending(); err != nil {
+		return RestoreResult{}, err
+	}
+	if err := storage.New(cfg.ConfigDir).CheckNoControlServerRotation(); err != nil {
 		return RestoreResult{}, err
 	}
 	currentState, currentExists, err := loadRestoreTargetState(cfg.ConfigDir)

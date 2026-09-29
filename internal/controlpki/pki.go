@@ -128,32 +128,25 @@ func Pin(certificate *x509.Certificate) string {
 }
 
 // Validate checks a committed identity. allowExpired is only for archive
-// recovery; live identity validation must always use false.
+// recovery and intact expired-leaf rotation; live validation uses false.
 func Validate(material Material, endpoint Endpoint, expectedPin string, now time.Time, allowExpired bool) error {
-	ca, err := parseCertificate(material.CACert)
+	if now.IsZero() {
+		return errors.New("control certificate time is required")
+	}
+	ca, _, err := validateCA(material, expectedPin, now, allowExpired)
 	if err != nil {
-		return fmt.Errorf("invalid control CA certificate: %w", err)
+		return err
 	}
 	leaf, err := parseCertificate(material.ServerCert)
 	if err != nil {
 		return fmt.Errorf("invalid control server certificate: %w", err)
 	}
-	caKey, err := parseKey(material.CAKey)
-	if err != nil {
-		return errors.New("invalid control CA key")
-	}
 	leafKey, err := parseKey(material.ServerKey)
 	if err != nil {
 		return errors.New("invalid control server key")
 	}
-	if Pin(ca) != expectedPin || !keyMatches(ca, caKey) || !keyMatches(leaf, leafKey) {
+	if !keyMatches(leaf, leafKey) {
 		return errors.New("control certificate pin or private key mismatch")
-	}
-	if !ca.IsCA || !ca.BasicConstraintsValid || !ca.MaxPathLenZero || ca.MaxPathLen != 0 || ca.KeyUsage&x509.KeyUsageCertSign == 0 || len(ca.ExtKeyUsage) != 0 {
-		return errors.New("invalid control CA constraints")
-	}
-	if err := ca.CheckSignatureFrom(ca); err != nil {
-		return errors.New("invalid control CA signature")
 	}
 	if leaf.IsCA || !leaf.BasicConstraintsValid || leaf.KeyUsage != x509.KeyUsageDigitalSignature || len(leaf.ExtKeyUsage) != 1 || leaf.ExtKeyUsage[0] != x509.ExtKeyUsageServerAuth || len(leaf.UnknownExtKeyUsage) != 0 {
 		return errors.New("invalid control server certificate usage")
@@ -175,7 +168,7 @@ func Validate(material Material, endpoint Endpoint, expectedPin string, now time
 		return errors.New("control server DNS SAN mismatch")
 	}
 	verifyAt := now.UTC()
-	expired := verifyAt.After(leaf.NotAfter) || verifyAt.After(ca.NotAfter)
+	expired := !verifyAt.Before(leaf.NotAfter) || !verifyAt.Before(ca.NotAfter)
 	if expired {
 		verifyAt = leaf.NotAfter
 		if ca.NotAfter.Before(verifyAt) {

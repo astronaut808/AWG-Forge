@@ -7,7 +7,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +17,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/astronaut808/awg-forge/internal/controlpki"
@@ -64,12 +64,21 @@ type Route struct {
 type routeKey struct{ method, path string }
 
 type Runtime struct {
-	endpoint   controlpki.Endpoint
-	tlsConfig  *tls.Config
-	expiresAt  time.Time
-	authorizer Authorizer
-	routes     map[routeKey]Route
-	requests   chan struct{}
+	endpoint    controlpki.Endpoint
+	tlsConfig   *tls.Config
+	mu          sync.Mutex
+	snapshot    *certificateSnapshot
+	caPEM       []byte
+	pin         string
+	listener    net.Listener
+	connections map[*trackedConnection]struct{}
+	changed     chan struct{}
+	closed      bool
+	serving     bool
+	closeReason error
+	authorizer  Authorizer
+	routes      map[routeKey]Route
+	requests    chan struct{}
 }
 
 // New validates the prepared identity and builds a separate, closed-by-default
@@ -85,29 +94,13 @@ func New(material controlpki.Material, endpoint controlpki.Endpoint, pin string,
 	if err := controlpki.Validate(material, endpoint, pin, time.Now(), false); err != nil {
 		return nil, fmt.Errorf("invalid prepared control identity: %w", err)
 	}
-	serverCert, err := tls.X509KeyPair(material.ServerCert, material.ServerKey)
+	snapshot, err := makeCertificateSnapshot(material, endpoint, pin)
 	if err != nil {
-		return nil, errors.New("invalid control server key pair")
+		return nil, err
 	}
 	clientCAs := x509.NewCertPool()
 	if !clientCAs.AppendCertsFromPEM(material.CACert) {
 		return nil, errors.New("invalid control client CA")
-	}
-	caBlock, _ := pem.Decode(material.CACert)
-	if caBlock == nil {
-		return nil, errors.New("invalid control CA certificate")
-	}
-	caCert, err := x509.ParseCertificate(caBlock.Bytes)
-	if err != nil {
-		return nil, errors.New("invalid control CA certificate")
-	}
-	serverLeaf, err := x509.ParseCertificate(serverCert.Certificate[0])
-	if err != nil {
-		return nil, errors.New("invalid control server certificate")
-	}
-	expiresAt := serverLeaf.NotAfter
-	if caCert.NotAfter.Before(expiresAt) {
-		expiresAt = caCert.NotAfter
 	}
 	if len(routes) > 0 && authorizer == nil {
 		return nil, errors.New("control routes require an authorizer")
@@ -130,21 +123,20 @@ func New(material controlpki.Material, endpoint controlpki.Endpoint, pin string,
 		routeTable[key] = route
 		routeIDs[route.ID] = struct{}{}
 	}
-	return &Runtime{
-		endpoint:  endpoint,
-		expiresAt: expiresAt,
+	runtime := &Runtime{
+		endpoint: endpoint, snapshot: snapshot, caPEM: append([]byte(nil), material.CACert...), pin: pin,
+		connections: make(map[*trackedConnection]struct{}), changed: make(chan struct{}, 1),
 		tlsConfig: &tls.Config{
-			MinVersion:             tls.VersionTLS13,
-			Certificates:           []tls.Certificate{serverCert},
-			ClientAuth:             tls.VerifyClientCertIfGiven,
-			ClientCAs:              clientCAs,
-			SessionTicketsDisabled: true,
-			NextProtos:             []string{"http/1.1"},
+			MinVersion: tls.VersionTLS13,
+			ClientAuth: tls.VerifyClientCertIfGiven, ClientCAs: clientCAs,
+			SessionTicketsDisabled: true, NextProtos: []string{"http/1.1"},
 		},
-		authorizer: authorizer,
-		routes:     routeTable,
-		requests:   make(chan struct{}, maxRequests),
-	}, nil
+		authorizer: authorizer, routes: routeTable, requests: make(chan struct{}, maxRequests),
+	}
+	// Certificates must remain empty: IP clients send no SNI and must still use
+	// the same callback as DNS clients, including ServeTLS's cloned configuration.
+	runtime.tlsConfig.GetCertificate = runtime.getCertificate
+	return runtime, nil
 }
 
 // Serve binds only the validated loopback endpoint and drains on cancellation.
@@ -152,55 +144,102 @@ func (runtime *Runtime) Serve(ctx context.Context) error {
 	if runtime == nil || runtime.tlsConfig == nil {
 		return errors.New("uninitialized control runtime")
 	}
-	if !time.Now().Before(runtime.expiresAt) {
+	runtime.mu.Lock()
+	if !time.Now().Before(runtime.snapshot.expiresAt) {
+		runtime.mu.Unlock()
 		return controlpki.ErrExpired
+	}
+	if runtime.closed || runtime.serving {
+		runtime.mu.Unlock()
+		return errors.New("control runtime is closed or already serving")
 	}
 	address := net.JoinHostPort(runtime.endpoint.BindIP, strconv.Itoa(runtime.endpoint.Port))
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
+		runtime.mu.Unlock()
 		return fmt.Errorf("bind control loopback listener: %w", err)
 	}
-	defer func() { _ = listener.Close() }()
+	runtime.listener = limitListener(listener, maxConnections)
+	runtime.serving = true
+	runtime.mu.Unlock()
+	defer runtime.Close()
 	server := &http.Server{
-		Handler:   runtime.handler(),
-		TLSConfig: runtime.tlsConfig.Clone(),
-		// net/http's default logger includes certificate subjects and remote
-		// addresses in handshake failures. Do not emit those raw diagnostics.
-		ErrorLog:          log.New(io.Discard, "", 0),
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       30 * time.Second,
-		MaxHeaderBytes:    maxHeaderBytes,
+		Handler: runtime.handler(), TLSConfig: runtime.tlsConfig.Clone(),
+		// Raw handshake diagnostics may contain certificate subjects.
+		ErrorLog: log.New(io.Discard, "", 0), ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 30 * time.Second,
+		MaxHeaderBytes: maxHeaderBytes,
 	}
 	result := make(chan error, 1)
-	go func() { result <- server.ServeTLS(limitListener(listener, maxConnections), "", "") }()
-	expiry := time.NewTimer(time.Until(runtime.expiresAt))
-	defer expiry.Stop()
-	select {
-	case err := <-result:
-		_ = server.Close()
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
+	go func() {
+		result <- server.ServeTLS(&trackingListener{Listener: runtime.listener, runtime: runtime}, "", "")
+	}()
+	for {
+		runtime.mu.Lock()
+		expiresAt := runtime.snapshot.expiresAt
+		if !time.Now().Before(expiresAt) && !runtime.closed {
+			runtime.closeLocked(controlpki.ErrExpired)
 		}
-		return err
-	case <-expiry.C:
-		_ = server.Close()
-		<-result
-		return controlpki.ErrExpired
-	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
+		closed, reason := runtime.closed, runtime.closeReason
+		runtime.mu.Unlock()
+		if closed {
 			_ = server.Close()
 			<-result
-			return err
+			return reason
 		}
-		err := <-result
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		expiry := time.NewTimer(time.Until(expiresAt))
+		select {
+		case err := <-result:
+			expiry.Stop()
+			_ = server.Close()
+			runtime.mu.Lock()
+			reason = runtime.closeReason
+			runtime.mu.Unlock()
+			if reason != nil {
+				return reason
+			}
+			if errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) {
+				return nil
+			}
 			return err
+		case <-expiry.C:
+			// Re-read the current snapshot under the lock before expiring it. A reload
+			// can win the race with the predecessor's timer without being shut down.
+		case <-runtime.changed:
+			expiry.Stop()
+		case <-ctx.Done():
+			expiry.Stop()
+			runtime.mu.Lock()
+			deadline := time.Now().Add(shutdownTimeout)
+			if runtime.snapshot.expiresAt.Before(deadline) {
+				deadline = runtime.snapshot.expiresAt
+			}
+			runtime.mu.Unlock()
+			shutdownCtx, cancel := context.WithDeadline(context.Background(), deadline)
+			err := server.Shutdown(shutdownCtx)
+			cancel()
+			runtime.mu.Lock()
+			if !time.Now().Before(runtime.snapshot.expiresAt) {
+				runtime.closeLocked(controlpki.ErrExpired)
+			}
+			reason = runtime.closeReason
+			runtime.mu.Unlock()
+			if err != nil {
+				_ = server.Close()
+			}
+
+			serveErr := <-result
+			if reason != nil {
+				return reason
+			}
+			if err != nil && !errors.Is(err, net.ErrClosed) {
+				return err
+			}
+			if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) && !errors.Is(serveErr, net.ErrClosed) {
+				return serveErr
+			}
+			return nil
 		}
-		return nil
 	}
 }
 
@@ -227,7 +266,7 @@ func (runtime *Runtime) handler() http.Handler {
 		}
 		cert := r.TLS.PeerCertificates[0]
 		now := time.Now()
-		if now.Before(cert.NotBefore) || !now.Before(cert.NotAfter) || !now.Before(runtime.expiresAt) || runtime.authorizer == nil {
+		if now.Before(cert.NotBefore) || !now.Before(cert.NotAfter) || !runtime.identityValid(now) || runtime.authorizer == nil {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
