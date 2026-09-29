@@ -138,7 +138,13 @@ func TestInternalNodeRenewalRealLoopbackMTLS(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_ = response.Body.Close()
+		if _, err := io.Copy(io.Discard, response.Body); err != nil {
+			_ = response.Body.Close()
+			t.Fatal(err)
+		}
+		if err := response.Body.Close(); err != nil {
+			t.Fatal(err)
+		}
 		if response.StatusCode != want {
 			t.Fatalf("ping status = %d, want %d", response.StatusCode, want)
 		}
