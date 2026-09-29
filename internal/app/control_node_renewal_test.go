@@ -258,10 +258,29 @@ func TestInternalNodeRenewalRealLoopbackMTLS(t *testing.T) {
 	}
 	ping(newClient, http.StatusForbidden, nil)
 	ping(oldClient, http.StatusForbidden, nil)
+	rebindCSR, rebindKey := renewalTestCSR(t)
+	reboundPEM, err := service.rebindRevokedNodeCertificate(ctx, nodeID, 1, rebindCSR, readClock())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retry, err := service.rebindRevokedNodeCertificate(ctx, nodeID, 1, rebindCSR, readClock()); err != nil || !bytes.Equal(retry, reboundPEM) {
+		t.Fatalf("rebind retry: %v", err)
+	}
+	reboundClient := clientFor(renewalTestCertificate(t, reboundPEM), rebindKey)
+	ping(reboundClient, http.StatusNoContent, nil)
+	reused = false
+	ping(newClient, http.StatusForbidden, &reused)
+	if !reused {
+		t.Fatal("old binding was not fenced on its existing connection")
+	}
+	if err := db.RevokeNodeBinding(ctx, sqldb.NodeIdentity{ControllerID: controllerIDFromStore(t, cfg.ConfigDir), NodeID: nodeID, BindingEpoch: 2}, readClock()); err != nil {
+		t.Fatal(err)
+	}
+	ping(reboundClient, http.StatusForbidden, nil)
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	ping(newClient, http.StatusForbidden, nil)
+	ping(reboundClient, http.StatusForbidden, nil)
 }
 
 func renewalTestCSR(t *testing.T) ([]byte, ed25519.PrivateKey) {
@@ -426,6 +445,108 @@ func TestInternalNodeRenewalFailsClosed(t *testing.T) {
 	denied("uninitialized auth", old, csr, service, at)
 }
 
+func TestInternalNodeRebindFailsClosed(t *testing.T) {
+	ctx := context.Background()
+	cfg := controllerTestConfig(t)
+	service := newFastControllerTestService(cfg)
+	if _, err := service.Init(); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now().UTC()
+	if _, err := service.ActivateController(ctx, controllerTestActivationRequest(t, at)); err != nil {
+		t.Fatal(err)
+	}
+	control, err := service.PrepareControlIdentity(ctx, ControlIdentityRequest{
+		BindIP: "127.0.0.1", Advertised: "127.0.0.1", Port: 18443, Now: at,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const nodeID = "11111111-1111-4111-8111-111111111111"
+	initialCSR, _ := renewalTestCSR(t)
+	if _, err := service.issueInitialNodeCertificate(ctx, nodeID, initialCSR, at.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	csr, _ := renewalTestCSR(t)
+	denied := func(label string, caller *Service) {
+		t.Helper()
+		if certificate, err := caller.rebindRevokedNodeCertificate(ctx, nodeID, 1, csr, at.Add(2*time.Second)); err == nil || len(certificate) != 0 {
+			t.Fatalf("%s allowed rebind", label)
+		}
+	}
+	denied("active binding", service)
+	db, err := sqldb.Open(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controllerID := controllerIDFromStore(t, cfg.ConfigDir)
+	if err := db.RevokeNodeBinding(ctx, sqldb.NodeIdentity{ControllerID: controllerID, NodeID: nodeID, BindingEpoch: 1}, at.Add(time.Second)); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store := storage.New(cfg.ConfigDir)
+	if err := store.BeginRestorePending(controllerID); err != nil {
+		t.Fatal(err)
+	}
+	denied("restore marker", service)
+	if err := store.ClearRestorePending(); err != nil {
+		t.Fatal(err)
+	}
+	journal := storage.ControlIdentityJournal{ControllerID: controllerID,
+		CAGeneration: control.CAGeneration, ServerGeneration: control.ServerGeneration, StartedAt: at}
+	if err := store.SaveControlIdentityJournal(journal); err != nil {
+		t.Fatal(err)
+	}
+	denied("identity journal", service)
+	if err := store.DeleteControlIdentityJournal(); err != nil {
+		t.Fatal(err)
+	}
+	dbOff := cfg
+	dbOff.DatabaseMode = sqldb.ModeOff
+	denied("DB off", newFastControllerTestService(dbOff))
+	missingDB := cfg
+	missingDB.DatabasePath = filepath.Join(t.TempDir(), "missing.db")
+	denied("missing DB", newFastControllerTestService(missingDB))
+	paths, err := storage.ControlIdentityRelativePaths(control.CAGeneration, control.ServerGeneration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caPath := filepath.Join(cfg.ConfigDir, paths[1])
+	caPEM, err := os.ReadFile(caPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(caPath, []byte("corrupt"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	denied("corrupt CA", service)
+	if err := os.WriteFile(caPath, caPEM, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.rebindRevokedNodeCertificate(ctx, nodeID, 1, csr, at.Add(2*time.Second)); err != nil {
+		t.Fatalf("valid rebind after failures: %v", err)
+	}
+	db, err = sqldb.Open(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RevokeNodeBinding(ctx, sqldb.NodeIdentity{ControllerID: controllerID, NodeID: nodeID, BindingEpoch: 2}, at.Add(3*time.Second)); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.ResetControllerAuth(ctx); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	denied("uninitialized auth", service)
+}
+
 func TestInternalNodeRenewalRetryAfterLostResponseNearCAExpiry(t *testing.T) {
 	ctx := context.Background()
 	cfg := controllerTestConfig(t)
@@ -515,5 +636,34 @@ func TestInternalNodeRenewalRetryAfterLostResponseNearCAExpiry(t *testing.T) {
 	recoveredPEM, err := newFastControllerTestService(cfg).renewNodeCertificate(ctx, old, csr, retryAt)
 	if err != nil || !bytes.Equal(recoveredPEM, issuedPEM) {
 		t.Fatalf("lost-response retry = %v", err)
+	}
+	// The same recovery guarantee applies to a rebind committed before the
+	// CA stops signing. Use a second node so the renewal remains independent.
+	const reboundNodeID = "33333333-3333-4333-8333-333333333333"
+	initialCSR, _ := renewalTestCSR(t)
+	if _, err := service.issueInitialNodeCertificate(ctx, reboundNodeID, initialCSR, initialAt); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sqldb.Open(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RevokeNodeBinding(ctx, sqldb.NodeIdentity{
+		ControllerID: controllerIDFromStore(t, cfg.ConfigDir), NodeID: reboundNodeID, BindingEpoch: 1,
+	}, firstAt); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	rebindCSR, _ := renewalTestCSR(t)
+	reboundPEM, err := service.rebindRevokedNodeCertificate(ctx, reboundNodeID, 1, rebindCSR, firstAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recoveredRebindPEM, err := newFastControllerTestService(cfg).rebindRevokedNodeCertificate(ctx, reboundNodeID, 1, rebindCSR, retryAt)
+	if err != nil || !bytes.Equal(recoveredRebindPEM, reboundPEM) {
+		t.Fatalf("lost rebind response retry = %v", err)
 	}
 }
