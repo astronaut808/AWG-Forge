@@ -348,11 +348,15 @@ func (db *DB) RecoverControllerAdmin(ctx context.Context, user controlauth.User,
 }
 
 // DisableControllerAuthAfterRestore prevents an older database snapshot from
-// resurrecting browser sessions, used recovery codes, or TOTP steps. The
-// offline root recovery command is the only path that reenables the admin.
+// resurrecting browser sessions, used recovery codes, TOTP steps, or node
+// certificate authority. Public certificate history and binding epochs remain.
+// Offline root recovery is the only path that reenables the admin.
 func (db *DB) DisableControllerAuthAfterRestore(ctx context.Context, now time.Time) error {
-	if now.IsZero() {
+	if now.IsZero() || now.UnixMilli() <= 0 {
 		return errors.New("restore time is required")
+	}
+	if db == nil || db.sql == nil {
+		return errors.New("controller database is unavailable")
 	}
 	tx, err := db.sql.BeginTx(ctx, nil)
 	if err != nil {
@@ -379,7 +383,43 @@ func (db *DB) DisableControllerAuthAfterRestore(ctx context.Context, now time.Ti
 			return err
 		}
 	}
+	for _, query := range []string{
+		"UPDATE control_node_certificates SET revoked_at_unix_ms = ? WHERE revoked_at_unix_ms IS NULL",
+		"UPDATE control_node_bindings SET revoked_at_unix_ms = ? WHERE revoked_at_unix_ms IS NULL",
+	} {
+		if _, err := tx.ExecContext(ctx, query, now.UnixMilli()); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
+}
+
+// VerifyControllerRestoreReset checks the durable denial conditions required
+// before cold restore may clear its startup gate. It never changes authority.
+func (db *DB) VerifyControllerRestoreReset(ctx context.Context) error {
+	if db == nil || db.sql == nil {
+		return errors.New("controller database is unavailable")
+	}
+	var disabled, users, credentials int
+	if err := db.sql.QueryRowContext(ctx, `SELECT count(*),
+COALESCE(sum(CASE WHEN disabled_at != '' THEN 1 ELSE 0 END), 0) FROM controller_users`).Scan(&users, &disabled); err != nil {
+		return errors.New("cannot verify restored administrator")
+	}
+	if users != 1 || disabled != 1 {
+		return errors.New("restored administrator must remain disabled")
+	}
+	if err := db.sql.QueryRowContext(ctx, `SELECT
+(SELECT count(*) FROM controller_sessions) +
+(SELECT count(*) FROM controller_recovery_codes) +
+(SELECT count(*) FROM controller_auth_attempts) +
+(SELECT count(*) FROM control_node_certificates WHERE revoked_at_unix_ms IS NULL) +
+(SELECT count(*) FROM control_node_bindings WHERE revoked_at_unix_ms IS NULL)`).Scan(&credentials); err != nil {
+		return errors.New("cannot verify restored authority invalidation")
+	}
+	if credentials != 0 {
+		return errors.New("restored credentials must remain invalidated")
+	}
+	return nil
 }
 
 func (db *DB) FindControllerSession(ctx context.Context, digest controlauth.Digest, now time.Time) (controlauth.Session, error) {

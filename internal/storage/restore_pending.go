@@ -40,6 +40,10 @@ func (s Store) CheckRestorePending() error {
 // BeginRestorePending durably records the fail-closed gate before any controller
 // file is replaced. The caller must hold the exclusive state directory lock.
 func (s Store) BeginRestorePending(controllerID string) error {
+	return s.beginRestorePending(controllerID, nil)
+}
+
+func (s Store) beginRestorePending(controllerID string, step func(string) error) error {
 	if controllerID == "" {
 		return errors.New("controller ID is required for restore marker")
 	}
@@ -55,9 +59,16 @@ func (s Store) BeginRestorePending(controllerID string) error {
 			return fmt.Errorf("protect state directory: %w", err)
 		}
 	}
+	if err := restorePendingStep(step, "before-create"); err != nil {
+		return err
+	}
 	marker, err := os.OpenFile(s.RestorePendingPath(), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		return fmt.Errorf("create controller restore marker: %w", err)
+	}
+	defer func() { _ = marker.Close() }()
+	if err := restorePendingStep(step, "after-create"); err != nil {
+		return err
 	}
 	body, err := json.Marshal(RestorePending{ControllerID: controllerID, StartedAt: time.Now().UTC()})
 	if err != nil {
@@ -69,19 +80,32 @@ func (s Store) BeginRestorePending(controllerID string) error {
 		_ = marker.Close()
 		return fmt.Errorf("write controller restore marker: %w", err)
 	}
+	if err := restorePendingStep(step, "after-write"); err != nil {
+		return err
+	}
 	if err := marker.Sync(); err != nil {
 		_ = marker.Close()
 		return fmt.Errorf("sync controller restore marker: %w", err)
 	}
+	if err := restorePendingStep(step, "after-file-sync"); err != nil {
+		return err
+	}
 	if err := marker.Close(); err != nil {
 		return fmt.Errorf("close controller restore marker: %w", err)
 	}
-	return syncRestoreDirectory(s.dir)
+	if err := syncRestoreDirectory(s.dir); err != nil {
+		return err
+	}
+	return restorePendingStep(step, "after-directory-sync")
 }
 
 // ClearRestorePending is called only after the restored identity and database
-// have been verified and browser credentials invalidated.
+// have been verified and browser and node credentials durably invalidated.
 func (s Store) ClearRestorePending() error {
+	return s.clearRestorePending(nil)
+}
+
+func (s Store) clearRestorePending(step func(string) error) error {
 	info, err := os.Lstat(s.RestorePendingPath())
 	if err != nil {
 		return err
@@ -89,10 +113,26 @@ func (s Store) ClearRestorePending() error {
 	if !info.Mode().IsRegular() || info.Mode().Perm() != 0600 {
 		return errors.New("invalid controller restore marker")
 	}
+	if err := restorePendingStep(step, "before-unlink"); err != nil {
+		return err
+	}
 	if err := os.Remove(s.RestorePendingPath()); err != nil {
 		return err
 	}
-	return syncRestoreDirectory(s.dir)
+	if err := restorePendingStep(step, "after-unlink"); err != nil {
+		return err
+	}
+	if err := syncRestoreDirectory(s.dir); err != nil {
+		return err
+	}
+	return restorePendingStep(step, "after-clear-directory-sync")
+}
+
+func restorePendingStep(step func(string) error, point string) error {
+	if step != nil {
+		return step(point)
+	}
+	return nil
 }
 
 func syncRestoreDirectory(path string) error {

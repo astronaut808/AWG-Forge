@@ -111,7 +111,10 @@ restored desired state and TLS assets. Standalone and managed-node backups do
 not include SQLite operational history. Controller backups include the
 authentication database snapshot and its key file. If a disabled control
 identity has been prepared, they also include the private keys and certificates
-of its exact CA and server generations. With `APPLY_CONFIG=true`, startup applies
+of its exact CA and server generations. Restore revokes every archived node
+certificate and binding; recovering the administrator does not restore node
+access. See [controller recovery](diagnostics.md) before restarting.
+With `APPLY_CONFIG=true`, startup applies
 enabled tunnels and reconciles WARP. Wait for startup before running the
 remaining checks.
 

@@ -197,8 +197,15 @@ rebind the node without changing tunnels. A controller cannot remotely transfer
 a node to another controller.
 
 Controller backup is encrypted and includes its identity, CA, authentication
-database, registry, and operation journal. Restoring without the identity is a
-new controller and requires explicit node rebind.
+database and certificate registry. Operation-journal recovery remains a future
+gate when controller operations exist. The implemented internal
+[restore checkpoint](control-backup-restore-next-session.md) accepts only the
+same existing controller, verifies its archived PKI and registry, then atomically
+revokes every restored certificate and binding alongside browser credentials.
+It preserves history, keeps control disabled, and prevents repeated stale
+restore or administrator recovery from restoring node access. Explicit local
+node recovery and fresh enrollment remain future work. This policy does not
+protect against raw-filesystem rollback or prove uniqueness of cloned controllers.
 
 ## Required security tests
 

@@ -221,8 +221,9 @@ at handoff, without creating the commit.
 
 ## After this checkpoint
 
-The next separate checkpoint reconciles controller backup/restore with the
-node-certificate registry and its PKI generations. A stale backup must not
+The [backup/restore checkpoint](control-backup-restore-next-session.md) reconciles
+controller backup/restore with the node-certificate registry and its PKI
+generations. A stale backup must not
 silently undo revocation; use fail-closed re-enrollment until a proven replay
 fence exists. Only after that recovery gate may explicit loopback enablement
 be wired. Non-loopback exposure waits for authenticated enrollment and its

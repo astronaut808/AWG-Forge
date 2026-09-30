@@ -13,14 +13,14 @@ import (
 	"github.com/astronaut808/awg-forge/internal/app"
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/controlauth"
-	"github.com/astronaut808/awg-forge/internal/controlpki"
 	"github.com/astronaut808/awg-forge/internal/sqldb"
 	"github.com/astronaut808/awg-forge/internal/storage"
 )
 
 // restoreController is called only with both offline locks held. A pending
-// marker stays in place after any failure following BeginRestorePending; a
-// partial restore must be inspected and recovered offline before serving.
+// marker gates partial restore until authority invalidation is durable. A
+// failed final directory sync after marker unlink reports incomplete restore,
+// but old browser/node credentials have already been durably invalidated.
 func restoreController(ctx context.Context, cfg config.Config, password string, current config.State, backup validatedBackup) error {
 	return restoreControllerWithFiles(ctx, cfg, password, current, backup, func(root string, files []restoreFile) error {
 		return restoreFilesWithAudit(root, files, cfg.AuditLogPath)
@@ -28,6 +28,11 @@ func restoreController(ctx context.Context, cfg config.Config, password string, 
 }
 
 func restoreControllerWithFiles(ctx context.Context, cfg config.Config, password string, current config.State, backup validatedBackup, applyFiles func(string, []restoreFile) error) error {
+	return restoreControllerWithStep(ctx, cfg, password, current, backup, applyFiles, nil)
+}
+
+// step is a private failure-injection seam; production always supplies nil.
+func restoreControllerWithStep(ctx context.Context, cfg config.Config, password string, current config.State, backup validatedBackup, applyFiles func(string, []restoreFile) error, step func(string) error) error {
 	if cfg.DatabaseMode != sqldb.ModeSQLite || !filepath.IsAbs(cfg.DatabasePath) {
 		return errors.New("controller restore requires an absolute SQLite database path")
 	}
@@ -81,22 +86,52 @@ func restoreControllerWithFiles(ctx context.Context, cfg config.Config, password
 	if err := store.BeginRestorePending(current.Controller.ControllerID); err != nil {
 		return err
 	}
+	if err := controllerRestoreStep(step, "after-marker-sync"); err != nil {
+		return err
+	}
 	if err := applyFiles(cfg.ConfigDir, files); err != nil {
 		return fmt.Errorf("restore controller files; offline recovery required: %w", err)
+	}
+	if err := controllerRestoreStep(step, "after-files-install"); err != nil {
+		return err
 	}
 	if external {
 		if err := installExternalDatabase(cfg.DatabasePath, externalStage); err != nil {
 			return fmt.Errorf("install controller database; offline recovery required: %w", err)
 		}
+		if err := controllerRestoreStep(step, "after-external-install"); err != nil {
+			return err
+		}
 	}
-	if err := verifyRestoredController(ctx, cfg, backup.State.Controller.ControllerID); err != nil {
+	if err := app.ReconcileRestoredController(ctx, cfg, backup.State, time.Now().UTC()); err != nil {
 		return fmt.Errorf("verify restored controller; offline recovery required: %w", err)
+	}
+	if err := controllerRestoreStep(step, "after-reconciliation"); err != nil {
+		return err
 	}
 	if err := syncRestoredFiles(cfg.ConfigDir, files); err != nil {
 		return fmt.Errorf("sync restored controller; offline recovery required: %w", err)
 	}
+	if err := controllerRestoreStep(step, "after-files-sync"); err != nil {
+		return err
+	}
+	if external {
+		if err := syncRestoredFiles(filepath.Dir(cfg.DatabasePath), []restoreFile{{Path: filepath.Base(cfg.DatabasePath)}}); err != nil {
+			return fmt.Errorf("sync restored external controller database; offline recovery required: %w", err)
+		}
+		if err := controllerRestoreStep(step, "after-external-sync"); err != nil {
+			return err
+		}
+	}
 	if err := store.ClearRestorePending(); err != nil {
 		return fmt.Errorf("clear restored controller gate; offline recovery required: %w", err)
+	}
+	return controllerRestoreStep(step, "after-marker-clear")
+}
+
+func controllerRestoreStep(step func(string) error, point string) error {
+	if step != nil {
+		return step(point)
 	}
 	return nil
 }
@@ -238,48 +273,6 @@ func installExternalDatabase(path, stage string) error {
 		return err
 	}
 	return os.RemoveAll(old)
-}
-
-func verifyRestoredController(ctx context.Context, cfg config.Config, controllerID string) error {
-	state, err := storage.New(cfg.ConfigDir).Load()
-	if err != nil {
-		return err
-	}
-	if state.EffectiveMode() != config.ModeController || state.Controller == nil || state.Controller.ControllerID != controllerID {
-		return errors.New("restored controller identity mismatch")
-	}
-	if _, err := controlauth.LoadKeys(filepath.Join(cfg.ConfigDir, controlauth.KeyFileName)); err != nil {
-		return err
-	}
-	if state.Controller.Control != nil {
-		control := state.Controller.Control
-		if err := app.ValidateControlIdentityState(control, cfg.WebUIPort); err != nil {
-			return errors.New("restored control identity state is invalid")
-		}
-		material, err := storage.New(cfg.ConfigDir).LoadControlIdentity(control.CAGeneration, control.ServerGeneration)
-		if err != nil {
-			return errors.New("restored control identity files are invalid")
-		}
-		if err := controlpki.Validate(material, controlpki.Endpoint{BindIP: control.BindIP, Advertised: control.Advertised, Port: control.Port}, control.CAPin, time.Now().UTC(), true); err != nil {
-			return errors.New("restored control identity is invalid")
-		}
-	}
-	if err := sqldb.VerifyControllerSnapshot(ctx, cfg.DatabasePath); err != nil {
-		return err
-	}
-	db, err := sqldb.Open(ctx, cfg)
-	if err != nil {
-		return err
-	}
-	if err := db.Migrate(ctx); err != nil {
-		_ = db.Close()
-		return fmt.Errorf("migrate restored controller database: %w", err)
-	}
-	if err := db.DisableControllerAuthAfterRestore(ctx, time.Now().UTC()); err != nil {
-		_ = db.Close()
-		return err
-	}
-	return db.Close()
 }
 
 func syncRestoredFiles(root string, files []restoreFile) error {

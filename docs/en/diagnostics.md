@@ -242,15 +242,25 @@ docker compose run --rm -v "$PWD/<backup-file>.afbackup:/restore/controller.afba
 ```
 
 Restore invalidates browser sessions and recovery codes and disables the
-restored administrator. Before starting `serve`, run the offline root
+restored administrator. It also revokes every restored node certificate and
+binding, preserving their registry history. This applies to recent archives,
+repeated restores and pre-restore backups. Administrator recovery does not
+restore node access; nodes require explicit local recovery and fresh enrollment,
+whose workflow remains a later checkpoint. Archive verification checks the
+registry against its schema, controller identity and archived CA before changing
+target files. Inconsistent archives are rejected.
+
+Before starting `serve`, run the offline root
 `controller recover-admin` command described in [Usage](usage.md), save the new
 TOTP secret and recovery codes, then start the service. A controller archive
 cannot create a second controller installation or replace a different
 `controller_id`.
 
-If restore is interrupted, `.restore-pending.json` blocks server startup,
-administrator recovery, and new backups. Keep the server stopped. Preserve the
-archive and any `.restore-old-*` or external `.awg-restore-old-db-*` staging
+While `.restore-pending.json` exists, it blocks server startup, administrator
+recovery, and new backups. A failure during final marker removal may leave the
+marker absent, but browser and node credentials have already been durably
+invalidated. Any reported restore failure requires offline inspection; keep
+the server stopped. Preserve the archive and any `.restore-old-*` or external `.awg-restore-old-db-*` staging
 directories for offline inspection and recovery; never remove the marker merely
 to force startup.
 
