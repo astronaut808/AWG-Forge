@@ -8,6 +8,5 @@ released AWG-Forge version.
 - [Multi-node failure and recovery matrix](multi-node-failure-matrix.md)
 - [Control TLS and PKI delivery plan](control-tls-pki-plan.md)
 - [Control node certificate registry checkpoint](control-node-certificate-registry.md)
-- [Controller backup/restore and node revocation checkpoint](control-backup-restore-next-session.md)
 
 Current user behavior remains documented under `docs/en` and `docs/ru`.

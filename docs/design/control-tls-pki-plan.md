@@ -23,9 +23,8 @@ recovery.
 This is a future implementation risk, not a currently reachable controller
 TLS/PKI vulnerability: the product has no control listener or enrollment routes,
 and no production path issues node certificates. Controller restore uses a
-durable startup gate to block a partially restored file set. The internal
-[backup/restore checkpoint](control-backup-restore-next-session.md) validates
-archived PKI and registry together and invalidates all restored node authority.
+durable startup gate to block a partially restored file set. Backup/restore
+validates archived PKI and registry together and invalidates all restored node authority.
 Control remains disabled.
 
 The goal of this phase is a tested control identity, dedicated TLS listener,
@@ -237,10 +236,10 @@ The completed renewal handoff is
 [control-node-renewal-next-session.md](control-node-renewal-next-session.md).
 The internal server-leaf rotation checkpoint is implemented in
 [control-server-leaf-rotation-next-session.md](control-server-leaf-rotation-next-session.md).
-It has no scheduler, production runtime owner or route. The internal
-[backup/restore checkpoint](control-backup-restore-next-session.md) now
-reconciles certificate authority with archived PKI and registry. A separate
-checkpoint may plan explicit loopback enablement after its acceptance gates.
+It has no scheduler, production runtime owner or route. Controller backup/restore
+reconciles certificate authority with archived PKI and registry, invalidating
+all restored node certificates and bindings. Explicit loopback enablement
+remains gated on the verified recovery policy and later enrollment prerequisites.
 
 | Slice | Main ownership | Deliverable and acceptance evidence |
 | --- | --- | --- |

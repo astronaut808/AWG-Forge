@@ -198,8 +198,7 @@ a node to another controller.
 
 Controller backup is encrypted and includes its identity, CA, authentication
 database and certificate registry. Operation-journal recovery remains a future
-gate when controller operations exist. The implemented internal
-[restore checkpoint](control-backup-restore-next-session.md) accepts only the
+gate when controller operations exist. Controller restore accepts only the
 same existing controller, verifies its archived PKI and registry, then atomically
 revokes every restored certificate and binding alongside browser credentials.
 It preserves history, keeps control disabled, and prevents repeated stale
