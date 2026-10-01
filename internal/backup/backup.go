@@ -739,6 +739,7 @@ func validateStateSanity(state config.State) error {
 
 func validateControllerArchive(ctx context.Context, files []restoreFile, state config.State) error {
 	var keyData, snapshotData []byte
+	var material controlpki.Material
 	var controlPaths []string
 	if state.Controller != nil && state.Controller.Control != nil {
 		if err := app.ValidateControlIdentityState(state.Controller.Control, 0); err != nil {
@@ -778,7 +779,7 @@ func validateControllerArchive(ctx context.Context, files []restoreFile, state c
 			}
 		}
 		control := state.Controller.Control
-		material := controlpki.Material{CAKey: controlData[controlPaths[0]], CACert: controlData[controlPaths[1]], ServerKey: controlData[controlPaths[2]], ServerCert: controlData[controlPaths[3]]}
+		material = controlpki.Material{CAKey: controlData[controlPaths[0]], CACert: controlData[controlPaths[1]], ServerKey: controlData[controlPaths[2]], ServerCert: controlData[controlPaths[3]]}
 		if err := controlpki.Validate(material, controlpki.Endpoint{BindIP: control.BindIP, Advertised: control.Advertised, Port: control.Port}, control.CAPin, time.Now().UTC(), true); err != nil {
 			return errors.New("backup validation failed: control identity is invalid")
 		}
@@ -799,7 +800,7 @@ func validateControllerArchive(ctx context.Context, files []restoreFile, state c
 	if err := os.WriteFile(snapshotPath, snapshotData, 0600); err != nil {
 		return err
 	}
-	if err := sqldb.VerifyControllerSnapshot(ctx, snapshotPath); err != nil {
+	if err := app.ValidateControllerBackupSnapshot(ctx, snapshotPath, state, material); err != nil {
 		return fmt.Errorf("backup validation failed: controller database: %w", err)
 	}
 	return nil

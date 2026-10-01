@@ -23,9 +23,9 @@ recovery.
 This is a future implementation risk, not a currently reachable controller
 TLS/PKI vulnerability: the product has no control listener or enrollment routes,
 and no production path issues node certificates. Controller restore uses a
-durable startup gate to block a partially restored file set; the remaining
-PKI files and node registry will join this archive before any control listener
-is exposed.
+durable startup gate to block a partially restored file set. Backup/restore
+validates archived PKI and registry together and invalidates all restored node authority.
+Control remains disabled.
 
 The goal of this phase is a tested control identity, dedicated TLS listener,
 certificate issuance and renewal primitives, and a fail-closed authorization
@@ -174,9 +174,9 @@ certificate registry, and later enrollment state. The operator must then
 create and verify an encrypted backup containing the newly committed CA before
 enabling the listener, and explicitly confirm they saved the downloaded archive
 off host. Software can verify archive integrity and generation but cannot prove
-that the operator retained an external copy. The current controller backup
-only covers the existing auth identity; adding PKI material to it is a gate
-before control exposure. Restore is cold and
+that the operator retained an external copy. Controller backup includes auth
+keys, exact prepared CA/server generations and a semantically verified registry
+snapshot. Restore is cold and
 explicit; it must not start a second active controller with the same identity.
 Missing key files or SQLite fail closed. A restore on a different installation
 must preserve the complete controller identity or require explicit new-controller
@@ -194,26 +194,25 @@ Before **any** controller restore moves a DB, key, or state file, persist and
 directory-sync a root-private, secret-free `restore-pending` marker that the
 restore mover explicitly preserves. `runServe` checks this marker before
 initializing browser or control authentication and fails closed while it exists.
-Only after the restored files, database schema, identities, session/code resets,
-and control-disabled state are verified and synced may restore remove the
-marker. A failed rollback clears it only after the original files are restored
-and verified; otherwise offline root recovery is required. Fault-inject every
+Only after the restored files, database schema, identities, combined browser/node
+reset and control-disabled state are verified and synced may restore remove the
+marker. Postconditions are checked from a reopened database. Failures retain
+the marker for offline inspection; a final unlink followed by failed directory
+sync may leave it absent, but denial is already durable. No automatic resume or
+marker-removal command is provided. Fault-inject every
 rename/sync/crash boundary, including a crash after SQLite replacement but
 before `state.json` replacement.
 
 Restoring an older database snapshot can resurrect sessions, used recovery
-codes, invitations and revoked node certificates. Phase-5 restore must revoke
-restored browser sessions and recovery codes and require offline root
-administrator recovery before serving the browser API. It must not open the
-control listener until the node-certificate rollback rule is implemented and
-verified. Phase-6 restore also invalidates every restored invitation and claim
-credential, including those marked pending or consumed in the snapshot. Before
-real node enrollment in phase 6, resolve the conflict between
-the current ADR's seamless same-identity reconnect goal and fail-closed
-revocation after restore. The conservative proposal is to invalidate all
-restored node certificates and require explicit local re-enrollment; accepting
-old certificates solely because the restored registry says `active` is unsafe.
-This is an explicit product decision, not an implicit consequence of backup.
+codes and revoked node certificates. The implemented internal restore policy
+atomically disables the administrator, deletes browser sessions/recovery codes
+and revokes every restored certificate and binding, retaining registry history
+and existing revocation timestamps. Administrator recovery and repeated stale
+restore never reactivate those credentials. Nodes require explicit local
+recovery and fresh enrollment; this workflow remains unimplemented. There is
+no seamless reconnect or archive-local replay counter. Phase-6 restore must
+also invalidate every restored invitation and claim credential when those
+capabilities exist.
 
 The dedicated listener uses bounded header/body/timeouts, connection and
 handshake limits, `Cache-Control: no-store`, generic error bodies, no CORS, and
@@ -237,8 +236,10 @@ The completed renewal handoff is
 [control-node-renewal-next-session.md](control-node-renewal-next-session.md).
 The internal server-leaf rotation checkpoint is implemented in
 [control-server-leaf-rotation-next-session.md](control-server-leaf-rotation-next-session.md).
-It has no scheduler, production runtime owner or route. The next checkpoint
-reconciles controller backup/restore with certificate revocation and replay state.
+It has no scheduler, production runtime owner or route. Controller backup/restore
+reconciles certificate authority with archived PKI and registry, invalidating
+all restored node certificates and bindings. Explicit loopback enablement
+remains gated on the verified recovery policy and later enrollment prerequisites.
 
 | Slice | Main ownership | Deliverable and acceptance evidence |
 | --- | --- | --- |
@@ -267,7 +268,7 @@ raw TLS handshake diagnostics are suppressed until safe structured transport
 events are defined.
 
 For every code slice: targeted Go tests during development, then `make ci`,
-`make quality`, `make security-fast`, and `go test -race ./...` for the final
+`make quality`, `make security`, and `go test -race ./...` for the final
 integrated transport. Build the Docker image and run a host-network smoke test
 when bind/packaging changes. Before exposure, test a real TLS handshake with
 wrong/expired/revoked/overlapping certificates, same-connection revocation,
@@ -289,7 +290,8 @@ unverified, not passed.
   and port collisions. Keep `/api/v1` out of scope.
 - Keep the `VACUUM INTO` controller backup snapshot verified with the pinned
   SQLite driver, including integrity, permissions, size and concurrent auth
-  writes. Recheck these properties when PKI tables join the archive.
+  writes. The registry/PKI validation and stale-restore denial tests now cover
+  their participation in the archive.
 - Use `(issuer generation, serial)` as the unique certificate key. Store public
   certificate DER and a digest of the full CSR DER with the issuance row so an
   exact renewal retry can return the original certificate without issuing a
@@ -300,10 +302,9 @@ unverified, not passed.
   transition stays in an operator-visible staged state. Until phase 6 provides
   authenticated node acknowledgement, CA rotation remains design-only, not an
   automatically enabled fleet operation.
-- Settle the restore/revocation trade-off before phase 6: the existing ADR says
-  nodes reconnect seamlessly after same-identity restore, while a stale backup
-  can undo later certificate revocations. Default to fail-closed re-enrollment
-  unless a testable replay-fencing mechanism preserves both properties.
+- Preserve the implemented blanket revocation policy across future enrollment
+  work. Seamless reconnect would require a separate proven replay fence; a
+  generation stored only in the restored archive cannot provide one.
 
 Reference behavior: [Go TLS client-auth and verification](https://pkg.go.dev/crypto/tls),
 [Go X.509 issuance and validation](https://pkg.go.dev/crypto/x509), and

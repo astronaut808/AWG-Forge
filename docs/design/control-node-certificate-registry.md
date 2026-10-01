@@ -49,8 +49,9 @@ record durable before PEM is returned. SQLite is configured with WAL and full
 synchronous writes. The controller's CA key remains in the protected
 generation files and never enters the database. A missing database, a revoked
 record in the current database, corrupt key, or expired CA fails closed. A
-restored backup that predates revocation is handled by the later restore gate
-before any listener is enabled.
+restored backup that predates revocation is handled by controller restore:
+every archived certificate and binding is revoked before completion, preserving
+history. Administrator recovery never restores that authority.
 
 ## Internal renewal and rebind fencing
 
@@ -96,10 +97,10 @@ persistence domains. A controller cannot transfer a node remotely.
    predecessor through durable journal recovery. No scheduler or production
    caller exists. CA trust rotation remains a later staged operation requiring
    node acknowledgement.
-2. Reconcile controller backup/restore with the registry. An old backup
-   must not silently undo a revocation: until a replay fence exists, restored
-   node certificates require fail-closed re-enrollment. Verify the archived
-   SQLite schema and PKI files together.
+2. Controller backup/restore validates SQLite schema, registry and PKI together
+   and atomically invalidates all restored browser/node authority. Nodes need
+   explicit local recovery and fresh enrollment; that workflow is still a later
+   checkpoint.
 3. Only then wire an explicit loopback enablement transition. Non-loopback
    exposure waits for authenticated enrollment, its backup gate and the
    failure-matrix tests. The existing Web UI, standalone mode and DB-off mode
