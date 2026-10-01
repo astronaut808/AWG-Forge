@@ -64,21 +64,23 @@ type Route struct {
 type routeKey struct{ method, path string }
 
 type Runtime struct {
-	endpoint    controlpki.Endpoint
-	tlsConfig   *tls.Config
-	mu          sync.Mutex
-	snapshot    *certificateSnapshot
-	caPEM       []byte
-	pin         string
-	listener    net.Listener
-	connections map[*trackedConnection]struct{}
-	changed     chan struct{}
-	closed      bool
-	serving     bool
-	closeReason error
-	authorizer  Authorizer
-	routes      map[routeKey]Route
-	requests    chan struct{}
+	endpoint       controlpki.Endpoint
+	tlsConfig      *tls.Config
+	mu             sync.Mutex
+	snapshot       *certificateSnapshot
+	caPEM          []byte
+	pin            string
+	listener       net.Listener
+	connections    map[*trackedConnection]struct{}
+	changed        chan struct{}
+	closed         bool
+	serving        bool
+	closeReason    error
+	authorizer     Authorizer
+	routes         map[routeKey]Route
+	requests       chan struct{}
+	requestContext context.Context
+	cancelRequests context.CancelFunc
 }
 
 // New validates the prepared identity and builds a separate, closed-by-default
@@ -123,6 +125,7 @@ func New(material controlpki.Material, endpoint controlpki.Endpoint, pin string,
 		routeTable[key] = route
 		routeIDs[route.ID] = struct{}{}
 	}
+	requestContext, cancelRequests := context.WithCancel(context.Background())
 	runtime := &Runtime{
 		endpoint: endpoint, snapshot: snapshot, caPEM: append([]byte(nil), material.CACert...), pin: pin,
 		connections: make(map[*trackedConnection]struct{}), changed: make(chan struct{}, 1),
@@ -132,6 +135,7 @@ func New(material controlpki.Material, endpoint controlpki.Endpoint, pin string,
 			SessionTicketsDisabled: true, NextProtos: []string{"http/1.1"},
 		},
 		authorizer: authorizer, routes: routeTable, requests: make(chan struct{}, maxRequests),
+		requestContext: requestContext, cancelRequests: cancelRequests,
 	}
 	// Certificates must remain empty: IP clients send no SNI and must still use
 	// the same callback as DNS clients, including ServeTLS's cloned configuration.
@@ -139,13 +143,46 @@ func New(material controlpki.Material, endpoint controlpki.Endpoint, pin string,
 	return runtime, nil
 }
 
-// Serve binds only the validated loopback endpoint and drains on cancellation.
-func (runtime *Runtime) Serve(ctx context.Context) error {
+// Bind reserves the loopback socket without accepting connections or TLS. An
+// application owner can commit enablement while holding this exact socket.
+func (runtime *Runtime) Bind() error {
 	if runtime == nil || runtime.tlsConfig == nil {
 		return errors.New("uninitialized control runtime")
 	}
 	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	return runtime.bindLocked()
+}
+
+func (runtime *Runtime) bindLocked() error {
 	if !time.Now().Before(runtime.snapshot.expiresAt) {
+		return controlpki.ErrExpired
+	}
+	if runtime.closed || runtime.serving || runtime.listener != nil {
+		return errors.New("control runtime is closed or already bound")
+	}
+	address := net.JoinHostPort(runtime.endpoint.BindIP, strconv.Itoa(runtime.endpoint.Port))
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		return fmt.Errorf("bind control loopback listener: %w", err)
+	}
+	runtime.listener = limitListener(listener, maxConnections)
+	return nil
+}
+
+// Serve uses a reserved socket, or binds it for isolated transport callers. It
+// drains on cancellation. The application owner binds before committing state.
+func (runtime *Runtime) Serve(ctx context.Context) error {
+	if runtime == nil || runtime.tlsConfig == nil {
+		return errors.New("uninitialized control runtime")
+	}
+	if err := ctx.Err(); err != nil {
+		runtime.Close()
+		return err
+	}
+	runtime.mu.Lock()
+	if !time.Now().Before(runtime.snapshot.expiresAt) {
+		runtime.closeLocked(controlpki.ErrExpired)
 		runtime.mu.Unlock()
 		return controlpki.ErrExpired
 	}
@@ -153,13 +190,12 @@ func (runtime *Runtime) Serve(ctx context.Context) error {
 		runtime.mu.Unlock()
 		return errors.New("control runtime is closed or already serving")
 	}
-	address := net.JoinHostPort(runtime.endpoint.BindIP, strconv.Itoa(runtime.endpoint.Port))
-	listener, err := net.Listen("tcp", address)
-	if err != nil {
-		runtime.mu.Unlock()
-		return fmt.Errorf("bind control loopback listener: %w", err)
+	if runtime.listener == nil {
+		if err := runtime.bindLocked(); err != nil {
+			runtime.mu.Unlock()
+			return err
+		}
 	}
-	runtime.listener = limitListener(listener, maxConnections)
 	runtime.serving = true
 	runtime.mu.Unlock()
 	defer runtime.Close()
@@ -169,11 +205,28 @@ func (runtime *Runtime) Serve(ctx context.Context) error {
 		ErrorLog: log.New(io.Discard, "", 0), ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 30 * time.Second,
 		MaxHeaderBytes: maxHeaderBytes,
+		BaseContext:    func(net.Listener) context.Context { return runtime.requestContext },
 	}
 	result := make(chan error, 1)
 	go func() {
 		result <- server.ServeTLS(&trackingListener{Listener: runtime.listener, runtime: runtime}, "", "")
 	}()
+	drain := func() error {
+		runtime.cancelRequests()
+		runtime.mu.Lock()
+		deadline := time.Now().Add(shutdownTimeout)
+		if runtime.snapshot.expiresAt.Before(deadline) {
+			deadline = runtime.snapshot.expiresAt
+		}
+		runtime.mu.Unlock()
+		shutdownCtx, cancel := context.WithDeadline(context.Background(), deadline)
+		defer cancel()
+		err := server.Shutdown(shutdownCtx)
+		if err != nil {
+			_ = server.Close()
+		}
+		return err
+	}
 	for {
 		runtime.mu.Lock()
 		expiresAt := runtime.snapshot.expiresAt
@@ -183,15 +236,19 @@ func (runtime *Runtime) Serve(ctx context.Context) error {
 		closed, reason := runtime.closed, runtime.closeReason
 		runtime.mu.Unlock()
 		if closed {
-			_ = server.Close()
+			drainErr := drain()
 			<-result
-			return reason
+			if reason != nil {
+				return reason
+			}
+			return drainErr
 		}
 		expiry := time.NewTimer(time.Until(expiresAt))
 		select {
 		case err := <-result:
 			expiry.Stop()
-			_ = server.Close()
+			runtime.Close()
+			drainErr := drain()
 			runtime.mu.Lock()
 			reason = runtime.closeReason
 			runtime.mu.Unlock()
@@ -199,7 +256,7 @@ func (runtime *Runtime) Serve(ctx context.Context) error {
 				return reason
 			}
 			if errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) {
-				return nil
+				return drainErr
 			}
 			return err
 		case <-expiry.C:
@@ -209,15 +266,7 @@ func (runtime *Runtime) Serve(ctx context.Context) error {
 			expiry.Stop()
 		case <-ctx.Done():
 			expiry.Stop()
-			runtime.mu.Lock()
-			deadline := time.Now().Add(shutdownTimeout)
-			if runtime.snapshot.expiresAt.Before(deadline) {
-				deadline = runtime.snapshot.expiresAt
-			}
-			runtime.mu.Unlock()
-			shutdownCtx, cancel := context.WithDeadline(context.Background(), deadline)
-			err := server.Shutdown(shutdownCtx)
-			cancel()
+			err := drain()
 			runtime.mu.Lock()
 			if !time.Now().Before(runtime.snapshot.expiresAt) {
 				runtime.closeLocked(controlpki.ErrExpired)

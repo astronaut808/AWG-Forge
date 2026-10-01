@@ -42,6 +42,19 @@ func restoreControllerWithStep(ctx context.Context, cfg config.Config, password 
 	if err := checkRestoreStagingAbsent(cfg.ConfigDir); err != nil {
 		return err
 	}
+	restoredState := backup.State
+	if restoredState.Controller.Control != nil {
+		controller := *restoredState.Controller
+		control := *controller.Control
+		control.Enabled = false
+		controller.Control = &control
+		restoredState.Controller = &controller
+		var err error
+		backup.Files, err = replaceRestoredState(backup.Files, restoredState)
+		if err != nil {
+			return err
+		}
+	}
 	preRestore, err := preRestoreBackupFile(ctx, cfg, current, password)
 	if err != nil {
 		return fmt.Errorf("create encrypted pre-restore backup: %w", err)
@@ -103,7 +116,7 @@ func restoreControllerWithStep(ctx context.Context, cfg config.Config, password 
 			return err
 		}
 	}
-	if err := app.ReconcileRestoredController(ctx, cfg, backup.State, time.Now().UTC()); err != nil {
+	if err := app.ReconcileRestoredController(ctx, cfg, restoredState, time.Now().UTC()); err != nil {
 		return fmt.Errorf("verify restored controller; offline recovery required: %w", err)
 	}
 	if err := controllerRestoreStep(step, "after-reconciliation"); err != nil {

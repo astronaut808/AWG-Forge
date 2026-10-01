@@ -25,7 +25,7 @@ func ValidateControllerBackupSnapshot(ctx context.Context, path string, state co
 	var ca *x509.Certificate
 	var generation string
 	if control := state.Controller.Control; control != nil {
-		if err := ValidateControlIdentityState(control, 0); err != nil {
+		if err := ValidateControlIdentityMetadata(control, 0); err != nil {
 			return errors.New("invalid controller snapshot control identity")
 		}
 		if err := controlpki.Validate(material, controlpki.Endpoint{BindIP: control.BindIP, Advertised: control.Advertised, Port: control.Port}, control.CAPin, time.Now().UTC(), true); err != nil {

@@ -239,6 +239,64 @@ func TestControllerRegistryRestoreRejectsStaleNodeAuthority(t *testing.T) {
 	}
 }
 
+func TestEnabledControlIdentityBackupRestoresDisabled(t *testing.T) {
+	ctx := context.Background()
+	f := newRegistryRestoreFixture(t, false)
+	store := storage.New(f.cfg.ConfigDir)
+	source, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	source.Controller.Control.Enabled = true
+	if err := store.Save(source); err != nil {
+		t.Fatal(err)
+	}
+	archive, err := Create(ctx, f.cfg, app.New(f.cfg), testPassword, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := decrypt(archive.Data, testPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, metadata, archived, err := readPlainZip(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if archived.Controller == nil || archived.Controller.Control == nil || !archived.Controller.Control.Enabled {
+		t.Fatal("archive did not retain enabled control identity metadata")
+	}
+	path := writeTempArchive(t, archive.Data)
+	if _, err := Verify(ctx, f.cfg, testPassword, path); err != nil {
+		t.Fatalf("verify enabled control identity backup: %v", err)
+	}
+	invalidState := archived
+	invalidControl := *invalidState.Controller.Control
+	invalidControl.CAPin = "invalid"
+	invalidState.Controller = &config.ControllerState{ControllerID: invalidState.Controller.ControllerID, ActivatedAt: invalidState.Controller.ActivatedAt, Control: &invalidControl}
+	invalidFiles, err := replaceRestoredState(files, invalidState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Verify(ctx, f.cfg, testPassword, writeTempArchive(t, rebuildControlArchive(t, metadata, invalidFiles))); err == nil {
+		t.Fatal("malformed enabled control metadata passed verification")
+	}
+	if err := Restore(ctx, f.cfg, testPassword, path); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Controller == nil || restored.Controller.Control == nil || restored.Controller.Control.Enabled {
+		t.Fatal("enabled control identity was not disabled during restore")
+	}
+	if !reflect.DeepEqual(restored.Tunnels, source.Tunnels) {
+		t.Fatal("restore changed tunnel revisions")
+	}
+	assertRegistryRestoreDenied(t, f, []controlpki.NodeCertificate{f.initial})
+}
+
 func TestControllerRegistryArchiveRejectsMismatchBeforeTargetMutation(t *testing.T) {
 	f := newRegistryRestoreFixture(t, false)
 	ctx := context.Background()

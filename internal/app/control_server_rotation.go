@@ -15,8 +15,8 @@ import (
 var errStaleControlServerGeneration = errors.New("active control server generation changed")
 
 // rotateControlServerLeaf has no production caller. An expected generation
-// fences retries after an uncertain commit. live is solely an isolated runtime
-// transition contract until a future explicit runtime owner is implemented.
+// fences retries after an uncertain commit. Enabled state requires the private
+// application runtime owner; disabled-state tests may use an isolated runtime.
 func (s *Service) rotateControlServerLeaf(ctx context.Context, expected string, now time.Time, live *controlserver.Runtime) (result config.ControlIdentityState, err error) {
 	if err := ctx.Err(); err != nil {
 		return result, err
@@ -51,8 +51,11 @@ func (s *Service) rotateControlServerLeaf(ctx context.Context, expected string, 
 		return result, errors.New("control server rotation requires offline inspection")
 	}
 	control := *state.Controller.Control
-	if err := ValidateControlIdentityState(&control, s.cfg.WebUIPort); err != nil {
+	if err := ValidateControlIdentityMetadata(&control, s.cfg.WebUIPort); err != nil {
 		return result, err
+	}
+	if control.Enabled && (live == nil || s.controlOwner == nil || live != s.controlOwner.runtime) {
+		return result, errors.New("enabled control rotation requires its runtime owner")
 	}
 	if control.ServerGeneration != expected {
 		return result, errStaleControlServerGeneration
