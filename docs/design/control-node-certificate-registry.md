@@ -101,8 +101,11 @@ persistence domains. A controller cannot transfer a node remotely.
    and atomically invalidates all restored browser/node authority. Nodes need
    explicit local recovery and fresh enrollment; that workflow is still a later
    checkpoint.
-3. Only then wire an explicit loopback enablement transition. Non-loopback
-   exposure waits for authenticated enrollment, its backup gate and the
+3. The private application owner now tests explicit loopback enablement with a
+   fresh verified backup, recent-auth session receipt, socket reservation before
+   commit, disable/restart and live leaf rotation. No product lifecycle caller
+   exists. Public lifecycle wiring and non-loopback exposure wait for
+   authenticated enrollment, confirmation that the backup was retained and the
    failure-matrix tests. The existing Web UI, standalone mode and DB-off mode
    remain independent throughout.
 

@@ -9,7 +9,10 @@ authenticated node transport; enrollment and fleet features remain later work.
 Controller authentication and disabled control-identity preparation are
 implemented. `runServe` currently starts the Web UI and optional ACME HTTP-01
 listener, but no control listener. A separate loopback TLS runtime exists
-without a production caller. Controller mode has an administrator,
+with a private application lifecycle owner and no production caller. Its tests
+reserve the socket before committing enablement, require a fresh verified backup
+and recent administrator session, and cover disable, restart and owned rotation.
+Controller mode has an administrator,
 `controller_id`, and an optional prepared CA/server identity in `state.json`.
 The node registry and initial issuance are merged in PR #110; internal
 [certificate renewal](control-node-renewal-next-session.md) is merged in PR
@@ -25,7 +28,8 @@ TLS/PKI vulnerability: the product has no control listener or enrollment routes,
 and no production path issues node certificates. Controller restore uses a
 durable startup gate to block a partially restored file set. Backup/restore
 validates archived PKI and registry together and invalidates all restored node authority.
-Control remains disabled.
+Product control remains disabled. Internal loopback transitions can persist
+`Enabled=true`; archives preserve that value and cold restore forces it to false.
 
 The goal of this phase is a tested control identity, dedicated TLS listener,
 certificate issuance and renewal primitives, and a fail-closed authorization
@@ -236,10 +240,13 @@ The completed renewal handoff is
 [control-node-renewal-next-session.md](control-node-renewal-next-session.md).
 The internal server-leaf rotation checkpoint is implemented in
 [control-server-leaf-rotation-next-session.md](control-server-leaf-rotation-next-session.md).
-It has no scheduler, production runtime owner or route. Controller backup/restore
+It has no scheduler or production route. The private application lifecycle owner
+publishes rotation into its loopback runtime. Controller backup/restore
 reconciles certificate authority with archived PKI and registry, invalidating
-all restored node certificates and bindings. Explicit loopback enablement
-remains gated on the verified recovery policy and later enrollment prerequisites.
+all restored node certificates and bindings. Private loopback enablement has a
+one-use, process-local verified-backup receipt bound to the complete prepared
+identity and the current recent-auth session. Public lifecycle wiring remains
+gated on authenticated enrollment and confirmation that the backup was retained.
 
 | Slice | Main ownership | Deliverable and acceptance evidence |
 | --- | --- | --- |
@@ -251,9 +258,10 @@ remains gated on the verified recovery policy and later enrollment prerequisites
 | 5. Enablement integration | `internal/app`, `internal/server`, `cmd/awg-forge`, installer tests | Test recent-auth protected preparation, endpoint/bind preflight, verified post-preparation backup and reversible runtime transition on loopback. Keep non-loopback enablement unavailable until phase-6 enrollment routes and their security tests are ready. No auto-enable on install/upgrade. |
 
 The loopback transport implementation is isolated in `internal/controlserver`.
-It has no production caller while `ControlIdentityState.Enabled` remains false.
+It has no production caller. `internal/app` owns the private loopback transition;
+`Init` never starts it, even when committed state records `Enabled=true`.
 The `cmd/awg-forge` and `internal/server` lifecycle wiring in slice 2 is
-deliberately deferred to the explicit enablement transition in slice 5: merely
+deliberately deferred until authenticated enrollment: merely
 preparing an identity must not open a socket. Transport tests originally used a
 temporary test-only SQLite authorizer. The production certificate registry and
 typed node authorizer from PR #110 have no production route. No bootstrap route

@@ -115,6 +115,7 @@ func (runtime *Runtime) closeLocked(reason error) {
 	}
 	runtime.closed = true
 	runtime.closeReason = reason
+	runtime.cancelRequests()
 	if runtime.listener != nil {
 		_ = runtime.listener.Close()
 	}

@@ -109,11 +109,12 @@ Restore must run while the server container is stopped. The one-shot restore
 container uses the same data volume; starting the service afterwards loads the
 restored desired state and TLS assets. Standalone and managed-node backups do
 not include SQLite operational history. Controller backups include the
-authentication database snapshot and its key file. If a disabled control
+authentication database snapshot and its key file. If a control
 identity has been prepared, they also include the private keys and certificates
 of its exact CA and server generations. Restore revokes every archived node
 certificate and binding; recovering the administrator does not restore node
-access. See [controller recovery](diagnostics.md) before restarting.
+access. Restore always disables the control listener, including when the archive
+records an enabled identity. See [controller recovery](diagnostics.md) before restarting.
 With `APPLY_CONFIG=true`, startup applies
 enabled tunnels and reconciles WARP. Wait for startup before running the
 remaining checks.

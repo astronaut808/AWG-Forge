@@ -49,6 +49,9 @@ type Service struct {
 	controllerAuthOptions controlauth.Options
 	controlIdentityStep   func(string) error
 	controlRotationStep   func(string) error
+	controlRuntimeStep    func(string) error
+	controlOwner          *controlRuntimeOwner
+	controlEnable         *controlEnableAuthorization
 }
 
 type runtimeOperations struct {

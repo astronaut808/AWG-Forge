@@ -186,8 +186,18 @@ func createFromState(ctx context.Context, cfg config.Config, state config.State,
 	if int64(len(data)) > maxEncryptedBackupBytes {
 		return Archive{}, errors.New("encrypted backup exceeds the 64 MiB restore limit")
 	}
-	if _, err := validateBackupData(ctx, password, data); err != nil {
+	validated, err := validateBackupData(ctx, password, data)
+	if err != nil {
 		return Archive{}, fmt.Errorf("verify encrypted backup before publication: %w", err)
+	}
+	if state.Controller != nil {
+		if validated.State.Controller == nil || validated.State.Controller.ControllerID != state.Controller.ControllerID {
+			return Archive{}, errors.New("verified controller backup identity changed")
+		}
+		actual, expected := validated.State.Controller.Control, state.Controller.Control
+		if (actual == nil) != (expected == nil) || (actual != nil && *actual != *expected) {
+			return Archive{}, errors.New("verified controller backup control identity changed")
+		}
 	}
 	return Archive{
 		Name: fmt.Sprintf("awg-forge-backup-%s.afbackup", now.Format("20060102-150405")),
@@ -258,7 +268,7 @@ func RestoreWithOptions(ctx context.Context, cfg config.Config, password, path s
 			return RestoreResult{}, errors.New("controller restore requires the existing stopped controller with the same identity")
 		}
 		if validated.State.Controller.Control != nil {
-			if err := app.ValidateControlIdentityState(validated.State.Controller.Control, cfg.WebUIPort); err != nil {
+			if err := app.ValidateControlIdentityMetadata(validated.State.Controller.Control, cfg.WebUIPort); err != nil {
 				return RestoreResult{}, errors.New("restored control endpoint conflicts with the target Web UI configuration")
 			}
 		}
@@ -742,7 +752,7 @@ func validateControllerArchive(ctx context.Context, files []restoreFile, state c
 	var material controlpki.Material
 	var controlPaths []string
 	if state.Controller != nil && state.Controller.Control != nil {
-		if err := app.ValidateControlIdentityState(state.Controller.Control, 0); err != nil {
+		if err := app.ValidateControlIdentityMetadata(state.Controller.Control, 0); err != nil {
 			return errors.New("backup validation failed: invalid control identity state")
 		}
 		var err error
@@ -823,7 +833,7 @@ func allowedControllerBackupPath(path string, controlPaths []string) bool {
 }
 
 func validateStoredControlIdentity(cfg config.Config, control *config.ControlIdentityState, allowExpired bool) error {
-	if err := app.ValidateControlIdentityState(control, cfg.WebUIPort); err != nil {
+	if err := app.ValidateControlIdentityMetadata(control, cfg.WebUIPort); err != nil {
 		return err
 	}
 	material, err := storage.New(cfg.ConfigDir).LoadControlIdentity(control.CAGeneration, control.ServerGeneration)
