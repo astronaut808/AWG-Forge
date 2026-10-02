@@ -225,6 +225,7 @@ func (s *Service) enrollmentRoutes() []controlserver.Route {
 		{ID: "enrollment.claim", Method: http.MethodPost, Path: "/control/v1/enrollments/{invitation_id}/claim", Bootstrap: true, Handler: http.HandlerFunc(s.claimEnrollmentHTTP)},
 		{ID: "enrollment.status", Method: http.MethodGet, Path: "/control/v1/enrollments/{enrollment_id}", Bootstrap: true, Handler: http.HandlerFunc(s.enrollmentStatusHTTP)},
 		{ID: "node.presence", Method: http.MethodPut, Path: "/control/v1/node/presence", Handler: http.HandlerFunc(s.nodePresenceHTTP)},
+		{ID: "node.certificate-renewal", Method: http.MethodPost, Path: "/control/v1/node/certificate-renewals", Handler: http.HandlerFunc(s.nodeCertificateRenewalHTTP)},
 	}
 }
 func bootstrapToken(r *http.Request) (string, error) {

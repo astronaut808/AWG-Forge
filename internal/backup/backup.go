@@ -108,6 +108,9 @@ func Create(ctx context.Context, cfg config.Config, service *app.Service, passwo
 	if err := storage.New(cfg.ConfigDir).CheckRestorePending(); err != nil {
 		return Archive{}, err
 	}
+	if _, err := os.Lstat(storage.New(cfg.ConfigDir).NodeRenewalJournalPath()); !errors.Is(err, os.ErrNotExist) {
+		return Archive{}, errors.New("cannot create backup while node renewal is pending")
+	}
 	if _, err := os.Lstat(storage.New(cfg.ConfigDir).NodeIdentityJournalPath()); !errors.Is(err, os.ErrNotExist) {
 		return Archive{}, errors.New("cannot create backup while node enrollment is pending")
 	}
@@ -156,6 +159,9 @@ func Create(ctx context.Context, cfg config.Config, service *app.Service, passwo
 }
 
 func createFromState(ctx context.Context, cfg config.Config, state config.State, password string, opts Options) (Archive, error) {
+	if _, err := os.Lstat(storage.New(cfg.ConfigDir).NodeRenewalJournalPath()); !errors.Is(err, os.ErrNotExist) {
+		return Archive{}, errors.New("cannot create backup while node renewal is pending")
+	}
 	if _, err := os.Lstat(storage.New(cfg.ConfigDir).NodeIdentityJournalPath()); !errors.Is(err, os.ErrNotExist) {
 		return Archive{}, errors.New("node enrollment is pending")
 	}

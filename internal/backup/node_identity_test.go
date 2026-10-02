@@ -8,6 +8,7 @@ import (
 	"encoding/pem"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,7 +22,8 @@ import (
 func TestNodeCredentialBackupAndDetach(t *testing.T) {
 	cfg := testConfig(t)
 	service := app.New(cfg)
-	material, pin, err := controlpki.Generate(controlpki.Endpoint{BindIP: "127.0.0.1", Advertised: "127.0.0.1", Port: 9443}, time.Now())
+	issuedAt := time.Now().Add(-21 * 24 * time.Hour)
+	material, pin, err := controlpki.Generate(controlpki.Endpoint{BindIP: "127.0.0.1", Advertised: "127.0.0.1", Port: 9443}, issuedAt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +35,7 @@ func TestNodeCredentialBackupAndDetach(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cert, err := controlpki.IssueNodeCertificate(material, csr, time.Now())
+	cert, err := controlpki.IssueNodeCertificate(material, csr, issuedAt.Add(time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,6 +48,28 @@ func TestNodeCredentialBackupAndDetach(t *testing.T) {
 	if err := service.InstallNodeEnrollment(context.Background(), invitation, approved, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})); err != nil {
 		t.Fatal(err)
 	}
+	before, err := storage.New(cfg.ConfigDir).Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	renewal, err := service.PrepareNodeCertificateRenewal(context.Background(), *before.NodeConnection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Create(context.Background(), cfg, service, testPassword, Options{}); err == nil {
+		t.Fatal("pending renewal was archived")
+	}
+	if _, err := createFromState(context.Background(), cfg, before, testPassword, Options{}); err == nil {
+		t.Fatal("cached state bypassed renewal gate")
+	}
+	replacement, err := controlpki.IssueNodeCertificate(material, renewal.CSRDER, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	renewed := controlapi.IssuedCertificate{CertificatePEM: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: replacement.DER})), ChainPEM: string(material.CACert), Serial: replacement.Serial, NotBefore: replacement.NotBefore, NotAfter: replacement.NotAfter}
+	if err := service.InstallNodeCertificateRenewal(context.Background(), *before.NodeConnection, renewal.Generation, renewed); err != nil {
+		t.Fatal(err)
+	}
 	archive, err := Create(context.Background(), cfg, service, testPassword, Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -54,8 +78,14 @@ func TestNodeCredentialBackupAndDetach(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if validated.State.NodeConnection.CredentialGeneration != renewal.Generation {
+		t.Fatal("backup rolled credentials back")
+	}
 	var nodeFiles int
 	for _, file := range validated.Files {
+		if strings.Contains(file.Path, before.NodeConnection.CredentialGeneration) || strings.HasPrefix(file.Path, "node-renewal/") || file.Path == storage.NodeRenewalJournalFileName {
+			t.Fatal("backup included predecessor or candidate material")
+		}
 		if len(file.Path) > 5 && file.Path[:5] == "node/" {
 			nodeFiles++
 		}

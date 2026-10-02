@@ -208,12 +208,22 @@ configuration and tunnel revisions are preserved; a fresh node has no default
 tunnel. Controller connection loss leaves local forwarding running. Revocation
 stops the connection worker and requires explicit local recovery.
 
+While `serve` is running, the node automatically renews its certificate after
+two thirds of its validity period. It saves a new private key and the exact CSR
+before requesting renewal, so a restart or lost response retries the same request.
+The controller keeps the old certificate valid for at most 24 hours after renewal;
+revocation ends that overlap immediately. Switching credentials preserves local
+tunnels, configuration revisions and the current boot identity. An expired or
+revoked certificate requires local recovery; local service remains available.
+Automatic controller server-certificate renewal is a separate checkpoint.
+
 Cold controller restore disables the listener and administrator, revokes all
 restored node certificates/bindings, and removes invitations, claim credentials
 and presence sessions. Managed-node backups include the protected credential
-generation; restore still enforces identity fencing or explicit detach. Detach
-removes controller authority. Certificate renewal, local re-enrollment of a
-revoked binding, external listeners and fleet UI remain separate work.
+generation; backup is blocked while node renewal is pending. Restore still
+enforces identity fencing or explicit detach. Detach removes controller authority.
+Local re-enrollment of a revoked binding, external listeners and fleet UI remain
+separate work.
 
 ## Client Config Import
 

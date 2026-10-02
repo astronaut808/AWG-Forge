@@ -48,6 +48,9 @@ func (s *Service) initWithOptionsLocked(options InitOptions) (config.State, erro
 	if err := s.recoverNodeEnrollmentLocked(); err != nil {
 		return config.State{}, err
 	}
+	if err := s.recoverNodeRenewalLocked(); err != nil {
+		s.log("warn", "node.renewal.recovery_pending", "node renewal needs local recovery; local forwarding continues", nil, nil)
+	}
 	if state, err := s.store.Load(); err == nil {
 		if err := s.recoverPendingDesiredStateCommitLocked(state); err != nil {
 			return config.State{}, fmt.Errorf("recover pending desired-state commit: %w", err)

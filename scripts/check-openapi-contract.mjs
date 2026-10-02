@@ -71,6 +71,7 @@ controlAjv.addSchema({
 });
 
 const enrollmentClaim = requireSchema(controlAjv, "EnrollmentClaimRequest");
+const certificateRenewal = requireSchema(controlAjv, "CertificateRenewalRequest");
 const nodePresence = requireSchema(controlAjv, "NodePresence");
 const presenceAccepted = requireSchema(controlAjv, "PresenceAccepted");
 const nodeSnapshot = requireSchema(controlAjv, "NodeSnapshot");
@@ -141,6 +142,27 @@ const controlCases = [
       capabilities: ["snapshot.read"],
     },
     true,
+  ],
+  [
+    "certificate renewal request",
+    certificateRenewal,
+    {
+      boot_id: ids.boot,
+      current_serial: "123456789",
+      csr_pem: `-----BEGIN CERTIFICATE REQUEST-----\n${"A".repeat(128)}\n-----END CERTIFICATE REQUEST-----`,
+    },
+    true,
+  ],
+  [
+    "certificate renewal rejects an unknown field",
+    certificateRenewal,
+    {
+      boot_id: ids.boot,
+      current_serial: "123456789",
+      csr_pem: `-----BEGIN CERTIFICATE REQUEST-----\n${"A".repeat(128)}\n-----END CERTIFICATE REQUEST-----`,
+      node_id: ids.epoch,
+    },
+    false,
   ],
   [
     "enrollment rejects a private key",

@@ -1,7 +1,7 @@
 # Control TLS and PKI implementation plan
 
-Status: loopback enrollment and initial mTLS presence are implemented. External
-control listeners, fleet operations and production renewal routes remain later work.
+Status: loopback enrollment, mTLS presence and automatic node certificate renewal
+are implemented. External control listeners and fleet operations remain later work.
 
 ## Current boundary and goal
 
@@ -19,15 +19,19 @@ mTLS with a registry check on every request and a persisted boot sequence fence.
 The node stores private credentials separately from `state.json`; enrollment
 preserves existing local tunnels, and a fresh node has no tunnel. Controller outage,
 revocation or certificate expiry stops control admission while local service remains
-available. No remote tunnel management or automatic renewal is exposed.
+available. The running node renews after two thirds of its certificate lifetime,
+persisting a fresh key and the exact CSR before its first request. A lost response
+or restart reuses that CSR; only a complete validated credential generation can
+replace the committed generation. No remote tunnel management is exposed.
 
 The `/control/v1` OpenAPI file remains a draft for the wider protocol; claim,
-status and presence are implemented on loopback. Controller backup includes auth
-keys, control identity and a verified SQLite snapshot. Cold restore requires the
+status, presence and certificate renewal are implemented on loopback. Controller
+backup includes auth keys, control identity and a verified SQLite snapshot. Cold restore requires the
 same existing controller identity and offline admin recovery, disables the listener,
 and invalidates restored node authority, invitations, claim credentials and presence.
-Node backup includes its committed credential generation; explicit detach removes
-controller authority while preserving local configuration.
+Node backup includes its committed credential generation and rejects pending
+renewal; explicit detach removes controller authority while preserving local
+configuration.
 
 The goal of this phase is a tested control identity, dedicated TLS listener,
 certificate issuance and renewal primitives, and a fail-closed authorization
@@ -156,15 +160,19 @@ node private key. Write a new certificate record atomically and keep the old
 serial active for at most 24 hours to cover the node's atomic key/cert switch.
 Explicit revocation or rebind ends that overlap immediately. An expired or
 revoked certificate cannot renew itself; local re-enrollment is the recovery
-path. Persist node key/cert replacement atomically on the node in phase 6.
+path. The node publishes immutable credentials before switching their generation
+in `state.json`. The private renewal journal contains fencing metadata only; key
+and signed CSR remain in private files. Startup recovers a committed switch even
+after certificate expiry, preserving local service. Backup rejects a pending
+renewal and contains only the committed credential generation.
 
 Server leaf rotation uses a hot-swappable immutable TLS certificate snapshot;
 readers never observe a partial key/cert pair. Changing the advertised hostname
 or IP requires a new SAN-bearing server leaf and a controlled endpoint update.
-An enabled controller renews its server leaf before the final third of its
-lifetime, retains the current valid leaf if renewal fails, and reports a safe
-warning before expiry. Expiry closes the control listener rather than serving
-an invalid certificate. The CA is never silently replaced. Nodes continue to
+An automatic server-leaf scheduler remains a separate checkpoint. It must renew
+before the final third of the leaf's lifetime, retain a valid current leaf on
+failure, and report a safe warning before expiry. Expiry closes the control
+listener rather than serving an invalid certificate. The CA is never silently replaced. Nodes continue to
 pin the same CA unless CA rotation is explicitly staged.
 
 ## Exposure and recovery gates
@@ -259,7 +267,7 @@ The loopback transport implementation is isolated in `internal/controlserver`.
 `internal/app` owns the transition; `internal/server` owns startup and shutdown.
 `Init` never starts it, even when committed state records `Enabled=true`.
 Preparing an identity does not open a socket. The production registry authorizes
-presence; only the two bootstrap routes bypass client-certificate admission.
+presence and renewal; only the two bootstrap routes bypass client-certificate admission.
 The runtime uses `GetCertificate` with no fixed fallback certificate. Reload closes
 all pre-switch sockets, including unfinished handshakes, and refreshes the
 expiry watch without rebinding. An invalid pre-commit candidate leaves the
