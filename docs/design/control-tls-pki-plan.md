@@ -1,35 +1,33 @@
 # Control TLS and PKI implementation plan
 
-Status: proposed architecture for delivery sequence phase 5. This is not an
-enabled product capability. The phase prepares a dedicated, independently
-authenticated node transport; enrollment and fleet features remain later work.
+Status: loopback enrollment and initial mTLS presence are implemented. External
+control listeners, fleet operations and production renewal routes remain later work.
 
 ## Current boundary and goal
 
-Controller authentication and disabled control-identity preparation are
-implemented. `runServe` currently starts the Web UI and optional ACME HTTP-01
-listener, but no control listener. A separate loopback TLS runtime exists
-with a private application lifecycle owner and no production caller. Its tests
-reserve the socket before committing enablement, require a fresh verified backup
-and recent administrator session, and cover disable, restart and owned rotation.
-Controller mode has an administrator,
-`controller_id`, and an optional prepared CA/server identity in `state.json`.
-The node registry and initial issuance are merged in PR #110; internal
-[certificate renewal](control-node-renewal-next-session.md) is merged in PR
-#112. Internal same-controller rebind fencing exists for an already revoked
-binding, but no local node rebind or production route exists.
-The `/control/v1` OpenAPI file is a design contract. Controller backup includes
-the auth key, prepared control identity and a verified SQLite snapshot; cold
-restore requires the same existing controller identity and offline admin
-recovery.
+Controller authentication, control-identity preparation, certificate registry,
+renewal primitives, server-leaf rotation and cold restore fencing are implemented.
+The browser API supports explicit recent-auth preparation, a new verified encrypted
+backup, confirmation that the archive was retained, and loopback enable/disable.
+`serve` restarts only committed enabled control state; `Init` never opens a socket.
 
-This is a future implementation risk, not a currently reachable controller
-TLS/PKI vulnerability: the product has no control listener or enrollment routes,
-and no production path issues node certificates. Controller restore uses a
-durable startup gate to block a partially restored file set. Backup/restore
-validates archived PKI and registry together and invalidates all restored node authority.
-Product control remains disabled. Internal loopback transitions can persist
-`Enabled=true`; archives preserve that value and cold restore forces it to false.
+A protected invitation file pins the controller CA. The node generates its key
+locally and claims one signed CSR; the administrator compares the verification
+code before explicitly approving or rejecting it. Only the exact invitation claim
+and enrollment status routes permit certificate-free TLS. Initial presence uses
+mTLS with a registry check on every request and a persisted boot sequence fence.
+The node stores private credentials separately from `state.json`; enrollment
+preserves existing local tunnels, and a fresh node has no tunnel. Controller outage,
+revocation or certificate expiry stops control admission while local service remains
+available. No remote tunnel management or automatic renewal is exposed.
+
+The `/control/v1` OpenAPI file remains a draft for the wider protocol; claim,
+status and presence are implemented on loopback. Controller backup includes auth
+keys, control identity and a verified SQLite snapshot. Cold restore requires the
+same existing controller identity and offline admin recovery, disables the listener,
+and invalidates restored node authority, invitations, claim credentials and presence.
+Node backup includes its committed credential generation; explicit detach removes
+controller authority while preserving local configuration.
 
 The goal of this phase is a tested control identity, dedicated TLS listener,
 certificate issuance and renewal primitives, and a fail-closed authorization
@@ -45,7 +43,7 @@ and tested on loopback before node enrollment begins.
 | --- | --- |
 | Browser `/api` | Keep its existing listener, same-origin cookie session, and current routes. Browser auth never authenticates a node. |
 | Node `/control/v1` | Use a separate `net.Listener`, `http.Server`, route table, TLS configuration, and request log policy. Never mount `/api` or static assets there. |
-| Enrollment bootstrap | The only future routes allowed without a client certificate are an exact allowlist of invitation claim/status routes. A valid server certificate and pinned controller CA are still mandatory. This phase does not expose these routes. |
+| Enrollment bootstrap | Only an exact allowlist of invitation claim/status routes permits requests without a client certificate. A valid server certificate and pinned controller CA are mandatory. These routes are implemented on loopback. |
 | Established node | TLS verifies the client chain and client-auth usage. On **every request**, the application resolves the presented issuer/serial to an active node certificate, `controller_id`, `node_id`, and `binding_epoch` in SQLite. Headers, URL/body IDs, subject CN, and proxy assertions do not establish identity. |
 | Controller to node | The node verifies the server hostname/IP SAN using normal TLS verification against its pinned CA certificate and checks the SHA-256 fingerprint of that CA's SubjectPublicKeyInfo, encoded as `sha256:` plus 64 lowercase hex characters. The join command and node state use this one pin format. Never set `InsecureSkipVerify` or fall back to Web UI/ACME trust. |
 
@@ -59,7 +57,7 @@ flowchart LR
     App --> State[(Controller-local state.json)]
 ```
 
-Use Go's `tls.VerifyClientCertIfGiven` only because enrollment later needs a TLS
+Use Go's `tls.VerifyClientCertIfGiven` because enrollment needs a TLS
 connection without a node certificate. A certificate that *is* presented must
 verify. The request gate rejects certificate-free calls outside the exact
 bootstrap allowlist. Disable TLS session tickets initially and recheck SQLite
@@ -245,8 +243,8 @@ publishes rotation into its loopback runtime. Controller backup/restore
 reconciles certificate authority with archived PKI and registry, invalidating
 all restored node certificates and bindings. Private loopback enablement has a
 one-use, process-local verified-backup receipt bound to the complete prepared
-identity and the current recent-auth session. Public lifecycle wiring remains
-gated on authenticated enrollment and confirmation that the backup was retained.
+identity and the current recent-auth session. Browser lifecycle wiring requires recent authentication and confirmation that the
+new verified backup was retained; control admission is limited to loopback.
 
 | Slice | Main ownership | Deliverable and acceptance evidence |
 | --- | --- | --- |
@@ -258,15 +256,11 @@ gated on authenticated enrollment and confirmation that the backup was retained.
 | 5. Enablement integration | `internal/app`, `internal/server`, `cmd/awg-forge`, installer tests | Test recent-auth protected preparation, endpoint/bind preflight, verified post-preparation backup and reversible runtime transition on loopback. Keep non-loopback enablement unavailable until phase-6 enrollment routes and their security tests are ready. No auto-enable on install/upgrade. |
 
 The loopback transport implementation is isolated in `internal/controlserver`.
-It has no production caller. `internal/app` owns the private loopback transition;
+`internal/app` owns the transition; `internal/server` owns startup and shutdown.
 `Init` never starts it, even when committed state records `Enabled=true`.
-The `cmd/awg-forge` and `internal/server` lifecycle wiring in slice 2 is
-deliberately deferred until authenticated enrollment: merely
-preparing an identity must not open a socket. Transport tests originally used a
-temporary test-only SQLite authorizer. The production certificate registry and
-typed node authorizer from PR #110 have no production route. No bootstrap route
-is registered yet, so a certificate-free request cannot reach a handler. The
-runtime uses `GetCertificate` with no fixed fallback certificate. Reload closes
+Preparing an identity does not open a socket. The production registry authorizes
+presence; only the two bootstrap routes bypass client-certificate admission.
+The runtime uses `GetCertificate` with no fixed fallback certificate. Reload closes
 all pre-switch sockets, including unfinished handshakes, and refreshes the
 expiry watch without rebinding. An invalid pre-commit candidate leaves the
 current snapshot intact; failed publication after state commit permanently

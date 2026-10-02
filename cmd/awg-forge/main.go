@@ -77,6 +77,8 @@ func run(args []string) error {
 		return runClient(cfg, svc, args[1:])
 	case "tunnel":
 		return runTunnel(svc, args[1:])
+	case "node":
+		return runNode(cfg, svc, args[1:])
 	case "controller":
 		return runController(cfg, svc, args[1:])
 	default:
@@ -330,7 +332,7 @@ func runClient(cfg config.Config, svc *app.Service, args []string) error {
 }
 
 func usage() error {
-	return errors.New("usage: awg-forge init|serve|render|doctor|backup|restore|support-bundle|updates|firewall|logs|db|tls|client|tunnel|controller")
+	return errors.New("usage: awg-forge init|serve|render|doctor|backup|restore|support-bundle|updates|firewall|logs|db|tls|client|tunnel|controller|node")
 }
 
 func runDB(cfg config.Config, args []string) error {

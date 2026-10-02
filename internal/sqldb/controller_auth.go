@@ -378,6 +378,9 @@ func (db *DB) DisableControllerAuthAfterRestore(ctx context.Context, now time.Ti
 		"DELETE FROM controller_sessions",
 		"DELETE FROM controller_recovery_codes",
 		"DELETE FROM controller_auth_attempts",
+		"DELETE FROM control_node_presence",
+		"DELETE FROM control_enrollments",
+		"DELETE FROM control_enrollment_invitations",
 	} {
 		if _, err := tx.ExecContext(ctx, query); err != nil {
 			return err
@@ -412,6 +415,9 @@ COALESCE(sum(CASE WHEN disabled_at != '' THEN 1 ELSE 0 END), 0) FROM controller_
 (SELECT count(*) FROM controller_sessions) +
 (SELECT count(*) FROM controller_recovery_codes) +
 (SELECT count(*) FROM controller_auth_attempts) +
+(SELECT count(*) FROM control_node_presence) +
+(SELECT count(*) FROM control_enrollments) +
+(SELECT count(*) FROM control_enrollment_invitations) +
 (SELECT count(*) FROM control_node_certificates WHERE revoked_at_unix_ms IS NULL) +
 (SELECT count(*) FROM control_node_bindings WHERE revoked_at_unix_ms IS NULL)`).Scan(&credentials); err != nil {
 		return errors.New("cannot verify restored authority invalidation")

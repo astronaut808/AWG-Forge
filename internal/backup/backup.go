@@ -108,6 +108,9 @@ func Create(ctx context.Context, cfg config.Config, service *app.Service, passwo
 	if err := storage.New(cfg.ConfigDir).CheckRestorePending(); err != nil {
 		return Archive{}, err
 	}
+	if _, err := os.Lstat(storage.New(cfg.ConfigDir).NodeIdentityJournalPath()); !errors.Is(err, os.ErrNotExist) {
+		return Archive{}, errors.New("cannot create backup while node enrollment is pending")
+	}
 	// Init may recover and remove a preparation journal. A backup request must
 	// report the in-progress identity instead of silently changing that state.
 	if _, err := os.Lstat(storage.New(cfg.ConfigDir).ControlIdentityJournalPath()); err == nil {
@@ -153,6 +156,16 @@ func Create(ctx context.Context, cfg config.Config, service *app.Service, passwo
 }
 
 func createFromState(ctx context.Context, cfg config.Config, state config.State, password string, opts Options) (Archive, error) {
+	if _, err := os.Lstat(storage.New(cfg.ConfigDir).NodeIdentityJournalPath()); !errors.Is(err, os.ErrNotExist) {
+		return Archive{}, errors.New("node enrollment is pending")
+	}
+	if state.NodeConnection != nil {
+		material, err := storage.New(cfg.ConfigDir).LoadNodeIdentity(state.NodeConnection.CredentialGeneration)
+		if err != nil || app.ValidateNodeIdentity(state.NodeConnection, material, true) != nil {
+			return Archive{}, errors.New("committed node credentials are invalid")
+		}
+	}
+
 	if err := validatePassword(password); err != nil {
 		return Archive{}, err
 	}
@@ -292,6 +305,16 @@ func RestoreWithOptions(ctx context.Context, cfg config.Config, password, path s
 		return RestoreResult{}, fmt.Errorf("validate managed-node restore identity: %w", err)
 	}
 	if changed {
+		if prepared.NodeConnection == nil {
+			filtered := validated.Files[:0]
+			for _, file := range validated.Files {
+				if !strings.HasPrefix(file.Path, "node/") {
+					filtered = append(filtered, file)
+				}
+			}
+			validated.Files = filtered
+		}
+
 		validated.Files, err = replaceRestoredState(validated.Files, prepared)
 		if err != nil {
 			return RestoreResult{}, err
@@ -358,6 +381,17 @@ func createPlainZip(cfg config.Config, state config.State, now time.Time, snapsh
 				if err := addExistingFile(zw, cfg.ConfigDir, rel, &metas); err != nil {
 					return nil, err
 				}
+			}
+		}
+	}
+	if state.NodeConnection != nil {
+		paths, err := storage.NodeIdentityRelativePaths(state.NodeConnection.CredentialGeneration)
+		if err != nil {
+			return nil, err
+		}
+		for _, rel := range paths {
+			if err := addExistingFile(zw, cfg.ConfigDir, rel, &metas); err != nil {
+				return nil, err
 			}
 		}
 	}
@@ -637,6 +671,9 @@ func validateBackupData(ctx context.Context, password string, data []byte) (vali
 			}
 		}
 	}
+	if err := validateNodeArchive(files, state); err != nil {
+		return validatedBackup{}, err
+	}
 	for _, tunnel := range state.Tunnels {
 		if _, err := render.ServerConfig(state, tunnel); err != nil {
 			return validatedBackup{}, fmt.Errorf("backup validation failed for %s: %w", tunnel.Name, err)
@@ -651,6 +688,10 @@ func validateBackupData(ctx context.Context, password string, data []byte) (vali
 }
 
 func validateStateSanity(state config.State) error {
+	if state.NodeConnection != nil && (state.EffectiveMode() != config.ModeNode || state.ManagedNode == nil || app.ValidateNodeConnection(state.NodeConnection) != nil) {
+		return errors.New("backup node connection is invalid")
+	}
+
 	if state.EffectiveMode() == config.ModeController {
 		if _, _, err := app.PrepareRestoredState(nil, state, false, time.Time{}); err != nil {
 			return fmt.Errorf("backup validation failed: %w", err)
@@ -888,12 +929,12 @@ func readPlainZip(data []byte) ([]restoreFile, Metadata, config.State, error) {
 			return nil, Metadata{}, config.State{}, err
 		}
 		if file.FileInfo().IsDir() {
-			if strings.HasPrefix(name, "control/") {
+			if strings.HasPrefix(name, "control/") || strings.HasPrefix(name, "node/") {
 				return nil, Metadata{}, config.State{}, errors.New("backup contains unexpected control directory entry")
 			}
 			continue
 		}
-		if strings.HasPrefix(name, "control/") && (!file.FileInfo().Mode().IsRegular() || file.Mode().Perm() != 0600) {
+		if (strings.HasPrefix(name, "control/") || strings.HasPrefix(name, "node/")) && (!file.FileInfo().Mode().IsRegular() || file.Mode().Perm() != 0600) {
 			return nil, Metadata{}, config.State{}, errors.New("backup control identity file must be private and regular")
 		}
 		if file.UncompressedSize64 > uint64(maxPlainBackupBytes-totalSize) {

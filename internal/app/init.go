@@ -45,6 +45,9 @@ func (s *Service) initWithOptionsLocked(options InitOptions) (config.State, erro
 	if err := s.store.CheckRestorePending(); err != nil {
 		return config.State{}, err
 	}
+	if err := s.recoverNodeEnrollmentLocked(); err != nil {
+		return config.State{}, err
+	}
 	if state, err := s.store.Load(); err == nil {
 		if err := s.recoverPendingDesiredStateCommitLocked(state); err != nil {
 			return config.State{}, fmt.Errorf("recover pending desired-state commit: %w", err)
@@ -255,7 +258,7 @@ func (s *Service) repairLoadedState(state config.State) (config.State, error) {
 		state.ExternalInterface = s.cfg.ExternalInterface
 		changed = true
 	}
-	if len(state.Tunnels) == 0 {
+	if len(state.Tunnels) == 0 && state.EffectiveMode() != config.ModeNode {
 		tunnel, err := s.newTunnel(defaultTunnelSpec(s.cfg.ProtocolProfile, s.cfg.TunnelName, s.cfg.ListenPort, s.cfg.IPv4Subnet))
 		if err != nil {
 			return config.State{}, err

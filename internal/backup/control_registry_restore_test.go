@@ -586,7 +586,7 @@ func TestControllerRegistryRestoreFailedRollbackKeepsGate(t *testing.T) {
 }
 
 func TestControllerRegistryRestoreLegacySchemas(t *testing.T) {
-	for _, version := range []int{5, 6, 7} {
+	for _, version := range []int{5, 6, 7, 8} {
 		t.Run(strconv.Itoa(version), func(t *testing.T) {
 			ctx := context.Background()
 			f := newRegistryRestoreFixture(t, false)
@@ -610,7 +610,10 @@ func TestControllerRegistryRestoreLegacySchemas(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				statements := []string{"DROP INDEX control_node_certificates_one_initial_per_binding_idx"}
+				statements := []string{"DROP TABLE control_node_presence", "DROP TABLE control_enrollments", "DROP TABLE control_enrollment_invitations"}
+				if version < 8 {
+					statements = append(statements, "DROP INDEX control_node_certificates_one_initial_per_binding_idx")
+				}
 				if version <= 6 {
 					statements = append(statements, "DROP INDEX control_node_certificates_one_successor_idx", "ALTER TABLE control_node_certificates DROP COLUMN predecessor_serial", "ALTER TABLE control_node_certificates DROP COLUMN predecessor_issuer_generation")
 				}
