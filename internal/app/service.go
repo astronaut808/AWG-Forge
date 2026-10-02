@@ -48,6 +48,7 @@ type Service struct {
 	runtimeOps            runtimeOperations
 	controllerAuthOptions controlauth.Options
 	controlIdentityStep   func(string) error
+	nodeRenewalStep       func(string) error
 	controlRotationStep   func(string) error
 	controlRuntimeStep    func(string) error
 	controlOwner          *controlRuntimeOwner

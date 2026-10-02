@@ -300,9 +300,9 @@
     },
     "/control/v1/node/certificate-renewals": {
       "post": {
-        "operationId": "renewNodeCertificate",
+        "operationId": "node.certificate-renewal",
         "summary": "Renew the current node certificate",
-        "description": "Draft only; no production route is registered. The presented verified mTLS certificate and current registry binding establish identity. The body current_serial must match that peer certificate when a handler is added; boot_id does not establish identity. A signed Ed25519 CSR with a different key may renew at or after two thirds of the predecessor's actual validity interval. One predecessor gets one successor. An exact full-CSR retry from that predecessor returns the committed certificate only while the predecessor remains authorized; a different CSR conflicts. The predecessor overlap ends no later than 24 hours after commit or its own expiry, and revocation can end it earlier.",
+        "description": "Requires the presented verified mTLS certificate and current registry binding. The body current_serial must match that peer certificate; boot_id is informational and does not establish identity. A signed extension-free Ed25519 CSR with a different key may renew at or after two thirds of the predecessor's actual validity interval. One predecessor gets one successor. An exact full-CSR retry from that predecessor returns the committed certificate only while the predecessor remains authorized; a different CSR conflicts. The predecessor overlap ends no later than 24 hours after commit or its own expiry, and revocation can end it earlier.",
         "tags": ["Certificates"],
         "requestBody": {
           "required": true,
@@ -333,6 +333,7 @@
           "401": { "$ref": "#/components/responses/Problem" },
           "403": { "$ref": "#/components/responses/Problem" },
           "409": { "$ref": "#/components/responses/Problem" },
+          "503": { "$ref": "#/components/responses/Problem" },
           "429": { "$ref": "#/components/responses/RateLimitedProblem" },
           "default": { "$ref": "#/components/responses/Problem" }
         }

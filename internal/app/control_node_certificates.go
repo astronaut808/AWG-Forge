@@ -209,8 +209,11 @@ func (s *Service) rebindRevokedNodeCertificate(ctx context.Context, nodeID strin
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: storedDER}), nil
 }
 
-// renewNodeCertificate is internal until a reviewed node route exists. The
-// predecessor is the actual verified TLS peer leaf, never a body-supplied ID.
+// renewNodeCertificate is a trusted internal primitive for disabled control
+// preparation flows. HTTP callers use renewNodeCertificateLocked with an
+// enabled control identity after acquiring the cancellable request lock.
+// The predecessor is the actual verified TLS peer leaf, never a body-supplied
+// ID.
 func (s *Service) renewNodeCertificate(ctx context.Context, predecessor *x509.Certificate, csrDER []byte, now time.Time) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -222,6 +225,10 @@ func (s *Service) renewNodeCertificate(ctx context.Context, predecessor *x509.Ce
 		return nil, err
 	}
 	defer s.unlockStateMutation()
+	return s.renewNodeCertificateLocked(ctx, predecessor, csrDER, now, false)
+}
+
+func (s *Service) renewNodeCertificateLocked(ctx context.Context, predecessor *x509.Certificate, csrDER []byte, now time.Time, enabled bool) ([]byte, error) {
 	if err := s.store.CheckRestorePending(); err != nil {
 		return nil, errors.New("controller restore is pending")
 	}
@@ -241,7 +248,7 @@ func (s *Service) renewNodeCertificate(ctx context.Context, predecessor *x509.Ce
 		return nil, err
 	}
 	if state.EffectiveMode() != config.ModeController || state.Controller == nil ||
-		state.Controller.Control == nil || state.Controller.Control.Enabled ||
+		state.Controller.Control == nil || state.Controller.Control.Enabled != enabled ||
 		s.cfg.DatabaseMode != sqldb.ModeSQLite {
 		return nil, errors.New("control identity is not prepared")
 	}
@@ -292,6 +299,9 @@ func (s *Service) renewNodeCertificate(ctx context.Context, predecessor *x509.Ce
 		return nil, err
 	}
 	if !found {
+		if _, err := authorizer.Authorize(ctx, predecessor, "node.certificate-renewal"); err != nil {
+			return nil, err
+		}
 		issued, err := controlpki.IssueNodeCertificate(material, csrDER, now)
 		if err != nil {
 			return nil, err

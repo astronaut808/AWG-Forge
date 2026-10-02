@@ -135,7 +135,7 @@ func Run(ctx context.Context, service *app.Service, cfg config.Config) error {
 	if err != nil {
 		return errors.New("node credentials invalid")
 	}
-	defer client.CloseIdleConnections()
+	defer func() { client.CloseIdleConnections() }()
 	boot, err := service.StartManagedNodeBootContext(ctx)
 	if err != nil {
 		return err
@@ -172,6 +172,46 @@ func Run(ctx context.Context, service *app.Service, cfg config.Config) error {
 		} else if errors.Is(err, errForbidden) || errors.Is(err, errFenced) {
 			return errors.New("node authorization revoked")
 		}
+		if err == nil && !time.Now().Before(certificate.NotBefore.Add(certificate.NotAfter.Sub(certificate.NotBefore)*2/3)) {
+			renewal, prepareErr := service.PrepareNodeCertificateRenewal(ctx, connection)
+			if prepareErr != nil {
+				return errors.New("node renewal preparation failed")
+			}
+			var issued controlapi.IssuedCertificate
+			renewalErr := requestJSON(ctx, client, connection.ControllerURL, http.MethodPost, "/control/v1/node/certificate-renewals", "", controlapi.CertificateRenewalRequest{BootID: boot.BootID, CurrentSerial: renewal.CurrentSerial, CSRPEM: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: renewal.CSRDER}))}, &issued)
+			if errors.Is(renewalErr, errForbidden) || errors.Is(renewalErr, errFenced) {
+				return errors.New("node renewal authorization denied")
+			}
+			if renewalErr == nil {
+				if err := service.InstallNodeCertificateRenewal(ctx, connection, renewal.Generation, issued); err != nil {
+					return errors.New("node renewal installation failed")
+				}
+				nextState, err := service.NodeAgentState(ctx)
+				if err != nil || nextState.NodeConnection == nil || nextState.NodeConnection.CredentialGeneration != renewal.Generation || nextState.NodeConnection.ControllerURL != connection.ControllerURL || nextState.NodeConnection.CAPin != connection.CAPin {
+					return errors.New("node renewal state changed")
+				}
+				nextIdentity, err := storage.New(cfg.ConfigDir).LoadNodeIdentity(renewal.Generation)
+				if err != nil {
+					return errors.New("renewed identity unavailable")
+				}
+				nextClient, err := mtlsClient(nextState.NodeConnection, nextIdentity)
+				if err != nil {
+					return errors.New("renewed identity invalid")
+				}
+				client.CloseIdleConnections()
+				client = nextClient
+				connection = *nextState.NodeConnection
+				certificate, err = strictCertificate(nextIdentity.Certificate)
+				if err != nil {
+					return errors.New("renewed identity invalid")
+				}
+				delay = time.Second
+			} else {
+				// Keep refreshing presence with the predecessor while retrying
+				// the durable CSR; its server-side overlap bounds admission.
+				err = renewalErr
+			}
+		}
 		wait := delay
 		if err != nil {
 			if jitter, jitterErr := crand.Int(crand.Reader, big.NewInt(int64(delay/4+1))); jitterErr == nil {
@@ -199,6 +239,7 @@ func Run(ctx context.Context, service *app.Service, cfg config.Config) error {
 
 var errForbidden = errors.New("forbidden")
 var errFenced = errors.New("fenced")
+var errRenewalNotDue = errors.New("renewal not due")
 var comparisonCodeRE = regexp.MustCompile(`^[A-Z0-9]{4}-[A-Z0-9]{4}$`)
 
 func validUUID(value string) bool {
@@ -313,6 +354,13 @@ func requestJSON(ctx context.Context, client *http.Client, base, method, route, 
 		return errForbidden
 	}
 	if res.StatusCode == http.StatusConflict {
+		var problem struct {
+			Code string `json:"code"`
+		}
+		raw, readErr := io.ReadAll(io.LimitReader(res.Body, (64<<10)+1))
+		if route == "/control/v1/node/certificate-renewals" && readErr == nil && len(raw) <= 64<<10 && json.Unmarshal(raw, &problem) == nil && problem.Code == "renewal_not_due" {
+			return errRenewalNotDue
+		}
 		return errFenced
 	}
 	if res.StatusCode < 200 || res.StatusCode > 299 {

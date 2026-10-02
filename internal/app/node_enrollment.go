@@ -53,7 +53,7 @@ func (s *Service) preflightNodeEnrollmentLocked() error {
 	if err := s.store.CheckRestorePending(); err != nil {
 		return err
 	}
-	for _, check := range []func() error{func() error { _, e := s.store.LoadPendingDesiredStateCommit(); return e }, func() error { _, e := s.store.LoadControllerActivationJournal(); return e }, func() error { _, e := s.store.LoadControlIdentityJournal(); return e }, func() error { _, e := s.store.LoadNodeIdentityJournal(); return e }} {
+	for _, check := range []func() error{func() error { _, e := s.store.LoadPendingDesiredStateCommit(); return e }, func() error { _, e := s.store.LoadControllerActivationJournal(); return e }, func() error { _, e := s.store.LoadControlIdentityJournal(); return e }, func() error { _, e := s.store.LoadNodeIdentityJournal(); return e }, func() error { _, e := s.store.LoadNodeRenewalJournal(); return e }} {
 		if err := check(); err == nil {
 			return errors.New("enrollment recovery is pending")
 		} else if !errors.Is(err, os.ErrNotExist) {
@@ -268,6 +268,9 @@ func (s *Service) NodeAgentState(ctx context.Context) (config.State, error) {
 	}
 	if _, err := s.store.LoadNodeIdentityJournal(); !errors.Is(err, os.ErrNotExist) {
 		return config.State{}, errors.New("node enrollment recovery is pending")
+	}
+	if err := s.recoverNodeRenewalLocked(); err != nil {
+		return config.State{}, err
 	}
 	state, err := s.store.Load()
 	if err != nil {

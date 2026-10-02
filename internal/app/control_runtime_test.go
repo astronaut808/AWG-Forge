@@ -49,12 +49,13 @@ func newControlLifecycleFixture(t *testing.T) controlLifecycleFixture {
 	}
 	port := l.Addr().(*net.TCPAddr).Port
 	_ = l.Close()
-	control, err := s.PrepareControlIdentity(context.Background(), ControlIdentityRequest{BindIP: "127.0.0.1", Advertised: "127.0.0.1", Port: port})
+	issuedAt := time.Now().Add(-20 * 24 * time.Hour)
+	control, err := s.PrepareControlIdentity(context.Background(), ControlIdentityRequest{BindIP: "127.0.0.1", Advertised: "127.0.0.1", Port: port, Now: issuedAt})
 	if err != nil {
 		t.Fatal(err)
 	}
 	csr, key := renewalTestCSR(t)
-	pem, err := s.issueInitialNodeCertificate(context.Background(), "11111111-1111-4111-8111-111111111111", csr, time.Now())
+	pem, err := s.issueInitialNodeCertificate(context.Background(), "11111111-1111-4111-8111-111111111111", csr, issuedAt.Add(time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}

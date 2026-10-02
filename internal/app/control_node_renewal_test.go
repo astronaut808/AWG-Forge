@@ -24,11 +24,121 @@ import (
 	"testing"
 	"time"
 
+	"github.com/astronaut808/awg-forge/internal/controlapi"
 	"github.com/astronaut808/awg-forge/internal/controlpki"
 	"github.com/astronaut808/awg-forge/internal/controlserver"
 	"github.com/astronaut808/awg-forge/internal/sqldb"
 	"github.com/astronaut808/awg-forge/internal/storage"
+	"github.com/google/uuid"
 )
+
+func TestNodeCertificateRenewalRouteEnabledMTLS(t *testing.T) {
+	f := newControlLifecycleFixture(t)
+	ctx := context.Background()
+	if err := f.service.EnableControl(ctx, f.token, f.receipt(t), true); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.service.ShutdownControl() }()
+	base := "https://" + f.address
+	request := func(client *http.Client, value any, want int, output *controlapi.IssuedCertificate) string {
+		t.Helper()
+		raw, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response, err := client.Post(base+"/control/v1/node/certificate-renewals", "application/json", bytes.NewReader(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = response.Body.Close() }()
+		if response.StatusCode != want {
+			t.Fatalf("renew status = %d, want %d", response.StatusCode, want)
+		}
+		if output != nil {
+			if err := json.NewDecoder(response.Body).Decode(output); err != nil {
+				t.Fatal("decode renewal response")
+			}
+			return ""
+		}
+		var problem struct {
+			Code string `json:"code"`
+		}
+		_ = json.NewDecoder(response.Body).Decode(&problem)
+		return problem.Code
+	}
+	csr, key := renewalTestCSR(t)
+	valid := controlapi.CertificateRenewalRequest{BootID: uuid.NewString(), CurrentSerial: renewalPeerSerial(t, f), CSRPEM: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csr}))}
+	request(f.client, controlapi.CertificateRenewalRequest{BootID: valid.BootID, CurrentSerial: "0", CSRPEM: valid.CSRPEM}, http.StatusBadRequest, nil)
+	request(f.client, controlapi.CertificateRenewalRequest{BootID: "not-a-uuid", CurrentSerial: valid.CurrentSerial, CSRPEM: valid.CSRPEM}, http.StatusBadRequest, nil)
+	request(f.client, controlapi.CertificateRenewalRequest{BootID: valid.BootID, CurrentSerial: valid.CurrentSerial, CSRPEM: "bad"}, http.StatusBadRequest, nil)
+	sameKeyCSR, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, f.tls.Certificates[0].PrivateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request(f.client, controlapi.CertificateRenewalRequest{BootID: valid.BootID, CurrentSerial: valid.CurrentSerial, CSRPEM: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: sameKeyCSR}))}, http.StatusBadRequest, nil)
+	request(f.client, map[string]any{"boot_id": valid.BootID, "current_serial": valid.CurrentSerial, "csr_pem": valid.CSRPEM, "extra": true}, http.StatusBadRequest, nil)
+	request(f.client, controlapi.CertificateRenewalRequest{BootID: valid.BootID, CurrentSerial: valid.CurrentSerial, CSRPEM: string(bytes.Repeat([]byte("x"), 17<<10))}, http.StatusBadRequest, nil)
+	var issued controlapi.IssuedCertificate
+	request(f.client, valid, http.StatusOK, &issued)
+	if issued.CertificatePEM == "" || issued.ChainPEM == "" || issued.Serial == "" {
+		t.Fatal("incomplete issued certificate")
+	}
+	var retry controlapi.IssuedCertificate
+	request(f.client, valid, http.StatusOK, &retry)
+	if retry.CertificatePEM != issued.CertificatePEM {
+		t.Fatal("exact retry changed certificate")
+	}
+	other, _ := renewalTestCSR(t)
+	conflict := valid
+	conflict.CSRPEM = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: other}))
+	request(f.client, conflict, http.StatusConflict, nil)
+	newCertificate := renewalTestCertificate(t, []byte(issued.CertificatePEM))
+	newClient := &http.Client{Transport: &http.Transport{TLSClientConfig: f.tls.Clone()}, Timeout: 2 * time.Second}
+	newClient.Transport.(*http.Transport).TLSClientConfig.Certificates = []tls.Certificate{{Certificate: [][]byte{newCertificate.Raw}, PrivateKey: key}}
+	defer newClient.CloseIdleConnections()
+	earlyCSR, _ := renewalTestCSR(t)
+	early := controlapi.CertificateRenewalRequest{BootID: uuid.NewString(), CurrentSerial: newCertificate.SerialNumber.String(), CSRPEM: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: earlyCSR}))}
+	if code := request(newClient, early, http.StatusConflict, nil); code != "renewal_not_due" {
+		t.Fatalf("early renewal code = %q", code)
+	}
+	if err := f.service.store.SavePendingDesiredStateCommit(storage.PendingDesiredStateCommit{OperationID: "pending"}); err != nil {
+		t.Fatal(err)
+	}
+	request(f.client, valid, http.StatusServiceUnavailable, nil)
+	if err := f.service.store.DeletePendingDesiredStateCommit(); err != nil {
+		t.Fatal(err)
+	}
+	state, err := f.service.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.service.store.BeginRestorePending(state.Controller.ControllerID); err != nil {
+		t.Fatal(err)
+	}
+	request(f.client, valid, http.StatusForbidden, nil)
+	if err := f.service.store.ClearRestorePending(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sqldb.Open(ctx, f.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	if err := db.RevokeNodeBinding(ctx, sqldb.NodeIdentity{ControllerID: state.Controller.ControllerID, NodeID: "11111111-1111-4111-8111-111111111111", BindingEpoch: 1}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	request(f.client, valid, http.StatusForbidden, nil)
+}
+
+func renewalPeerSerial(t *testing.T, f controlLifecycleFixture) string {
+	t.Helper()
+	cert := f.tls.Certificates[0].Certificate[0]
+	parsed, err := x509.ParseCertificate(cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return parsed.SerialNumber.String()
+}
 
 func TestInternalNodeRenewalRealLoopbackMTLS(t *testing.T) {
 	ctx := context.Background()
