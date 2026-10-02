@@ -30,6 +30,7 @@ import (
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/controlauth"
 	"github.com/astronaut808/awg-forge/internal/doctor"
+	"github.com/astronaut808/awg-forge/internal/nodeagent"
 	"github.com/astronaut808/awg-forge/internal/sqldb"
 	"github.com/astronaut808/awg-forge/internal/support"
 	"github.com/astronaut808/awg-forge/internal/updates"
@@ -41,19 +42,22 @@ import (
 var staticFiles embed.FS
 
 type web struct {
-	cfg            config.Config
-	service        *app.Service
-	controllerAuth *controlauth.Service
-	controllerDB   *sqldb.DB
-	authMu         sync.RWMutex
-	activating     atomic.Bool
-	activationStop chan struct{}
-	sessions       []byte
-	shutdown       context.Context
-	tls            webtls.Runtime
-	limits         map[string][]time.Time
-	idem           map[string]*idempotencyEntry
-	mu             sync.Mutex
+	cfg              config.Config
+	service          *app.Service
+	controlEnableMu  sync.Mutex
+	controlReceipt   *app.ControlEnableReceipt
+	controlReceiptID string
+	controllerAuth   *controlauth.Service
+	controllerDB     *sqldb.DB
+	authMu           sync.RWMutex
+	activating       atomic.Bool
+	activationStop   chan struct{}
+	sessions         []byte
+	shutdown         context.Context
+	tls              webtls.Runtime
+	limits           map[string][]time.Time
+	idem             map[string]*idempotencyEntry
+	mu               sync.Mutex
 }
 
 const idempotencyTTL = 10 * time.Minute
@@ -81,13 +85,34 @@ func Serve(cfg config.Config, service *app.Service, tlsRuntime webtls.Runtime, c
 	return ServeContext(ctx, cfg, service, tlsRuntime, controllerAuth)
 }
 
-func ServeContext(ctx context.Context, cfg config.Config, service *app.Service, tlsRuntime webtls.Runtime, controllerAuth *controlauth.Service) error {
+func ServeContext(ctx context.Context, cfg config.Config, service *app.Service, tlsRuntime webtls.Runtime, controllerAuth *controlauth.Service) (result error) {
 	secret, err := service.SessionSecret()
 	if err != nil {
 		return err
 	}
 	serverContext, stopServer := context.WithCancel(context.Background())
 	defer stopServer()
+	if err := service.StartControl(serverContext); err != nil {
+		service.RuntimeLog().Info(context.Background(), "control", "control.start.unavailable", "control listener unavailable; local recovery required", nil)
+	}
+	defer func() { _ = service.ShutdownControl() }()
+	nodeDone := make(chan struct{})
+	go func() {
+		defer close(nodeDone)
+		if err := nodeagent.Run(serverContext, service, cfg); err != nil && serverContext.Err() == nil {
+			service.RuntimeLog().Info(context.Background(), "node", "node.agent.unavailable", "node connection unavailable; local forwarding continues", nil)
+		}
+	}()
+	defer func() {
+		stopServer()
+		timer := time.NewTimer(15 * time.Second)
+		defer timer.Stop()
+		select {
+		case <-nodeDone:
+		case <-timer.C:
+			result = errors.Join(result, errors.New("node worker shutdown did not finish"))
+		}
+	}()
 	w := newWeb(serverContext, cfg, service, secret, tlsRuntime, controllerAuth)
 	defer w.closeControllerDB()
 	server := newHTTPServer(webUIAddress(cfg.WebUIHost, cfg.WebUIPort), newHandler(w))
@@ -197,6 +222,14 @@ func newHandler(w *web) http.Handler {
 	mux.HandleFunc("/api/controller/activate", w.security(w.controllerActivateAPI))
 	mux.HandleFunc("/api/controller/reauth", w.security(w.requireAuth(w.controllerReauthAPI)))
 	mux.HandleFunc("/api/controller/recovery-codes", w.security(w.requireAuth(w.controllerRecoveryCodesAPI)))
+	mux.HandleFunc("/api/controller/control/status", w.security(w.requireAuth(w.controlStatusAPI)))
+	mux.HandleFunc("/api/controller/control/prepare", w.security(w.requireAuth(w.controlPrepareAPI)))
+	mux.HandleFunc("/api/controller/control/backup", w.security(w.requireAuth(w.controlBackupAPI)))
+	mux.HandleFunc("/api/controller/control/enable", w.security(w.requireAuth(w.controlEnableAPI)))
+	mux.HandleFunc("/api/controller/control/disable", w.security(w.requireAuth(w.controlDisableAPI)))
+	mux.HandleFunc("/api/controller/enrollments/invite", w.security(w.requireAuth(w.enrollmentInvitationAPI)))
+	mux.HandleFunc("/api/controller/enrollments/review", w.security(w.requireAuth(w.enrollmentReviewAPI)))
+	mux.HandleFunc("/api/controller/enrollments/decide", w.security(w.requireAuth(w.enrollmentDecideAPI)))
 	mux.HandleFunc("/api/logout", w.security(w.requireAuth(w.logoutAPI)))
 	mux.HandleFunc("/api/state", w.security(w.requireAuth(w.stateAPI)))
 	mux.HandleFunc("/api/events", w.security(w.requireAuth(w.eventsAPI)))

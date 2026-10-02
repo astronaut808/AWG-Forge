@@ -169,6 +169,52 @@ option are described in [Diagnostics](diagnostics.md#encrypted-backup--restore).
 Controller restore has additional identity, archive-location, and offline
 administrator-recovery requirements in the same section.
 
+## Loopback node enrollment
+
+This checkpoint supports the first authenticated node session on a literal
+loopback endpoint. Use the controller browser session and recent MFA
+reauthentication with the internal routes in [the browser API contract](../../api/openapi.json):
+
+1. `POST /api/controller/control/prepare` with `bind_ip`, `advertised` (both
+   literal loopback addresses), and a dedicated `port` different from the Web UI.
+2. `POST /api/controller/control/backup` with a backup `password`. Save the
+   encrypted response outside the configuration directory. Keep its
+   `X-Control-Enable-Receipt` header; it expires with recent authentication and
+   cannot survive restart or another backup preparation.
+3. `POST /api/controller/control/enable` with `receipt` and `backup_saved: true`
+   only after retaining the archive. `GET /api/controller/control/status`
+   returns public identity metadata. Disable with
+   `POST /api/controller/control/disable` after recent authentication.
+4. `POST /api/controller/enrollments/invite` with `{}`. Save the JSON download
+   as a current-user-owned `0600` regular file. It contains the one-time secret
+   and public CA, expires after ten minutes, and must not be logged or copied
+   into command arguments or environment variables.
+5. On the node, with its own `CONFIG_DIR`, run:
+
+   ```bash
+   awg-forge node enroll --input-file ./node-invitation.json --name node
+   ```
+
+6. Review `POST /api/controller/enrollments/review` with `invitation_id`.
+   Compare its `verification_code` with the code shown by the node. Approve or
+   reject using `POST /api/controller/enrollments/decide` with `enrollment_id`,
+   the matching `verification_code`, and `approve`. Then start or restart the
+   node's `awg-forge serve` process to send mTLS presence.
+
+The node verifies the pinned CA and normal TLS certificate before transmitting
+its secret. Its private key stays local. An invitation accepts exactly one CSR;
+repeating that CSR is safe, while a competing CSR is denied. Existing local
+configuration and tunnel revisions are preserved; a fresh node has no default
+tunnel. Controller connection loss leaves local forwarding running. Revocation
+stops the connection worker and requires explicit local recovery.
+
+Cold controller restore disables the listener and administrator, revokes all
+restored node certificates/bindings, and removes invitations, claim credentials
+and presence sessions. Managed-node backups include the protected credential
+generation; restore still enforces identity fencing or explicit detach. Detach
+removes controller authority. Certificate renewal, local re-enrollment of a
+revoked binding, external listeners and fleet UI remain separate work.
+
 ## Client Config Import
 
 The most reliable path is `.conf` file import. The UI also provides separate QR options for different official clients. Every option contains client secrets, so show QR codes only on a trusted screen and never share them publicly.

@@ -230,11 +230,11 @@ func (s *Service) rollbackControllerActivation(ctx context.Context, db *sqldb.DB
 func validateStateMode(state config.State) error {
 	switch state.EffectiveMode() {
 	case config.ModeStandalone:
-		if state.Controller != nil || state.ManagedNode != nil {
+		if state.Controller != nil || state.ManagedNode != nil || state.NodeConnection != nil {
 			return fmt.Errorf("%w: standalone state contains controller metadata", ErrInvalidStateMode)
 		}
 	case config.ModeController:
-		if state.Controller == nil || state.ManagedNode != nil || state.Controller.ActivatedAt.IsZero() {
+		if state.Controller == nil || state.ManagedNode != nil || state.NodeConnection != nil || state.Controller.ActivatedAt.IsZero() {
 			return fmt.Errorf("%w: incomplete controller state", ErrInvalidStateMode)
 		}
 		if _, err := uuid.Parse(state.Controller.ControllerID); err != nil {
@@ -247,6 +247,12 @@ func validateStateMode(state config.State) error {
 		if err := validateManagedNodeState(state.ManagedNode); err != nil {
 			return err
 		}
+		if state.NodeConnection != nil {
+			if err := ValidateNodeConnection(state.NodeConnection); err != nil {
+				return err
+			}
+		}
+
 	default:
 		return fmt.Errorf("%w: unsupported mode %q", ErrInvalidStateMode, state.Mode)
 	}

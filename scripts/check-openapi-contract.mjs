@@ -18,10 +18,20 @@ const updateClient = ajv.compile(schemas.UpdateClientSettingsRequest);
 const profile = ajv.compile(schemas.Profile);
 const controllerActivation = ajv.compile(schemas.ControllerActivationRequest);
 const controllerLogin = ajv.compile(schemas.ControllerLoginRequest);
+const controlEnable = ajv.compile(schemas.ControlEnableRequest);
+const enrollmentDecision = ajv.compile(schemas.EnrollmentDecisionRequest);
+const schemaUUID = "103354a0-e154-4d4c-bfde-f71dbbc7394f";
 const schemaPassword = "p".repeat(16);
 const schemaTOTPSecret = "A".repeat(32);
 const schemaCode = "1".repeat(6);
 const cases = [
+  ["control enable requires saved backup", controlEnable, { receipt: schemaUUID, backup_saved: true }, true],
+  ["control enable rejects unsaved backup", controlEnable, { receipt: schemaUUID, backup_saved: false }, false],
+  ["control enable rejects absent confirmation", controlEnable, { receipt: schemaUUID }, false],
+  ["enrollment decision requires explicit approval", enrollmentDecision, { enrollment_id: schemaUUID, verification_code: "ABCD-EFGH", approve: true }, true],
+  ["enrollment decision supports explicit rejection", enrollmentDecision, { enrollment_id: schemaUUID, verification_code: "ABCD-EFGH", approve: false }, true],
+  ["enrollment decision rejects implicit rejection", enrollmentDecision, { enrollment_id: schemaUUID, verification_code: "ABCD-EFGH" }, false],
+  ["enrollment decision rejects null", enrollmentDecision, { enrollment_id: schemaUUID, verification_code: "ABCD-EFGH", approve: null }, false],
   ["controller activation requires MFA confirmation", controllerActivation, { username: "admin", password: schemaPassword, totp_secret: schemaTOTPSecret, confirmation_code: schemaCode }, true],
   ["controller activation rejects missing MFA confirmation", controllerActivation, { username: "admin", password: schemaPassword, totp_secret: schemaTOTPSecret }, false],
   ["controller login requires the second factor", controllerLogin, { username: "admin", password: schemaPassword, code: schemaCode }, true],

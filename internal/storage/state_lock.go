@@ -1,10 +1,12 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -33,6 +35,30 @@ func AcquireStateLock(dir string) (*StateLock, error) {
 // across the server and concurrently invoked CLI processes.
 func AcquireStateMutationLock(dir string) (*StateLock, error) {
 	return acquireStateFileLock(dir, StateMutationLockFileName, unix.LOCK_EX)
+}
+
+// AcquireStateMutationLockContext waits without making cancellation depend on
+// another process releasing its lock.
+func AcquireStateMutationLockContext(ctx context.Context, dir string) (*StateLock, error) {
+	timer := time.NewTicker(10 * time.Millisecond)
+	defer timer.Stop()
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		lock, err := acquireStateFileLock(dir, StateMutationLockFileName, unix.LOCK_EX|unix.LOCK_NB)
+		if err == nil {
+			return lock, nil
+		}
+		if !errors.Is(err, ErrStateDirectoryInUse) {
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 func acquireStateFileLock(dir, name string, operation int) (*StateLock, error) {

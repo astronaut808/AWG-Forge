@@ -156,6 +156,9 @@ func (s *Service) controlRecentSession(ctx context.Context, token string) (contr
 }
 
 func (s *Service) openControlRegistry(ctx context.Context) (*sqldb.DB, *controlauth.Keys, error) {
+	if err := s.store.CheckRestorePending(); err != nil {
+		return nil, nil, errors.New("controller restore is pending")
+	}
 	if s.cfg.DatabaseMode != sqldb.ModeSQLite {
 		return nil, nil, errors.New("control registry requires SQLite")
 	}

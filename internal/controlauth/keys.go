@@ -299,6 +299,18 @@ func (k *Keys) RecoveryDigest(userID, code string) (Digest, error) {
 	return k.digestValue("recovery", []byte(userID+"\x00"+normalized)), nil
 }
 
+// EnrollmentDigest isolates short-lived bootstrap credentials from browser sessions.
+func (k *Keys) EnrollmentDigest(purpose, token string) (Digest, error) {
+	if purpose != "invitation" && purpose != "claim" {
+		return Digest{}, ErrInvalidSessionToken
+	}
+	value, err := base64.RawURLEncoding.Strict().DecodeString(token)
+	if err != nil || len(value) != sessionTokenBytes {
+		return Digest{}, ErrInvalidSessionToken
+	}
+	return k.digestValue("enrollment-"+purpose, value), nil
+}
+
 func (k *Keys) AccountDigest(username string) Digest {
 	return k.digestValue("account", []byte(username))
 }

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -52,6 +53,35 @@ func (s *Service) StartManagedNodeBoot() (ManagedNodeBoot, error) {
 	if err != nil {
 		return ManagedNodeBoot{}, err
 	}
+	return s.startManagedNodeBootLocked(context.Background(), state)
+}
+
+// StartManagedNodeBootContext is used by the owned worker, so shutdown cannot
+// wait on a cross-process mutation lock without cancellation.
+func (s *Service) StartManagedNodeBootContext(ctx context.Context) (ManagedNodeBoot, error) {
+	if processBootIDErr != nil {
+		return ManagedNodeBoot{}, processBootIDErr
+	}
+	if err := s.lockControlRequest(ctx); err != nil {
+		return ManagedNodeBoot{}, err
+	}
+	defer s.unlockStateMutation()
+	if err := s.store.CheckRestorePending(); err != nil {
+		return ManagedNodeBoot{}, err
+	}
+	state, err := s.store.Load()
+	if err != nil {
+		return ManagedNodeBoot{}, err
+	}
+	if err := validateStateMode(state); err != nil {
+		return ManagedNodeBoot{}, err
+	}
+	if state.ManagedNode != nil && state.ManagedNode.BootSequence >= math.MaxInt64 {
+		return ManagedNodeBoot{}, ErrBootSequenceExhausted
+	}
+	return s.startManagedNodeBootLocked(ctx, state)
+}
+func (s *Service) startManagedNodeBootLocked(ctx context.Context, state config.State) (ManagedNodeBoot, error) {
 	if err := validateManagedNodeState(state.ManagedNode); err != nil {
 		return ManagedNodeBoot{}, err
 	}
@@ -63,6 +93,9 @@ func (s *Service) StartManagedNodeBoot() (ManagedNodeBoot, error) {
 	}
 	if state.ManagedNode.BootSequence == math.MaxUint64 {
 		return ManagedNodeBoot{}, ErrBootSequenceExhausted
+	}
+	if err := ctx.Err(); err != nil {
+		return ManagedNodeBoot{}, err
 	}
 	state.ManagedNode.BootSequence++
 	state.UpdatedAt = time.Now().UTC()
@@ -116,6 +149,7 @@ func PrepareRestoredState(current *config.State, restored config.State, detachMa
 	}
 
 	restored.ManagedNode = nil
+	restored.NodeConnection = nil
 	restored.Mode = config.ModeStandalone
 	if now.IsZero() {
 		now = time.Now().UTC()

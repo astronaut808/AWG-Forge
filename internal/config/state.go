@@ -3,17 +3,26 @@ package config
 import "time"
 
 type State struct {
-	SchemaVersion     int               `json:"schema_version"`
-	Mode              string            `json:"mode"`
-	SessionSecret     string            `json:"session_secret"`
-	ServerHost        string            `json:"server_host"`
-	ExternalInterface string            `json:"external_interface"`
-	Controller        *ControllerState  `json:"controller,omitempty"`
-	ManagedNode       *ManagedNodeState `json:"managed_node,omitempty"`
-	Warp              Warp              `json:"warp,omitempty"`
-	Tunnels           []Tunnel          `json:"tunnels"`
-	CreatedAt         time.Time         `json:"created_at"`
-	UpdatedAt         time.Time         `json:"updated_at"`
+	SchemaVersion     int                  `json:"schema_version"`
+	Mode              string               `json:"mode"`
+	SessionSecret     string               `json:"session_secret"`
+	ServerHost        string               `json:"server_host"`
+	ExternalInterface string               `json:"external_interface"`
+	Controller        *ControllerState     `json:"controller,omitempty"`
+	ManagedNode       *ManagedNodeState    `json:"managed_node,omitempty"`
+	NodeConnection    *NodeConnectionState `json:"node_connection,omitempty"`
+	Warp              Warp                 `json:"warp,omitempty"`
+	Tunnels           []Tunnel             `json:"tunnels"`
+	CreatedAt         time.Time            `json:"created_at"`
+	UpdatedAt         time.Time            `json:"updated_at"`
+}
+
+// NodeConnectionState contains only public controller routing metadata. Node
+// credentials are kept in an immutable private generation below CONFIG_DIR.
+type NodeConnectionState struct {
+	ControllerURL        string `json:"controller_url"`
+	CAPin                string `json:"ca_pin"`
+	CredentialGeneration string `json:"credential_generation"`
 }
 
 const (

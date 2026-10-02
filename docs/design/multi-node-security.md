@@ -66,7 +66,7 @@ disabled until explicit setup and recoverable controller backup exist.
 | --- | --- | --- |
 | Invitation copied from terminal or UI | Separate non-secret ID from hidden high-entropy secret; short TTL; single CSR claim; hash at rest; rate limit; consume atomically | A live secret plus controller pin can be used before the legitimate node claims it |
 | Enrollment MITM | Version-pinned command carries CA/SPKI pin; TLS verification has no bypass; compare code binds invitation and CSR | Compromised controller UI/host can issue a malicious command |
-| Enrollment replay | Bind invitation to first accepted CSR; explicit approval; repeated claims return `410`; bounded claim token | A controller database rollback requires epoch/replay reconciliation |
+| Enrollment replay | Bind invitation to first accepted CSR; explicit approval; exact CSR retries return the same bounded claim capability; competing CSRs return `409` | A controller database rollback requires epoch/replay reconciliation |
 | Managed backup restored onto another installation | Compare complete persisted managed identity before writing; explicit local detach removes controller authority and replay metadata before reuse | A full raw filesystem clone duplicates the comparison metadata and cannot be distinguished locally |
 | Raw node data directory cloned | Keep the clone offline until explicit local detach; detect duplicate active identity at the controller and revoke/re-enroll one side | A clone has the old private key and can impersonate the node until controller revocation is enforced |
 | Stolen node certificate without key | Short lifetime and serial tracking; proof of private-key possession on renewal | Certificate metadata may reveal node identity |

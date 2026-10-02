@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/astronaut808/awg-forge/internal/controlpki"
+	"github.com/google/uuid"
 )
 
 const (
@@ -59,28 +60,33 @@ type Route struct {
 	Method  string
 	Path    string
 	Handler http.Handler
+	// Bootstrap is accepted only for the two hard-coded enrollment route pairs.
+	Bootstrap bool
 }
 
 type routeKey struct{ method, path string }
 
 type Runtime struct {
-	endpoint       controlpki.Endpoint
-	tlsConfig      *tls.Config
-	mu             sync.Mutex
-	snapshot       *certificateSnapshot
-	caPEM          []byte
-	pin            string
-	listener       net.Listener
-	connections    map[*trackedConnection]struct{}
-	changed        chan struct{}
-	closed         bool
-	serving        bool
-	closeReason    error
-	authorizer     Authorizer
-	routes         map[routeKey]Route
-	requests       chan struct{}
-	requestContext context.Context
-	cancelRequests context.CancelFunc
+	endpoint         controlpki.Endpoint
+	tlsConfig        *tls.Config
+	mu               sync.Mutex
+	snapshot         *certificateSnapshot
+	caPEM            []byte
+	pin              string
+	listener         net.Listener
+	connections      map[*trackedConnection]struct{}
+	changed          chan struct{}
+	closed           bool
+	serving          bool
+	closeReason      error
+	authorizer       Authorizer
+	routes           map[routeKey]Route
+	requests         chan struct{}
+	requestContext   context.Context
+	cancelRequests   context.CancelFunc
+	bootstrapWindow  time.Time
+	bootstrapCount   int
+	bootstrapSources map[string]int
 }
 
 // New validates the prepared identity and builds a separate, closed-by-default
@@ -115,6 +121,9 @@ func New(material controlpki.Material, endpoint controlpki.Endpoint, pin string,
 			strings.ContainsAny(route.Path, "?#%") || route.Handler == nil {
 			return nil, errors.New("invalid control route")
 		}
+		if route.Bootstrap && !validBootstrapRoute(route) {
+			return nil, errors.New("invalid bootstrap route")
+		}
 		key := routeKey{route.Method, route.Path}
 		if _, exists := routeTable[key]; exists {
 			return nil, errors.New("duplicate control route")
@@ -135,7 +144,7 @@ func New(material controlpki.Material, endpoint controlpki.Endpoint, pin string,
 			SessionTicketsDisabled: true, NextProtos: []string{"http/1.1"},
 		},
 		authorizer: authorizer, routes: routeTable, requests: make(chan struct{}, maxRequests),
-		requestContext: requestContext, cancelRequests: cancelRequests,
+		requestContext: requestContext, cancelRequests: cancelRequests, bootstrapSources: make(map[string]int),
 	}
 	// Certificates must remain empty: IP clients send no SNI and must still use
 	// the same callback as DNS clients, including ServeTLS's cloned configuration.
@@ -304,9 +313,23 @@ func (runtime *Runtime) handler() http.Handler {
 			return
 		}
 		// EscapedPath rules out alternate encodings of an authorized route.
-		route, ok := runtime.routes[routeKey{r.Method, r.URL.EscapedPath()}]
+		route, ok := runtime.resolveRoute(r.Method, r.URL.EscapedPath())
 		if !ok || r.URL.RawQuery != "" {
 			http.NotFound(w, r)
+			return
+		}
+		if !runtime.identityValid(time.Now()) {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if route.Bootstrap {
+			if r.TLS == nil || !runtime.allowBootstrap(r.RemoteAddr, time.Now()) {
+				w.Header().Set("Retry-After", "60")
+				http.Error(w, "rate limited", http.StatusTooManyRequests)
+				return
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+			route.Handler.ServeHTTP(w, r)
 			return
 		}
 		if r.TLS == nil || len(r.TLS.VerifiedChains) == 0 || len(r.TLS.PeerCertificates) == 0 {
@@ -332,4 +355,55 @@ func (runtime *Runtime) handler() http.Handler {
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		route.Handler.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), nodeIdentityContextKey{}, identity)))
 	})
+}
+
+func validBootstrapRoute(route Route) bool {
+	return route.ID == "enrollment.claim" && route.Method == http.MethodPost && route.Path == "/control/v1/enrollments/{invitation_id}/claim" ||
+		route.ID == "enrollment.status" && route.Method == http.MethodGet && route.Path == "/control/v1/enrollments/{enrollment_id}"
+}
+
+func (runtime *Runtime) resolveRoute(method, requestPath string) (Route, bool) {
+	if route, ok := runtime.routes[routeKey{method, requestPath}]; ok {
+		return route, true
+	}
+	parts := strings.Split(requestPath, "/")
+	if len(parts) != 5 && len(parts) != 6 || parts[1] != "control" || parts[2] != "v1" || parts[3] != "enrollments" {
+		return Route{}, false
+	}
+	id, err := uuid.Parse(parts[4])
+	if err != nil || id.String() != parts[4] {
+		return Route{}, false
+	}
+	template := "/control/v1/enrollments/{enrollment_id}"
+	if len(parts) == 6 {
+		if parts[5] != "claim" {
+			return Route{}, false
+		}
+		template = "/control/v1/enrollments/{invitation_id}/claim"
+	}
+	route, ok := runtime.routes[routeKey{method, template}]
+	return route, ok && route.Bootstrap && validBootstrapRoute(route)
+}
+
+func (runtime *Runtime) allowBootstrap(remote string, now time.Time) bool {
+	source, _, err := net.SplitHostPort(remote)
+	if err != nil {
+		return false
+	}
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	if runtime.bootstrapWindow.IsZero() || now.Sub(runtime.bootstrapWindow) >= time.Minute {
+		runtime.bootstrapWindow = now
+		runtime.bootstrapCount = 0
+		clear(runtime.bootstrapSources)
+	}
+	if runtime.bootstrapCount >= 60 || runtime.bootstrapSources[source] >= 30 {
+		return false
+	}
+	if _, exists := runtime.bootstrapSources[source]; !exists && len(runtime.bootstrapSources) >= 128 {
+		return false
+	}
+	runtime.bootstrapCount++
+	runtime.bootstrapSources[source]++
+	return true
 }

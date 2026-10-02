@@ -22,7 +22,7 @@ const snapshotControllerID = "22222222-2222-4222-8222-222222222222"
 
 func TestControllerRegistrySnapshotSupportedSchemas(t *testing.T) {
 	ctx := context.Background()
-	for _, version := range []int{5, 6, 7, 8} {
+	for _, version := range []int{5, 6, 7, 8, 9} {
 		t.Run("schema", func(t *testing.T) {
 			db := openSnapshotSchema(t, version)
 			path := snapshotPath(t, db)
@@ -156,7 +156,7 @@ END`); err != nil {
 
 func TestControllerRegistrySnapshotPopulatedSchemasAndPreservesArchive(t *testing.T) {
 	ctx := context.Background()
-	for _, version := range []int{6, 7, 8} {
+	for _, version := range []int{6, 7, 8, 9} {
 		t.Run("populated", func(t *testing.T) {
 			db, material, generation, identity := populatedSnapshotSchema(t, version, version >= 7)
 			path := snapshotPath(t, db)

@@ -38,6 +38,10 @@ func (s *Service) PrepareControlIdentity(ctx context.Context, request ControlIde
 		return result, err
 	}
 	defer s.unlockStateMutation()
+	return s.prepareControlIdentityLocked(ctx, request)
+}
+
+func (s *Service) prepareControlIdentityLocked(ctx context.Context, request ControlIdentityRequest) (result ControlIdentityResult, err error) {
 	if err := s.store.CheckRestorePending(); err != nil {
 		return result, err
 	}
