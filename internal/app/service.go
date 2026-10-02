@@ -11,9 +11,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/astronaut808/awg-forge/internal/audit"
@@ -51,7 +53,10 @@ type Service struct {
 	nodeRenewalStep       func(string) error
 	controlRotationStep   func(string) error
 	controlRuntimeStep    func(string) error
+	controlRenewalNow     func() time.Time
+	controlRenewalWait    func(context.Context, time.Duration) bool
 	controlOwner          *controlRuntimeOwner
+	controlLifetime       atomic.Pointer[controlRuntimeOwner] // Cancellation access without Service.mu.
 	controlEnable         *controlEnableAuthorization
 }
 
@@ -272,8 +277,36 @@ func (s *Service) SessionSecret() (string, error) {
 	return state.SessionSecret, nil
 }
 
+func (s *Service) SessionSecretContext(ctx context.Context) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if err := s.store.CheckRestorePending(); err != nil {
+		return "", err
+	}
+	if s.cfg.SessionSecret != "" {
+		return s.cfg.SessionSecret, nil
+	}
+	state, err := s.store.Load()
+	if errors.Is(err, os.ErrNotExist) {
+		state, err = s.InitContext(ctx)
+	}
+	if err != nil {
+		return "", err
+	}
+	return state.SessionSecret, nil
+}
+
 func (s *Service) RenderAll() error {
 	if err := s.lockStateMutation(); err != nil {
+		return err
+	}
+	defer s.unlockStateMutation()
+	return s.renderAllLocked()
+}
+
+func (s *Service) RenderAllContext(ctx context.Context) error {
+	if err := s.lockControlRequest(ctx); err != nil {
 		return err
 	}
 	defer s.unlockStateMutation()

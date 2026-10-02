@@ -92,9 +92,16 @@ requests; it never grants a cached identity or falls back to a browser cookie.
   is durable.
 - Create the control CA only during explicit node-management preparation, not
   during controller-auth activation or `serve` startup. On restart, missing,
-  malformed, mismatched, or expired committed control identity keeps the control
-  listener closed and reports a safe diagnostic. It never generates replacement
-  keys. Browser recovery remains available if its separate auth state is valid.
+  malformed, mismatched or future-valid material, expired CA, and disabled/restored
+  controller state keep the control listener closed without replacement identity.
+  Narrow startup exception: an intact server leaf of a previously enabled
+  controller may renew under its existing valid CA, even after leaf expiry.
+  Validate controller ID, metadata, endpoint, key pair, SAN/profile/chain, CA key
+  and pin, existing registry/admin/auth material, restore and desired-state fences;
+  finish valid journal recovery first. Commit and clean up rotation before bind,
+  without changing Enabled or node trust. Any uncertainty keeps control closed.
+  Init and offline restore never renew or start control. Browser recovery remains
+  available if its separate auth state is valid.
 - The initial cryptographic profile is TLS 1.3 with Go standard-library X.509
   and Ed25519 keys. A CA certificate has CA basic constraints and `keyCertSign`;
   server and node leaf certificates have distinct server/client EKUs and no CA
@@ -169,11 +176,23 @@ renewal and contains only the committed credential generation.
 Server leaf rotation uses a hot-swappable immutable TLS certificate snapshot;
 readers never observe a partial key/cert pair. Changing the advertised hostname
 or IP requires a new SAN-bearing server leaf and a controlled endpoint update.
-An automatic server-leaf scheduler remains a separate checkpoint. It must renew
-before the final third of the leaf's lifetime, retain a valid current leaf on
-failure, and report a safe warning before expiry. Expiry closes the control
-listener rather than serving an invalid certificate. The CA is never silently replaced. Nodes continue to
-pin the same CA unless CA rotation is explicitly staged.
+One cancellable worker belongs to each bound application runtime owner. It
+renews at NotBefore + (NotAfter - NotBefore) * 2/3, rereads committed authority
+after both cancellable locks, and fences stale owners/generations. Retry frequency
+is bounded with backoff/jitter and wall-clock rechecks. A CA-capped leaf that
+cannot gain validity stays selected until expiry with a safe CA-maintenance
+diagnostic; no rotation storm or automatic CA replacement occurs. Journal
+publication atomically exposes a complete synced record without replacement.
+Pre-commit failure may retain the predecessor; uncertain state save or any
+post-commit publication/cleanup failure closes that captured runtime until an
+explicit restart. Shutdown closes admission, cancels serving/worker, drains both,
+then closes the registry. A drain deadline remains an error even at certificate
+expiry. A handler ignoring cancellation keeps its registry alive until it exits;
+bounded owner shutdown reports timeout rather than claiming completion. Terminal
+renewal closes admission under the generation fence and emits a safe diagnostic.
+Expiry closes accepted sockets; old expiry timers
+cannot close a successor. Node pin, binding, revocation, sessions, epochs and
+ConfigRevision are unchanged by server renewal.
 
 ## Exposure and recovery gates
 
@@ -246,8 +265,8 @@ The completed renewal handoff is
 [control-node-renewal-next-session.md](control-node-renewal-next-session.md).
 The internal server-leaf rotation checkpoint is implemented in
 [control-server-leaf-rotation-next-session.md](control-server-leaf-rotation-next-session.md).
-It has no scheduler or production route. The private application lifecycle owner
-publishes rotation into its loopback runtime. Controller backup/restore
+The application lifecycle owner automatically renews and publishes server leaves
+into its loopback runtime; no public rotation route is added. Controller backup/restore
 reconciles certificate authority with archived PKI and registry, invalidating
 all restored node certificates and bindings. Private loopback enablement has a
 one-use, process-local verified-backup receipt bound to the complete prepared

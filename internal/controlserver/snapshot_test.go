@@ -375,6 +375,9 @@ func TestSnapshotCancellationStillClosesAtRealExpiry(t *testing.T) {
 		if !errors.Is(err, controlpki.ErrExpired) {
 			t.Fatalf("expiry during graceful shutdown: %v", err)
 		}
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("expiry hid drain timeout: %v", err)
+		}
 	case <-time.After(4 * time.Second):
 		t.Fatal("graceful shutdown outlived expiry")
 	}

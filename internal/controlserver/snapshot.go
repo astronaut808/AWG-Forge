@@ -109,6 +109,20 @@ func (runtime *Runtime) Close() {
 	runtime.closeLocked(nil)
 }
 
+// Closed reports permanent admission closure; Reload cannot reopen it.
+func (runtime *Runtime) Closed() bool {
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	return runtime.closed
+}
+
+// WaitForRequests waits for admitted handlers to release their dependencies.
+// Call only after Close: no handler can register after admission is closed.
+// The owner separately bounds shutdown without closing a DB still in use.
+func (runtime *Runtime) WaitForRequests() {
+	runtime.activeRequests.Wait()
+}
+
 func (runtime *Runtime) closeLocked(reason error) {
 	if runtime.closed {
 		return

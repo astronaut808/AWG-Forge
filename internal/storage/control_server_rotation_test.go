@@ -231,3 +231,75 @@ func TestRotationJournalRejectsCaseAliases(t *testing.T) {
 		}
 	}
 }
+
+func TestControlServerJournalPublicationFaults(t *testing.T) {
+	pre := []string{"before-write:journal", "after-create:journal", "after-partial-write:journal", "after-write:journal", "before-sync:journal", "before-close:journal", "after-sync:journal", "before-publication:journal"}
+	post := []string{"after-publication:journal", "before-directory-sync:journal", "after-directory-sync:journal"}
+	for _, point := range append(pre, post...) {
+		t.Run(point, func(t *testing.T) {
+			store, journal, _, _ := controlServerRotationFixture(t)
+			hit := false
+			err := store.SaveControlServerRotationJournal(journal, func(step string) error {
+				if step == point {
+					hit = true
+					return errors.New("injected")
+				}
+				return nil
+			})
+			if !hit || err == nil {
+				t.Fatal("fault not exercised")
+			}
+			published := false
+			for _, step := range post {
+				published = published || point == step
+			}
+			got, err := store.LoadControlServerRotationJournal()
+			if published {
+				if err != nil || got != journal {
+					t.Fatal("published record incomplete", err)
+				}
+				assertControlRotationMode(t, store.ControlServerRotationJournalPath(), 0600)
+			} else if !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("unpublished journal visible", err)
+			}
+			temps, err := filepath.Glob(filepath.Join(store.dir, ".control-server-rotation-*.tmp"))
+			if err != nil || len(temps) != 0 {
+				t.Fatal("operation temp leaked")
+			}
+		})
+	}
+}
+
+func TestControlServerJournalPublicationNeverReplaces(t *testing.T) {
+	for _, kind := range []string{"file", "symlink", "directory"} {
+		t.Run(kind, func(t *testing.T) {
+			store, journal, _, _ := controlServerRotationFixture(t)
+			sentinel := []byte("historical malformed journal")
+			err := store.SaveControlServerRotationJournal(journal, func(step string) error {
+				if step != "before-publication:journal" {
+					return nil
+				}
+				switch kind {
+				case "file":
+					return os.WriteFile(store.ControlServerRotationJournalPath(), sentinel, 0600)
+				case "directory":
+					return os.Mkdir(store.ControlServerRotationJournalPath(), 0700)
+				default:
+					return os.Symlink(store.StatePath(), store.ControlServerRotationJournalPath())
+				}
+			})
+			if err == nil {
+				t.Fatal("collision overwritten")
+			}
+			if kind == "file" {
+				body, err := os.ReadFile(store.ControlServerRotationJournalPath())
+				if err != nil || string(body) != string(sentinel) {
+					t.Fatal("historical evidence replaced")
+				}
+			}
+			if store.CheckNoControlServerRotation() == nil {
+				t.Fatal("unsafe collision did not fence")
+			}
+		})
+	}
+}

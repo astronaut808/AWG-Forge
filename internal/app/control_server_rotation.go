@@ -14,7 +14,7 @@ import (
 
 var errStaleControlServerGeneration = errors.New("active control server generation changed")
 
-// rotateControlServerLeaf has no production caller. An expected generation
+// rotateControlServerLeaf uses an expected generation that
 // fences retries after an uncertain commit. Enabled state requires the private
 // application runtime owner; disabled-state tests may use an isolated runtime.
 func (s *Service) rotateControlServerLeaf(ctx context.Context, expected string, now time.Time, live *controlserver.Runtime) (result config.ControlIdentityState, err error) {
@@ -27,10 +27,18 @@ func (s *Service) rotateControlServerLeaf(ctx context.Context, expected string, 
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	if err := s.lockStateMutation(); err != nil {
+	if err := s.lockControlRequest(ctx); err != nil {
 		return result, err
 	}
 	defer s.unlockStateMutation()
+	return s.rotateControlServerLeafLocked(ctx, expected, now, live, false)
+}
+
+// startup is private to the closed restart path, with registry/auth preflight.
+func (s *Service) rotateControlServerLeafLocked(ctx context.Context, expected string, now time.Time, live *controlserver.Runtime, startup bool) (result config.ControlIdentityState, err error) {
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
 	if err := s.checkControlMutationJournalsLocked(); err != nil {
 		return result, err
 	}
@@ -54,8 +62,14 @@ func (s *Service) rotateControlServerLeaf(ctx context.Context, expected string, 
 	if err := ValidateControlIdentityMetadata(&control, s.cfg.WebUIPort); err != nil {
 		return result, err
 	}
-	if control.Enabled && (live == nil || s.controlOwner == nil || live != s.controlOwner.runtime) {
+	if control.Enabled && !startup && (live == nil || s.controlOwner == nil || live != s.controlOwner.runtime) {
 		return result, errors.New("enabled control rotation requires its runtime owner")
+	}
+	if live != nil && live.Closed() {
+		return result, errors.New("control runtime admission is closed")
+	}
+	if startup && (!control.Enabled || live != nil || s.controlOwner != nil) {
+		return result, errors.New("startup rotation requires a closed enabled controller")
 	}
 	if control.ServerGeneration != expected {
 		return result, errStaleControlServerGeneration
@@ -152,6 +166,9 @@ func (s *Service) rotateControlServerLeaf(ctx context.Context, expected string, 
 		}
 		if err := live.ReloadCommitted(material); err != nil {
 			return result, errors.New("committed control server runtime publication failed")
+		}
+		if s.controlOwner != nil && s.controlOwner.runtime == live {
+			s.controlOwner.identity.ServerGeneration = generation
 		}
 		if err := s.rotationStep("after-runtime-publication"); err != nil {
 			return result, err

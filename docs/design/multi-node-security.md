@@ -104,6 +104,13 @@ certificates.
 
 ## Credential lifecycle
 
+- Controller server leaves renew under the existing CA at two thirds of their
+  actual X.509 interval. Only an intact previously enabled controller with valid
+  CA, existing registry/auth and cleared recovery fences may renew an expired
+  leaf before startup bind. Missing/corrupt/future-valid identity, expired CA,
+  disabled or restored controllers never receive automatic recovery. Renewal
+  preserves node revocations, bindings and browser authority.
+
 - Node certificates are short-lived and renew during the final third of their
   lifetime, beginning at the two-thirds boundary.
 - Internal renewal requires the verified current client certificate, current
