@@ -60,6 +60,11 @@ func newControlLifecycleFixture(t *testing.T) controlLifecycleFixture {
 		t.Fatal(err)
 	}
 	node := renewalTestCertificate(t, pem)
+	// Keep node renewal due while isolating server lifecycle tests.
+	control, err = s.rotateControlServerLeaf(context.Background(), control.ServerGeneration, time.Now(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	material, err := s.store.LoadControlIdentity(control.CAGeneration, control.ServerGeneration)
 	if err != nil {
 		t.Fatal(err)

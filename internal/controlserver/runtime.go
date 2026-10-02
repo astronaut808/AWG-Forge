@@ -82,6 +82,7 @@ type Runtime struct {
 	authorizer       Authorizer
 	routes           map[routeKey]Route
 	requests         chan struct{}
+	activeRequests   sync.WaitGroup // Admission/Add is serialized with Close by mu.
 	requestContext   context.Context
 	cancelRequests   context.CancelFunc
 	bootstrapWindow  time.Time
@@ -248,7 +249,7 @@ func (runtime *Runtime) Serve(ctx context.Context) error {
 			drainErr := drain()
 			<-result
 			if reason != nil {
-				return reason
+				return errors.Join(reason, drainErr)
 			}
 			return drainErr
 		}
@@ -262,12 +263,12 @@ func (runtime *Runtime) Serve(ctx context.Context) error {
 			reason = runtime.closeReason
 			runtime.mu.Unlock()
 			if reason != nil {
-				return reason
+				return errors.Join(reason, drainErr)
 			}
 			if errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) {
 				return drainErr
 			}
-			return err
+			return errors.Join(err, drainErr)
 		case <-expiry.C:
 			// Re-read the current snapshot under the lock before expiring it. A reload
 			// can win the race with the predecessor's timer without being shut down.
@@ -288,7 +289,7 @@ func (runtime *Runtime) Serve(ctx context.Context) error {
 
 			serveErr := <-result
 			if reason != nil {
-				return reason
+				return errors.Join(reason, err)
 			}
 			if err != nil && !errors.Is(err, net.ErrClosed) {
 				return err
@@ -312,6 +313,15 @@ func (runtime *Runtime) handler() http.Handler {
 			http.Error(w, "unavailable", http.StatusServiceUnavailable)
 			return
 		}
+		runtime.mu.Lock()
+		if runtime.closed {
+			runtime.mu.Unlock()
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		runtime.activeRequests.Add(1)
+		runtime.mu.Unlock()
+		defer runtime.activeRequests.Done()
 		// EscapedPath rules out alternate encodings of an authorized route.
 		route, ok := runtime.resolveRoute(r.Method, r.URL.EscapedPath())
 		if !ok || r.URL.RawQuery != "" {

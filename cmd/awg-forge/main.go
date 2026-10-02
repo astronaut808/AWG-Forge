@@ -8,9 +8,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/astronaut808/awg-forge/internal/app"
@@ -87,6 +89,8 @@ func run(args []string) error {
 }
 
 func runServe(cfg config.Config) (err error) {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	stateLock, err := storage.AcquireStateLock(cfg.ConfigDir)
 	if err != nil {
 		return err
@@ -103,45 +107,50 @@ func runServe(cfg config.Config) (err error) {
 		return err
 	}
 	svc := app.New(cfg)
-	state, err := svc.Init()
+	state, err := svc.InitContext(ctx)
 	if err != nil {
 		return err
 	}
-	if err := svc.RenderAll(); err != nil {
+	if err := svc.RenderAllContext(ctx); err != nil {
 		return err
 	}
-	controllerAuth, controllerDB, err := loadControllerAuth(cfg, state)
+	svc.RuntimeLog().Info(ctx, "server", "server.startup.local_ready", "local startup prepared", nil)
+	controllerAuth, controllerDB, err := loadControllerAuthContext(ctx, cfg, state)
 	if err != nil {
 		return err
 	}
 	if controllerDB != nil {
 		defer func() { err = errors.Join(err, controllerDB.Close()) }()
 	}
-	return server.Serve(cfg, svc, tlsRuntime, controllerAuth)
+	return server.ServeContext(ctx, cfg, svc, tlsRuntime, controllerAuth)
 }
 
 func loadControllerAuth(cfg config.Config, state config.State) (*controlauth.Service, *sqldb.DB, error) {
+	return loadControllerAuthContext(context.Background(), cfg, state)
+}
+
+func loadControllerAuthContext(ctx context.Context, cfg config.Config, state config.State) (*controlauth.Service, *sqldb.DB, error) {
 	if state.EffectiveMode() != config.ModeController {
 		return nil, nil, nil
 	}
 	if cfg.DatabaseMode != sqldb.ModeSQLite {
 		return nil, nil, app.ErrControllerActivationRequiresDB
 	}
-	openCtx, cancel := context.WithTimeout(context.Background(), cfg.DatabaseQueryTimeout)
+	openCtx, cancel := context.WithTimeout(ctx, cfg.DatabaseQueryTimeout)
 	db, err := sqldb.Open(openCtx, cfg)
 	cancel()
 	if err != nil {
 		return nil, nil, fmt.Errorf("open controller authentication database: %w", err)
 	}
 	// Schema migration is a bounded startup operation, not one database query.
-	migrateCtx, cancel := context.WithTimeout(context.Background(), sqldb.MigrationTimeout(cfg.DatabaseQueryTimeout))
+	migrateCtx, cancel := context.WithTimeout(ctx, sqldb.MigrationTimeout(cfg.DatabaseQueryTimeout))
 	err = db.Migrate(migrateCtx)
 	cancel()
 	if err != nil {
 		_ = db.Close()
 		return nil, nil, fmt.Errorf("migrate controller authentication database: %w", err)
 	}
-	inspectCtx, cancel := context.WithTimeout(context.Background(), cfg.DatabaseQueryTimeout)
+	inspectCtx, cancel := context.WithTimeout(ctx, cfg.DatabaseQueryTimeout)
 	initialized, err := db.ControllerAuthInitialized(inspectCtx)
 	cancel()
 	if err != nil {

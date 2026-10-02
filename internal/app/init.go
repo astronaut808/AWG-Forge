@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -27,6 +28,15 @@ type InitOptions struct {
 
 func (s *Service) Init() (config.State, error) {
 	return s.InitWithOptions(InitOptionsFromConfig(s.cfg))
+}
+
+// InitContext keeps startup lock contention responsive to process shutdown.
+func (s *Service) InitContext(ctx context.Context) (config.State, error) {
+	if err := s.lockControlRequest(ctx); err != nil {
+		return config.State{}, err
+	}
+	defer s.unlockStateMutation()
+	return s.initLocked()
 }
 
 func (s *Service) InitWithOptions(options InitOptions) (config.State, error) {
@@ -68,7 +78,7 @@ func (s *Service) initWithOptionsLocked(options InitOptions) (config.State, erro
 			if state.Controller.Control != nil {
 				if err := s.validateControlIdentityLocked(state.Controller.Control, time.Time{}, false); err != nil {
 					if errors.Is(err, controlpki.ErrExpired) {
-						s.log("warn", "control.identity.expired", "control identity expired; explicit renewal is required before use", nil, nil)
+						s.log("warn", "control.identity.expired", "control identity expired; verified renewal is required before serving", nil, nil)
 					} else {
 						s.log("warn", "control.identity.unusable", "committed control identity is unusable", nil, nil)
 					}

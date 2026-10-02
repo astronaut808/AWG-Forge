@@ -51,10 +51,15 @@ lock. Activation drains existing authenticated requests and switches to opaque
 sessions without a server restart. Standalone and DB-off behavior remain
 unchanged until explicit activation.
 
-Node enrollment, identity replacement/rebind, the control listener, operation
-delivery, receipt acknowledgement, and receipt pruning are not implemented yet.
-Until controller backup includes the controller identity, authentication database,
-and key material atomically, backup creation and restore reject controller state.
+Loopback enrollment/approval, mTLS presence, automatic node renewal and
+controller server-leaf renewal are implemented. The server worker is owned by
+the control runtime, preserves existing CA/node authority and closes on expiry
+or uncertain commit. Startup may renew an intact expired leaf of a previously
+enabled controller only under a valid existing CA with all PKI/auth/registry
+prerequisites satisfied before bind. Controller backup includes identity and auth
+atomically; restore disables control and revokes archived node authority.
+External exposure, installer join/rebind, fleet UI, operation delivery, receipt
+acknowledgement and pruning remain outside the implemented checkpoint.
 
 `state.json` on each node is the desired-state source of truth. The controller
 is a secure remote control surface and redacted inventory cache, not an

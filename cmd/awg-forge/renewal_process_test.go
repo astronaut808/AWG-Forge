@@ -63,6 +63,21 @@ func TestRenewalProcesses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Fresh server leaf under the old CA isolates the node renewal fixture.
+	fixtureStore := storage.New(controllerDir)
+	fixtureMaterial, err := fixtureStore.LoadControlIdentity(control.CAGeneration, control.ServerGeneration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := controlpki.RotateServerLeaf(fixtureMaterial, controlpki.Endpoint{BindIP: control.BindIP, Advertised: control.Advertised, Port: control.Port}, control.CAPin, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string][]byte{controlpki.ServerKeyFile: fresh.ServerKey, controlpki.ServerCertFile: fresh.ServerCert} {
+		if err := os.WriteFile(filepath.Join(controllerDir, "control", "server", control.ServerGeneration, name), body, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	controller := enrollmentStartProcess(ctx, t, binary, enrollmentEnv(controllerDir, browserPort), "serve")
 	defer controller.stop(t)
 	baseURL := fmt.Sprintf("http://127.0.0.1:%d", browserPort)

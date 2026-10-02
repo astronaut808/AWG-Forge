@@ -46,7 +46,10 @@ func (s *Service) ShutdownControl() error { return s.shutdownControlLoopback() }
 
 // StartControl restarts only explicitly committed enablement; Init never starts it.
 func (s *Service) StartControl(ctx context.Context) error {
-	state, err := s.State()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	state, err := s.store.Load()
 	if err != nil {
 		return err
 	}
@@ -187,6 +190,11 @@ func (s *Service) lockControlRequest(ctx context.Context) error {
 		if s.mu.TryLock() {
 			lock, err := storage.AcquireStateMutationLockContext(ctx, s.cfg.ConfigDir)
 			if err != nil {
+				s.mu.Unlock()
+				return err
+			}
+			if err := ctx.Err(); err != nil {
+				_ = lock.Close()
 				s.mu.Unlock()
 				return err
 			}

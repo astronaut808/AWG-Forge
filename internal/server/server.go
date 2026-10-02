@@ -86,16 +86,20 @@ func Serve(cfg config.Config, service *app.Service, tlsRuntime webtls.Runtime, c
 }
 
 func ServeContext(ctx context.Context, cfg config.Config, service *app.Service, tlsRuntime webtls.Runtime, controllerAuth *controlauth.Service) (result error) {
-	secret, err := service.SessionSecret()
+	secret, err := service.SessionSecretContext(ctx)
 	if err != nil {
 		return err
 	}
-	serverContext, stopServer := context.WithCancel(context.Background())
+	serverContext, stopServer := context.WithCancel(ctx)
 	defer stopServer()
+	service.RuntimeLog().Info(ctx, "control", "control.start.checking", "checking committed control listener", nil)
 	if err := service.StartControl(serverContext); err != nil {
 		service.RuntimeLog().Info(context.Background(), "control", "control.start.unavailable", "control listener unavailable; local recovery required", nil)
 	}
-	defer func() { _ = service.ShutdownControl() }()
+	defer func() { result = errors.Join(result, service.ShutdownControl()) }()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	nodeDone := make(chan struct{})
 	go func() {
 		defer close(nodeDone)

@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -66,6 +67,15 @@ func TestEnrollmentProcesses(t *testing.T) {
 	client := enrollmentBrowserClient(activation.Authentication.Token, baseURL)
 	var prepared struct{}
 	enrollmentJSON(ctx, t, client, http.MethodPost, baseURL+"/api/controller/control/prepare", map[string]any{"bind_ip": "127.0.0.1", "advertised": "127.0.0.1", "port": controlPort}, &prepared)
+	preparedState, err := storage.New(controllerDir).Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialControl := *preparedState.Controller.Control
+	// The disabled identity is a short, real-time fixture. Enable starts the
+	// actual serving worker; enrollment and reconnect span its automatic renewal.
+	clock := time.Now().UTC().Truncate(time.Second)
+	processServerValidity(t, controllerDir, initialControl, clock.Add(-3*time.Second), clock.Add(27*time.Second))
 	request, _ := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/controller/control/backup", bytes.NewBufferString(`{"password":"process backup password"}`))
 	request.Header.Set("Content-Type", "application/json")
 	response, err := client.Do(request)
@@ -152,6 +162,38 @@ func TestEnrollmentProcesses(t *testing.T) {
 	secondSequence := enrollmentWaitPresenceAfter(ctx, t, cfg.DatabasePath, state.ManagedNode.NodeID, firstSequence)
 	if secondSequence != firstSequence+1 {
 		t.Fatalf("node boot sequence = %d, want %d", secondSequence, firstSequence+1)
+	}
+
+	controllerBeforeRenewal, err := storage.New(controllerDir).Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeServerRenewal := enrollmentPresenceExpiry(ctx, t, cfg.DatabasePath, state.ManagedNode.NodeID)
+	serverDeadline := time.Now().Add(35 * time.Second)
+	for {
+		current, err := storage.New(controllerDir).Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if current.Controller.Control.ServerGeneration != initialControl.ServerGeneration {
+			break
+		}
+		if time.Now().After(serverDeadline) {
+			t.Fatal("live controller process did not renew server leaf")
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	controllerAfterRenewal, err := storage.New(controllerDir).Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	controllerAfterRenewal.Controller.Control.ServerGeneration = controllerBeforeRenewal.Controller.Control.ServerGeneration
+	if !reflect.DeepEqual(controllerBeforeRenewal, controllerAfterRenewal) {
+		t.Fatal("live server renewal changed controller/local state")
+	}
+	enrollmentWaitPresenceRefresh(ctx, t, cfg.DatabasePath, state.ManagedNode.NodeID, beforeServerRenewal)
+	if got := enrollmentWaitPresenceAfter(ctx, t, cfg.DatabasePath, state.ManagedNode.NodeID, secondSequence-1); got != secondSequence {
+		t.Fatal("server renewal changed node boot identity")
 	}
 
 	// Controller restart must accept a still-running node with the same boot

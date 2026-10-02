@@ -73,3 +73,5 @@ Doctor checks config directory permissions and warns about problems.
 If a mutating operation changes state/configs but runtime apply fails, awg-forge rolls back state and rendered configs.
 
 This prevents the UI from showing a created client or modified tunnel when runtime state was not successfully applied.
+
+Controller control TLS automatically renews its server certificate under the existing CA at two thirds of the certificate lifetime. A previously enabled controller may renew an intact expired server certificate before opening its loopback listener, only with valid existing CA, identity, registry/auth and cleared recovery fences. Missing or corrupt data and expired CA require local recovery. Disabled or restored controllers stay disabled; node revocations and tunnel configurations are preserved. This does not enable remote exposure.

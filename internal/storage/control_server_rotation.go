@@ -117,7 +117,69 @@ func (s Store) SaveControlServerRotationJournal(j ControlServerRotationJournal, 
 	if err != nil {
 		return err
 	}
-	return writeControlRotationFile(s.ControlServerRotationJournalPath(), append(body, '\n'), hook, "journal")
+	// Callers hold the state mutation lock. Publish a complete synced record
+	// with no replacement, even if an unsafe entry appears before publication.
+	if err := s.CheckNoControlServerRotation(); err != nil {
+		return err
+	}
+	if err := rotationStep(hook, "before-write:journal"); err != nil {
+		return err
+	}
+	out, err := os.CreateTemp(s.dir, ".control-server-rotation-*.tmp")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = out.Close(); _ = os.Remove(out.Name()) }()
+	if err := rotationStep(hook, "after-create:journal"); err != nil {
+		return err
+	}
+	body = append(body, '\n')
+	if _, err := out.Write(body[:len(body)/2]); err != nil {
+		return err
+	}
+	if err := rotationStep(hook, "after-partial-write:journal"); err != nil {
+		return err
+	}
+	if _, err := out.Write(body[len(body)/2:]); err != nil {
+		return err
+	}
+	for _, point := range []string{"after-write:journal", "before-sync:journal"} {
+		if err := rotationStep(hook, point); err != nil {
+			return err
+		}
+	}
+	if err := out.Sync(); err != nil {
+		return err
+	}
+	if err := rotationStep(hook, "before-close:journal"); err != nil {
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	for _, point := range []string{"after-sync:journal", "before-publication:journal"} {
+		if err := rotationStep(hook, point); err != nil {
+			return err
+		}
+	}
+	if err := privateDir(s.dir); err != nil {
+		return err
+	}
+	if err := s.CheckNoControlServerRotation(); err != nil {
+		return err
+	}
+	if err := os.Link(out.Name(), s.ControlServerRotationJournalPath()); err != nil {
+		return err
+	}
+	for _, point := range []string{"after-publication:journal", "before-directory-sync:journal"} {
+		if err := rotationStep(hook, point); err != nil {
+			return err
+		}
+	}
+	if err := s.SyncStateDirectory(); err != nil {
+		return err
+	}
+	return rotationStep(hook, "after-directory-sync:journal")
 }
 
 func (s Store) LoadControlServerRotationJournal() (ControlServerRotationJournal, error) {

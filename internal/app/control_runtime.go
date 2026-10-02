@@ -33,12 +33,15 @@ type controlEnableAuthorization struct {
 // controlRuntimeOwner is owned by Service.mu. The serving goroutine writes only
 // its result under resultMu and closes done after releasing the database.
 type controlRuntimeOwner struct {
-	runtime  *controlserver.Runtime
-	db       *sqldb.DB
-	cancel   context.CancelFunc
-	done     chan struct{}
-	resultMu sync.Mutex
-	result   error
+	runtime       *controlserver.Runtime
+	identity      config.ControlIdentityState // Read/written only under Service.mu.
+	controllerID  string
+	db            *sqldb.DB
+	cancel        context.CancelFunc
+	done          chan struct{}
+	resultMu      sync.Mutex
+	result        error
+	shutdownError error
 }
 
 // PrepareControlEnable is a trusted internal backup adapter, not an HTTP
@@ -51,7 +54,7 @@ func (s *Service) PrepareControlEnable(ctx context.Context, token string, create
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if err := s.lockStateMutation(); err != nil {
+	if err := s.lockControlRequest(ctx); err != nil {
 		return nil, err
 	}
 	defer s.unlockStateMutation()
@@ -192,7 +195,7 @@ func (s *Service) enableControlLoopback(ctx context.Context, token string, recei
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := s.lockStateMutation(); err != nil {
+	if err := s.lockControlRequest(ctx); err != nil {
 		return err
 	}
 	defer s.unlockStateMutation()
@@ -265,12 +268,12 @@ func (s *Service) commitControlEnabledLocked(ctx context.Context, state config.S
 }
 
 // restartControlLoopback is an explicit private lifecycle entry, never called by
-// Init or installer/startup paths. It retries only the committed identity.
+// Init. It validates and renews an intact enabled identity before binding.
 func (s *Service) restartControlLoopback(ctx context.Context, routes []controlserver.Route) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := s.lockStateMutation(); err != nil {
+	if err := s.lockControlRequest(ctx); err != nil {
 		return err
 	}
 	defer s.unlockStateMutation()
@@ -282,11 +285,35 @@ func (s *Service) restartControlLoopback(ctx context.Context, routes []controlse
 	if !state.Controller.Control.Enabled {
 		return errors.New("control listener is disabled")
 	}
+	if s.controlOwner != nil {
+		select {
+		case <-s.controlOwner.done:
+		default:
+			if s.controlOwner.runtime.Closed() {
+				return errors.New("control listener is still shutting down")
+			}
+			return ctx.Err() // Already owned; never create a duplicate worker.
+		}
+	}
 	if err := s.stopControlOwnerLocked(); err != nil {
+		return err
+	}
+	if err := s.renewControlStartupLocked(ctx, state); err != nil {
+		return err
+	}
+	state, err = s.store.Load()
+	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	owner, err := s.newControlOwnerLocked(ctx, state, routes)
 	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		owner.discard()
 		return err
 	}
 	s.startControlOwnerLocked(owner)
@@ -317,7 +344,11 @@ func (s *Service) newControlOwnerLocked(ctx context.Context, state config.State,
 		_ = db.Close()
 		return nil, err
 	}
-	owner := &controlRuntimeOwner{runtime: runtime, db: db, done: make(chan struct{})}
+	owner := &controlRuntimeOwner{runtime: runtime, identity: control, controllerID: state.Controller.ControllerID, db: db, done: make(chan struct{})}
+	if err := ctx.Err(); err != nil {
+		owner.discard()
+		return nil, err
+	}
 	if err := runtime.Bind(); err != nil {
 		owner.discard()
 		return nil, errors.New("bind control loopback listener failed")
@@ -361,20 +392,39 @@ func (s *Service) startControlOwnerLocked(owner *controlRuntimeOwner) {
 	serveCtx, cancel := context.WithCancel(context.Background())
 	owner.cancel = cancel
 	s.controlOwner = owner
+	s.controlLifetime.Store(owner)
 	step := s.controlRuntimeStep
 	go func() {
 		var err error
+		var workerDone chan struct{}
 		if step != nil {
 			err = step("before-serve")
 		}
 		if err == nil {
+			workerDone = make(chan struct{})
+			go func() {
+				defer close(workerDone)
+				s.runControlServerRenewal(serveCtx, owner)
+			}()
 			err = owner.runtime.Serve(serveCtx)
 		}
 		owner.runtime.Close()
 		cancel()
-		err = errors.Join(err, owner.db.Close())
+		if workerDone != nil {
+			<-workerDone
+		}
+		// Force-closing sockets does not finish a handler ignoring cancellation.
+		// Keep its registry alive; stopControlOwnerLocked still has a bounded wait.
+		owner.runtime.WaitForRequests()
+		closeErr := owner.db.Close()
+		shutdownErr := closeErr
+		if errors.Is(err, context.DeadlineExceeded) {
+			shutdownErr = errors.Join(err, closeErr)
+		}
+		err = errors.Join(err, closeErr)
 		owner.resultMu.Lock()
 		owner.result = err
+		owner.shutdownError = shutdownErr
 		owner.resultMu.Unlock()
 		if err != nil {
 			s.log("warn", "control.runtime.stopped", "control listener stopped; explicit retry is required", nil, nil)
@@ -400,14 +450,25 @@ func (s *Service) stopControlOwnerLocked() error {
 	select {
 	case <-owner.done:
 		s.controlOwner = nil
-		return nil
+		s.controlLifetime.CompareAndSwap(owner, nil)
+		owner.resultMu.Lock()
+		err := owner.shutdownError
+		owner.resultMu.Unlock()
+		return err
 	case <-timer.C:
-		return errors.New("control listener shutdown did not finish")
+		return errors.Join(errors.New("control listener shutdown did not finish"), context.DeadlineExceeded)
 	}
 }
 
 func (s *Service) disableControlLoopback(ctx context.Context, token string) error {
-	if err := s.lockStateMutation(); err != nil {
+	// Authenticate before interrupting the owner. Cancellation must precede the
+	// mutex: the worker may hold it while waiting on another process's flock.
+	// Revalidate authorization under the mutation lock before changing state.
+	if _, _, err := s.controlRecentSession(ctx, token); err != nil {
+		return err
+	}
+	s.cancelControlLifetime()
+	if err := s.lockControlRequest(ctx); err != nil {
 		return err
 	}
 	defer s.unlockStateMutation()
@@ -433,16 +494,27 @@ func (s *Service) disableControlLoopback(ctx context.Context, token string) erro
 }
 
 func (s *Service) shutdownControlLoopback() error {
+	s.cancelControlLifetime()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.controlEnable = nil
 	return s.stopControlOwnerLocked()
 }
 
+func (s *Service) cancelControlLifetime() {
+	if owner := s.controlLifetime.Load(); owner != nil {
+		owner.runtime.Close()
+		owner.cancel()
+	}
+}
+
 func (s *Service) rotateControlLoopbackLeaf(ctx context.Context, expected string, now time.Time) (config.ControlIdentityState, error) {
-	s.mu.Lock()
-	owner := s.controlOwner
-	s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return config.ControlIdentityState{}, err
+	}
+	// Capture immutable runtime access without waiting on the service mutex.
+	// The actual owner and generation are rechecked under cancellable locks.
+	owner := s.controlLifetime.Load()
 	if owner == nil {
 		return config.ControlIdentityState{}, errors.New("control listener has no runtime owner")
 	}
