@@ -169,20 +169,26 @@ option are described in [Diagnostics](diagnostics.md#encrypted-backup--restore).
 Controller restore has additional identity, archive-location, and offline
 administrator-recovery requirements in the same section.
 
-## Loopback node enrollment
+## Explicit control listener and node enrollment
 
-This checkpoint supports the first authenticated node session on a literal
-loopback endpoint. Use the controller browser session and recent MFA
+This checkpoint supports authenticated enrollment and mTLS presence on an
+explicitly enabled control endpoint. Use the controller browser session and recent MFA
 reauthentication with the internal routes in [the browser API contract](../../api/openapi.json):
 
-1. `POST /api/controller/control/prepare` with `bind_ip`, `advertised` (both
-   literal loopback addresses), and a dedicated `port` different from the Web UI.
+1. `POST /api/controller/control/prepare` with a specific literal `bind_ip`,
+   an `advertised` IP address or DNS name for the TLS SAN, and a dedicated `port`
+   different from the Web UI and TCP/80. Wildcard, multicast, scoped and IPv4-mapped
+   bind addresses are rejected. Preparation leaves the listener disabled.
 2. `POST /api/controller/control/backup` with a backup `password`. Save the
    encrypted response outside the configuration directory. Keep its
    `X-Control-Enable-Receipt` header; it expires with recent authentication and
    cannot survive restart or another backup preparation.
 3. `POST /api/controller/control/enable` with `receipt` and `backup_saved: true`
-   only after retaining the archive. `GET /api/controller/control/status`
+   only after retaining the archive. If either endpoint value is not a literal
+   loopback address, also send `allow_non_loopback: true`. Omission or `false`
+   denies that endpoint and consumes a matching receipt; obtain a new backup
+   before retrying. Consent covers only the exact prepared endpoint.
+   `GET /api/controller/control/status`
    returns public identity metadata. Disable with
    `POST /api/controller/control/disable` after recent authentication.
 4. `POST /api/controller/enrollments/invite` with `{}`. Save the JSON download
@@ -200,6 +206,16 @@ reauthentication with the internal routes in [the browser API contract](../../ap
    reject using `POST /api/controller/enrollments/decide` with `enrollment_id`,
    the matching `verification_code`, and `approve`. Then start or restart the
    node's `awg-forge serve` process to send mTLS presence.
+
+Use a reachable advertised address whose certificate SAN the node can verify;
+DNS/NAT routing and firewall access are configured by the operator. The listener
+binds only the specified local IP; enable fails if that socket is unavailable.
+The browser UI can remain on loopback HTTP. The control listener serves TLS 1.3
+only, ignores forwarded identity headers, and exposes only the existing enrollment,
+presence and certificate-renewal routes. Existing mTLS registry checks and resource
+limits apply on every interface. `serve` restarts a previously enabled exact endpoint;
+install/upgrade and preparation never enable it automatically. Disable or restore
+requires a fresh verified backup and explicit consent before enabling it again.
 
 The node verifies the pinned CA and normal TLS certificate before transmitting
 its secret. Its private key stays local. An invitation accepts exactly one CSR;
@@ -224,8 +240,8 @@ and presence sessions. Managed-node backups include the protected credential
 generation; backup is blocked while node renewal is pending. Restore still
 enforces identity fencing or explicit detach. Detach removes controller authority.
 Linux-root [offline recovery](security.md#offline-node-recovery) supports detach
-and fresh enrollment with a new identity. External listeners, installer integration
-and fleet UI remain separate work.
+and fresh enrollment with a new identity. Installer integration, endpoint rebind,
+fleet UI and remote operations remain separate work.
 
 ## Client Config Import
 

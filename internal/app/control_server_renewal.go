@@ -52,7 +52,7 @@ func (s *Service) renewControlStartupLocked(ctx context.Context, state config.St
 		return errors.New("startup renewal requires a closed enabled controller")
 	}
 	control := *state.Controller.Control
-	if err := requireControlLoopback(control); err != nil {
+	if err := ValidateControlIdentityMetadata(&control, s.cfg.WebUIPort); err != nil {
 		return err
 	}
 	db, _, err := s.openControlRegistry(ctx)

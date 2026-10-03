@@ -35,6 +35,10 @@ import (
 // It deliberately keeps invitations and process logs in t.TempDir: neither is
 // emitted on failure because both contain enrollment credentials.
 func TestEnrollmentProcesses(t *testing.T) {
+	runEnrollmentProcesses(t, "127.0.0.1")
+}
+
+func runEnrollmentProcesses(t *testing.T, bindIP string) {
 	if testing.Short() {
 		t.Skip("process integration test")
 	}
@@ -66,7 +70,7 @@ func TestEnrollmentProcesses(t *testing.T) {
 	enrollmentWaitHTTP(ctx, t, baseURL+"/api/state")
 	client := enrollmentBrowserClient(activation.Authentication.Token, baseURL)
 	var prepared struct{}
-	enrollmentJSON(ctx, t, client, http.MethodPost, baseURL+"/api/controller/control/prepare", map[string]any{"bind_ip": "127.0.0.1", "advertised": "127.0.0.1", "port": controlPort}, &prepared)
+	enrollmentJSON(ctx, t, client, http.MethodPost, baseURL+"/api/controller/control/prepare", map[string]any{"bind_ip": bindIP, "advertised": bindIP, "port": controlPort}, &prepared)
 	preparedState, err := storage.New(controllerDir).Load()
 	if err != nil {
 		t.Fatal(err)
@@ -76,22 +80,84 @@ func TestEnrollmentProcesses(t *testing.T) {
 	// actual serving worker; enrollment and reconnect span its automatic renewal.
 	clock := time.Now().UTC().Truncate(time.Second)
 	processServerValidity(t, controllerDir, initialControl, clock.Add(-3*time.Second), clock.Add(27*time.Second))
-	request, _ := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/controller/control/backup", bytes.NewBufferString(`{"password":"process backup password"}`))
-	request.Header.Set("Content-Type", "application/json")
-	response, err := client.Do(request)
-	if err != nil {
-		t.Fatal(err)
+	prepareBackup := func() string {
+		request, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/controller/control/backup", bytes.NewBufferString(`{"password":"process backup password"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Content-Type", "application/json")
+		response, err := client.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := io.ReadAll(io.LimitReader(response.Body, 32<<20))
+		_ = response.Body.Close()
+		if err != nil || response.StatusCode != http.StatusOK {
+			t.Fatal("control backup failed")
+		}
+		archivePath := filepath.Join(root, "enable-controller.afbackup")
+		if err := os.WriteFile(archivePath, body, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := backup.Verify(ctx, cfg, "process backup password", archivePath); err != nil {
+			t.Fatal(err)
+		}
+		receipt := response.Header.Get("X-Control-Enable-Receipt")
+		if receipt == "" {
+			t.Fatal("control backup receipt missing")
+		}
+		return receipt
 	}
-	_, _ = io.Copy(io.Discard, response.Body)
-	_ = response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		t.Fatalf("control backup status = %d", response.StatusCode)
+	if bindIP != "127.0.0.1" {
+		address := net.JoinHostPort(bindIP, fmt.Sprint(controlPort))
+		assertDisabled := func() {
+			state, err := storage.New(controllerDir).Load()
+			if err != nil || state.Controller.Control.Enabled {
+				t.Fatal("denial changed enablement")
+			}
+			listener, err := net.Listen("tcp", address)
+			if err != nil {
+				t.Fatal("listener opened without consent")
+			}
+			_ = listener.Close()
+		}
+		assertDisabled()
+		for _, consent := range []any{nil, false} {
+			receipt := prepareBackup()
+			body := map[string]any{"receipt": receipt, "backup_saved": true}
+			if consent != nil {
+				body["allow_non_loopback"] = consent
+			}
+			if err := enrollmentJSONError(ctx, client, http.MethodPost, baseURL+"/api/controller/control/enable", body, &prepared); err == nil {
+				t.Fatal("external listener enabled without consent")
+			}
+			assertDisabled()
+			body["allow_non_loopback"] = true
+			if err := enrollmentJSONError(ctx, client, http.MethodPost, baseURL+"/api/controller/control/enable", body, &prepared); err == nil {
+				t.Fatal("denied receipt reused")
+			}
+		}
+		// Both invalid consent forms reject before consuming the valid receipt.
+		receipt := prepareBackup()
+		for _, invalid := range []any{nil, "true"} {
+			body, _ := json.Marshal(map[string]any{"receipt": receipt, "backup_saved": true, "allow_non_loopback": invalid})
+			request, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/controller/control/enable", bytes.NewReader(body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			response, err := client.Do(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = response.Body.Close()
+			if response.StatusCode != http.StatusBadRequest {
+				t.Fatal("invalid consent accepted")
+			}
+		}
+		assertDisabled()
 	}
-	receipt := response.Header.Get("X-Control-Enable-Receipt")
-	if receipt == "" {
-		t.Fatal("control backup receipt missing")
-	}
-	enrollmentJSON(ctx, t, client, http.MethodPost, baseURL+"/api/controller/control/enable", map[string]any{"receipt": receipt, "backup_saved": true}, &prepared)
+	receipt := prepareBackup()
+	enrollmentJSON(ctx, t, client, http.MethodPost, baseURL+"/api/controller/control/enable", map[string]any{"receipt": receipt, "backup_saved": true, "allow_non_loopback": bindIP != "127.0.0.1"}, &prepared)
 	var invitation controlapi.Invitation
 	enrollmentJSON(ctx, t, client, http.MethodPost, baseURL+"/api/controller/enrollments/invite", map[string]any{}, &invitation)
 	input, err := json.Marshal(invitation)

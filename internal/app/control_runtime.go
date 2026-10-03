@@ -68,9 +68,6 @@ func (s *Service) PrepareControlEnable(ctx context.Context, token string, create
 	if control.Enabled || createAndVerify == nil {
 		return nil, errors.New("disabled control identity and verified backup are required")
 	}
-	if err := requireControlLoopback(control); err != nil {
-		return nil, err
-	}
 	if err := s.validateControlIdentityLocked(&control, time.Time{}, false); err != nil {
 		return nil, errors.New("control identity is unusable")
 	}
@@ -103,9 +100,11 @@ func (s *Service) PrepareControlEnable(ctx context.Context, token string, create
 }
 
 func requireControlLoopback(control config.ControlIdentityState) error {
-	bind, err := netip.ParseAddr(control.BindIP)
-	if err != nil || !bind.IsLoopback() || bind.Is4In6() || bind.Zone() != "" {
-		return errors.New("control lifecycle requires a literal loopback bind IP")
+	for _, value := range []string{control.BindIP, control.Advertised} {
+		address, err := netip.ParseAddr(value)
+		if err != nil || !address.IsLoopback() || address.Is4In6() || address.Zone() != "" {
+			return errors.New("explicit non-loopback control enablement confirmation required")
+		}
 	}
 	return nil
 }
@@ -189,9 +188,12 @@ func (s *Service) openControlRegistry(ctx context.Context) (*sqldb.DB, *controla
 	return db, keys, nil
 }
 
-// enableControlLoopback has no product caller. Non-loopback transport and
-// public enablement remain gated on authenticated node enrollment.
+// enableControlLoopback keeps the default internal entry restricted to loopback.
 func (s *Service) enableControlLoopback(ctx context.Context, token string, receipt *ControlEnableReceipt, routes []controlserver.Route) error {
+	return s.enableControl(ctx, token, receipt, routes, false)
+}
+
+func (s *Service) enableControl(ctx context.Context, token string, receipt *ControlEnableReceipt, routes []controlserver.Route, allowNonLoopback bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -215,6 +217,11 @@ func (s *Service) enableControlLoopback(ctx context.Context, token string, recei
 	session, _, err := s.controlRecentSession(ctx, token)
 	if err != nil || session != authorization.session {
 		return errors.New("control backup authorization session changed")
+	}
+	if !allowNonLoopback {
+		if err := requireControlLoopback(*state.Controller.Control); err != nil {
+			return err
+		}
 	}
 	if err := s.stopControlOwnerLocked(); err != nil {
 		return err
@@ -267,7 +274,7 @@ func (s *Service) commitControlEnabledLocked(ctx context.Context, state config.S
 	return ctx.Err()
 }
 
-// restartControlLoopback is an explicit private lifecycle entry, never called by
+// restartControlLoopback resumes committed enablement on its exact endpoint, never called by
 // Init. It validates and renews an intact enabled identity before binding.
 func (s *Service) restartControlLoopback(ctx context.Context, routes []controlserver.Route) error {
 	if err := ctx.Err(); err != nil {
@@ -322,9 +329,6 @@ func (s *Service) restartControlLoopback(ctx context.Context, routes []controlse
 
 func (s *Service) newControlOwnerLocked(ctx context.Context, state config.State, routes []controlserver.Route) (*controlRuntimeOwner, error) {
 	control := *state.Controller.Control
-	if err := requireControlLoopback(control); err != nil {
-		return nil, err
-	}
 	material, err := s.store.LoadControlIdentity(control.CAGeneration, control.ServerGeneration)
 	if err != nil {
 		return nil, errors.New("control identity files are unavailable")
@@ -338,8 +342,11 @@ func (s *Service) newControlOwnerLocked(ctx context.Context, state config.State,
 		_ = db.Close()
 		return nil, err
 	}
-	runtime, err := controlserver.New(material, controlpki.Endpoint{BindIP: control.BindIP, Advertised: control.Advertised, Port: control.Port},
-		control.CAPin, &controlEnabledAuthorizer{store: s, identity: control, controllerID: state.Controller.ControllerID, nodes: authorizer}, routes)
+	// Only the receipt/consent transition or an already enabled state reaches
+	// this owner constructor; endpoint metadata has been normalized above.
+	runtime, err := controlserver.NewWithOptions(material, controlpki.Endpoint{BindIP: control.BindIP, Advertised: control.Advertised, Port: control.Port},
+		control.CAPin, &controlEnabledAuthorizer{store: s, identity: control, controllerID: state.Controller.ControllerID, nodes: authorizer}, routes,
+		controlserver.Options{AllowNonLoopback: true})
 	if err != nil {
 		_ = db.Close()
 		return nil, err
@@ -351,7 +358,7 @@ func (s *Service) newControlOwnerLocked(ctx context.Context, state config.State,
 	}
 	if err := runtime.Bind(); err != nil {
 		owner.discard()
-		return nil, errors.New("bind control loopback listener failed")
+		return nil, errors.New("bind control listener failed")
 	}
 	return owner, nil
 }

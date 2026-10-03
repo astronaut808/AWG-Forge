@@ -1,5 +1,4 @@
-// Package controlserver contains the isolated control transport. No production
-// caller starts it until node authorization and explicit enablement exist.
+// Package controlserver contains the isolated, explicitly enabled control transport.
 package controlserver
 
 import (
@@ -93,9 +92,22 @@ type Runtime struct {
 // New validates the prepared identity and builds a separate, closed-by-default
 // route table. It does not bind or start a listener.
 func New(material controlpki.Material, endpoint controlpki.Endpoint, pin string, authorizer Authorizer, routes []Route) (*Runtime, error) {
+	return NewWithOptions(material, endpoint, pin, authorizer, routes, Options{})
+}
+
+type Options struct {
+	AllowNonLoopback bool
+}
+
+// NewWithOptions permits a specific non-loopback bind only after application
+// consent. It preserves the same TLS, admission and resource limits as New.
+func NewWithOptions(material controlpki.Material, endpoint controlpki.Endpoint, pin string, authorizer Authorizer, routes []Route, options Options) (*Runtime, error) {
 	bind, err := netip.ParseAddr(endpoint.BindIP)
-	if err != nil || !bind.IsLoopback() || bind.Is4In6() || bind.Zone() != "" {
-		return nil, errors.New("control runtime requires a literal loopback bind IP")
+	if err != nil || bind.Is4In6() || bind.Zone() != "" || bind.IsUnspecified() || bind.IsMulticast() || endpoint.BindIP != bind.String() {
+		return nil, errors.New("control runtime requires a specific literal bind IP")
+	}
+	if !bind.IsLoopback() && !options.AllowNonLoopback {
+		return nil, errors.New("control runtime requires explicit non-loopback consent")
 	}
 	if endpoint.Port < 1 || endpoint.Port > 65535 {
 		return nil, errors.New("invalid control runtime port")
@@ -153,7 +165,7 @@ func New(material controlpki.Material, endpoint controlpki.Endpoint, pin string,
 	return runtime, nil
 }
 
-// Bind reserves the loopback socket without accepting connections or TLS. An
+// Bind reserves the socket without accepting connections or TLS. An
 // application owner can commit enablement while holding this exact socket.
 func (runtime *Runtime) Bind() error {
 	if runtime == nil || runtime.tlsConfig == nil {
@@ -174,7 +186,7 @@ func (runtime *Runtime) bindLocked() error {
 	address := net.JoinHostPort(runtime.endpoint.BindIP, strconv.Itoa(runtime.endpoint.Port))
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
-		return fmt.Errorf("bind control loopback listener: %w", err)
+		return fmt.Errorf("bind control listener: %w", err)
 	}
 	runtime.listener = limitListener(listener, maxConnections)
 	return nil

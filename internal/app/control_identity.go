@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -198,17 +197,11 @@ func ValidateControlIdentityState(control *config.ControlIdentityState, webPort 
 }
 
 // ValidateControlIdentityMetadata validates committed and archived identities.
-// Enabled identities are confined to the internal loopback lifecycle; restoring
-// an archive must separately force disabled state before clearing the gate.
+// Enabled records retain consent for this exact endpoint. Restoring an archive
+// must separately force disabled state before clearing the gate.
 func ValidateControlIdentityMetadata(control *config.ControlIdentityState, webPort int) error {
 	if control == nil {
 		return errors.New("control identity is not prepared")
-	}
-	if control.Enabled {
-		bind, err := netip.ParseAddr(control.BindIP)
-		if err != nil || !bind.IsLoopback() || bind.Is4In6() || bind.Zone() != "" {
-			return errors.New("enabled control identity requires loopback")
-		}
 	}
 	endpoint, err := controlpki.NormalizeEndpoint(control.BindIP, control.Advertised, control.Port, webPort)
 	if err != nil || endpoint.BindIP != control.BindIP || endpoint.Advertised != control.Advertised {

@@ -51,7 +51,7 @@ lock. Activation drains existing authenticated requests and switches to opaque
 sessions without a server restart. Standalone and DB-off behavior remain
 unchanged until explicit activation.
 
-Loopback enrollment/approval, mTLS presence, automatic node renewal and
+Explicit control endpoint enablement, enrollment/approval, mTLS presence, automatic node renewal and
 controller server-leaf renewal are implemented. The server worker is owned by
 the control runtime, preserves existing CA/node authority and closes on expiry
 or uncertain commit. Startup may renew an intact expired leaf of a previously
@@ -62,7 +62,9 @@ Linux-root offline `node detach` and `node rebind` preserve local configuration
 and use the server's exclusive state lease. Rebind is an explicit identity reset
 with fresh enrollment, rather than reopening the former registry node. See
 [local recovery](../en/security.md#offline-node-recovery) for the operator contract.
-External exposure, installer join/rebind, fleet UI, operation delivery, receipt
+Non-loopback listeners require recent auth, an exact-identity verified backup receipt,
+retained-archive confirmation and explicit `allow_non_loopback: true`.
+Installer join/rebind, fleet UI, operation delivery, receipt
 acknowledgement and pruning remain outside the implemented checkpoint.
 
 `state.json` on each node is the desired-state source of truth. The controller
@@ -309,7 +311,7 @@ transition.
 2. Controller creates a high-entropy, single-use invitation with a short expiry.
 3. UI shows a version-pinned command containing only the controller address,
    pinned CA/SPKI fingerprint, and non-secret invitation ID.
-4. The current loopback CLI reads a protected `0600` invitation JSON file through
+4. The current enrollment CLI reads a protected `0600` invitation JSON file through
    `--input-file`. A future installer may use a hidden interactive prompt. The
    invitation secret never appears in a URL, argv, `.env`, Compose file, log,
    audit event, or support bundle.

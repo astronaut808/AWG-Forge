@@ -1,15 +1,20 @@
 # Control TLS and PKI implementation plan
 
-Status: loopback enrollment, mTLS presence, automatic node and server-leaf renewal,
-and Linux-root offline node recovery are implemented. External control listeners,
-installer integration and fleet operations remain later work.
+Status: explicit loopback/non-loopback control enablement, enrollment, mTLS presence,
+automatic node and server-leaf renewal, and Linux-root offline node recovery are
+implemented. Installer integration and fleet operations remain later work.
 
 ## Current boundary and goal
 
 Controller authentication, control-identity preparation, certificate registry,
 renewal primitives, server-leaf rotation and cold restore fencing are implemented.
 The browser API supports explicit recent-auth preparation, a new verified encrypted
-backup, confirmation that the archive was retained, and loopback enable/disable.
+backup, confirmation that the archive was retained, and explicit endpoint enable/disable.
+Non-loopback bind or advertised endpoints additionally require
+`allow_non_loopback: true` at enable. The one-use receipt covers the exact endpoint;
+a matching denied attempt consumes it. `Enabled` on that immutable endpoint records
+consent for restart; restore forces disabled and requires fresh backup and consent.
+Specific bind IP and advertised IP/DNS normalization remains mandatory.
 `serve` restarts only committed enabled control state; `Init` never opens a socket.
 
 A protected invitation file pins the controller CA. The node generates its key
@@ -26,7 +31,7 @@ or restart reuses that CSR; only a complete validated credential generation can
 replace the committed generation. No remote tunnel management is exposed.
 
 The `/control/v1` OpenAPI file remains a draft for the wider protocol; claim,
-status, presence and certificate renewal are implemented on loopback. Controller
+status, presence and certificate renewal are implemented on explicitly enabled endpoints. Controller
 backup includes auth keys, control identity and a verified SQLite snapshot. Cold restore requires the
 same existing controller identity and offline admin recovery, disables the listener,
 and invalidates restored node authority, invitations, claim credentials and presence.
@@ -50,7 +55,7 @@ and tested on loopback before node enrollment begins.
 | --- | --- |
 | Browser `/api` | Keep its existing listener, same-origin cookie session, and current routes. Browser auth never authenticates a node. |
 | Node `/control/v1` | Use a separate `net.Listener`, `http.Server`, route table, TLS configuration, and request log policy. Never mount `/api` or static assets there. |
-| Enrollment bootstrap | Only an exact allowlist of invitation claim/status routes permits requests without a client certificate. A valid server certificate and pinned controller CA are mandatory. These routes are implemented on loopback. |
+| Enrollment bootstrap | Only an exact allowlist of invitation claim/status routes permits requests without a client certificate. A valid server certificate and pinned controller CA are mandatory. These routes are implemented on explicitly enabled endpoints. |
 | Established node | TLS verifies the client chain and client-auth usage. On **every request**, the application resolves the presented issuer/serial to an active node certificate, `controller_id`, `node_id`, and `binding_epoch` in SQLite. Headers, URL/body IDs, subject CN, and proxy assertions do not establish identity. |
 | Controller to node | The node verifies the server hostname/IP SAN using normal TLS verification against its pinned CA certificate and checks the SHA-256 fingerprint of that CA's SubjectPublicKeyInfo, encoded as `sha256:` plus 64 lowercase hex characters. The join command and node state use this one pin format. Never set `InsecureSkipVerify` or fall back to Web UI/ACME trust. |
 
@@ -278,23 +283,23 @@ Identity preparation, node renewal and server-leaf rotation are complete;
 their durable contracts are recorded above and in the
 [certificate registry contract](control-node-certificate-registry.md).
 The application lifecycle owner automatically renews and publishes server leaves
-into its loopback runtime; no public rotation route is added. Controller backup/restore
+into its explicitly enabled runtime; no public rotation route is added. Controller backup/restore
 reconciles certificate authority with archived PKI and registry, invalidating
-all restored node certificates and bindings. Private loopback enablement has a
+all restored node certificates and bindings. Explicit endpoint enablement has a
 one-use, process-local verified-backup receipt bound to the complete prepared
 identity and the current recent-auth session. Browser lifecycle wiring requires recent authentication and confirmation that the
-new verified backup was retained; control admission is limited to loopback.
+new verified backup was retained; external control admission requires explicit endpoint consent.
 
 | Slice | Main ownership | Deliverable and acceptance evidence |
 | --- | --- | --- |
 | 0. Contract and failure gates | `docs/design`, `api/control-v1.openapi.json` | Reconcile route security, identity vocabulary, renewal/revocation errors and crash/rotation cases. Add executable tests for the applicable threat/failure rows before enabling runtime routes. |
 | 1. Control identity store | `internal/controlpki`, `internal/config`, `internal/storage`, `internal/app` | Generate/load/validate versioned CA and server leaf with safe filesystem rules and secret-free journal. Tests cover interrupted preparation, missing/corrupt keys, symlinks, permissions, wrong SAN/pin and no startup auto-creation. |
 | 2. Dedicated TLS runtime | `internal/controlserver`, `cmd/awg-forge`, narrow lifecycle wiring in `internal/server` | Separate server and mux, optional verified client cert at handshake, exact-route authorization gate, bounded resources and graceful shutdown. Real loopback TLS tests cover wrong CA/host, missing/invalid client cert, forwarded-header forgery, revocation on keep-alive and SQLite outage. Production listener remains disabled without explicit setup. |
-| 3. Issuance and lifecycle | `internal/controlpki`, `internal/sqldb`, `internal/app` | Signed CSR validation; durable serial registry; renewal overlap, expiry, revocation, rebind fencing and server leaf rotation. Inject clock/failure points; run concurrency/race tests. Enrollment routes are available only on loopback. |
+| 3. Issuance and lifecycle | `internal/controlpki`, `internal/sqldb`, `internal/app` | Signed CSR validation; durable serial registry; renewal overlap, expiry, revocation, rebind fencing and server leaf rotation. Inject clock/failure points; run concurrency/race tests. Enrollment routes are available only on explicitly enabled endpoints. |
 | 4. Controller backup prerequisite | `internal/backup`, `internal/app`, `internal/sqldb`, docs EN/RU | First make the existing controller identity and auth recoverable, then include PKI generations before any control exposure. Use a durable pre-restore fail-closed marker, identity-match fencing, cold restore, auth replay reset and canary-secret tests. Inject crashes at every file switch and marker boundary. |
-| 5. Enablement integration | `internal/app`, `internal/server`, `cmd/awg-forge` | Recent-auth protected preparation, endpoint/bind preflight, verified backup and reversible runtime transition are implemented on loopback. Non-loopback exposure and installer integration require separate reviewed scope and failure tests. No auto-enable on install/upgrade. |
+| 5. Enablement integration | `internal/app`, `internal/server`, `cmd/awg-forge` | Recent-auth protected preparation, endpoint/bind preflight, verified backup and reversible runtime transition are implemented on explicitly enabled endpoints. Non-loopback exposure requires explicit endpoint consent; installer integration remains separate reviewed scope. No auto-enable on install/upgrade. |
 
-The loopback transport implementation is isolated in `internal/controlserver`.
+The control transport implementation is isolated in `internal/controlserver`.
 `internal/app` owns the transition; `internal/server` owns startup and shutdown.
 `Init` never starts it, even when committed state records `Enabled=true`.
 Preparing an identity does not open a socket. The production registry authorizes

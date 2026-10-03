@@ -74,7 +74,7 @@ If a mutating operation changes state/configs but runtime apply fails, awg-forge
 
 This prevents the UI from showing a created client or modified tunnel when runtime state was not successfully applied.
 
-Controller control TLS automatically renews its server certificate under the existing CA at two thirds of the certificate lifetime. A previously enabled controller may renew an intact expired server certificate before opening its loopback listener, only with valid existing CA, identity, registry/auth and cleared recovery fences. Missing or corrupt data and expired CA require local recovery. Disabled or restored controllers stay disabled; node revocations and tunnel configurations are preserved. This does not enable remote exposure.
+Controller control TLS automatically renews its server certificate under the existing CA at two thirds of the certificate lifetime. A previously enabled controller may renew an intact expired server certificate before opening its explicitly enabled listener, only with valid existing CA, identity, registry/auth and cleared recovery fences. Missing or corrupt data and expired CA require local recovery. Disabled or restored controllers stay disabled; node revocations and tunnel configurations are preserved. Non-loopback enablement separately requires explicit endpoint consent and a fresh verified backup.
 
 ## Offline node recovery
 
@@ -97,7 +97,7 @@ fresh enrollment directly while retaining the former local binding until the
 pinned TLS handshake, comparison code and controller administrator approval
 succeed. The invitation must be a root-owned regular file with mode `0600`,
 without symlinks or hardlinks; its secret must not appear in command arguments.
-The existing loopback transport constraints still apply.
+Invitations may use an explicitly enabled external control endpoint; CA pinning and TLS verification remain required.
 
 Rebind explicitly resets local node identity: it installs a new node ID, state
 epoch and credentials, with a fresh boot/desired-generation/receipt namespace.
