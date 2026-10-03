@@ -13,7 +13,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/netip"
 	"os"
 	"regexp"
 	"strconv"
@@ -32,12 +31,22 @@ import (
 )
 
 // EnableControl requires a process-local verified backup receipt and an explicit
-// acknowledgement that the operator retained the archive. It remains loopback-only.
+// acknowledgement that the operator retained the archive. This entry remains
+// loopback-only; external endpoints require EnableControlWithOptions.
 func (s *Service) EnableControl(ctx context.Context, token string, receipt *ControlEnableReceipt, backupRetained bool) error {
-	if !backupRetained {
+	return s.EnableControlWithOptions(ctx, token, receipt, ControlEnableOptions{BackupRetained: backupRetained})
+}
+
+type ControlEnableOptions struct {
+	BackupRetained   bool
+	AllowNonLoopback bool
+}
+
+func (s *Service) EnableControlWithOptions(ctx context.Context, token string, receipt *ControlEnableReceipt, options ControlEnableOptions) error {
+	if !options.BackupRetained {
 		return errors.New("retained backup confirmation required")
 	}
-	return s.enableControlLoopback(ctx, token, receipt, s.enrollmentRoutes())
+	return s.enableControl(ctx, token, receipt, s.enrollmentRoutes(), options.AllowNonLoopback)
 }
 func (s *Service) DisableControl(ctx context.Context, token string) error {
 	return s.disableControlLoopback(ctx, token)
@@ -60,10 +69,6 @@ func (s *Service) StartControl(ctx context.Context) error {
 }
 
 func (s *Service) PrepareAuthenticatedControl(ctx context.Context, token string, request ControlIdentityRequest) (ControlIdentityResult, error) {
-	advertised, err := netip.ParseAddr(request.Advertised)
-	if err != nil || !advertised.IsLoopback() || advertised.Is4In6() || advertised.Zone() != "" {
-		return ControlIdentityResult{}, errors.New("control advertised endpoint must be literal loopback")
-	}
 	if err := s.lockControlRequest(ctx); err != nil {
 		return ControlIdentityResult{}, err
 	}

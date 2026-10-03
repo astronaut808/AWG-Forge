@@ -168,20 +168,26 @@ awg-forge logs
 Для контроллера там же описаны дополнительные требования к identity, размещению
 архива и офлайн-восстановлению администратора.
 
-## Подключение ноды через loopback
+## Явное включение control listener и подключение ноды
 
-Этот checkpoint поддерживает первую аутентифицированную сессию ноды на
-буквальном loopback-адресе. Используй браузерную сессию контроллера и недавнее
+Этот checkpoint поддерживает enrollment и mTLS presence на явно включённом
+control endpoint. Используй браузерную сессию контроллера и недавнее
 MFA-подтверждение для внутренних маршрутов из [контракта browser API](../../api/openapi.json):
 
-1. `POST /api/controller/control/prepare`: `bind_ip`, `advertised` (оба —
-   буквальные loopback-адреса) и отдельный `port`, отличный от порта Web UI.
+1. `POST /api/controller/control/prepare`: конкретный буквальный `bind_ip`,
+   IP или DNS-имя `advertised` для SAN TLS-сертификата и отдельный `port`, отличный
+   от порта Web UI и TCP/80. Wildcard, multicast, scoped и IPv4-mapped bind
+   отклоняются. Подготовка оставляет listener выключенным.
 2. `POST /api/controller/control/backup` с паролем архива `password`. Сохрани
    зашифрованный ответ вне каталога конфигурации и заголовок
    `X-Control-Enable-Receipt`. Подтверждение истекает вместе с recent-auth и
    становится недействительным после перезапуска или подготовки другого backup.
 3. После сохранения архива вызови `POST /api/controller/control/enable` с
-   `receipt` и `backup_saved: true`. Публичные метаданные доступны через
+   `receipt` и `backup_saved: true`. Если хотя бы одно значение endpoint не является
+   буквальным loopback-адресом, также передай `allow_non_loopback: true`. Отсутствие
+   поля или `false` отклоняет включение и расходует совпавший receipt; для повтора
+   подготовь новый backup. Согласие относится только к точному подготовленному
+   endpoint. Публичные метаданные доступны через
    `GET /api/controller/control/status`; отключение —
    `POST /api/controller/control/disable` после недавней аутентификации.
 4. `POST /api/controller/enrollments/invite` с `{}` возвращает JSON-файл.
@@ -199,6 +205,17 @@ MFA-подтверждение для внутренних маршрутов и
    Подтверди или отклони через `POST /api/controller/enrollments/decide` с
    `enrollment_id`, совпадающим `verification_code` и `approve`. Затем запусти
    или перезапусти `awg-forge serve` на ноде для отправки mTLS presence.
+
+Используй доступный ноде advertised-адрес с проверяемым SAN сертификата;
+DNS/NAT и firewall настраивает оператор. Listener привязывается только к заданному
+локальному IP; занятый или недоступный socket отклоняет включение. Browser UI
+может остаться на loopback HTTP. Control listener обслуживает только TLS 1.3,
+игнорирует forwarded identity headers и предоставляет существующие маршруты
+enrollment, presence и продления сертификата. На любом интерфейсе сохраняются
+mTLS-проверки registry и ограничения ресурсов. `serve` перезапускает ранее явно
+включённый точный endpoint; install/upgrade и подготовка автоматически его не
+включают. После disable или restore нужны новый проверенный backup и явное
+согласие для повторного включения.
 
 Нода проверяет pin CA и обычный TLS-сертификат до передачи секрета. Закрытый
 ключ остаётся на ноде. Приглашение принимает ровно один CSR: его точный повтор
@@ -224,7 +241,8 @@ MFA-подтверждение для внутренних маршрутов и
 identity или требует явного detach. Detach
 удаляет полномочия контроллера. [Офлайн-восстановление](security.md#локальное-восстановление-node)
 от Linux root поддерживает detach и новый enrollment с новой identity.
-Внешний listener, интеграция installer и fleet UI остаются отдельной работой.
+Интеграция installer, смена endpoint, fleet UI и remote operations остаются
+отдельной работой.
 
 ## Импорт конфига клиента
 

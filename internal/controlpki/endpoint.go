@@ -2,7 +2,10 @@ package controlpki
 
 import (
 	"errors"
+	"net"
 	"net/netip"
+	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -10,6 +13,24 @@ type Endpoint struct {
 	BindIP     string `json:"bind_ip"`
 	Advertised string `json:"advertised"`
 	Port       int    `json:"port"`
+}
+
+// ValidateControllerURL shares endpoint rules between invitation admission and
+// persisted node connections. It never resolves DNS or relaxes TLS verification.
+func ValidateControllerURL(value string) error {
+	u, err := url.Parse(value)
+	if err != nil || u.Scheme != "https" || u.Opaque != "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawPath != "" || (u.Path != "" && u.Path != "/") {
+		return errors.New("invalid control URL")
+	}
+	port, err := strconv.Atoi(u.Port())
+	if err != nil {
+		return errors.New("invalid control URL port")
+	}
+	endpoint, err := NormalizeEndpoint("127.0.0.1", u.Hostname(), port, 0)
+	if err != nil || u.Host != net.JoinHostPort(endpoint.Advertised, strconv.Itoa(port)) {
+		return errors.New("invalid control URL endpoint")
+	}
+	return nil
 }
 
 // NormalizeEndpoint accepts one literal bind address and one unambiguous SAN.

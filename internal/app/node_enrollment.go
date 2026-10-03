@@ -6,7 +6,6 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
-	"net/netip"
 	"net/url"
 	"os"
 	"reflect"
@@ -27,12 +26,7 @@ func ValidateNodeConnection(c *config.NodeConnectionState) error {
 	if _, err := storage.NodeIdentityRelativePaths(c.CredentialGeneration); err != nil {
 		return errors.New("invalid node connection")
 	}
-	u, err := url.Parse(c.ControllerURL)
-	if err != nil || u.Scheme != "https" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
-		return errors.New("invalid node connection")
-	}
-	ip, err := netip.ParseAddr(u.Hostname())
-	if err != nil || !ip.IsLoopback() || ip.Is4In6() || ip.Zone() != "" || u.Port() == "" {
+	if err := controlpki.ValidateControllerURL(c.ControllerURL); err != nil {
 		return errors.New("invalid node connection")
 	}
 	return nil

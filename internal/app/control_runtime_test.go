@@ -33,6 +33,10 @@ type controlLifecycleFixture struct {
 }
 
 func newControlLifecycleFixture(t *testing.T) controlLifecycleFixture {
+	return newControlLifecycleFixtureEndpoint(t, "127.0.0.1", "127.0.0.1")
+}
+
+func newControlLifecycleFixtureEndpoint(t *testing.T, bind, advertised string) controlLifecycleFixture {
 	t.Helper()
 	cfg := controllerTestConfig(t)
 	s := newFastControllerTestService(cfg)
@@ -43,14 +47,14 @@ func newControlLifecycleFixture(t *testing.T) controlLifecycleFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := net.Listen("tcp", net.JoinHostPort(bind, "0"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	port := l.Addr().(*net.TCPAddr).Port
 	_ = l.Close()
 	issuedAt := time.Now().Add(-20 * 24 * time.Hour)
-	control, err := s.PrepareControlIdentity(context.Background(), ControlIdentityRequest{BindIP: "127.0.0.1", Advertised: "127.0.0.1", Port: port, Now: issuedAt})
+	control, err := s.PrepareControlIdentity(context.Background(), ControlIdentityRequest{BindIP: bind, Advertised: advertised, Port: port, Now: issuedAt})
 	if err != nil {
 		t.Fatal(err)
 	}

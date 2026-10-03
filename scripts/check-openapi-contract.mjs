@@ -26,6 +26,10 @@ const schemaTOTPSecret = "A".repeat(32);
 const schemaCode = "1".repeat(6);
 const cases = [
   ["control enable requires saved backup", controlEnable, { receipt: schemaUUID, backup_saved: true }, true],
+  ["control enable permits explicit external consent", controlEnable, { receipt: schemaUUID, backup_saved: true, allow_non_loopback: true }, true],
+  ["control enable permits default loopback restriction", controlEnable, { receipt: schemaUUID, backup_saved: true, allow_non_loopback: false }, true],
+  ["control enable rejects string consent", controlEnable, { receipt: schemaUUID, backup_saved: true, allow_non_loopback: "true" }, false],
+  ["control enable rejects null consent", controlEnable, { receipt: schemaUUID, backup_saved: true, allow_non_loopback: null }, false],
   ["control enable rejects unsaved backup", controlEnable, { receipt: schemaUUID, backup_saved: false }, false],
   ["control enable rejects absent confirmation", controlEnable, { receipt: schemaUUID }, false],
   ["enrollment decision requires explicit approval", enrollmentDecision, { enrollment_id: schemaUUID, verification_code: "ABCD-EFGH", approve: true }, true],

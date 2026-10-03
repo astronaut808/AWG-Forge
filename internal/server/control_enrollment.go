@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
@@ -120,10 +121,13 @@ func (w *web) controlEnableAPI(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request struct {
-		Receipt     string `json:"receipt"`
-		BackupSaved bool   `json:"backup_saved"`
+		Receipt          string          `json:"receipt"`
+		BackupSaved      bool            `json:"backup_saved"`
+		AllowNonLoopback json.RawMessage `json:"allow_non_loopback"`
 	}
-	if readJSON(rw, r, &request) != nil {
+	var allowNonLoopback bool
+	if readJSON(rw, r, &request) != nil || (len(request.AllowNonLoopback) > 0 &&
+		(string(request.AllowNonLoopback) == "null" || json.Unmarshal(request.AllowNonLoopback, &allowNonLoopback) != nil)) {
 		writeError(rw, 400, "invalid json")
 		return
 	}
@@ -138,7 +142,7 @@ func (w *web) controlEnableAPI(rw http.ResponseWriter, r *http.Request) {
 	w.controlReceiptID = ""
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	if err := w.service.EnableControl(ctx, token, receipt, request.BackupSaved); err != nil {
+	if err := w.service.EnableControlWithOptions(ctx, token, receipt, app.ControlEnableOptions{BackupRetained: request.BackupSaved, AllowNonLoopback: allowNonLoopback}); err != nil {
 		controlOperationError(rw, err)
 		return
 	}

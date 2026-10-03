@@ -16,7 +16,6 @@ import (
 	"io"
 	"math/big"
 	"net/http"
-	"net/netip"
 	"net/url"
 	"regexp"
 	"time"
@@ -266,14 +265,8 @@ func validateInvitation(i controlapi.Invitation) error {
 	if secret, err := base64.RawURLEncoding.Strict().DecodeString(i.Secret); err != nil || len(secret) != 32 {
 		return errors.New("invalid enrollment invitation")
 	}
-	u, err := url.Parse(i.ControllerURL)
-	if err != nil || u.Scheme != "https" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+	if err := controlpki.ValidateControllerURL(i.ControllerURL); err != nil {
 		return errors.New("invalid enrollment endpoint")
-	}
-	host := u.Hostname()
-	ip, err := netip.ParseAddr(host)
-	if err != nil || !ip.IsLoopback() || ip.Is4In6() || ip.Zone() != "" || u.Port() == "" {
-		return errors.New("enrollment endpoint must be loopback")
 	}
 	ca, err := strictCertificate([]byte(i.CACertPEM))
 	if err != nil {
