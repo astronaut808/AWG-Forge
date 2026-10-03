@@ -7,9 +7,10 @@ import (
 
 type boundedListener struct {
 	net.Listener
-	slots  chan struct{}
-	closed chan struct{}
-	once   sync.Once
+	slots    chan struct{}
+	closed   chan struct{}
+	once     sync.Once
+	closeErr error
 }
 
 func limitListener(listener net.Listener, maximum int) net.Listener {
@@ -31,8 +32,11 @@ func (listener *boundedListener) Accept() (net.Conn, error) {
 }
 
 func (listener *boundedListener) Close() error {
-	listener.once.Do(func() { close(listener.closed) })
-	return listener.Listener.Close()
+	listener.once.Do(func() {
+		close(listener.closed)
+		listener.closeErr = listener.Listener.Close()
+	})
+	return listener.closeErr
 }
 
 type boundedConn struct {
