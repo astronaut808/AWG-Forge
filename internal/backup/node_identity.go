@@ -25,6 +25,9 @@ func validateNodeArchive(files []restoreFile, state config.State) error {
 	}
 	bodies := make(map[string][]byte, len(paths))
 	for _, file := range files {
+		if file.Path == storage.NodeRecoveryJournalFileName || strings.HasPrefix(file.Path, storage.NodeRecoveryJournalFileName+"/") {
+			return errors.New("backup contains node recovery evidence")
+		}
 		if !strings.HasPrefix(file.Path, "node/") {
 			continue
 		}

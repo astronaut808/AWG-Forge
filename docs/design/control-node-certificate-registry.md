@@ -1,11 +1,10 @@
 # Control node certificate registry checkpoint
 
-Status: initial registry, internal renewal and rebind fencing are merged into
-`develop` in PRs #110, #112 and #113. This document describes internal
-prerequisites, not an enabled node-management feature. The control listener
-remains closed; no enrollment, renewal, or rebind route is registered. The
-historical [renewal handoff plan](control-node-renewal-next-session.md) records that
-checkpoint's bounds.
+Status: the registry authorizes explicitly enabled loopback enrollment, presence
+and certificate renewal. External listeners and remote management operations
+remain unimplemented. The same-node revoked-binding rebind primitive below remains
+internal; Linux-root `node rebind` instead performs fresh enrollment with a new
+node ID and does not call that primitive.
 
 ## Scope and sequence
 
@@ -17,16 +16,16 @@ PR #110 implemented the first bounded part of [PKI slice 3](control-tls-pki-plan
 2. Commit an approved initial `node_id`/`controller_id`/`binding_epoch = 1`
    binding and the public certificate in one SQLite transaction before
    returning PEM. An exact full-CSR retry returns the original stored DER; a
-   different CSR for that node conflicts. There is deliberately no route or
-   approval workflow that can call the private application issuance method.
+   different CSR for that node conflicts. The loopback enrollment workflow
+   requires explicit recent-auth administrator approval before issuance.
 3. Resolve the presented certificate through the active issuer generation,
    serial, full certificate fingerprint, public-key fingerprint, current
    binding and revocation state on every request. The transport passes only
    the resulting typed identity to a handler. No header, URL, body or CSR
    subject can supply it. SQLite errors deny admission.
 
-The schema reserves a supersession cutoff. Certificate and binding revocation
-are durable primitives here; renewal and rebind routes are not exposed.
+The schema stores a supersession cutoff. Certificate and binding revocation
+are durable primitives; renewal is exposed only through the loopback node protocol.
 `state.json` still decides whether the
 control identity is prepared or enabled, while SQLite stores the certificate
 registry. No tunnel revision or AWG state changes.
@@ -67,7 +66,8 @@ while the predecessor can still authenticate, without extending the cutoff.
 A different CSR conflicts, even with the same new key. The cutoff is the earlier
 of 24 hours after renewal and the predecessor's expiry. Serial revocation
 fences that serial; binding revocation fences both old and new. The operation
-does not change `ControlIdentityState.Enabled` or publish a route.
+does not change `ControlIdentityState.Enabled`. The authenticated loopback renewal
+route calls this operation; it cannot recover an expired predecessor.
 
 The internal rebind recovery primitive only advances a **revoked binding on
 the same controller**. A caller supplies the exact old node/controller/epoch
@@ -85,29 +85,32 @@ node. Failure before commit leaves the previous binding revoked.
 
 This primitive does not transfer a node to another controller, modify node
 `state.json`, install a key or certificate on a node, or authorize a remote
-caller to rebind. Those actions need a local-root-controlled transition and
-authenticated enrollment with explicit recovery across the node and controller
-persistence domains. A controller cannot transfer a node remotely.
+caller to rebind. The implemented [offline recovery](../en/security.md#offline-node-recovery)
+holds the server's exclusive state lease, confirms old node/controller UUIDs and
+uses fresh pinned enrollment and administrator approval. It installs a new node
+ID/state epoch and replay namespace, preserving the old registry record and
+local configuration. A controller cannot transfer a node remotely. Copied old
+credentials require separate revocation at the former controller when applicable.
 
-## Remaining checkpoints before exposure
+## Integrated lifecycle and remaining exposure gates
 
-1. Internal [server-leaf rotation](control-server-leaf-rotation-next-session.md)
-   now stages immutable generations under the existing CA, commits only the
+1. Automatic [server-leaf rotation](control-tls-pki-plan.md)
+   stages immutable generations under the existing CA, commits only the
    active server generation, closes pre-switch connections, and retires the
-   predecessor through durable journal recovery. No scheduler or production
-   caller exists. CA trust rotation remains a later staged operation requiring
+   predecessor through durable journal recovery. The worker belongs to the
+   control runtime owner and stops on cancellation, expiry or uncertain commit.
+   CA trust rotation remains a later staged operation requiring
    node acknowledgement.
 2. Controller backup/restore validates SQLite schema, registry and PKI together
    and atomically invalidates all restored browser/node authority. Nodes need
-   explicit local recovery and fresh enrollment; that workflow is still a later
-   checkpoint.
-3. The private application owner now tests explicit loopback enablement with a
+   explicit local recovery and fresh enrollment through the offline CLI.
+3. The application owner implements explicit loopback enablement with a
    fresh verified backup, recent-auth session receipt, socket reservation before
-   commit, disable/restart and live leaf rotation. No product lifecycle caller
-   exists. Public lifecycle wiring and non-loopback exposure wait for
-   authenticated enrollment, confirmation that the backup was retained and the
-   failure-matrix tests. The existing Web UI, standalone mode and DB-off mode
-   remain independent throughout.
+   commit, disable/restart and live leaf rotation. Browser lifecycle handlers
+   require recent authentication and confirmation that the verified backup was
+   retained. Non-loopback exposure, installer integration, fleet UI and operation
+   delivery require separate implementation and failure-matrix tests. The existing
+   standalone Web UI and DB-off node behavior remain independent throughout.
 
 The [failure matrix](multi-node-failure-matrix.md) remains the release gate for
 each capability when it becomes reachable.

@@ -50,6 +50,9 @@ func (s *Service) PreflightNodeEnrollment(ctx context.Context) error {
 	return s.preflightNodeEnrollmentLocked()
 }
 func (s *Service) preflightNodeEnrollmentLocked() error {
+	if err := s.store.CheckNoNodeRecovery(); err != nil {
+		return err
+	}
 	if err := s.store.CheckRestorePending(); err != nil {
 		return err
 	}
@@ -263,6 +266,9 @@ func (s *Service) NodeAgentState(ctx context.Context) (config.State, error) {
 		return config.State{}, err
 	}
 	defer s.unlockStateMutation()
+	if err := s.store.CheckNoNodeRecovery(); err != nil {
+		return config.State{}, err
+	}
 	if err := s.store.CheckRestorePending(); err != nil {
 		return config.State{}, err
 	}

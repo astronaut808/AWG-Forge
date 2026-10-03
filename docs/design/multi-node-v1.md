@@ -5,7 +5,7 @@ not describe functionality available in the current release.
 
 ## Implementation status
 
-The node-local transaction foundation is implemented but dormant:
+The node-local transaction and controller-auth foundations are implemented:
 
 - standalone state omits all managed-node metadata and keeps existing behavior;
 - explicit managed state carries `state_epoch`, `binding_epoch`, and
@@ -17,7 +17,7 @@ The node-local transaction foundation is implemented but dormant:
 - backup restore preserves a managed identity only on an exact in-place match;
   transfer to a new or different installation and mode transitions require
   explicit local detach;
-- `boot_id` is generated once per process and is never persisted; the dormant
+- `boot_id` is generated once per process and is never persisted; the
   control-agent startup primitive atomically persists and reuses one
   `boot_sequence` for its `Service` instance;
 - local UI and CLI desired-state writes remain available after enrollment and
@@ -58,6 +58,10 @@ or uncertain commit. Startup may renew an intact expired leaf of a previously
 enabled controller only under a valid existing CA with all PKI/auth/registry
 prerequisites satisfied before bind. Controller backup includes identity and auth
 atomically; restore disables control and revokes archived node authority.
+Linux-root offline `node detach` and `node rebind` preserve local configuration
+and use the server's exclusive state lease. Rebind is an explicit identity reset
+with fresh enrollment, rather than reopening the former registry node. See
+[local recovery](../en/security.md#offline-node-recovery) for the operator contract.
 External exposure, installer join/rebind, fleet UI, operation delivery, receipt
 acknowledgement and pruning remain outside the implemented checkpoint.
 
@@ -137,8 +141,9 @@ Keep three independent HTTP surfaces:
 
 The proposed node contract is tracked in
 [`api/control-v1.openapi.json`](../../api/control-v1.openapi.json). It is a
-design contract, not an enabled listener. Runtime implementation must not begin
-until the threat model and failure matrix have executable tests.
+draft of the wider protocol. Loopback claim/status, presence and certificate
+renewal are implemented; operation delivery and snapshots remain future work.
+Each additional route requires executable threat-model and failure-matrix tests.
 
 Use a dedicated control listener. Browser reverse proxies must not be able to
 assert node identity through forwarded certificate headers. Initial enrollment
@@ -176,7 +181,7 @@ a measured requirement.
 
 Use distinct identifiers for distinct failure domains:
 
-- `node_id`: stable installation identity;
+- `node_id`: stable installation identity until explicit local identity reset;
 - `state_epoch`: changes after node identity reset, unsafe restore, or clone
   recovery;
 - `desired_generation`: monotonic within a state epoch and advances only for a
@@ -206,8 +211,9 @@ so an interrupted restore cannot activate partial controller authority.
 This local check cannot distinguish the original data directory from a raw,
 byte-for-byte clone because the clone contains the same node key and identity
 metadata. Such a clone must remain offline until a local detach is completed.
-Duplicate active identity detection and certificate revocation require the
-future controller session layer.
+The controller fences competing process starts using presence sessions, but
+cannot reliably distinguish a complete clone. Copied credentials require explicit
+revocation on the former controller when applicable.
 
 Existing per-client `ConfigRevision` remains independent. It continues to mean
 that a previously exported client configuration may be stale; it must not be
@@ -303,9 +309,10 @@ transition.
 2. Controller creates a high-entropy, single-use invitation with a short expiry.
 3. UI shows a version-pinned command containing only the controller address,
    pinned CA/SPKI fingerprint, and non-secret invitation ID.
-4. The invitation secret is shown separately and entered through a hidden
-   interactive prompt. It is never placed in a URL, argv, `.env`, Compose file,
-   log, audit event, or support bundle.
+4. The current loopback CLI reads a protected `0600` invitation JSON file through
+   `--input-file`. A future installer may use a hidden interactive prompt. The
+   invitation secret never appears in a URL, argv, `.env`, Compose file, log,
+   audit event, or support bundle.
 5. Node verifies the controller pin, generates its private key locally, and
    submits a CSR plus allowlisted inventory.
 6. Terminal and controller UI display the same short comparison code derived
@@ -331,8 +338,10 @@ Multi-node is strictly opt-in. Installing or upgrading AWG-Forge must not enable
 controller mode, create control identities, publish the control listener,
 replace Web UI authentication, enroll a node, or rewrite tunnel state.
 
-- Controller activation and managed-node enrollment require SQLite and run an
-  explicit preflight. Database-off standalone installations remain supported.
+- Controller activation and its enrollment registry require SQLite and explicit
+  preflight. Node-local enrollment does not require SQLite; database-off
+  standalone and node installations remain supported. Future operation acceptance
+  has its own durable-storage prerequisite.
 - New identity, epoch, generation, and bounded receipt fields are created only
   during successful activation/enrollment in one atomic state migration.
 - Existing tunnels, client IDs, `ConfigRevision`, Web UI TLS/bind, local
@@ -368,16 +377,17 @@ not fall back to the old environment password.
 
 Controller recovery is explicit:
 
-- preferred: restore an encrypted backup containing `controller_id`, control
-  CA, auth database, registry, and operations, then move the stable endpoint;
+- with backup: cold-restore the same existing controller identity, recover its
+  administrator offline, and explicitly re-enable control after a new verified
+  backup; nodes need local recovery and fresh enrollment;
 - without backup: initialize a new controller and rebind each node locally;
 - never: run two controllers with the same restored identity or automatically
   elect a replacement.
 
-Restoring an older snapshot can undo later session/code use and node-certificate
-revocations. The [control TLS/PKI plan](control-tls-pki-plan.md) requires
-fail-closed recovery and a proven replay fence before seamless node reconnect
-can be promised. Otherwise affected nodes require explicit local re-enrollment.
+Restore disables control and atomically invalidates archived browser and node
+authority, preserving registry history. Administrator recovery never restores
+node access. The [control TLS/PKI plan](control-tls-pki-plan.md) records this
+fail-closed contract; seamless reconnect is not implemented.
 
 ## Secret client artifacts
 

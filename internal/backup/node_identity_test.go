@@ -6,13 +6,16 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/astronaut808/awg-forge/internal/app"
+	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/controlapi"
 	"github.com/astronaut808/awg-forge/internal/controlpki"
 	"github.com/astronaut808/awg-forge/internal/storage"
@@ -107,6 +110,32 @@ func TestNodeCredentialBackupAndDetach(t *testing.T) {
 	if _, err := storage.New(cfg.ConfigDir).LoadNodeIdentity(validated.State.NodeConnection.CredentialGeneration); err != nil {
 		t.Fatal("restored credentials unavailable")
 	}
+	current, err := storage.New(cfg.ConfigDir).Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovery, err := service.BeginNodeRecovery(context.Background(), current.ManagedNode.NodeID, current.ManagedNode.ControllerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	approved.NodeID = uuid.NewString()
+	if err := recovery.InstallNodeEnrollment(context.Background(), invitation, approved, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})); err != nil {
+		t.Fatal(err)
+	}
+	if err := recovery.Close(); err != nil {
+		t.Fatal(err)
+	}
+	rebound, err := storage.New(cfg.ConfigDir).Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Restore(context.Background(), cfg, testPassword, archivePath); !errors.Is(err, app.ErrManagedNodeRestoreIdentityConflict) {
+		t.Fatal("archived old binding restored over fresh enrollment")
+	}
+	unchanged, err := storage.New(cfg.ConfigDir).Load()
+	if err != nil || !reflect.DeepEqual(rebound, unchanged) {
+		t.Fatal("rejected old backup changed fresh binding")
+	}
 	if _, err := RestoreWithOptions(context.Background(), cfg, testPassword, archivePath, RestoreOptions{DetachManagedNode: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -116,5 +145,59 @@ func TestNodeCredentialBackupAndDetach(t *testing.T) {
 	}
 	if err := app.New(cfg).PreflightNodeEnrollment(context.Background()); err != nil {
 		t.Fatal("detached configuration cannot enroll")
+	}
+}
+
+func TestNodeRecoveryBackupRestoreFences(t *testing.T) {
+	cfg := testConfig(t)
+	svc := app.New(cfg)
+	_, err := svc.Init()
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive, err := Create(context.Background(), cfg, svc, testPassword, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := storage.New(cfg.ConfigDir)
+	state, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence := []byte("malformed evidence must remain")
+	if err := os.WriteFile(store.NodeRecoveryJournalPath(), evidence, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Create(context.Background(), cfg, svc, testPassword, Options{}); err == nil {
+		t.Fatal("pending recovery archived or recovered by backup")
+	}
+	if _, err := createFromState(context.Background(), cfg, state, testPassword, Options{}); err == nil {
+		t.Fatal("cached state bypassed recovery fence")
+	}
+	if err := Restore(context.Background(), cfg, testPassword, writeTempArchive(t, archive.Data)); err == nil {
+		t.Fatal("restore replaced pending recovery evidence")
+	}
+	got, err := os.ReadFile(store.NodeRecoveryJournalPath())
+	if err != nil || string(got) != string(evidence) {
+		t.Fatal("evidence changed")
+	}
+	after, err := store.Load()
+	if err != nil || !reflect.DeepEqual(state, after) {
+		t.Fatal("blocked backup/restore changed state")
+	}
+	files := []restoreFile{{Path: storage.NodeRecoveryJournalFileName, Data: evidence}}
+	if err := validateNodeArchive(files, config.State{}); err == nil {
+		t.Fatal("recovery journal admitted to archive")
+	}
+	if _, err := safeRestorePath(cfg.ConfigDir, storage.NodeRecoveryJournalFileName); err == nil {
+		t.Fatal("recovery journal admitted by restore path")
+	}
+	validated, err := validateBackupData(context.Background(), testPassword, archive.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutated := append(append([]restoreFile(nil), validated.Files...), files...)
+	if _, err := validateBackupData(context.Background(), testPassword, rebuildControlArchive(t, validated.Metadata, mutated)); err == nil {
+		t.Fatal("encrypted archive carried recovery evidence")
 	}
 }

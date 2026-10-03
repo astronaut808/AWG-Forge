@@ -105,6 +105,9 @@ func Create(ctx context.Context, cfg config.Config, service *app.Service, passwo
 	if err := validatePassword(password); err != nil {
 		return Archive{}, err
 	}
+	if err := storage.New(cfg.ConfigDir).CheckNoNodeRecovery(); err != nil {
+		return Archive{}, err
+	}
 	if err := storage.New(cfg.ConfigDir).CheckRestorePending(); err != nil {
 		return Archive{}, err
 	}
@@ -135,6 +138,9 @@ func Create(ctx context.Context, cfg config.Config, service *app.Service, passwo
 		err = errors.Join(err, mutationLock.Close())
 	}()
 	store := storage.New(cfg.ConfigDir)
+	if err := store.CheckNoNodeRecovery(); err != nil {
+		return Archive{}, err
+	}
 	if err := store.CheckRestorePending(); err != nil {
 		return Archive{}, err
 	}
@@ -159,6 +165,9 @@ func Create(ctx context.Context, cfg config.Config, service *app.Service, passwo
 }
 
 func createFromState(ctx context.Context, cfg config.Config, state config.State, password string, opts Options) (Archive, error) {
+	if err := storage.New(cfg.ConfigDir).CheckNoNodeRecovery(); err != nil {
+		return Archive{}, err
+	}
 	if _, err := os.Lstat(storage.New(cfg.ConfigDir).NodeRenewalJournalPath()); !errors.Is(err, os.ErrNotExist) {
 		return Archive{}, errors.New("cannot create backup while node renewal is pending")
 	}
@@ -268,6 +277,9 @@ func RestoreWithOptions(ctx context.Context, cfg config.Config, password, path s
 	}()
 
 	if err := storage.New(cfg.ConfigDir).CheckRestorePending(); err != nil {
+		return RestoreResult{}, err
+	}
+	if err := storage.New(cfg.ConfigDir).CheckNoNodeRecovery(); err != nil {
 		return RestoreResult{}, err
 	}
 	if err := storage.New(cfg.ConfigDir).CheckNoControlServerRotation(); err != nil {

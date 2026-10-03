@@ -75,3 +75,46 @@ Doctor проверяет права config directory и предупрежда�
 Это защищает от ситуации, когда UI показывает созданного клиента или измененный туннель, хотя runtime-состояние не было успешно применено.
 
 Control TLS контроллера автоматически продлевает серверный сертификат под прежним CA после двух третей срока действия. Ранее включённый контроллер может продлить целый истёкший серверный сертификат до открытия loopback listener только при действующем CA, целой identity, доступных registry/auth и завершённом recovery. Отсутствующие или повреждённые данные и истёкший CA требуют локального восстановления. Отключённый или восстановленный из backup контроллер остаётся отключённым; отзывы node-сертификатов и конфигурация туннелей сохраняются. Это не включает удалённый доступ.
+
+## Локальное восстановление node
+
+Если controller недоступен или credentials существующего managed node истекли
+либо отозваны, остановите его процесс `serve` и запускайте CLI от Linux root с тем
+же `CONFIG_DIR`. Обе команды требуют текущие `managed_node.node_id` и
+`managed_node.controller_id` из локального `state.json`. Просматривайте только эти
+поля: полный state содержит секреты. Работающий сервер, неверное подтверждение,
+небезопасные права каталогов/файлов, pending restore и пересекающиеся переходы
+identity/desired state блокируют восстановление.
+
+```bash
+awg-forge node detach --confirm-node-id <current-node-uuid> --confirm-controller-id <current-controller-uuid>
+awg-forge node rebind --confirm-node-id <current-node-uuid> --confirm-controller-id <current-controller-uuid> --input-file /protected/invitation.json --name node --timeout 10m
+```
+
+`detach` удаляет привязку и replay metadata и возвращает standalone mode.
+После detach используйте обычный `node enroll` для нового enrollment. `rebind`
+выполняет новое enrollment напрямую, сохраняя прежнюю локальную привязку до
+успешных pinned TLS handshake, сверки comparison code и approval администратора
+controller. Invitation должен быть обычным файлом владельца root с правами
+`0600`, без symlink/hardlink; его секрет нельзя передавать в аргументах команды.
+Прежние ограничения loopback transport сохраняются.
+
+Rebind явно сбрасывает локальную node identity: устанавливает новый node ID,
+state epoch и credentials, создаёт новое пространство boot/desired generation
+и receipts. Туннели, клиенты, локальная аутентификация, operational history и
+`ConfigRevision` сохраняются. Прежняя запись controller registry остаётся
+отозванной либо исторической: rebind не возвращает ей authority. Локальное
+удаление не отзывает скопированный сертификат на прежнем controller; при
+необходимости отдельно отзовите там прежний node. Cleanup удаляет только прежнее
+активное поколение credentials и записанный корректный pending renewal;
+посторонние исторические каталоги не удаляются.
+
+До state commit отказ, timeout или отмена сохраняют прежнюю привязку. Приватный
+journal `.node-local-recovery.json` разрешает прерванные staging/cleanup через
+проверку точного старого/нового полного state и никогда не откатывает state.
+После успеха перезапустите `serve`. После сообщения о неопределённом commit
+перезапуск позволяет однозначно сверить journal. Повреждённые evidence,
+изменённый state и небезопасные пути требуют offline inspection и остаются
+заблокированными. Не удаляйте evidence для обхода проверки. Backup/restore
+отклоняют pending recovery; старый node archive не может заменить identity,
+созданную новым rebind.

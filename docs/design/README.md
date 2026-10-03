@@ -1,7 +1,8 @@
 # Design documents
 
-These documents describe reviewed proposals, not functionality available in a
-released AWG-Forge version.
+These documents contain reviewed architecture constraints, implemented checkpoints
+and future release gates. Each document distinguishes current implementation from
+planned capabilities; an implemented checkpoint does not imply a stable release.
 
 - [Multi-node control plane v1](multi-node-v1.md)
 - [Multi-node security model](multi-node-security.md)

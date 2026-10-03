@@ -55,6 +55,9 @@ func (s *Service) initWithOptionsLocked(options InitOptions) (config.State, erro
 	if err := s.store.CheckRestorePending(); err != nil {
 		return config.State{}, err
 	}
+	if err := s.recoverNodeRecoveryLocked(); err != nil {
+		return config.State{}, err
+	}
 	if err := s.recoverNodeEnrollmentLocked(); err != nil {
 		return config.State{}, err
 	}

@@ -48,6 +48,9 @@ func validateRenewalCandidate(c storage.NodeRenewalCandidate) error {
 }
 
 func (s *Service) nodeRenewalStateLocked() (config.State, error) {
+	if err := s.store.CheckNoNodeRecovery(); err != nil {
+		return config.State{}, err
+	}
 	if err := s.store.CheckRestorePending(); err != nil {
 		return config.State{}, err
 	}

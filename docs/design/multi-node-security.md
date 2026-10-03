@@ -1,6 +1,7 @@
 # Multi-node security model
 
-Status: proposed. This threat model applies to the design in
+Status: architecture contract for implemented checkpoints and future capabilities.
+This threat model applies to the design in
 [`multi-node-v1.md`](multi-node-v1.md).
 
 The control TLS/PKI phase has a concrete trust boundary and delivery plan in
@@ -68,7 +69,7 @@ disabled until explicit setup and recoverable controller backup exist.
 | Enrollment MITM | Version-pinned command carries CA/SPKI pin; TLS verification has no bypass; compare code binds invitation and CSR | Compromised controller UI/host can issue a malicious command |
 | Enrollment replay | Bind invitation to first accepted CSR; explicit approval; exact CSR retries return the same bounded claim capability; competing CSRs return `409` | A controller database rollback requires epoch/replay reconciliation |
 | Managed backup restored onto another installation | Compare complete persisted managed identity before writing; explicit local detach removes controller authority and replay metadata before reuse | A full raw filesystem clone duplicates the comparison metadata and cannot be distinguished locally |
-| Raw node data directory cloned | Keep the clone offline until explicit local detach; detect duplicate active identity at the controller and revoke/re-enroll one side | A clone has the old private key and can impersonate the node until controller revocation is enforced |
+| Raw node data directory cloned | Keep the clone offline until explicit local detach; separately revoke copied credentials at the former controller when applicable, then freshly enroll | Presence fencing cannot reliably identify a complete clone; it can impersonate the node until controller revocation is enforced |
 | Stolen node certificate without key | Short lifetime and serial tracking; proof of private-key possession on renewal | Certificate metadata may reveal node identity |
 | Stolen node key and certificate | Revoke node and increment binding epoch; audit reconnects; require local re-enrollment | Attacker can act as node until revocation reaches the controller |
 | Controller database disclosure | Store only hashes for bearer credentials; encrypt TOTP secrets with a key held outside SQLite; keep the control CA key in a separate root-only `0600` file; keep node/client secrets out of DB | These boundaries do not protect against full host compromise |
@@ -76,7 +77,7 @@ disabled until explicit setup and recoverable controller backup exist.
 | Malicious or compromised node | Per-node identity; strict node-to-resource mapping; bounded schemas; snapshots treated as untrusted observations | Controller UI may display false health information from that node |
 | Operation replay | Immutable operation ID, idempotency key, expiry, expected generation, and a success receipt committed with desired state | Database restore may reintroduce old queued work; generation and receipts must reject duplicate execution |
 | Out-of-order mutation | One mutation lease per node; expected generation conflict; no blind last-write-wins | Long-running operations may delay later work |
-| Concurrent local CLI, browser, policy, and controller mutations overwrite each other | Node holds one cross-process mutation lock through read, runtime apply, commit, or rollback; both remote control surfaces use expected generation; stale controller work is rejected and refreshed from the node | A future local browser API must send its observed generation before enrollment is enabled |
+| Concurrent local CLI, browser, policy, and controller mutations overwrite each other | Node holds one cross-process mutation lock through read, runtime apply, commit, or rollback; future controller operations require expected generation and refresh stale observations | Controller operation delivery remains unimplemented; local requests serialize and reload committed state under the lock |
 | Delayed presence or snapshots roll back controller observations | Presence replaces a session only for a greater persisted `boot_sequence`, or renews the matching `boot_id` at the same sequence; snapshots require the active certificate-bound `session_id` and an increasing per-boot `snapshot_sequence`; desired state additionally requires a nondecreasing generation | A compromised node can still report false observations for itself |
 | Crash between runtime apply and state save | Explicit commit protocol and startup reconciliation to persisted desired state | Brief runtime divergence before reconciliation |
 | Secret artifact logged or retained | Dedicated in-memory TTL store, no-store response, redaction tests, no durable operation payload | Secret exists in controller memory while being relayed |
@@ -200,8 +201,21 @@ backups, and support bundles for seeded canary secrets.
 ## Recovery authority
 
 Local root access is the final authority for a node. It may detach or explicitly
-rebind the node without changing tunnels. A controller cannot remotely transfer
-a node to another controller.
+rebind the node without changing tunnels. Linux-root CLI recovery confirms the
+current node/controller UUIDs and holds the stopped server's exclusive state
+lease through approval and commit. Rebind uses a fresh pinned invitation,
+comparison code and operator approval, then installs a new node ID and state
+epoch. The former registry record is never un-revoked. A controller cannot
+remotely transfer a node to another controller. Offline local retirement cannot
+revoke a copied certificate on an unreachable controller; former authority must
+be revoked there separately when applicable.
+
+A private, atomically published no-replace journal contains only exact generation
+names and hashes of the old/new full state and any pending renewal journal.
+Startup proves one committed state before exact candidate or predecessor cleanup;
+it never replaces state from the journal. Unexpected state, malformed evidence,
+overlapping transitions and unsafe credential paths preserve evidence and fail
+closed. Backup/restore refuses pending recovery and never archives its journal.
 
 Controller backup is encrypted and includes its identity, CA, authentication
 database and certificate registry. Operation-journal recovery remains a future
@@ -210,7 +224,7 @@ same existing controller, verifies its archived PKI and registry, then atomicall
 revokes every restored certificate and binding alongside browser credentials.
 It preserves history, keeps control disabled, and prevents repeated stale
 restore or administrator recovery from restoring node access. Explicit local
-node recovery and fresh enrollment remain future work. This policy does not
+node recovery and fresh enrollment use the offline CLI above. This policy does not
 protect against raw-filesystem rollback or prove uniqueness of cloned controllers.
 
 ## Required security tests

@@ -55,6 +55,8 @@ type Service struct {
 	controlRuntimeStep    func(string) error
 	controlRenewalNow     func() time.Time
 	controlRenewalWait    func(context.Context, time.Duration) bool
+	nodeRecoveryStep      func(string) error
+	nodeRecovery          *NodeRecoverySession // Owned by mu; offline state lease.
 	controlOwner          *controlRuntimeOwner
 	controlLifetime       atomic.Pointer[controlRuntimeOwner] // Cancellation access without Service.mu.
 	controlEnable         *controlEnableAuthorization
