@@ -5,19 +5,26 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"io"
+	"os"
+	"os/signal"
+	"runtime"
+	"syscall"
+	"time"
+
 	"github.com/astronaut808/awg-forge/internal/app"
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/controlapi"
 	"github.com/astronaut808/awg-forge/internal/nodeagent"
 	"golang.org/x/sys/unix"
-	"io"
-	"os"
-	"time"
 )
 
 func runNode(cfg config.Config, service *app.Service, args []string) error {
+	if len(args) > 0 && (args[0] == "detach" || args[0] == "rebind") {
+		return runNodeRecoveryWithAuthority(cfg, service, args, runtime.GOOS, os.Geteuid())
+	}
 	if len(args) == 0 || args[0] != "enroll" {
-		return errors.New("usage: awg-forge node enroll --input-file <invitation.json> [--name name] [--timeout duration]")
+		return errors.New("usage: awg-forge node enroll|detach|rebind (see node recovery documentation)")
 	}
 	flags := flag.NewFlagSet("node enroll", flag.ContinueOnError)
 	input := flags.String("input-file", "", "protected enrollment invitation")
@@ -36,6 +43,57 @@ func runNode(cfg config.Config, service *app.Service, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 	return nodeagent.Enroll(ctx, service, invitation, *name, func(code string) error {
+		_, err := os.Stdout.WriteString("Enrollment verification code: " + code + "\n")
+		return err
+	})
+}
+
+func runNodeRecoveryWithAuthority(_ config.Config, service *app.Service, args []string, operatingSystem string, euid int) (result error) {
+	if len(args) == 0 || (args[0] != "detach" && args[0] != "rebind") {
+		return errors.New("usage: awg-forge node detach|rebind --confirm-node-id <uuid> --confirm-controller-id <uuid>")
+	}
+	if operatingSystem != "linux" || euid != 0 {
+		return errors.New("node local recovery requires Linux root")
+	}
+	flags := flag.NewFlagSet("node "+args[0], flag.ContinueOnError)
+	nodeID := flags.String("confirm-node-id", "", "current local node identity")
+	controllerID := flags.String("confirm-controller-id", "", "current local controller identity")
+	var input, name *string
+	var timeout *time.Duration
+	if args[0] == "rebind" {
+		input = flags.String("input-file", "", "protected fresh enrollment invitation")
+		name = flags.String("name", "node", "node display name")
+		timeout = flags.Duration("timeout", 10*time.Minute, "enrollment timeout")
+	}
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 || *nodeID == "" || *controllerID == "" {
+		return errors.New("node recovery requires explicit current node/controller confirmation")
+	}
+	if input != nil && (*input == "" || *timeout <= 0 || *timeout > 15*time.Minute) {
+		return errors.New("rebind requires protected invitation and bounded timeout")
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if timeout != nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, *timeout)
+		defer cancel()
+	}
+	r, err := service.BeginNodeRecovery(ctx, *nodeID, *controllerID)
+	if err != nil {
+		return err
+	}
+	defer func() { result = errors.Join(result, r.Close()) }()
+	if args[0] == "detach" {
+		return r.Detach(ctx)
+	}
+	invitation, err := readNodeInvitation(*input)
+	if err != nil {
+		return err
+	}
+	return nodeagent.Enroll(ctx, r, invitation, *name, func(code string) error {
 		_, err := os.Stdout.WriteString("Enrollment verification code: " + code + "\n")
 		return err
 	})

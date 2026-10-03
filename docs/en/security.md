@@ -75,3 +75,44 @@ If a mutating operation changes state/configs but runtime apply fails, awg-forge
 This prevents the UI from showing a created client or modified tunnel when runtime state was not successfully applied.
 
 Controller control TLS automatically renews its server certificate under the existing CA at two thirds of the certificate lifetime. A previously enabled controller may renew an intact expired server certificate before opening its loopback listener, only with valid existing CA, identity, registry/auth and cleared recovery fences. Missing or corrupt data and expired CA require local recovery. Disabled or restored controllers stay disabled; node revocations and tunnel configurations are preserved. This does not enable remote exposure.
+
+## Offline node recovery
+
+For an existing managed node with an unavailable controller or expired/revoked
+credentials, stop its `serve` process and run the CLI as Linux root with the same
+`CONFIG_DIR`. Both commands require the current `managed_node.node_id` and
+`managed_node.controller_id` from the local `state.json`; inspect only these
+fields, because the full state contains secrets. Recovery refuses a running
+server, incorrect confirmation, unsafe directory/file permissions, pending
+restore or overlapping identity/desired-state transitions.
+
+```bash
+awg-forge node detach --confirm-node-id <current-node-uuid> --confirm-controller-id <current-controller-uuid>
+awg-forge node rebind --confirm-node-id <current-node-uuid> --confirm-controller-id <current-controller-uuid> --input-file /protected/invitation.json --name node --timeout 10m
+```
+
+`detach` removes the binding and replay metadata and returns to standalone mode.
+After detach, use ordinary `node enroll` for fresh enrollment. `rebind` performs
+fresh enrollment directly while retaining the former local binding until the
+pinned TLS handshake, comparison code and controller administrator approval
+succeed. The invitation must be a root-owned regular file with mode `0600`,
+without symlinks or hardlinks; its secret must not appear in command arguments.
+The existing loopback transport constraints still apply.
+
+Rebind explicitly resets local node identity: it installs a new node ID, state
+epoch and credentials, with a fresh boot/desired-generation/receipt namespace.
+Tunnels, clients, local authentication, operational history and `ConfigRevision`
+are preserved. The old controller registry record remains revoked or historical;
+rebind never restores its authority. Offline deletion cannot revoke a copied
+certificate on the old controller: revoke the former node there separately when
+applicable. Cleanup removes only the former active credential generation and a
+recorded valid pending renewal; unrelated historical directories are not erased.
+
+Before state commit, refusal, timeout or cancellation keeps the former binding.
+A private `.node-local-recovery.json` journal resolves interrupted staging or
+cleanup by proving the exact old/new full state; it never rolls state back.
+Restart `serve` after success. After a reported uncertain commit, restart permits
+deterministic journal reconciliation; malformed evidence, changed state or unsafe
+paths require offline inspection and remain fail closed. Do not delete evidence
+to bypass that check. Backup and restore reject pending recovery, and an old node
+archive cannot replace the identity established by fresh rebind.

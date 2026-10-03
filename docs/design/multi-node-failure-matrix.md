@@ -1,7 +1,8 @@
 # Multi-node failure and recovery matrix
 
-Status: proposed. Each row becomes an executable integration or fault-injection
-test before the corresponding capability can be released.
+Status: acceptance requirements for implemented checkpoints and future capabilities.
+Each row requires an executable integration or fault-injection test before the
+corresponding capability can be released; the matrix alone is not test evidence.
 
 | Failure point | Required observable outcome | Persistent authority | Recovery/test assertion |
 | --- | --- | --- | --- |
@@ -9,7 +10,7 @@ test before the corresponding capability can be released.
 | Control CA, server key, or SQLite is missing after explicit control setup | Control listener stays closed; no replacement identity is generated | Committed controller identity generation | Browser administrator can see a safe failure; node traffic never falls back to HTTP or Web UI TLS |
 | Control setup crashes before or after state commit | Pre-commit stage is removed or recoverable; post-commit identity is loaded exactly | `state.json` plus secret-free setup journal | No orphan listener, partial key pair, or silent identity replacement |
 | Loopback enable uses a stale backup receipt, replaced/revoked session or changed identity | Reject before serving; every matching attempt consumes its receipt | Process-local receipt, complete identity and recent administrator session | Real encrypted backup adapter; generation/session/process fences and concurrent enable tests |
-| Loopback bind, enable commit or post-commit serving fails | Release the reserved socket; never roll back an uncertain commit; explicit retry loads committed state | Application runtime owner and `state.json` | Bind/save/sync/serve fault tests; local Init remains available and never auto-starts control |
+| Loopback bind, enable commit or post-commit serving fails | Release the reserved socket; never roll back an uncertain commit; explicit retry loads committed state | Application runtime owner and `state.json` | Bind/save/sync/serve fault tests; local Init remains available and never opens a control listener |
 | Loopback disable interrupts a held request | Close admission, cancel request context, drain with a deadline, release owned registry, persist disabled state | Application runtime owner | Handler cleanup barrier test; identity, tunnel configuration and revisions are preserved |
 | Bootstrap reaches a node-only path without a client certificate | Request is rejected even though the TLS handshake may omit a client certificate | Exact route allowlist and node certificate registry | Browser cookie and forwarded certificate headers cannot authorize a control request |
 | Server hostname or CA pin is wrong | Node refuses the TLS connection before sending an invitation secret or node data | Node-pinned CA and advertised endpoint | No insecure verification fallback or secret-bearing retry |
@@ -43,10 +44,17 @@ test before the corresponding capability can be released.
 | Certificate expires during controller outage | Tunnels continue; control becomes unavailable; local recovery remains | Node state/runtime | Re-enrollment does not modify tunnels |
 | Controller CA rotation interrupted | Old trust remains valid until new trust and certificates are confirmed | Staged trust bundle | No fleet-wide simultaneous lockout |
 | Controller restored with same identity | Control remains disabled; every restored certificate and binding is revoked | Exact archived controller ID/CA/server generation and preserved registry history | Explicit local recovery and fresh enrollment required; existing keep-alive next request denies before handler invocation |
-| Controller restored twice | Duplicate identity is detected operationally; automatic leader behavior is absent | Operator-controlled restore | Documentation and Doctor warn; no split-brain claim |
+| Controller restored twice | Operator must prevent simultaneous use of duplicated identity; automatic leader behavior is absent | Operator-controlled restore | Local identity fencing does not prove clone uniqueness; no split-brain or automatic Doctor detection claim |
 | Controller lost without backup | Nodes continue locally and require explicit root-authorized rebind | Node old binding | Old controller cannot remotely transfer nodes |
+| Offline detach/rebind runs while serve is alive or confirmation differs | Reject before enrollment or state mutation | Existing exclusive state lease and exact node/controller UUIDs | Real Linux-root process and confirmation tests |
+| Fresh rebind has wrong pin, unavailable controller, declined approval or cancellation before commit | Keep the previous binding and local configuration | Old full `state.json` and active credentials | Pinned enrollment, cancellation and failed approval tests |
+| Local recovery crashes before state save | Prove the old full state; retire only the journal-named staged new generation | Old state hash and private recovery journal | Atomic journal publication and pre-save crash matrix; old pending renewal remains |
+| Local recovery save is uncertain or cleanup crashes after commit | Prove the new full state; validate new identity and retire exact predecessor/pending renewal before deleting journal | New state hash and exact generation references | Post-save crash matrix; no state rollback or old authority resurrection |
+| Recovery evidence is malformed, overlaps another transition or state differs | Preserve journal and credentials; deny boot, enrollment, renewal and backup/restore | Private evidence and current state | Fail-closed recovery and redirection tests; offline inspection required |
+| Revoked/expired node freshly rebinds after controller recovery | New node ID/state epoch and replay namespace; archived node remains revoked | New approved identity and existing registry history | Linux process/TLS presence and stale renewal/boot fencing |
+| Old node archive is restored after fresh rebind | Reject identity mismatch before replacing target | Fresh node identity and local configuration | Encrypted node backup/restore regression |
 | Managed backup restored onto a different installation | Restore rejects the identity mismatch; local root may explicitly detach before reuse and later enrollment establishes a new identity | Target node identity plus restored local configuration | Rejected restore writes no state; detached state has no controller authority |
-| Node data directory cloned byte for byte | Clone remains offline until local root detaches it; controller later detects duplicate active identity and revokes/re-enrolls one side | Copied node identity until detach | Local code cannot identify a complete clone without controller evidence; never run both copies as managed nodes |
+| Node data directory cloned byte for byte | Clone remains offline until local root detaches it; separately revoke copied credentials at the former controller when applicable before fresh enrollment | Copied node identity until detach and former-controller revocation | Presence fencing cannot reliably identify a complete clone; never run both copies as managed nodes |
 | Operation delivered twice before execution | Second delivery observes accepted/leased operation state | Node SQLite | Application service executes once per active operation |
 | Crash before operation acceptance is durable | Redelivery is safe and starts execution once | Controller queued operation | No local mutation occurred |
 | Crash after acceptance before candidate build | Resume the same accepted operation | Node SQLite | No mutation and no duplicate resource |

@@ -29,3 +29,19 @@ func TestRunNodeRejectsSecretBearingArgumentShapes(t *testing.T) {
 		t.Fatal("unknown secret flag accepted")
 	}
 }
+
+func TestNodeRecoveryRequiresLinuxRootAndExplicitConfirmation(t *testing.T) {
+	for _, a := range []struct {
+		os  string
+		uid int
+	}{{"darwin", 0}, {"linux", 1000}} {
+		if err := runNodeRecoveryWithAuthority(config.Config{}, nil, []string{"detach"}, a.os, a.uid); err == nil {
+			t.Fatal("unauthorized recovery admitted")
+		}
+	}
+	for _, args := range [][]string{{"detach"}, {"detach", "--secret", "x"}, {"rebind", "--input-file", "unused"}, {"detach", "--confirm-node-id", "bad", "--confirm-controller-id", "bad", "extra"}} {
+		if err := runNodeRecoveryWithAuthority(config.Config{}, nil, args, "linux", 0); err == nil {
+			t.Fatal("unsafe or unconfirmed recovery admitted")
+		}
+	}
+}

@@ -82,6 +82,9 @@ func (s *Service) StartManagedNodeBootContext(ctx context.Context) (ManagedNodeB
 	return s.startManagedNodeBootLocked(ctx, state)
 }
 func (s *Service) startManagedNodeBootLocked(ctx context.Context, state config.State) (ManagedNodeBoot, error) {
+	if err := s.store.CheckNoNodeRecovery(); err != nil {
+		return ManagedNodeBoot{}, err
+	}
 	if err := validateManagedNodeState(state.ManagedNode); err != nil {
 		return ManagedNodeBoot{}, err
 	}

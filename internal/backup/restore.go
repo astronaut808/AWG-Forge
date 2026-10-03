@@ -43,6 +43,9 @@ func safeRestorePath(root, archivePath string) (string, error) {
 	if clean == storage.StateLockFileName || clean == storage.StateMutationLockFileName || clean == storage.RestorePendingFileName {
 		return "", errors.New("backup contains reserved state lock path")
 	}
+	if clean == storage.NodeRecoveryJournalFileName || strings.HasPrefix(clean, storage.NodeRecoveryJournalFileName+"/") {
+		return "", errors.New("backup contains reserved node recovery path")
+	}
 	if clean == "backups" || strings.HasPrefix(clean, "backups/") {
 		return "", errors.New("backup contains reserved backup history path")
 	}

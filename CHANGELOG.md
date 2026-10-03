@@ -4,18 +4,21 @@
 
 ### Added
 
-- Added a dormant managed-node desired-state commit foundation with epoch and generation fencing, bounded idempotent success receipts, and startup recovery for interrupted runtime changes. Multi-node enrollment and control remain unavailable until later implementation phases.
-- Added a process-lifetime `boot_id` foundation for future restart confirmation without persisting it in node state.
+- Added managed-node desired-state generation and epoch fencing, bounded idempotent success receipts, and startup recovery for interrupted runtime changes.
+- Added explicit controller activation with mandatory TOTP, opaque sessions, recovery codes and Linux-root offline administrator recovery.
+- Added loopback-only pinned enrollment with administrator approval, mTLS presence, process-start fencing, and automatic node and controller server-certificate renewal. External listeners, installer integration, fleet UI and remote operations remain future work.
+- Added Linux-root offline `node detach` and fresh `node rebind`, preserving local tunnels and configuration while resetting managed identity through approved enrollment.
 
 ### Changed
 
 - Centralized protocol profile registration and parameter catalogs; the browser API and Web UI now consume server-provided profile names and experimental status instead of maintaining independent profile tables.
-- Updated the Aislop development quality gate from v0.14 to v0.16 and revalidated the project against its recalibrated scoring model.
 
 ### Security
 
 - Fence backup restores across managed-node identities: only an exact in-place identity match is preserved automatically; backup transfer to a new or different installation and managed/standalone transitions require explicit local detachment while retaining tunnel configuration without controller authority. Restore now requires the server to be stopped and holds an exclusive state-directory lock for the complete operation.
 - Keep enrolled nodes locally manageable while making the node the sole commit authority: Web UI, CLI, autonomous policy, and future controller transactions are serialized across processes; successful `state.json` tunnel, client, protocol, WARP, automatic repair, and traffic-limit enforcement changes advance `desired_generation`, so the controller can refresh from the node and stale remote operations fail instead of overwriting newer local state.
+- Controller backups include protected identity and a verified SQLite snapshot; cold restore disables control and atomically invalidates archived browser and node authority without erasing registry history. Administrator recovery never restores node access.
+- Identity rotation and local recovery use private atomic journals, exact generation cleanup and fail-closed startup fencing; offline node retirement does not revoke credentials copied to another machine.
 
 ## v0.19.0 - 2026-09-05
 

@@ -1,7 +1,8 @@
 # Control TLS and PKI implementation plan
 
-Status: loopback enrollment, mTLS presence and automatic node certificate renewal
-are implemented. External control listeners and fleet operations remain later work.
+Status: loopback enrollment, mTLS presence, automatic node and server-leaf renewal,
+and Linux-root offline node recovery are implemented. External control listeners,
+installer integration and fleet operations remain later work.
 
 ## Current boundary and goal
 
@@ -30,8 +31,10 @@ backup includes auth keys, control identity and a verified SQLite snapshot. Cold
 same existing controller identity and offline admin recovery, disables the listener,
 and invalidates restored node authority, invitations, claim credentials and presence.
 Node backup includes its committed credential generation and rejects pending
-renewal; explicit detach removes controller authority while preserving local
-configuration.
+renewal or local recovery. Linux-root offline `node detach` and fresh `node rebind`
+preserve local configuration under the stopped server's exclusive state lease.
+Rebind creates a new node ID and state epoch through approved pinned enrollment;
+it never un-revokes the former registry binding. See [operator recovery](../en/security.md#offline-node-recovery).
 
 The goal of this phase is a tested control identity, dedicated TLS listener,
 certificate issuance and renewal primitives, and a fail-closed authorization
@@ -106,7 +109,7 @@ requests; it never grants a cached identity or falls back to a browser cookie.
   and Ed25519 keys. A CA certificate has CA basic constraints and `keyCertSign`;
   server and node leaf certificates have distinct server/client EKUs and no CA
   privilege. Server SANs cover only the configured advertised DNS name or IP.
-  Use random unique serials and injected clocks in tests. Proposed lifetimes:
+  Use random unique serials and injected clocks in tests. Current lifetimes:
   five years for the CA, 30 days for server and node leaves; renew at two thirds
   of leaf lifetime. These are product policy constants, not user-facing knobs.
 
@@ -122,7 +125,9 @@ requests; it never grants a cached identity or falls back to a browser cookie.
    atomic state replacement, then clear the journal. A pre-commit failure
    removes only newly staged files. Restart loads the committed identity
    without starting a listener; it never generates replacement keys.
-4. `enabled`: after an enrollment route is implemented, require a newly created and verified encrypted backup of the
+   An exact preparation retry with the same normalized endpoint validates and
+   reuses the committed identity; a different endpoint conflicts.
+4. `enabled`: require a newly created and verified encrypted backup of the
    committed identity. A one-use backup receipt is bound to the prepared
    identity generation and administrator session; a restart before enablement
    requires a new backup. Hold the proposed socket open, establish an auth barrier,
@@ -144,11 +149,24 @@ requests; it never grants a cached identity or falls back to a browser cookie.
    then retire old trust. Phase 5 records this contract but does not implement
    fleet CA rotation. Do not automate CA replacement on expiry or key loss.
 
-Destructive identity reset is a separate root-authorized recovery operation.
+The renewal worker belongs to one captured control runtime owner. Cancellation
+interrupts both in-process and cross-process mutation-lock waits, so shutdown
+cannot trigger a late bind or mutation. Terminal expiry/failure closes admission
+under the generation fence; registry resources remain alive until serving and
+worker users have drained. A drain timeout is reported explicitly.
 
-The explicit setup action belongs in `internal/app`. A future browser handler
-must require a controller session with recent authentication and call that
-service. A local root CLI may provide an offline recovery path, but neither
+Rotation journals are published atomically with no replacement, after a complete
+private temporary file has been synced and closed; the parent directory is synced
+after publication. Partial writes never appear at the final path, and existing
+malformed evidence is preserved. Startup validates the committed old or new
+generation before exact cleanup, deletes the journal last, and never rolls a
+committed successor back to its predecessor.
+
+Node identity reset is a separate root-authorized offline recovery operation.
+
+The explicit setup action belongs in `internal/app`. Its browser handler
+requires a controller session with recent authentication and calls that
+service. The Linux-root CLI provides offline node recovery, but neither
 surface may accept private keys in argv or log them. The bind address must be
 explicit; do not default to a public wildcard or reuse Web UI/ACME ports.
 
@@ -238,10 +256,9 @@ atomically disables the administrator, deletes browser sessions/recovery codes
 and revokes every restored certificate and binding, retaining registry history
 and existing revocation timestamps. Administrator recovery and repeated stale
 restore never reactivate those credentials. Nodes require explicit local
-recovery and fresh enrollment; this workflow remains unimplemented. There is
-no seamless reconnect or archive-local replay counter. Phase-6 restore must
-also invalidate every restored invitation and claim credential when those
-capabilities exist.
+recovery and fresh enrollment through the offline CLI. There is no seamless
+reconnect or archive-local replay counter. Restore also removes every restored
+invitation, claim credential and presence session.
 
 The dedicated listener uses bounded header/body/timeouts, connection and
 handshake limits, `Cache-Control: no-store`, generic error bodies, no CORS, and
@@ -257,14 +274,9 @@ They may be implemented in one feature branch from current `develop`; later
 slices depend on earlier ones, and each needs focused tests. No slice changes
 the standalone or DB-off default.
 
-The prepared identity checkpoint in
-[control-identity-next-session.md](control-identity-next-session.md) is complete.
-The completed registry checkpoint is described in
-[control-node-certificate-registry.md](control-node-certificate-registry.md).
-The completed renewal handoff is
-[control-node-renewal-next-session.md](control-node-renewal-next-session.md).
-The internal server-leaf rotation checkpoint is implemented in
-[control-server-leaf-rotation-next-session.md](control-server-leaf-rotation-next-session.md).
+Identity preparation, node renewal and server-leaf rotation are complete;
+their durable contracts are recorded above and in the
+[certificate registry contract](control-node-certificate-registry.md).
 The application lifecycle owner automatically renews and publishes server leaves
 into its loopback runtime; no public rotation route is added. Controller backup/restore
 reconciles certificate authority with archived PKI and registry, invalidating
@@ -278,9 +290,9 @@ new verified backup was retained; control admission is limited to loopback.
 | 0. Contract and failure gates | `docs/design`, `api/control-v1.openapi.json` | Reconcile route security, identity vocabulary, renewal/revocation errors and crash/rotation cases. Add executable tests for the applicable threat/failure rows before enabling runtime routes. |
 | 1. Control identity store | `internal/controlpki`, `internal/config`, `internal/storage`, `internal/app` | Generate/load/validate versioned CA and server leaf with safe filesystem rules and secret-free journal. Tests cover interrupted preparation, missing/corrupt keys, symlinks, permissions, wrong SAN/pin and no startup auto-creation. |
 | 2. Dedicated TLS runtime | `internal/controlserver`, `cmd/awg-forge`, narrow lifecycle wiring in `internal/server` | Separate server and mux, optional verified client cert at handshake, exact-route authorization gate, bounded resources and graceful shutdown. Real loopback TLS tests cover wrong CA/host, missing/invalid client cert, forwarded-header forgery, revocation on keep-alive and SQLite outage. Production listener remains disabled without explicit setup. |
-| 3. Issuance and lifecycle | `internal/controlpki`, `internal/sqldb`, `internal/app` | Signed CSR validation; durable serial registry; renewal overlap, expiry, revocation, rebind fencing and server leaf rotation. Inject clock/failure points; run concurrency/race tests. No public enrollment route yet. |
+| 3. Issuance and lifecycle | `internal/controlpki`, `internal/sqldb`, `internal/app` | Signed CSR validation; durable serial registry; renewal overlap, expiry, revocation, rebind fencing and server leaf rotation. Inject clock/failure points; run concurrency/race tests. Enrollment routes are available only on loopback. |
 | 4. Controller backup prerequisite | `internal/backup`, `internal/app`, `internal/sqldb`, docs EN/RU | First make the existing controller identity and auth recoverable, then include PKI generations before any control exposure. Use a durable pre-restore fail-closed marker, identity-match fencing, cold restore, auth replay reset and canary-secret tests. Inject crashes at every file switch and marker boundary. |
-| 5. Enablement integration | `internal/app`, `internal/server`, `cmd/awg-forge`, installer tests | Test recent-auth protected preparation, endpoint/bind preflight, verified post-preparation backup and reversible runtime transition on loopback. Keep non-loopback enablement unavailable until phase-6 enrollment routes and their security tests are ready. No auto-enable on install/upgrade. |
+| 5. Enablement integration | `internal/app`, `internal/server`, `cmd/awg-forge` | Recent-auth protected preparation, endpoint/bind preflight, verified backup and reversible runtime transition are implemented on loopback. Non-loopback exposure and installer integration require separate reviewed scope and failure tests. No auto-enable on install/upgrade. |
 
 The loopback transport implementation is isolated in `internal/controlserver`.
 `internal/app` owns the transition; `internal/server` owns startup and shutdown.
@@ -307,12 +319,13 @@ missing keys/DB, no secret leakage in logs/audit/support bundles, and
 standalone/DB-off regressions. Report any unavailable environment gate as
 unverified, not passed.
 
-## Decisions to verify in slice 0
+## Current contracts and remaining trust-rotation gate
 
-- Reserve same-origin `GET /api/controller/control/status`,
+- Same-origin `GET /api/controller/control/status`,
   `POST /api/controller/control/prepare`,
+  `POST /api/controller/control/backup`,
   `POST /api/controller/control/enable`, and
-  `POST /api/controller/control/disable` for later enablement. The `GET` requires
+  `POST /api/controller/control/disable` are implemented. The `GET` requires
   a controller session; all mutations require recent authentication. Accept a
   separate bind IP and advertised DNS name or IP plus port;
   reject schemes, paths, userinfo, ambiguous names, wildcard advertised hosts,

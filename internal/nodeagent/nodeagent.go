@@ -32,7 +32,15 @@ import (
 
 const maxEnrollmentPoll = 30 * time.Second
 
-func Enroll(ctx context.Context, service *app.Service, invitation controlapi.Invitation, name string, onComparison func(string) error) error {
+// EnrollmentService admits either first enrollment or a captured offline root
+// recovery session, sharing the same pinned handshake and approval protocol.
+type EnrollmentService interface {
+	PreflightNodeEnrollment(context.Context) error
+	InstallNodeEnrollment(context.Context, controlapi.Invitation, controlapi.EnrollmentStatus, []byte) error
+	BootID() (string, error)
+}
+
+func Enroll(ctx context.Context, service EnrollmentService, invitation controlapi.Invitation, name string, onComparison func(string) error) error {
 	if err := validateInvitation(invitation); err != nil {
 		return err
 	}

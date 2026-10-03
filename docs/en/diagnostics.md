@@ -245,8 +245,8 @@ Restore invalidates browser sessions and recovery codes and disables the
 restored administrator. It also revokes every restored node certificate and
 binding, preserving their registry history. This applies to recent archives,
 repeated restores and pre-restore backups. Administrator recovery does not
-restore node access; nodes require explicit local recovery and fresh enrollment,
-whose workflow remains a later checkpoint. Archive verification checks the
+restore node access; nodes require [offline local recovery and fresh enrollment](security.md#offline-node-recovery).
+Archive verification checks the
 registry against its schema, controller identity and archived CA before changing
 target files. Inconsistent archives are rejected.
 
@@ -276,14 +276,16 @@ docker compose run --rm -e BACKUP_PASSWORD='long-random-backup-password' awg-for
 docker compose up -d awg-forge
 ```
 
-This option does not enroll or rebind the restored installation. Multi-node
-enrollment remains unavailable until a later implementation phase.
+This option does not enroll or rebind the restored installation. Use explicit
+`node enroll` after detach; recovery of an existing binding uses the
+[offline recovery workflow](security.md#offline-node-recovery).
 
 A byte-for-byte copy of the complete data directory also copies the managed
 node key and identity metadata, so it cannot be recognized locally as a clone.
 Do not start both copies. Keep the clone offline and use detached restore before
-reuse; duplicate-session detection and certificate revocation belong to the
-future controller implementation.
+reuse. The controller fences competing process starts, but cannot identify a
+complete clone reliably; revoke copied credentials on the former controller
+separately when applicable.
 
 Restore checks:
 
@@ -295,8 +297,9 @@ Restore checks:
 - server config rendering.
 
 Restore does not apply runtime automatically. Starting the server afterwards
-loads the restored desired state and TLS assets. Encrypted backups do not
-currently include SQLite operational history. With `APPLY_CONFIG=true`, startup
+loads the restored desired state and TLS assets. Standalone and managed-node
+backups omit SQLite operational history; controller backups include a consistent
+SQLite snapshot with authentication and the node registry. With `APPLY_CONFIG=true`, startup
 applies enabled tunnels and then reconciles WARP. `awg-forge tunnel restart`
 restarts only the first tunnel and does not reload the running service's
 settings or reconcile WARP. After startup, repair managed firewall rules and

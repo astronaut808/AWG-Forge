@@ -215,15 +215,17 @@ The controller keeps the old certificate valid for at most 24 hours after renewa
 revocation ends that overlap immediately. Switching credentials preserves local
 tunnels, configuration revisions and the current boot identity. An expired or
 revoked certificate requires local recovery; local service remains available.
-Automatic controller server-certificate renewal is a separate checkpoint.
+The controller also renews its server certificate automatically under its existing
+CA; see [Security](security.md) for startup prerequisites and expiry behavior.
 
 Cold controller restore disables the listener and administrator, revokes all
 restored node certificates/bindings, and removes invitations, claim credentials
 and presence sessions. Managed-node backups include the protected credential
 generation; backup is blocked while node renewal is pending. Restore still
 enforces identity fencing or explicit detach. Detach removes controller authority.
-Local re-enrollment of a revoked binding, external listeners and fleet UI remain
-separate work.
+Linux-root [offline recovery](security.md#offline-node-recovery) supports detach
+and fresh enrollment with a new identity. External listeners, installer integration
+and fleet UI remain separate work.
 
 ## Client Config Import
 
