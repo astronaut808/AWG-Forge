@@ -20,7 +20,11 @@ import (
 	"github.com/astronaut808/awg-forge/internal/app"
 	"github.com/astronaut808/awg-forge/internal/buildinfo"
 	"github.com/astronaut808/awg-forge/internal/config"
+	"github.com/astronaut808/awg-forge/internal/controlauth"
+	"github.com/astronaut808/awg-forge/internal/controlpki"
 	"github.com/astronaut808/awg-forge/internal/render"
+	"github.com/astronaut808/awg-forge/internal/sqldb"
+	"github.com/astronaut808/awg-forge/internal/storage"
 	"github.com/astronaut808/awg-forge/internal/warp"
 	"github.com/astronaut808/awg-forge/internal/webtls"
 )
@@ -34,7 +38,9 @@ const (
 	kdfThreads    = uint8(4)
 	keySize       = uint32(32)
 
-	maxEncryptedBackupBytes = int64(64 << 20)
+	maxEncryptedBackupBytes       = int64(64 << 20)
+	maxPlainBackupBytes           = int64(64 << 20)
+	controllerSnapshotArchivePath = "controller/database.sqlite"
 )
 
 type Archive struct {
@@ -44,6 +50,17 @@ type Archive struct {
 
 type Options struct {
 	Now time.Time
+}
+
+// RestoreOptions controls identity handling for an encrypted restore.
+type RestoreOptions struct {
+	DetachManagedNode bool
+	Now               time.Time
+}
+
+// RestoreResult reports security-relevant transformations applied by restore.
+type RestoreResult struct {
+	ManagedNodeDetached bool
 }
 
 type Metadata struct {
@@ -84,26 +101,131 @@ type FileMeta struct {
 	SHA256 string `json:"sha256"`
 }
 
-func Create(ctx context.Context, cfg config.Config, service *app.Service, password string, opts Options) (Archive, error) {
-	_ = ctx
+func Create(ctx context.Context, cfg config.Config, service *app.Service, password string, opts Options) (archive Archive, err error) {
 	if err := validatePassword(password); err != nil {
 		return Archive{}, err
+	}
+	if err := storage.New(cfg.ConfigDir).CheckNoNodeRecovery(); err != nil {
+		return Archive{}, err
+	}
+	if err := storage.New(cfg.ConfigDir).CheckRestorePending(); err != nil {
+		return Archive{}, err
+	}
+	if _, err := os.Lstat(storage.New(cfg.ConfigDir).NodeRenewalJournalPath()); !errors.Is(err, os.ErrNotExist) {
+		return Archive{}, errors.New("cannot create backup while node renewal is pending")
+	}
+	if _, err := os.Lstat(storage.New(cfg.ConfigDir).NodeIdentityJournalPath()); !errors.Is(err, os.ErrNotExist) {
+		return Archive{}, errors.New("cannot create backup while node enrollment is pending")
+	}
+	// Init may recover and remove a preparation journal. A backup request must
+	// report the in-progress identity instead of silently changing that state.
+	if _, err := os.Lstat(storage.New(cfg.ConfigDir).ControlIdentityJournalPath()); err == nil {
+		return Archive{}, errors.New("cannot create backup while control identity preparation is pending")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return Archive{}, errors.New("cannot inspect control identity preparation journal")
+	}
+	if err := storage.New(cfg.ConfigDir).CheckNoControlServerRotation(); err != nil {
+		return Archive{}, err
+	}
+	if _, err := service.Init(); err != nil {
+		return Archive{}, err
+	}
+	mutationLock, err := storage.AcquireStateMutationLock(cfg.ConfigDir)
+	if err != nil {
+		return Archive{}, err
+	}
+	defer func() {
+		err = errors.Join(err, mutationLock.Close())
+	}()
+	store := storage.New(cfg.ConfigDir)
+	if err := store.CheckNoNodeRecovery(); err != nil {
+		return Archive{}, err
+	}
+	if err := store.CheckRestorePending(); err != nil {
+		return Archive{}, err
+	}
+	if _, err := store.LoadPendingDesiredStateCommit(); err == nil {
+		return Archive{}, errors.New("cannot create backup while a desired-state commit journal exists")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return Archive{}, fmt.Errorf("load desired-state commit journal: %w", err)
+	}
+	if _, err := store.LoadControlIdentityJournal(); err == nil {
+		return Archive{}, errors.New("cannot create backup while control identity preparation is pending")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return Archive{}, errors.New("cannot inspect control identity preparation journal")
+	}
+	if err := store.CheckNoControlServerRotation(); err != nil {
+		return Archive{}, err
+	}
+	state, err := store.Load()
+	if err != nil {
+		return Archive{}, err
+	}
+	return createFromState(ctx, cfg, state, password, opts)
+}
+
+func createFromState(ctx context.Context, cfg config.Config, state config.State, password string, opts Options) (Archive, error) {
+	if err := storage.New(cfg.ConfigDir).CheckNoNodeRecovery(); err != nil {
+		return Archive{}, err
+	}
+	if _, err := os.Lstat(storage.New(cfg.ConfigDir).NodeRenewalJournalPath()); !errors.Is(err, os.ErrNotExist) {
+		return Archive{}, errors.New("cannot create backup while node renewal is pending")
+	}
+	if _, err := os.Lstat(storage.New(cfg.ConfigDir).NodeIdentityJournalPath()); !errors.Is(err, os.ErrNotExist) {
+		return Archive{}, errors.New("node enrollment is pending")
+	}
+	if state.NodeConnection != nil {
+		material, err := storage.New(cfg.ConfigDir).LoadNodeIdentity(state.NodeConnection.CredentialGeneration)
+		if err != nil || app.ValidateNodeIdentity(state.NodeConnection, material, true) != nil {
+			return Archive{}, errors.New("committed node credentials are invalid")
+		}
+	}
+
+	if err := validatePassword(password); err != nil {
+		return Archive{}, err
+	}
+	if state.Controller != nil && state.Controller.Control != nil {
+		if err := validateStoredControlIdentity(cfg, state.Controller.Control, true); err != nil {
+			return Archive{}, errors.New("committed control identity is invalid")
+		}
+	}
+	var snapshotPath string
+	if state.EffectiveMode() == config.ModeController {
+		var cleanup func()
+		var err error
+		snapshotPath, cleanup, err = prepareControllerSnapshot(ctx, cfg)
+		if err != nil {
+			return Archive{}, err
+		}
+		defer cleanup()
 	}
 	now := opts.Now
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	state, err := service.Init()
-	if err != nil {
-		return Archive{}, err
-	}
-	plain, err := createPlainZip(cfg, state, now)
+	plain, err := createPlainZip(cfg, state, now, snapshotPath)
 	if err != nil {
 		return Archive{}, err
 	}
 	data, err := encrypt(plain, password, now)
 	if err != nil {
 		return Archive{}, err
+	}
+	if int64(len(data)) > maxEncryptedBackupBytes {
+		return Archive{}, errors.New("encrypted backup exceeds the 64 MiB restore limit")
+	}
+	validated, err := validateBackupData(ctx, password, data)
+	if err != nil {
+		return Archive{}, fmt.Errorf("verify encrypted backup before publication: %w", err)
+	}
+	if state.Controller != nil {
+		if validated.State.Controller == nil || validated.State.Controller.ControllerID != state.Controller.ControllerID {
+			return Archive{}, errors.New("verified controller backup identity changed")
+		}
+		actual, expected := validated.State.Controller.Control, state.Controller.Control
+		if (actual == nil) != (expected == nil) || (actual != nil && *actual != *expected) {
+			return Archive{}, errors.New("verified controller backup control identity changed")
+		}
 	}
 	return Archive{
 		Name: fmt.Sprintf("awg-forge-backup-%s.afbackup", now.Format("20060102-150405")),
@@ -126,22 +248,121 @@ func WriteFile(ctx context.Context, cfg config.Config, service *app.Service, pas
 }
 
 func Restore(ctx context.Context, cfg config.Config, password, path string) error {
-	validated, err := loadAndValidate(password, path)
+	_, err := RestoreWithOptions(ctx, cfg, password, path, RestoreOptions{})
+	return err
+}
+
+// RestoreWithOptions validates identity fencing before writing target files.
+func RestoreWithOptions(ctx context.Context, cfg config.Config, password, path string, opts RestoreOptions) (result RestoreResult, err error) {
+	validated, err := loadAndValidate(ctx, password, path)
 	if err != nil {
-		return err
+		return RestoreResult{}, err
 	}
-	if preRestore, ok, err := preRestoreBackupFile(ctx, cfg, password); err != nil {
-		return err
-	} else if ok {
-		validated.Files = append(validated.Files, preRestore)
+	stateLock, err := storage.AcquireStateLock(cfg.ConfigDir)
+	if err != nil {
+		if errors.Is(err, storage.ErrStateDirectoryInUse) {
+			return RestoreResult{}, fmt.Errorf("%w: stop the AWG-Forge server before restoring", err)
+		}
+		return RestoreResult{}, err
 	}
-	return restoreFiles(cfg.ConfigDir, validated.Files)
+	defer func() {
+		err = errors.Join(err, stateLock.Close())
+	}()
+	mutationLock, err := storage.AcquireStateMutationLock(cfg.ConfigDir)
+	if err != nil {
+		return RestoreResult{}, err
+	}
+	defer func() {
+		err = errors.Join(err, mutationLock.Close())
+	}()
+
+	if err := storage.New(cfg.ConfigDir).CheckRestorePending(); err != nil {
+		return RestoreResult{}, err
+	}
+	if err := storage.New(cfg.ConfigDir).CheckNoNodeRecovery(); err != nil {
+		return RestoreResult{}, err
+	}
+	if err := storage.New(cfg.ConfigDir).CheckNoControlServerRotation(); err != nil {
+		return RestoreResult{}, err
+	}
+	currentState, currentExists, err := loadRestoreTargetState(cfg.ConfigDir)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("load restore target identity: %w", err)
+	}
+	if currentExists && currentState.EffectiveMode() == config.ModeController {
+		if currentState.Controller == nil || validated.State.EffectiveMode() != config.ModeController || validated.State.Controller.ControllerID != currentState.Controller.ControllerID {
+			return RestoreResult{}, errors.New("restore into an existing controller requires a backup of the same controller identity")
+		}
+	}
+	if validated.State.EffectiveMode() == config.ModeController {
+		if !currentExists || currentState.EffectiveMode() != config.ModeController {
+			return RestoreResult{}, errors.New("controller restore requires the existing stopped controller with the same identity")
+		}
+		if validated.State.Controller.Control != nil {
+			if err := app.ValidateControlIdentityMetadata(validated.State.Controller.Control, cfg.WebUIPort); err != nil {
+				return RestoreResult{}, errors.New("restored control endpoint conflicts with the target Web UI configuration")
+			}
+		}
+		if err := requireControllerArchiveOutsideConfig(cfg.ConfigDir, path); err != nil {
+			return RestoreResult{}, err
+		}
+		if err := restoreController(ctx, cfg, password, currentState, validated); err != nil {
+			return RestoreResult{}, err
+		}
+		return RestoreResult{}, nil
+	}
+	var current *config.State
+	if currentExists {
+		current = &currentState
+	}
+	prepared, changed, err := app.PrepareRestoredState(current, validated.State, opts.DetachManagedNode, opts.Now)
+	if err != nil {
+		if errors.Is(err, app.ErrManagedNodeRestoreIdentityConflict) {
+			return RestoreResult{}, fmt.Errorf("%w: use --detach-managed-node to restore local configuration without the controller binding", err)
+		}
+		return RestoreResult{}, fmt.Errorf("validate managed-node restore identity: %w", err)
+	}
+	if changed {
+		if prepared.NodeConnection == nil {
+			filtered := validated.Files[:0]
+			for _, file := range validated.Files {
+				if !strings.HasPrefix(file.Path, "node/") {
+					filtered = append(filtered, file)
+				}
+			}
+			validated.Files = filtered
+		}
+
+		validated.Files, err = replaceRestoredState(validated.Files, prepared)
+		if err != nil {
+			return RestoreResult{}, err
+		}
+	}
+	preserve, err := auditRestorePreserveNames(cfg.ConfigDir, cfg.AuditLogPath)
+	if err != nil {
+		return RestoreResult{}, err
+	}
+	if err := validatePreservedRootCollisions(validated.Files, preserve); err != nil {
+		return RestoreResult{}, err
+	}
+	if currentExists {
+		preRestore, err := preRestoreBackupFile(ctx, cfg, currentState, password)
+		if err != nil {
+			return RestoreResult{}, err
+		}
+		if err := savePreRestoreBackup(cfg.ConfigDir, preRestore); err != nil {
+			return RestoreResult{}, err
+		}
+	}
+	if err := restoreFilesWithAudit(cfg.ConfigDir, validated.Files, cfg.AuditLogPath); err != nil {
+		return RestoreResult{}, err
+	}
+	return RestoreResult{ManagedNodeDetached: changed}, nil
 }
 
 func Verify(ctx context.Context, cfg config.Config, password, path string) (VerifyReport, error) {
-	_ = ctx
 	_ = cfg
-	validated, err := loadAndValidate(password, path)
+	validated, err := loadAndValidate(ctx, password, path)
 	if err != nil {
 		return VerifyReport{}, err
 	}
@@ -155,12 +376,42 @@ func validatePassword(password string) error {
 	return nil
 }
 
-func createPlainZip(cfg config.Config, state config.State, now time.Time) ([]byte, error) {
+func createPlainZip(cfg config.Config, state config.State, now time.Time, snapshotPath string) ([]byte, error) {
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 	var metas []FileMeta
 	if err := addExistingFile(zw, cfg.ConfigDir, "state.json", &metas); err != nil {
 		return nil, err
+	}
+	if snapshotPath != "" {
+		if err := addExistingFile(zw, cfg.ConfigDir, controlauth.KeyFileName, &metas); err != nil {
+			return nil, err
+		}
+		if err := addFileAtPath(zw, snapshotPath, controllerSnapshotArchivePath, &metas); err != nil {
+			return nil, err
+		}
+		if state.Controller != nil && state.Controller.Control != nil {
+			paths, err := storage.ControlIdentityRelativePaths(state.Controller.Control.CAGeneration, state.Controller.Control.ServerGeneration)
+			if err != nil {
+				return nil, err
+			}
+			for _, rel := range paths {
+				if err := addExistingFile(zw, cfg.ConfigDir, rel, &metas); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	if state.NodeConnection != nil {
+		paths, err := storage.NodeIdentityRelativePaths(state.NodeConnection.CredentialGeneration)
+		if err != nil {
+			return nil, err
+		}
+		for _, rel := range paths {
+			if err := addExistingFile(zw, cfg.ConfigDir, rel, &metas); err != nil {
+				return nil, err
+			}
+		}
 	}
 	if err := addOptionalExistingFile(zw, cfg.ConfigDir, webtls.SettingsRelativePath, &metas); err != nil {
 		return nil, err
@@ -199,6 +450,17 @@ func createPlainZip(cfg config.Config, state config.State, now time.Time) ([]byt
 	for _, tunnel := range state.Tunnels {
 		metadata.Tunnels = append(metadata.Tunnels, tunnel.Name)
 	}
+	var total int64
+	for _, meta := range metas {
+		total += meta.Size
+	}
+	metadataBody, err := json.MarshalIndent(metadata, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	if total+int64(len(metadataBody))+1 > maxPlainBackupBytes {
+		return nil, errors.New("backup contents exceed the 64 MiB plaintext limit")
+	}
 	if err := addJSON(zw, "metadata.json", metadata); err != nil {
 		return nil, err
 	}
@@ -213,17 +475,85 @@ func addExistingFile(zw *zip.Writer, root, rel string, metas *[]FileMeta) error 
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(root, filepath.FromSlash(clean))
+	return addFileAtPath(zw, filepath.Join(root, filepath.FromSlash(clean)), clean, metas)
+}
+
+func addFileAtPath(zw *zip.Writer, path, archivePath string, metas *[]FileMeta) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm() != 0600 {
+		return fmt.Errorf("backup file %s must be a private regular file", archivePath)
+	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	if err := addBytes(zw, clean, b); err != nil {
+	if err := addBytes(zw, archivePath, b); err != nil {
 		return err
 	}
 	sum := sha256.Sum256(b)
-	*metas = append(*metas, FileMeta{Path: clean, Size: int64(len(b)), SHA256: hex.EncodeToString(sum[:])})
+	*metas = append(*metas, FileMeta{Path: archivePath, Size: int64(len(b)), SHA256: hex.EncodeToString(sum[:])})
 	return nil
+}
+
+func prepareControllerSnapshot(ctx context.Context, cfg config.Config) (string, func(), error) {
+	if cfg.DatabaseMode != sqldb.ModeSQLite || cfg.DatabasePath == "" || !filepath.IsAbs(cfg.DatabasePath) {
+		return "", nil, errors.New("controller backup requires an absolute SQLite database path")
+	}
+	if _, err := controlauth.LoadKeys(filepath.Join(cfg.ConfigDir, controlauth.KeyFileName)); err != nil {
+		return "", nil, fmt.Errorf("load existing controller authentication keys: %w", err)
+	}
+	info, err := os.Lstat(cfg.DatabasePath)
+	if err != nil {
+		return "", nil, fmt.Errorf("inspect existing controller database: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm() != 0600 {
+		return "", nil, errors.New("controller database must be a private regular file")
+	}
+	stage, err := os.MkdirTemp(cfg.ConfigDir, ".backup-snapshot-")
+	if err != nil {
+		return "", nil, err
+	}
+	cleanup := func() { _ = os.RemoveAll(stage) }
+	if err := os.Chmod(stage, 0700); err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	db, err := sqldb.Open(ctx, cfg)
+	if err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("open existing controller database: %w", err)
+	}
+	defer func() { _ = db.Close() }()
+	initialized, err := db.ControllerAuthInitialized(ctx)
+	if err != nil || !initialized {
+		cleanup()
+		if err != nil {
+			return "", nil, fmt.Errorf("inspect controller authentication database: %w", err)
+		}
+		return "", nil, errors.New("controller authentication database is not initialized")
+	}
+	path := filepath.Join(stage, "database.sqlite")
+	if err := db.SnapshotInto(ctx, path); err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	if err := sqldb.VerifyControllerSnapshot(ctx, path); err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	info, err = os.Lstat(path)
+	if err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	if info.Size() > maxEncryptedBackupBytes {
+		cleanup()
+		return "", nil, errors.New("controller database snapshot exceeds the 64 MiB restore limit")
+	}
+	return path, cleanup, nil
 }
 
 func addOptionalExistingFile(zw *zip.Writer, root, rel string, metas *[]FileMeta) error {
@@ -283,7 +613,9 @@ func addJSON(zw *zip.Writer, name string, v any) error {
 }
 
 func addBytes(zw *zip.Writer, name string, b []byte) error {
-	w, err := zw.Create(name)
+	header := &zip.FileHeader{Name: name, Method: zip.Deflate}
+	header.SetMode(0600)
+	w, err := zw.CreateHeader(header)
 	if err != nil {
 		return err
 	}
@@ -302,7 +634,7 @@ type validatedBackup struct {
 	State    config.State
 }
 
-func loadAndValidate(password, archivePath string) (validatedBackup, error) {
+func loadAndValidate(ctx context.Context, password, archivePath string) (validatedBackup, error) {
 	if err := validatePassword(password); err != nil {
 		return validatedBackup{}, err
 	}
@@ -320,6 +652,13 @@ func loadAndValidate(password, archivePath string) (validatedBackup, error) {
 	if err != nil {
 		return validatedBackup{}, err
 	}
+	return validateBackupData(ctx, password, data)
+}
+
+func validateBackupData(ctx context.Context, password string, data []byte) (validatedBackup, error) {
+	if int64(len(data)) > maxEncryptedBackupBytes {
+		return validatedBackup{}, errors.New("backup file is too large")
+	}
 	plain, err := decrypt(data, password)
 	if err != nil {
 		return validatedBackup{}, err
@@ -328,10 +667,29 @@ func loadAndValidate(password, archivePath string) (validatedBackup, error) {
 	if err != nil {
 		return validatedBackup{}, err
 	}
+	for _, file := range files {
+		if _, err := safeRestorePath(string(filepath.Separator), file.Path); err != nil {
+			return validatedBackup{}, err
+		}
+	}
 	if metadata.SchemaVersion > config.CurrentStateSchemaVersion || state.SchemaVersion > config.CurrentStateSchemaVersion {
 		return validatedBackup{}, fmt.Errorf("backup schema %d is newer than supported schema %d", max(metadata.SchemaVersion, state.SchemaVersion), config.CurrentStateSchemaVersion)
 	}
 	if err := validateStateSanity(state); err != nil {
+		return validatedBackup{}, err
+	}
+	if state.EffectiveMode() == config.ModeController {
+		if err := validateControllerArchive(ctx, files, state); err != nil {
+			return validatedBackup{}, err
+		}
+	} else {
+		for _, file := range files {
+			if strings.HasPrefix(file.Path, "control/") {
+				return validatedBackup{}, errors.New("backup validation failed: control files require controller state")
+			}
+		}
+	}
+	if err := validateNodeArchive(files, state); err != nil {
 		return validatedBackup{}, err
 	}
 	for _, tunnel := range state.Tunnels {
@@ -348,6 +706,20 @@ func loadAndValidate(password, archivePath string) (validatedBackup, error) {
 }
 
 func validateStateSanity(state config.State) error {
+	if state.NodeConnection != nil && (state.EffectiveMode() != config.ModeNode || state.ManagedNode == nil || app.ValidateNodeConnection(state.NodeConnection) != nil) {
+		return errors.New("backup node connection is invalid")
+	}
+
+	if state.EffectiveMode() == config.ModeController {
+		if _, _, err := app.PrepareRestoredState(nil, state, false, time.Time{}); err != nil {
+			return fmt.Errorf("backup validation failed: %w", err)
+		}
+	}
+	if state.ManagedNode != nil {
+		if err := app.ValidateManagedNodeState(state.ManagedNode); err != nil {
+			return fmt.Errorf("backup validation failed: %w", err)
+		}
+	}
 	if state.Warp.Configured() {
 		if err := warp.Validate(state.Warp); err != nil {
 			return fmt.Errorf("backup validation failed: WARP config is invalid: %w", err)
@@ -434,6 +806,102 @@ func validateStateSanity(state config.State) error {
 	return nil
 }
 
+func validateControllerArchive(ctx context.Context, files []restoreFile, state config.State) error {
+	var keyData, snapshotData []byte
+	var material controlpki.Material
+	var controlPaths []string
+	if state.Controller != nil && state.Controller.Control != nil {
+		if err := app.ValidateControlIdentityMetadata(state.Controller.Control, 0); err != nil {
+			return errors.New("backup validation failed: invalid control identity state")
+		}
+		var err error
+		controlPaths, err = storage.ControlIdentityRelativePaths(state.Controller.Control.CAGeneration, state.Controller.Control.ServerGeneration)
+		if err != nil {
+			return err
+		}
+	}
+	controlData := make(map[string][]byte)
+	for _, file := range files {
+		if !allowedControllerBackupPath(file.Path, controlPaths) {
+			return fmt.Errorf("backup validation failed: controller file path %q is not allowed", file.Path)
+		}
+		switch file.Path {
+		case controlauth.KeyFileName:
+			keyData = file.Data
+		case controllerSnapshotArchivePath:
+			snapshotData = file.Data
+		default:
+			for _, path := range controlPaths {
+				if file.Path == path {
+					controlData[path] = file.Data
+				}
+			}
+		}
+	}
+	if len(keyData) == 0 || len(snapshotData) == 0 {
+		return errors.New("backup validation failed: controller keys and SQLite snapshot are required")
+	}
+	if len(controlPaths) != 0 {
+		for _, path := range controlPaths {
+			if len(controlData[path]) == 0 {
+				return errors.New("backup validation failed: referenced control identity file is missing")
+			}
+		}
+		control := state.Controller.Control
+		material = controlpki.Material{CAKey: controlData[controlPaths[0]], CACert: controlData[controlPaths[1]], ServerKey: controlData[controlPaths[2]], ServerCert: controlData[controlPaths[3]]}
+		if err := controlpki.Validate(material, controlpki.Endpoint{BindIP: control.BindIP, Advertised: control.Advertised, Port: control.Port}, control.CAPin, time.Now().UTC(), true); err != nil {
+			return errors.New("backup validation failed: control identity is invalid")
+		}
+	}
+	stage, err := os.MkdirTemp("", "awg-forge-controller-verify-")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.RemoveAll(stage) }()
+	keyPath := filepath.Join(stage, controlauth.KeyFileName)
+	if err := os.WriteFile(keyPath, keyData, 0600); err != nil {
+		return err
+	}
+	if _, err := controlauth.LoadKeys(keyPath); err != nil {
+		return fmt.Errorf("backup validation failed: controller keys: %w", err)
+	}
+	snapshotPath := filepath.Join(stage, "database.sqlite")
+	if err := os.WriteFile(snapshotPath, snapshotData, 0600); err != nil {
+		return err
+	}
+	if err := app.ValidateControllerBackupSnapshot(ctx, snapshotPath, state, material); err != nil {
+		return fmt.Errorf("backup validation failed: controller database: %w", err)
+	}
+	return nil
+}
+
+func allowedControllerBackupPath(path string, controlPaths []string) bool {
+	for _, allowed := range controlPaths {
+		if path == allowed {
+			return true
+		}
+	}
+	switch path {
+	case "state.json", controlauth.KeyFileName, controllerSnapshotArchivePath, webtls.SettingsRelativePath:
+		return true
+	}
+	if strings.HasPrefix(path, webtls.ACMECacheRelativePath+"/") {
+		return true
+	}
+	return strings.HasPrefix(path, "tunnels/") && strings.HasSuffix(path, ".conf")
+}
+
+func validateStoredControlIdentity(cfg config.Config, control *config.ControlIdentityState, allowExpired bool) error {
+	if err := app.ValidateControlIdentityMetadata(control, cfg.WebUIPort); err != nil {
+		return err
+	}
+	material, err := storage.New(cfg.ConfigDir).LoadControlIdentity(control.CAGeneration, control.ServerGeneration)
+	if err != nil {
+		return err
+	}
+	return controlpki.Validate(material, controlpki.Endpoint{BindIP: control.BindIP, Advertised: control.Advertised, Port: control.Port}, control.CAPin, time.Now().UTC(), allowExpired)
+}
+
 func verifyReport(metadata Metadata, state config.State) VerifyReport {
 	report := VerifyReport{
 		Format:        metadata.Format,
@@ -466,11 +934,12 @@ func readPlainZip(data []byte) ([]restoreFile, Metadata, config.State, error) {
 		return nil, Metadata{}, config.State{}, err
 	}
 	var (
-		files    []restoreFile
-		metadata Metadata
-		state    config.State
-		hasMeta  bool
-		hasState bool
+		files     []restoreFile
+		metadata  Metadata
+		state     config.State
+		hasMeta   bool
+		hasState  bool
+		totalSize int64
 	)
 	for _, file := range reader.File {
 		name, err := cleanArchivePath(file.Name)
@@ -478,16 +947,29 @@ func readPlainZip(data []byte) ([]restoreFile, Metadata, config.State, error) {
 			return nil, Metadata{}, config.State{}, err
 		}
 		if file.FileInfo().IsDir() {
+			if strings.HasPrefix(name, "control/") || strings.HasPrefix(name, "node/") {
+				return nil, Metadata{}, config.State{}, errors.New("backup contains unexpected control directory entry")
+			}
 			continue
+		}
+		if (strings.HasPrefix(name, "control/") || strings.HasPrefix(name, "node/")) && (!file.FileInfo().Mode().IsRegular() || file.Mode().Perm() != 0600) {
+			return nil, Metadata{}, config.State{}, errors.New("backup control identity file must be private and regular")
+		}
+		if file.UncompressedSize64 > uint64(maxPlainBackupBytes-totalSize) {
+			return nil, Metadata{}, config.State{}, errors.New("backup contents exceed the 64 MiB plaintext limit")
 		}
 		rc, err := file.Open()
 		if err != nil {
 			return nil, Metadata{}, config.State{}, err
 		}
-		b, err := io.ReadAll(rc)
+		b, err := io.ReadAll(io.LimitReader(rc, maxPlainBackupBytes-totalSize+1))
 		_ = rc.Close()
 		if err != nil {
 			return nil, Metadata{}, config.State{}, err
+		}
+		totalSize += int64(len(b))
+		if totalSize > maxPlainBackupBytes {
+			return nil, Metadata{}, config.State{}, errors.New("backup contents exceed the 64 MiB plaintext limit")
 		}
 		switch name {
 		case "metadata.json":

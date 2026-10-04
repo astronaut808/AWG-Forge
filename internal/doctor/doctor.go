@@ -101,9 +101,7 @@ func (c *checker) checkDatabase(cfg config.Config) bool {
 	if cfg.DatabaseMode == "" || cfg.DatabaseMode == sqldb.ModeOff {
 		return false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), cfg.DatabaseQueryTimeout)
-	defer cancel()
-	status, err := sqldb.Check(ctx, cfg)
+	status, err := sqldb.Check(context.Background(), cfg)
 	if err != nil {
 		c.fail(categoryDatabase, "database", err.Error())
 		return false

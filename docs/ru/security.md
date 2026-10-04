@@ -27,6 +27,16 @@ ssh -L 51821:127.0.0.1:51821 user@server
 
 UI sessions истекают через 30 минут.
 
+В режиме контроллера для входа нужны пароль администратора и текущий код TOTP
+или одноразовый код восстановления. Opaque-сессии контроллера хранятся на
+сервере в SQLite. Первая сессия выдаётся при активации; код подтверждения TOTP
+повторно использовать нельзя. Повторная аутентификация меняет cookie сессии и
+открывает пятиминутный интервал recent-auth для замены кодов восстановления.
+Выход отзывает серверную сессию, а восстановление админа под root отзывает все
+сессии. При активации прежние standalone cookie и `PASSWORD` перестают работать
+без перезапуска. Для запуска контроллера нужны существующие SQLite и
+`controller-auth.keys`; при их отсутствии вход не открывается.
+
 `SESSION_SECRET` можно не задавать вручную. Если он отсутствует, awg-forge создаст и сохранит его в `state.json`.
 
 По умолчанию `SESSION_COOKIE_SECURE=auto`: cookie без `Secure` разрешается только для loopback HTTP (`127.0.0.1`, `localhost`, `::1`), а для внешних host используется `Secure`. Для обычного HTTP на внешнем host можно явно указать `SESSION_COOKIE_SECURE=false`, но doctor покажет предупреждение. Такой режим стоит использовать только в доверенной сети или за отдельной защитой.
@@ -46,6 +56,7 @@ Opaque origins вроде `null` и browser-extension origins отклоняют
 - private keys;
 - preshared keys;
 - passwords;
+- секреты TOTP и коды восстановления;
 - session secrets;
 - backup passwords;
 - полные client configs;
@@ -62,3 +73,48 @@ Doctor проверяет права config directory и предупрежда�
 Если mutating operation меняет state/configs, но runtime apply падает, awg-forge откатывает state и rendered configs.
 
 Это защищает от ситуации, когда UI показывает созданного клиента или измененный туннель, хотя runtime-состояние не было успешно применено.
+
+Control TLS контроллера автоматически продлевает серверный сертификат под прежним CA после двух третей срока действия. Ранее включённый контроллер может продлить целый истёкший серверный сертификат до открытия явно включённого listener только при действующем CA, целой identity, доступных registry/auth и завершённом recovery. Отсутствующие или повреждённые данные и истёкший CA требуют локального восстановления. Отключённый или восстановленный из backup контроллер остаётся отключённым; отзывы node-сертификатов и конфигурация туннелей сохраняются. Включение вне loopback отдельно требует явного согласия на точный endpoint и нового проверенного backup.
+
+## Локальное восстановление node
+
+Если controller недоступен или credentials существующего managed node истекли
+либо отозваны, остановите его процесс `serve` и запускайте CLI от Linux root с тем
+же `CONFIG_DIR`. Обе команды требуют текущие `managed_node.node_id` и
+`managed_node.controller_id` из локального `state.json`. Просматривайте только эти
+поля: полный state содержит секреты. Работающий сервер, неверное подтверждение,
+небезопасные права каталогов/файлов, pending restore и пересекающиеся переходы
+identity/desired state блокируют восстановление.
+
+```bash
+awg-forge node detach --confirm-node-id <current-node-uuid> --confirm-controller-id <current-controller-uuid>
+awg-forge node rebind --confirm-node-id <current-node-uuid> --confirm-controller-id <current-controller-uuid> --input-file /protected/invitation.json --name node --timeout 10m
+```
+
+`detach` удаляет привязку и replay metadata и возвращает standalone mode.
+После detach используйте обычный `node enroll` для нового enrollment. `rebind`
+выполняет новое enrollment напрямую, сохраняя прежнюю локальную привязку до
+успешных pinned TLS handshake, сверки comparison code и approval администратора
+controller. Invitation должен быть обычным файлом владельца root с правами
+`0600`, без symlink/hardlink; его секрет нельзя передавать в аргументах команды.
+Invitation может использовать явно включённый внешний control endpoint; pin CA и проверка TLS сохраняются.
+
+Rebind явно сбрасывает локальную node identity: устанавливает новый node ID,
+state epoch и credentials, создаёт новое пространство boot/desired generation
+и receipts. Туннели, клиенты, локальная аутентификация, operational history и
+`ConfigRevision` сохраняются. Прежняя запись controller registry остаётся
+отозванной либо исторической: rebind не возвращает ей authority. Локальное
+удаление не отзывает скопированный сертификат на прежнем controller; при
+необходимости отдельно отзовите там прежний node. Cleanup удаляет только прежнее
+активное поколение credentials и записанный корректный pending renewal;
+посторонние исторические каталоги не удаляются.
+
+До state commit отказ, timeout или отмена сохраняют прежнюю привязку. Приватный
+journal `.node-local-recovery.json` разрешает прерванные staging/cleanup через
+проверку точного старого/нового полного state и никогда не откатывает state.
+После успеха перезапустите `serve`. После сообщения о неопределённом commit
+перезапуск позволяет однозначно сверить journal. Повреждённые evidence,
+изменённый state и небезопасные пути требуют offline inspection и остаются
+заблокированными. Не удаляйте evidence для обхода проверки. Backup/restore
+отклоняют pending recovery; старый node archive не может заменить identity,
+созданную новым rebind.

@@ -168,3 +168,5 @@ Runtime и Docker image не требуют Node/npm/Deno. Эти инструм
 - `internal/doctor`: diagnostics;
 - `internal/support`: secret-free support bundle generation;
 - `internal/updates`: AmneziaWG upstream update checks.
+
+`internal/protocol` владеет упорядоченным реестром профилей, их ID, отображаемыми именами, версиями, редактируемыми параметрами, значениями по умолчанию, валидацией и рендерингом. `internal/server` владеет только представлением для браузера: вкладками, групповыми метками, признаком экспериментального профиля и runtime-доступностью. Frontend получает имя и статус профиля из `/api/state` и не должен поддерживать собственную таблицу соответствия profile ID. При добавлении профиля его нужно один раз зарегистрировать в `internal/protocol`, добавить server presentation metadata и расширить тесты полноты реестра и API-каталога.

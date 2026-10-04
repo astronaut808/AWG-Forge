@@ -76,6 +76,36 @@ export function login(password: string): Promise<{ ok: true }> {
   return request("/api/login", { method: "POST", body: { password } });
 }
 
+export type AuthMode = "standalone" | "activating" | "controller";
+
+export function authStatus(): Promise<{ mode: AuthMode }> {
+  return request("/api/auth/status");
+}
+
+export function authSession(): Promise<{ mode: AuthMode; authenticated: true; username?: string; recent_auth?: boolean; expires_at?: string }> {
+  return request("/api/auth/session");
+}
+
+export function controllerSetup(username: string): Promise<{ totp_secret: string; qr_png: string }> {
+  return request("/api/controller/setup", { method: "POST", body: { username } });
+}
+
+export function controllerActivate(body: { username: string; password: string; totp_secret: string; confirmation_code: string }): Promise<{ mode: "controller"; username: string; recovery_codes: string[] }> {
+  return request("/api/controller/activate", { method: "POST", body });
+}
+
+export function controllerLogin(username: string, password: string, code: string, recovery = false): Promise<{ ok: true }> {
+  return request(recovery ? "/api/controller/login/recovery" : "/api/controller/login", { method: "POST", body: { username, password, code } });
+}
+
+export function controllerReauth(password: string, code: string, recovery = false): Promise<{ ok: true }> {
+  return request("/api/controller/reauth", { method: "POST", body: { password, code, recovery } });
+}
+
+export function controllerRotateRecoveryCodes(): Promise<{ recovery_codes: string[] }> {
+  return request("/api/controller/recovery-codes", { method: "POST", body: {} });
+}
+
 export function logout(): Promise<{ ok: true }> {
   return request("/api/logout", { method: "POST", body: {} });
 }

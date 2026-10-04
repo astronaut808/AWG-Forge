@@ -188,27 +188,104 @@ docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge
 docker cp awg-forge:/tmp/awg-forge.afbackup ./awg-forge-backup-YYYYMMDD-HHMMSS.afbackup
 ```
 
-Restore требует тот же пароль:
-
-```bash
-docker cp ./<backup-file>.afbackup awg-forge:/tmp/backup.afbackup
-docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore verify /tmp/backup.afbackup
-docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore /tmp/backup.afbackup
-```
-
-`docker exec` видит только filesystem контейнера. Если backup лежит на хосте, сначала скопируй его внутрь контейнера через `docker cp`, как в примере выше. Альтернативно можно положить файл в mounted volume:
+Проверить backup с тем же паролем можно при работающем сервере:
 
 ```bash
 cp ./<backup-file>.afbackup ./data/backup.afbackup
 docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore verify /etc/awg-forge/backup.afbackup
-docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore /etc/awg-forge/backup.afbackup
 ```
+
+Сам restore выполняется только offline. Останови сервер, запусти restore в
+одноразовом контейнере с тем же mounted data directory, затем снова запусти
+сервер:
+
+```bash
+docker compose stop awg-forge
+docker compose run --rm -e BACKUP_PASSWORD='long-random-backup-password' awg-forge restore /etc/awg-forge/backup.afbackup
+docker compose up -d awg-forge
+```
+
+Работающий сервер удерживает блокировку state directory, поэтому online restore
+завершается до чтения или изменения текущего state. `docker exec` видит только
+filesystem целевого контейнера; файл в mounted `./data` доступен и одноразовому
+restore-контейнеру.
 
 `restore verify` расшифровывает и валидирует backup, рендерит server и client configs в памяти и выводит summary без секретов. Он не пишет в config directory, не создает pre-restore backup, не перезапускает tunnels и не меняет runtime state.
 
 В UI открой `Maintenance` -> `Backup и restore`, загрузи `.afbackup` и запусти такую же проверку в dry-run режиме. Настоящий restore остается CLI-only.
 
 Перед заменой текущего config directory restore сохраняет encrypted pre-restore backup в `backups/` внутри восстановленного config directory.
+Существующие архивы в `backups/`, настроенный audit log и его ротации
+сохраняются. Остальные файлы внутри `CONFIG_DIR` заменяются; сторонние файлы
+держи вне каталога приложения. Если пользовательский путь audit log делит
+верхний каталог с восстанавливаемыми данными, до restore перенеси журнал в
+отдельный приватный каталог.
+
+Backup контроллера также содержит `controller-auth.keys` и согласованный снимок
+SQLite. Восстановление допускается только на остановленной установке с тем же
+`controller_id`. Храни архив вне `CONFIG_DIR`; для Docker подключи его в
+одноразовый контейнер по отдельному пути. Если `DATABASE_PATH` находится вне
+`CONFIG_DIR`, сохрани тот же mount и переменную окружения.
+Если отключённая control identity была подготовлена, зашифрованный архив также
+содержит приватные ключи и сертификаты именно тех поколений CA и сервера, на
+которые ссылается состояние. Restore сохраняет identity отключённой. Identity
+с истёкшим сроком можно восстановить, но использовать её для control TLS нельзя
+до будущего явного обновления сертификата. В этом этапе control listener
+отсутствует.
+Если файлы текущей подготовленной identity повреждены, restore остановится до
+замены файлов: проверенный pre-restore backup создать нельзя. Сохрани исправный
+зашифрованный архив и разбери или восстанови текущие файлы офлайн; не удаляй
+маркер незавершённого restore ради обхода ошибки.
+
+```bash
+docker compose stop awg-forge
+docker compose run --rm -v "$PWD/<backup-file>.afbackup:/restore/controller.afbackup:ro" -e BACKUP_PASSWORD='long-random-backup-password' awg-forge restore /restore/controller.afbackup
+```
+
+Restore отзывает браузерные сессии и коды восстановления и отключает
+восстановленного администратора. Он также отзывает все восстановленные
+сертификаты и привязки нод, сохраняя историю реестра. Это правило действует
+для свежих архивов, повторного restore и pre-restore backup. Восстановление
+администратора не возвращает доступ нодам: им нужны явное локальное
+восстановление и новый enrollment по [офлайн-сценарию](security.md#локальное-восстановление-node).
+До замены файлов проверка архива сопоставляет реестр со схемой, identity
+контроллера и архивной CA. Несогласованные архивы отклоняются.
+
+Перед запуском `serve` выполни офлайн-команду
+`controller recover-admin` от root из раздела [Использование](usage.md), сохрани
+новый секрет TOTP и коды восстановления, затем запусти сервис. Архив контроллера
+не создаёт вторую установку и не заменяет другой `controller_id`.
+
+Пока `.restore-pending.json` существует, он блокирует запуск сервера,
+восстановление администратора и новые backup. При ошибке финального удаления
+маркер может уже отсутствовать, но браузерные и node-credentials к этому
+моменту надёжно отозваны. Любая сообщённая ошибка restore требует
+офлайн-разбора; оставь сервер остановленным.
+Сохрани архив и каталоги `.restore-old-*` или внешние
+`.awg-restore-old-db-*` для офлайн-разбора; не удаляй маркер только ради запуска.
+
+Managed identity автоматически сохраняется только при точном совпадении с
+identity текущей установки. Restore managed backup на новую или другую
+установку, а также restore standalone backup поверх managed-ноды завершается
+ошибкой. Чтобы сохранить локальные туннели и клиентов, но удалить привязку к
+контроллеру, явно выполни restore от локального root:
+
+```bash
+docker compose stop awg-forge
+docker compose run --rm -e BACKUP_PASSWORD='long-random-backup-password' awg-forge restore --detach-managed-node /etc/awg-forge/backup.afbackup
+docker compose up -d awg-forge
+```
+
+Этот флаг не выполняет enrollment или rebind восстановленной установки.
+После detach явно выполни `node enroll`; для существующей привязки используй
+[офлайн-восстановление](security.md#локальное-восстановление-node).
+
+Побайтовая копия всего data directory содержит тот же ключ managed-ноды и те
+же identity metadata, поэтому локально распознать её как клон невозможно. Не
+запускай обе копии одновременно: держи клон offline и используй detached
+restore перед повторным использованием. Контроллер отсеивает конкурирующие
+запуски процессов, но не может надёжно распознать полный клон; при необходимости
+отдельно отзови скопированные credentials на прежнем контроллере.
 
 Restore проверяет:
 
@@ -219,10 +296,16 @@ Restore проверяет:
 - валидность `state.json`;
 - возможность render server configs.
 
-Restore не применяет runtime автоматически. Перезапусти контейнер, чтобы загрузить все восстановленные настройки, включая TLS и состояние базы данных. При `APPLY_CONFIG=true` запуск применяет включенные туннели, а затем согласует runtime WARP. `awg-forge tunnel restart` перезапускает только первый туннель и не перезагружает настройки работающего сервиса или runtime WARP. После запуска восстанови managed firewall rules и проверь состояние:
+Restore не применяет runtime автоматически. Последующий запуск сервера загружает
+восстановленный desired state и TLS assets. Backup standalone и managed-ноды
+не включает SQLite operational history; backup контроллера содержит согласованный
+SQLite snapshot с аутентификацией и реестром нод. При `APPLY_CONFIG=true` запуск применяет включенные
+туннели, а затем согласует runtime WARP. `awg-forge tunnel restart` перезапускает
+только первый туннель и не перезагружает настройки работающего сервиса или
+runtime WARP. После запуска восстанови managed firewall rules и проверь
+состояние:
 
 ```bash
-docker restart awg-forge
 docker exec awg-forge awg-forge firewall repair
 docker exec awg-forge awg-forge doctor
 ```

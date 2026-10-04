@@ -11,13 +11,17 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/astronaut808/awg-forge/internal/audit"
 	"github.com/astronaut808/awg-forge/internal/config"
+	"github.com/astronaut808/awg-forge/internal/controlauth"
+	"github.com/astronaut808/awg-forge/internal/firewall"
 	"github.com/astronaut808/awg-forge/internal/observability"
 	"github.com/astronaut808/awg-forge/internal/protocol"
 	"github.com/astronaut808/awg-forge/internal/render"
@@ -35,18 +39,34 @@ var serverHostRE = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0
 var transferRE = regexp.MustCompile(`^transfer:\s+(.+?) received,\s+(.+?) sent$`)
 
 type Service struct {
-	mu         sync.Mutex
-	cfg        config.Config
-	store      storage.Store
-	audit      audit.Logger
-	runtime    *observability.Logger
-	runtimeOps runtimeOperations
+	mu                    sync.Mutex
+	stateMutationLock     *storage.StateLock
+	managedBoot           *ManagedNodeBoot
+	cfg                   config.Config
+	store                 storage.Store
+	saveState             func(config.State) error
+	audit                 audit.Logger
+	runtime               *observability.Logger
+	runtimeOps            runtimeOperations
+	controllerAuthOptions controlauth.Options
+	controlIdentityStep   func(string) error
+	nodeRenewalStep       func(string) error
+	controlRotationStep   func(string) error
+	controlRuntimeStep    func(string) error
+	controlRenewalNow     func() time.Time
+	controlRenewalWait    func(context.Context, time.Duration) bool
+	nodeRecoveryStep      func(string) error
+	nodeRecovery          *NodeRecoverySession // Owned by mu; offline state lease.
+	controlOwner          *controlRuntimeOwner
+	controlLifetime       atomic.Pointer[controlRuntimeOwner] // Cancellation access without Service.mu.
+	controlEnable         *controlEnableAuthorization
 }
 
 type runtimeOperations struct {
-	applyTunnel   func(config.Tunnel) error
-	removeTunnel  func(config.Tunnel) error
-	reconcileWarp func(config.State) error
+	applyTunnel    func(config.Tunnel) error
+	removeTunnel   func(config.Tunnel) error
+	reconcileWarp  func(config.State) error
+	repairFirewall func(config.Config, config.State) (firewall.Report, error)
 }
 
 type TunnelStatus struct {
@@ -126,13 +146,51 @@ func New(cfg config.Config) *Service {
 }
 
 func NewWithRuntimeLog(cfg config.Config, runtimeLog *observability.Logger) *Service {
-	service := &Service{cfg: cfg, store: storage.New(cfg.ConfigDir), audit: audit.New(cfg), runtime: runtimeLog}
+	service := &Service{
+		cfg:     cfg,
+		store:   storage.New(cfg.ConfigDir),
+		audit:   audit.New(cfg),
+		runtime: runtimeLog,
+	}
+	service.saveState = service.store.Save
 	service.runtimeOps = runtimeOperations{
 		applyTunnel:   service.apply,
 		removeTunnel:  service.removeTunnelRuntime,
 		reconcileWarp: service.reconcileWarpRuntime,
+		repairFirewall: func(cfg config.Config, state config.State) (firewall.Report, error) {
+			return firewall.Repair(cfg, state, firewall.IPTablesRunner{})
+		},
 	}
 	return service
+}
+
+func (s *Service) lockStateMutation() error {
+	s.mu.Lock()
+	lock, err := storage.AcquireStateMutationLock(s.cfg.ConfigDir)
+	if err != nil {
+		s.mu.Unlock()
+		return fmt.Errorf("lock state mutation: %w", err)
+	}
+	s.stateMutationLock = lock
+	// The paired mutation method owns the lock until unlockStateMutation.
+	// nosemgrep: trailofbits.go.missing-unlock-before-return.missing-unlock-before-return
+	return nil
+}
+
+func (s *Service) unlockStateMutation() {
+	lock := s.stateMutationLock
+	s.stateMutationLock = nil
+	unlockErr := lock.Close()
+	s.mu.Unlock()
+	if unlockErr != nil {
+		s.log("error", "state.mutation_unlock.failed", "state mutation lock release failed", nil, unlockErr)
+	}
+}
+
+// BootID returns a process-lifetime identifier. It is intentionally never
+// persisted and changes whenever the operating-system process starts.
+func (s *Service) BootID() (string, error) {
+	return processBootID, processBootIDErr
 }
 
 func (s *Service) Audit() audit.Logger {
@@ -221,9 +279,39 @@ func (s *Service) SessionSecret() (string, error) {
 	return state.SessionSecret, nil
 }
 
+func (s *Service) SessionSecretContext(ctx context.Context) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if err := s.store.CheckRestorePending(); err != nil {
+		return "", err
+	}
+	if s.cfg.SessionSecret != "" {
+		return s.cfg.SessionSecret, nil
+	}
+	state, err := s.store.Load()
+	if errors.Is(err, os.ErrNotExist) {
+		state, err = s.InitContext(ctx)
+	}
+	if err != nil {
+		return "", err
+	}
+	return state.SessionSecret, nil
+}
+
 func (s *Service) RenderAll() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lockStateMutation(); err != nil {
+		return err
+	}
+	defer s.unlockStateMutation()
+	return s.renderAllLocked()
+}
+
+func (s *Service) RenderAllContext(ctx context.Context) error {
+	if err := s.lockControlRequest(ctx); err != nil {
+		return err
+	}
+	defer s.unlockStateMutation()
 	return s.renderAllLocked()
 }
 
@@ -290,8 +378,10 @@ func (s *Service) renderAllLocked() error {
 }
 
 func (s *Service) RenderTunnel(tunnelID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lockStateMutation(); err != nil {
+		return err
+	}
+	defer s.unlockStateMutation()
 	return s.renderTunnelLocked(tunnelID, true)
 }
 
@@ -438,8 +528,10 @@ func (s *Service) UpdateTunnelProtocol(tunnelID, profileID string, params config
 }
 
 func (s *Service) updateTunnelProtocol(tunnelID, profileID string, params config.ProtocolParams, regenerateSecrets bool) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lockStateMutation(); err != nil {
+		return err
+	}
+	defer s.unlockStateMutation()
 	if !s.profileAvailable(profileID) {
 		return fmt.Errorf("unsupported protocol profile %q", profileID)
 	}
@@ -493,7 +585,7 @@ func (s *Service) updateTunnelProtocol(tunnelID, profileID string, params config
 	state.Tunnels[idx].ConfigRevision++
 	state.Tunnels[idx].UpdatedAt = now
 	state.UpdatedAt = now
-	if err := s.store.Save(state); err != nil {
+	if err := s.saveLocalDesiredState(&state); err != nil {
 		return err
 	}
 	if err := s.renderTunnelLocked(tunnelID, true); err != nil {
