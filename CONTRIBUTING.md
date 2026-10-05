@@ -51,7 +51,13 @@ Before a release:
 
 ```bash
 make ci
+make quality
+make security
 docker build --platform linux/amd64 -t awg-forge:local .
+make docker-smoke
 ```
 
 If runtime behavior changed, verify `doctor`, client creation, config download, tunnel restart, backup/restore, and support bundle redaction.
+
+For concurrency, runtime apply, locking, rollback, or backup/restore changes, also
+run `go test -race ./...`. Report unavailable scanner or runtime checks explicitly.

@@ -40,6 +40,23 @@ Maintenance actions are available through the `Maintenance` button:
 - `Traffic`: aggregate traffic history when SQLite is enabled.
 - `Audit log`: inspect recent safe audit events. The panel auto-refreshes while the Audit log tab is open and shows newest events first.
 - `Support`: download a support bundle without secrets and view the safe runtime, database, TLS, and version summary.
+- `Controller`: with SQLite enabled, create the administrator, scan the MFA QR, confirm a TOTP code, and save the recovery codes before finishing. In controller mode, reauthenticate and replace recovery codes here.
+
+After activation, log in with username, password, and TOTP. The login page has a
+separate recovery-code option; each recovery code works once. Store replacement
+codes when they are displayed because they cannot be retrieved later.
+
+For offline administrator recovery, stop `awg-forge serve` first. As Linux root,
+prepare a root-owned regular JSON file with mode `0600` containing `username`
+and `password`, then run:
+
+```bash
+awg-forge controller recover-admin --input-file /etc/awg-forge/recovery-input.json
+```
+
+The command prints a new TOTP secret and recovery codes once and revokes all
+browser sessions. Remove the input file after use. Missing SQLite or
+`controller-auth.keys` is an error; do not create replacement files.
 
 ## Stale Configs
 
@@ -88,16 +105,29 @@ In `serve` mode, awg-forge periodically enforces expired clients and re-renders 
 
 ## CLI In Docker
 
-After restore, restart the container to reload all restored settings, including TLS and database state. With `APPLY_CONFIG=true`, startup applies enabled tunnels and reconciles WARP. Restarting only a tunnel is not enough. Wait for startup before running the remaining checks.
+Restore must run while the server container is stopped. The one-shot restore
+container uses the same data volume; starting the service afterwards loads the
+restored desired state and TLS assets. Standalone and managed-node backups do
+not include SQLite operational history. Controller backups include the
+authentication database snapshot and its key file. If a control
+identity has been prepared, they also include the private keys and certificates
+of its exact CA and server generations. Restore revokes every archived node
+certificate and binding; recovering the administrator does not restore node
+access. Restore always disables the control listener, including when the archive
+records an enabled identity. See [controller recovery](diagnostics.md) before restarting.
+With `APPLY_CONFIG=true`, startup applies
+enabled tunnels and reconciles WARP. Wait for startup before running the
+remaining checks.
 
 ```bash
 docker exec awg-forge awg-forge doctor
 docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge backup /tmp/awg-forge.afbackup
 docker cp awg-forge:/tmp/awg-forge.afbackup ./awg-forge-backup-YYYYMMDD-HHMMSS.afbackup
-docker cp ./<backup-file>.afbackup awg-forge:/tmp/backup.afbackup
-docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore verify /tmp/backup.afbackup
-docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore /tmp/backup.afbackup
-docker restart awg-forge
+cp ./<backup-file>.afbackup ./data/backup.afbackup
+docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore verify /etc/awg-forge/backup.afbackup
+docker compose stop awg-forge
+docker compose run --rm -e BACKUP_PASSWORD='long-random-backup-password' awg-forge restore /etc/awg-forge/backup.afbackup
+docker compose up -d awg-forge
 docker exec awg-forge awg-forge firewall repair
 docker exec awg-forge awg-forge firewall check
 docker exec awg-forge awg-forge support-bundle
@@ -115,6 +145,10 @@ docker exec awg-forge awg-forge tunnel create awg_1_5 awg15 51825 10.15.0.0/24
 
 ## Local CLI
 
+Stop any `awg-forge serve` process that uses the same config directory before
+running the local restore command. The state-directory lock rejects an online
+restore.
+
 ```bash
 awg-forge init --server-host vpn.example.com --external-interface eth0 --profile awg_2_0 --tunnel-name awg20 --listen-port 51830 --ipv4-subnet 10.20.0.0/24
 awg-forge serve
@@ -130,7 +164,84 @@ awg-forge updates
 awg-forge logs
 ```
 
-After a local restore, restart the running awg-forge process to reload restored settings.
+Managed-node restore fencing and the explicit `--detach-managed-node` recovery
+option are described in [Diagnostics](diagnostics.md#encrypted-backup--restore).
+Controller restore has additional identity, archive-location, and offline
+administrator-recovery requirements in the same section.
+
+## Explicit control listener and node enrollment
+
+This checkpoint supports authenticated enrollment and mTLS presence on an
+explicitly enabled control endpoint. Use the controller browser session and recent MFA
+reauthentication with the internal routes in [the browser API contract](../../api/openapi.json):
+
+1. `POST /api/controller/control/prepare` with a specific literal `bind_ip`,
+   an `advertised` IP address or DNS name for the TLS SAN, and a dedicated `port`
+   different from the Web UI and TCP/80. Wildcard, multicast, scoped and IPv4-mapped
+   bind addresses are rejected. Preparation leaves the listener disabled.
+2. `POST /api/controller/control/backup` with a backup `password`. Save the
+   encrypted response outside the configuration directory. Keep its
+   `X-Control-Enable-Receipt` header; it expires with recent authentication and
+   cannot survive restart or another backup preparation.
+3. `POST /api/controller/control/enable` with `receipt` and `backup_saved: true`
+   only after retaining the archive. If either endpoint value is not a literal
+   loopback address, also send `allow_non_loopback: true`. Omission or `false`
+   denies that endpoint and consumes a matching receipt; obtain a new backup
+   before retrying. Consent covers only the exact prepared endpoint.
+   `GET /api/controller/control/status`
+   returns public identity metadata. Disable with
+   `POST /api/controller/control/disable` after recent authentication.
+4. `POST /api/controller/enrollments/invite` with `{}`. Save the JSON download
+   as a current-user-owned `0600` regular file. It contains the one-time secret
+   and public CA, expires after ten minutes, and must not be logged or copied
+   into command arguments or environment variables.
+5. On the node, with its own `CONFIG_DIR`, run:
+
+   ```bash
+   awg-forge node enroll --input-file ./node-invitation.json --name node
+   ```
+
+6. Review `POST /api/controller/enrollments/review` with `invitation_id`.
+   Compare its `verification_code` with the code shown by the node. Approve or
+   reject using `POST /api/controller/enrollments/decide` with `enrollment_id`,
+   the matching `verification_code`, and `approve`. Then start or restart the
+   node's `awg-forge serve` process to send mTLS presence.
+
+Use a reachable advertised address whose certificate SAN the node can verify;
+DNS/NAT routing and firewall access are configured by the operator. The listener
+binds only the specified local IP; enable fails if that socket is unavailable.
+The browser UI can remain on loopback HTTP. The control listener serves TLS 1.3
+only, ignores forwarded identity headers, and exposes only the existing enrollment,
+presence and certificate-renewal routes. Existing mTLS registry checks and resource
+limits apply on every interface. `serve` restarts a previously enabled exact endpoint;
+install/upgrade and preparation never enable it automatically. Disable or restore
+requires a fresh verified backup and explicit consent before enabling it again.
+
+The node verifies the pinned CA and normal TLS certificate before transmitting
+its secret. Its private key stays local. An invitation accepts exactly one CSR;
+repeating that CSR is safe, while a competing CSR is denied. Existing local
+configuration and tunnel revisions are preserved; a fresh node has no default
+tunnel. Controller connection loss leaves local forwarding running. Revocation
+stops the connection worker and requires explicit local recovery.
+
+While `serve` is running, the node automatically renews its certificate after
+two thirds of its validity period. It saves a new private key and the exact CSR
+before requesting renewal, so a restart or lost response retries the same request.
+The controller keeps the old certificate valid for at most 24 hours after renewal;
+revocation ends that overlap immediately. Switching credentials preserves local
+tunnels, configuration revisions and the current boot identity. An expired or
+revoked certificate requires local recovery; local service remains available.
+The controller also renews its server certificate automatically under its existing
+CA; see [Security](security.md) for startup prerequisites and expiry behavior.
+
+Cold controller restore disables the listener and administrator, revokes all
+restored node certificates/bindings, and removes invitations, claim credentials
+and presence sessions. Managed-node backups include the protected credential
+generation; backup is blocked while node renewal is pending. Restore still
+enforces identity fencing or explicit detach. Detach removes controller authority.
+Linux-root [offline recovery](security.md#offline-node-recovery) supports detach
+and fresh enrollment with a new identity. Installer integration, endpoint rebind,
+fleet UI and remote operations remain separate work.
 
 ## Client Config Import
 

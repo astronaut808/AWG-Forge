@@ -29,20 +29,45 @@ func TestOpenAPIContractDocumentsCoreControlPlane(t *testing.T) {
 		t.Fatalf("OpenAPI version = %q, want %q", got, want)
 	}
 	for path, method := range map[string]string{
-		"/api/login":                      http.MethodPost,
-		"/api/state":                      http.MethodGet,
-		"/api/tunnels":                    http.MethodPost,
-		"/api/tunnels/{id}/settings":      http.MethodPatch,
-		"/api/tunnels/{id}/protocol":      http.MethodPatch,
-		"/api/tunnels/{id}/regenerate":    http.MethodPost,
-		"/api/clients":                    http.MethodPost,
-		"/api/clients/{id}/traffic-limit": http.MethodPatch,
-		"/api/warp":                       http.MethodGet,
-		"/api/warp/import":                http.MethodPost,
+		"/api/login":                         http.MethodPost,
+		"/api/auth/status":                   http.MethodGet,
+		"/api/auth/session":                  http.MethodGet,
+		"/api/controller/control/status":     http.MethodGet,
+		"/api/controller/control/prepare":    http.MethodPost,
+		"/api/controller/control/backup":     http.MethodPost,
+		"/api/controller/control/enable":     http.MethodPost,
+		"/api/controller/control/disable":    http.MethodPost,
+		"/api/controller/enrollments/invite": http.MethodPost,
+		"/api/controller/enrollments/review": http.MethodPost,
+		"/api/controller/enrollments/decide": http.MethodPost,
+		"/api/controller/setup":              http.MethodPost,
+		"/api/controller/activate":           http.MethodPost,
+		"/api/controller/login":              http.MethodPost,
+		"/api/controller/login/recovery":     http.MethodPost,
+		"/api/controller/reauth":             http.MethodPost,
+		"/api/controller/recovery-codes":     http.MethodPost,
+		"/api/state":                         http.MethodGet,
+		"/api/tunnels":                       http.MethodPost,
+		"/api/tunnels/{id}/settings":         http.MethodPatch,
+		"/api/tunnels/{id}/protocol":         http.MethodPatch,
+		"/api/tunnels/{id}/regenerate":       http.MethodPost,
+		"/api/clients":                       http.MethodPost,
+		"/api/clients/{id}/traffic-limit":    http.MethodPatch,
+		"/api/warp":                          http.MethodGet,
+		"/api/warp/import":                   http.MethodPost,
 	} {
 		operations, ok := document.Paths[path]
 		if !ok || operations[strings.ToLower(method)] == nil {
 			t.Fatalf("OpenAPI document is missing %s %s", method, path)
+		}
+	}
+	for _, path := range []string{"/api/auth/status", "/api/auth/session", "/api/controller/setup", "/api/controller/activate", "/api/controller/recovery-codes"} {
+		operation := document.Paths[path][map[bool]string{true: "get", false: "post"}[path == "/api/auth/status" || path == "/api/auth/session"]].(map[string]any)
+		responses := operation["responses"].(map[string]any)
+		success := responses["200"].(map[string]any)
+		headers, ok := success["headers"].(map[string]any)
+		if !ok || headers["Cache-Control"] == nil {
+			t.Fatalf("%s lacks no-store contract", path)
 		}
 	}
 	if !strings.Contains(string(document.Components["schemas"]), `"APIError"`) || !strings.Contains(string(document.Components["schemas"]), `"code"`) {

@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -45,6 +47,21 @@ PersistentKeepalive = 25
 	if err := storage.New(cfg.ConfigDir).Save(state); err != nil {
 		t.Fatal(err)
 	}
+	for name, value := range map[string]string{
+		"controller-auth.keys": "totp-secret-canary-and-session-token-canary",
+		"recovery-input.json":  "recovery-code-canary-and-password-canary",
+	} {
+		if err := os.WriteFile(filepath.Join(cfg.ConfigDir, name), []byte(value), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	controlDir := filepath.Join(cfg.ConfigDir, "control", "ca", strings.Repeat("a", 32))
+	if err := os.MkdirAll(controlDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(controlDir, "key.pem"), []byte("control-ca-private-key-canary"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	bundle, err := Generate(context.Background(), cfg, svc, Options{Now: time.Date(2026, 5, 20, 12, 0, 0, 0, time.UTC)})
 	if err != nil {
 		t.Fatal(err)
@@ -60,6 +77,11 @@ PersistentKeepalive = 25
 		"warp-private-key",
 		"warp-preshared-key",
 		"header-protection-key",
+		"totp-secret-canary",
+		"session-token-canary",
+		"recovery-code-canary",
+		"password-canary",
+		"control-ca-private-key-canary",
 	} {
 		if secret != "" && strings.Contains(content, secret) {
 			t.Fatalf("support bundle leaked secret %q in:\n%s", secret, content)
