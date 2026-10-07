@@ -5,19 +5,27 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
+	"encoding/base32"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/netip"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/astronaut808/awg-forge/internal/app"
 	"github.com/astronaut808/awg-forge/internal/config"
+	"github.com/astronaut808/awg-forge/internal/controlauth"
+	"github.com/astronaut808/awg-forge/internal/sqldb"
+	"github.com/astronaut808/awg-forge/internal/storage"
 	"github.com/astronaut808/awg-forge/internal/webtls"
+	"github.com/pquerna/otp/totp"
 )
 
 const testPassword = "correct horse battery staple"
@@ -50,6 +58,43 @@ func TestBackupRestoreRoundTripEncrypted(t *testing.T) {
 	}
 	assertMode(t, restoreCfg.ConfigDir, 0700)
 	assertMode(t, filepath.Join(restoreCfg.ConfigDir, "state.json"), 0600)
+	assertMode(t, filepath.Join(restoreCfg.ConfigDir, storage.StateLockFileName), 0600)
+	assertMode(t, filepath.Join(restoreCfg.ConfigDir, storage.StateMutationLockFileName), 0600)
+}
+
+func TestBackupWaitsForStateMutationTransaction(t *testing.T) {
+	cfg := testConfig(t)
+	svc := app.New(cfg)
+	if _, err := svc.Init(); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := storage.AcquireStateMutationLock(cfg.ConfigDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := Create(context.Background(), cfg, svc, testPassword, Options{})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		_ = lock.Close()
+		t.Fatalf("backup completed during a state mutation transaction: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if err := lock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("backup did not resume after the state mutation transaction")
+	}
 }
 
 func TestBackupIncludesTLSSettings(t *testing.T) {
@@ -344,8 +389,19 @@ func TestRestoreKeepsEncryptedPreRestoreBackup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	backupDir := filepath.Join(cfg.ConfigDir, "backups")
+	if err := os.Mkdir(backupDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	previous := filepath.Join(backupDir, "previous.afbackup")
+	if err := os.WriteFile(previous, []byte("earlier encrypted backup"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	if err := Restore(context.Background(), cfg, testPassword, writeTempArchive(t, archive.Data)); err != nil {
 		t.Fatal(err)
+	}
+	if body, err := os.ReadFile(previous); err != nil || string(body) != "earlier encrypted backup" {
+		t.Fatalf("previous backup was not preserved: %q, %v", body, err)
 	}
 	matches, err := filepath.Glob(filepath.Join(cfg.ConfigDir, "backups", "pre-restore-*.afbackup"))
 	if err != nil {
@@ -355,6 +411,642 @@ func TestRestoreKeepsEncryptedPreRestoreBackup(t *testing.T) {
 		t.Fatalf("pre-restore backups = %d, want 1", len(matches))
 	}
 	assertMode(t, matches[0], 0600)
+	if _, err := Verify(context.Background(), cfg, testPassword, matches[0]); err != nil {
+		t.Fatalf("saved pre-restore backup is unusable: %v", err)
+	}
+}
+
+func TestCreateRejectsControllerStateWithoutAuthenticationData(t *testing.T) {
+	cfg := testConfig(t)
+	svc := app.New(cfg)
+	state, err := svc.Init()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.Mode = config.ModeController
+	state.Controller = &config.ControllerState{
+		ControllerID: "11111111-1111-4111-8111-111111111111",
+		ActivatedAt:  time.Date(2026, 9, 23, 8, 0, 0, 0, time.UTC),
+	}
+	if err := storage.New(cfg.ConfigDir).Save(state); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Create(context.Background(), cfg, svc, testPassword, Options{}); err == nil || !strings.Contains(err.Error(), "requires an absolute SQLite database path") {
+		t.Fatalf("controller backup error = %v", err)
+	}
+}
+
+func TestControllerBackupIncludesVerifiedKeysAndSQLiteSnapshot(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.DatabaseMode = sqldb.ModeSQLite
+	cfg.DatabasePath = filepath.Join(t.TempDir(), "controller.sqlite")
+	cfg.DatabaseQueryTimeout = 5 * time.Second
+	cfg.DatabaseBusyTimeout = 5 * time.Second
+	cfg.DatabaseMaxOpenConns = 1
+	cfg.DatabaseMaxIdleConns = 1
+	svc := app.New(cfg)
+	standaloneArchive, err := Create(context.Background(), cfg, svc, testPassword, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString([]byte("controller-backup-test-secret"))
+	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	code, err := totp.GenerateCode(secret, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activated, err := svc.ActivateController(context.Background(), app.ControllerActivationRequest{
+		Username: "admin", Password: testPassword, TOTPSecret: secret, TOTPConfirmation: code, Now: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Restore(context.Background(), cfg, testPassword, writeTempArchive(t, standaloneArchive.Data)); err == nil || !strings.Contains(err.Error(), "existing controller") {
+		t.Fatalf("standalone restore into controller error = %v", err)
+	}
+	if _, err := svc.AddClient("controller-client"); err != nil {
+		t.Fatal(err)
+	}
+	archive, err := Create(context.Background(), cfg, svc, testPassword, Options{Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	archivePath := writeTempArchive(t, archive.Data)
+	if _, err := Verify(context.Background(), cfg, testPassword, archivePath); err != nil {
+		t.Fatalf("verify controller backup: %v", err)
+	}
+	if err := Restore(context.Background(), cfg, testPassword, archivePath); err != nil {
+		t.Fatalf("restore controller backup: %v", err)
+	}
+	if err := storage.New(cfg.ConfigDir).CheckRestorePending(); err != nil {
+		t.Fatalf("restore gate remains after verified restore: %v", err)
+	}
+	conn, err := sql.Open("sqlite", cfg.DatabasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	var disabledAt string
+	if err := conn.QueryRow("SELECT disabled_at FROM controller_users WHERE singleton = 1").Scan(&disabledAt); err != nil || disabledAt == "" {
+		t.Fatalf("restored administrator disabled_at = %q, error = %v", disabledAt, err)
+	}
+	for _, table := range []struct {
+		name string
+		row  *sql.Row
+	}{
+		{"controller_sessions", conn.QueryRow("SELECT count(*) FROM controller_sessions")},
+		{"controller_recovery_codes", conn.QueryRow("SELECT count(*) FROM controller_recovery_codes")},
+		{"controller_auth_attempts", conn.QueryRow("SELECT count(*) FROM controller_auth_attempts")},
+	} {
+		var count int
+		if err := table.row.Scan(&count); err != nil || count != 0 {
+			t.Fatalf("restored %s count = %d, error = %v", table.name, count, err)
+		}
+	}
+	if len(archive.Data) == 0 || strings.Contains(string(archive.Data), secret) {
+		t.Fatal("controller backup is empty or exposes authentication material")
+	}
+	plain, err := decrypt(archive.Data, testPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, _, state, err := readPlainZip(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Controller == nil || state.Controller.ControllerID != activated.ControllerID {
+		t.Fatal("controller identity is missing from backup")
+	}
+	paths := map[string]bool{}
+	for _, file := range files {
+		paths[file.Path] = true
+	}
+	if !paths[controlauth.KeyFileName] || !paths[controllerSnapshotArchivePath] {
+		t.Fatalf("controller backup files = %v", paths)
+	}
+	staged, err := filepath.Glob(filepath.Join(cfg.ConfigDir, ".backup-snapshot-*"))
+	if err != nil || len(staged) != 0 {
+		t.Fatalf("snapshot staging paths = %v, error = %v", staged, err)
+	}
+}
+
+func TestControllerRestoreWithDatabaseInsideConfigDirectory(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.DatabaseMode = sqldb.ModeSQLite
+	cfg.DatabasePath = filepath.Join(cfg.ConfigDir, "awg-forge.db")
+	cfg.DatabaseQueryTimeout = 5 * time.Second
+	cfg.DatabaseBusyTimeout = 5 * time.Second
+	cfg.DatabaseMaxOpenConns = 1
+	cfg.DatabaseMaxIdleConns = 1
+	svc := app.New(cfg)
+	secret := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString([]byte("controller-internal-backup-secret"))
+	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	code, err := totp.GenerateCode(secret, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activated, err := svc.ActivateController(context.Background(), app.ControllerActivationRequest{
+		Username: "admin", Password: testPassword, TOTPSecret: secret, TOTPConfirmation: code, Now: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive, err := Create(context.Background(), cfg, svc, testPassword, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	insideArchive := filepath.Join(cfg.ConfigDir, "controller.afbackup")
+	if err := os.WriteFile(insideArchive, archive.Data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Restore(context.Background(), cfg, testPassword, insideArchive); err == nil || !strings.Contains(err.Error(), "outside the configuration directory") {
+		t.Fatalf("controller archive inside config directory error = %v", err)
+	}
+	if err := os.Remove(insideArchive); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"audit.log", "audit.log.1"} {
+		if err := os.WriteFile(filepath.Join(cfg.ConfigDir, name), []byte("preserved audit"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := Restore(context.Background(), cfg, testPassword, writeTempArchive(t, archive.Data)); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"audit.log", "audit.log.1"} {
+		if body, err := os.ReadFile(filepath.Join(cfg.ConfigDir, name)); err != nil || string(body) != "preserved audit" {
+			t.Fatalf("%s was not preserved: %q, %v", name, body, err)
+		}
+	}
+	state, err := storage.New(cfg.ConfigDir).Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Controller == nil || state.Controller.ControllerID != activated.ControllerID {
+		t.Fatalf("restored controller identity = %#v", state.Controller)
+	}
+	if err := sqldb.VerifyControllerSnapshot(context.Background(), cfg.DatabasePath); err != nil {
+		t.Fatal(err)
+	}
+	assertMode(t, cfg.DatabasePath, 0600)
+	assertMode(t, filepath.Join(cfg.ConfigDir, controlauth.KeyFileName), 0600)
+}
+
+func TestControllerRestoreRejectsDifferentControllerIdentity(t *testing.T) {
+	makeController := func(t *testing.T, name string) (config.Config, *app.Service, string) {
+		t.Helper()
+		cfg := testConfig(t)
+		cfg.DatabaseMode = sqldb.ModeSQLite
+		cfg.DatabasePath = filepath.Join(cfg.ConfigDir, "awg-forge.db")
+		cfg.DatabaseQueryTimeout = 5 * time.Second
+		cfg.DatabaseBusyTimeout = 5 * time.Second
+		cfg.DatabaseMaxOpenConns = 1
+		cfg.DatabaseMaxIdleConns = 1
+		svc := app.New(cfg)
+		secret := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString([]byte(name + "-identity-secret"))
+		now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+		code, err := totp.GenerateCode(secret, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := svc.ActivateController(context.Background(), app.ControllerActivationRequest{
+			Username: "admin", Password: testPassword, TOTPSecret: secret, TOTPConfirmation: code, Now: now,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cfg, svc, result.ControllerID
+	}
+	sourceCfg, sourceSvc, sourceID := makeController(t, "source")
+	archive, err := Create(context.Background(), sourceCfg, sourceSvc, testPassword, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetCfg, _, targetID := makeController(t, "target")
+	if sourceID == targetID {
+		t.Fatal("controller test identities unexpectedly match")
+	}
+	if err := Restore(context.Background(), targetCfg, testPassword, writeTempArchive(t, archive.Data)); err == nil || !strings.Contains(err.Error(), "same controller identity") {
+		t.Fatalf("cross-controller restore error = %v", err)
+	}
+	if err := storage.New(targetCfg.ConfigDir).CheckRestorePending(); err != nil {
+		t.Fatalf("cross-controller restore changed recovery gate: %v", err)
+	}
+	state, err := storage.New(targetCfg.ConfigDir).Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Controller == nil || state.Controller.ControllerID != targetID {
+		t.Fatal("cross-controller restore changed target identity")
+	}
+}
+
+func TestControllerRestoreInterruptedBeforeStateCommitStaysFailClosed(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.DatabaseMode = sqldb.ModeSQLite
+	cfg.DatabasePath = filepath.Join(cfg.ConfigDir, "awg-forge.db")
+	cfg.DatabaseQueryTimeout = 5 * time.Second
+	cfg.DatabaseBusyTimeout = 5 * time.Second
+	cfg.DatabaseMaxOpenConns = 1
+	cfg.DatabaseMaxIdleConns = 1
+	svc := app.New(cfg)
+	secret := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString([]byte("controller-crash-restore-secret"))
+	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	code, err := totp.GenerateCode(secret, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ActivateController(context.Background(), app.ControllerActivationRequest{
+		Username: "admin", Password: testPassword, TOTPSecret: secret, TOTPConfirmation: code, Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := svc.PrepareControlIdentity(context.Background(), app.ControlIdentityRequest{
+		BindIP: "127.0.0.1", Advertised: "control.example.com", Port: 8443,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive, err := Create(context.Background(), cfg, svc, testPassword, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	archivePath := writeTempArchive(t, archive.Data)
+	validated, err := loadAndValidate(context.Background(), testPassword, archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := storage.New(cfg.ConfigDir).Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateLock, err := storage.AcquireStateLock(cfg.ConfigDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stateLock.Close() }()
+	mutationLock, err := storage.AcquireStateMutationLock(cfg.ConfigDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = mutationLock.Close() }()
+	injected := errors.New("injected state commit failure")
+	err = restoreControllerWithFiles(context.Background(), cfg, testPassword, current, validated, func(root string, files []restoreFile) error {
+		return restoreFilesWithRename(root, files, func(src, dst string) error {
+			if strings.Contains(src, ".restore-tmp-") && filepath.Base(src) == "state.json" {
+				return injected
+			}
+			return os.Rename(src, dst)
+		})
+	})
+	if !errors.Is(err, injected) {
+		t.Fatalf("interrupted restore error = %v", err)
+	}
+	if !errors.Is(storage.New(cfg.ConfigDir).CheckRestorePending(), storage.ErrRestorePending) {
+		t.Fatal("interrupted controller restore did not block startup")
+	}
+	if _, err := storage.New(cfg.ConfigDir).LoadControlIdentity(prepared.CAGeneration, prepared.ServerGeneration); err != nil {
+		t.Fatalf("interrupted restore lost staged control identity: %v", err)
+	}
+	if err := mutationLock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := stateLock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Create(context.Background(), cfg, svc, testPassword, Options{}); !errors.Is(err, storage.ErrRestorePending) {
+		t.Fatalf("backup after interrupted restore error = %v", err)
+	}
+}
+
+func TestControllerRestoreAfterExternalDatabaseSwitchStaysClosedOnVerificationFailure(t *testing.T) {
+	cfg, archive := controllerBackupFixture(t, true)
+	validated, err := loadAndValidate(context.Background(), testPassword, writeTempArchive(t, archive.Data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := storage.New(cfg.ConfigDir).Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateLock, err := storage.AcquireStateLock(cfg.ConfigDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stateLock.Close() }()
+	mutationLock, err := storage.AcquireStateMutationLock(cfg.ConfigDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = mutationLock.Close() }()
+	err = restoreControllerWithFiles(context.Background(), cfg, testPassword, current, validated, func(root string, files []restoreFile) error {
+		if err := restoreFiles(root, files); err != nil {
+			return err
+		}
+		return os.Chmod(filepath.Join(root, controlauth.KeyFileName), 0644)
+	})
+	if err == nil || !strings.Contains(err.Error(), "verify restored controller") {
+		t.Fatalf("post-switch verification error = %v", err)
+	}
+	if !errors.Is(storage.New(cfg.ConfigDir).CheckRestorePending(), storage.ErrRestorePending) {
+		t.Fatal("post-switch failure did not block startup")
+	}
+	if err := sqldb.VerifyControllerSnapshot(context.Background(), cfg.DatabasePath); err != nil {
+		t.Fatalf("external database was not installed before the injected failure: %v", err)
+	}
+}
+
+func TestControllerRestoreMarkerClearFailureKeepsStartupBlocked(t *testing.T) {
+	cfg, archive := controllerBackupFixture(t, false)
+	validated, err := loadAndValidate(context.Background(), testPassword, writeTempArchive(t, archive.Data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := storage.New(cfg.ConfigDir).Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateLock, err := storage.AcquireStateLock(cfg.ConfigDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stateLock.Close() }()
+	mutationLock, err := storage.AcquireStateMutationLock(cfg.ConfigDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = mutationLock.Close() }()
+	err = restoreControllerWithFiles(context.Background(), cfg, testPassword, current, validated, func(root string, files []restoreFile) error {
+		if err := restoreFiles(root, files); err != nil {
+			return err
+		}
+		return os.Chmod(storage.New(root).RestorePendingPath(), 0644)
+	})
+	if err == nil || !strings.Contains(err.Error(), "clear restored controller gate") {
+		t.Fatalf("marker-clear error = %v", err)
+	}
+	if !errors.Is(storage.New(cfg.ConfigDir).CheckRestorePending(), storage.ErrRestorePending) {
+		t.Fatal("invalid marker did not block startup")
+	}
+}
+
+func controllerBackupFixture(t *testing.T, externalDatabase bool) (config.Config, Archive) {
+	t.Helper()
+	cfg := testConfig(t)
+	cfg.DatabaseMode = sqldb.ModeSQLite
+	if externalDatabase {
+		cfg.DatabasePath = filepath.Join(t.TempDir(), "controller.sqlite")
+	} else {
+		cfg.DatabasePath = filepath.Join(cfg.ConfigDir, "awg-forge.db")
+	}
+	cfg.DatabaseQueryTimeout = 5 * time.Second
+	cfg.DatabaseBusyTimeout = 5 * time.Second
+	cfg.DatabaseMaxOpenConns = 1
+	cfg.DatabaseMaxIdleConns = 1
+	svc := app.New(cfg)
+	secret := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString([]byte("controller-fault-fixture-secret"))
+	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	code, err := totp.GenerateCode(secret, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ActivateController(context.Background(), app.ControllerActivationRequest{
+		Username: "admin", Password: testPassword, TOTPSecret: secret, TOTPConfirmation: code, Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	archive, err := Create(context.Background(), cfg, svc, testPassword, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg, archive
+}
+
+func TestRestoreManagedBackupRequiresExplicitDetachOnNewInstallation(t *testing.T) {
+	sourceCfg := testConfig(t)
+	sourceSvc, sourceState := managedBackupService(t, sourceCfg, testManagedBackupState())
+	archive, err := Create(context.Background(), sourceCfg, sourceSvc, testPassword, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	restoreCfg := sourceCfg
+	restoreCfg.ConfigDir = t.TempDir()
+	archivePath := writeTempArchive(t, archive.Data)
+	if err := Restore(context.Background(), restoreCfg, testPassword, archivePath); !errors.Is(err, app.ErrManagedNodeRestoreIdentityConflict) {
+		t.Fatalf("restore error = %v, want %v", err, app.ErrManagedNodeRestoreIdentityConflict)
+	}
+	if _, err := os.Stat(filepath.Join(restoreCfg.ConfigDir, "state.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("restore wrote state before identity authorization: %v", err)
+	}
+
+	now := time.Date(2026, 9, 8, 15, 0, 0, 0, time.UTC)
+	result, err := RestoreWithOptions(context.Background(), restoreCfg, testPassword, archivePath, RestoreOptions{
+		DetachManagedNode: true,
+		Now:               now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.ManagedNodeDetached {
+		t.Fatal("restore result did not report managed-node detach")
+	}
+	restored, err := storage.New(restoreCfg.ConfigDir).Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.ManagedNode != nil {
+		t.Fatalf("managed identity remains after detached restore: %#v", restored.ManagedNode)
+	}
+	if len(restored.Tunnels) != len(sourceState.Tunnels) || restored.Tunnels[0].ID != sourceState.Tunnels[0].ID {
+		t.Fatalf("detached restore did not preserve tunnels: %#v", restored.Tunnels)
+	}
+	if !restored.UpdatedAt.Equal(now) {
+		t.Fatalf("updated at = %v, want %v", restored.UpdatedAt, now)
+	}
+	assertMode(t, restoreCfg.ConfigDir, 0700)
+	assertMode(t, filepath.Join(restoreCfg.ConfigDir, "state.json"), 0600)
+}
+
+func TestRestoreManagedBackupPreservesMatchingInstallationIdentity(t *testing.T) {
+	cfg := testConfig(t)
+	svc, sourceState := managedBackupService(t, cfg, testManagedBackupState())
+	archive, err := Create(context.Background(), cfg, svc, testPassword, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Restore(context.Background(), cfg, testPassword, writeTempArchive(t, archive.Data)); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := storage.New(cfg.ConfigDir).Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(restored.ManagedNode, sourceState.ManagedNode) {
+		t.Fatalf("managed identity changed during in-place restore: %#v", restored.ManagedNode)
+	}
+}
+
+func TestRestoreRejectsManagedIdentityMismatchWithoutChangingTarget(t *testing.T) {
+	sourceCfg := testConfig(t)
+	sourceSvc, _ := managedBackupService(t, sourceCfg, testManagedBackupState())
+	archive, err := Create(context.Background(), sourceCfg, sourceSvc, testPassword, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	targetCfg := testConfig(t)
+	targetManaged := testManagedBackupState()
+	targetManaged.NodeID = "55555555-5555-4555-8555-555555555555"
+	_, targetState := managedBackupService(t, targetCfg, targetManaged)
+	err = Restore(context.Background(), targetCfg, testPassword, writeTempArchive(t, archive.Data))
+	if !errors.Is(err, app.ErrManagedNodeRestoreIdentityConflict) {
+		t.Fatalf("restore error = %v, want %v", err, app.ErrManagedNodeRestoreIdentityConflict)
+	}
+	persisted, err := storage.New(targetCfg.ConfigDir).Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.ManagedNode == nil || persisted.ManagedNode.NodeID != targetState.ManagedNode.NodeID {
+		t.Fatalf("target identity changed after rejected restore: %#v", persisted.ManagedNode)
+	}
+	if matches, err := filepath.Glob(filepath.Join(targetCfg.ConfigDir, "backups", "pre-restore-*.afbackup")); err != nil || len(matches) != 0 {
+		t.Fatalf("rejected restore created pre-restore backup: matches=%v err=%v", matches, err)
+	}
+}
+
+func TestRestoreStandaloneBackupRequiresDetachOnManagedInstallation(t *testing.T) {
+	sourceCfg := testConfig(t)
+	sourceSvc := app.New(sourceCfg)
+	if _, err := sourceSvc.Init(); err != nil {
+		t.Fatal(err)
+	}
+	archive, err := Create(context.Background(), sourceCfg, sourceSvc, testPassword, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	targetCfg := testConfig(t)
+	_, _ = managedBackupService(t, targetCfg, testManagedBackupState())
+	archivePath := writeTempArchive(t, archive.Data)
+	if err := Restore(context.Background(), targetCfg, testPassword, archivePath); !errors.Is(err, app.ErrManagedNodeRestoreIdentityConflict) {
+		t.Fatalf("restore error = %v, want %v", err, app.ErrManagedNodeRestoreIdentityConflict)
+	}
+	result, err := RestoreWithOptions(context.Background(), targetCfg, testPassword, archivePath, RestoreOptions{DetachManagedNode: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.ManagedNodeDetached {
+		t.Fatal("restore result did not report managed-node detach")
+	}
+	restored, err := storage.New(targetCfg.ConfigDir).Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.ManagedNode != nil {
+		t.Fatalf("managed identity remains after standalone restore: %#v", restored.ManagedNode)
+	}
+}
+
+func TestRestoreReportsNoDetachForStandaloneState(t *testing.T) {
+	sourceCfg := testConfig(t)
+	sourceSvc := app.New(sourceCfg)
+	if _, err := sourceSvc.Init(); err != nil {
+		t.Fatal(err)
+	}
+	archive, err := Create(context.Background(), sourceCfg, sourceSvc, testPassword, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	targetCfg := testConfig(t)
+	result, err := RestoreWithOptions(context.Background(), targetCfg, testPassword, writeTempArchive(t, archive.Data), RestoreOptions{
+		DetachManagedNode: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ManagedNodeDetached {
+		t.Fatal("standalone restore incorrectly reported a managed-node detach")
+	}
+}
+
+func TestRestoreRejectsStateDirectoryInUseBeforeReadingTarget(t *testing.T) {
+	sourceCfg := testConfig(t)
+	sourceSvc := app.New(sourceCfg)
+	if _, err := sourceSvc.Init(); err != nil {
+		t.Fatal(err)
+	}
+	archive, err := Create(context.Background(), sourceCfg, sourceSvc, testPassword, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	targetCfg := testConfig(t)
+	stateLock, err := storage.AcquireStateLock(targetCfg.ConfigDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := stateLock.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+
+	_, err = RestoreWithOptions(context.Background(), targetCfg, testPassword, writeTempArchive(t, archive.Data), RestoreOptions{})
+	if !errors.Is(err, storage.ErrStateDirectoryInUse) {
+		t.Fatalf("restore error = %v, want %v", err, storage.ErrStateDirectoryInUse)
+	}
+	if _, err := os.Stat(filepath.Join(targetCfg.ConfigDir, "state.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("locked restore changed target state: %v", err)
+	}
+}
+
+func TestVerifyRejectsInvalidManagedNodeMetadata(t *testing.T) {
+	cfg := testConfig(t)
+	svc, _ := managedBackupService(t, cfg, testManagedBackupState())
+	archive, err := Create(context.Background(), cfg, svc, testPassword, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := decrypt(archive.Data, testPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mutatedStateJSON []byte
+	mutated := mutatePlainZip(t, plain, func(name string, b []byte) []byte {
+		switch name {
+		case "state.json":
+			var state config.State
+			if err := json.Unmarshal(b, &state); err != nil {
+				t.Fatal(err)
+			}
+			state.ManagedNode.StateEpoch = "not-a-uuid"
+			mutatedStateJSON = mustJSON(t, state)
+			return mutatedStateJSON
+		case "metadata.json":
+			var metadata Metadata
+			if err := json.Unmarshal(b, &metadata); err != nil {
+				t.Fatal(err)
+			}
+			for i := range metadata.Files {
+				if metadata.Files[i].Path == "state.json" {
+					metadata.Files[i] = testFileMeta("state.json", mutatedStateJSON)
+				}
+			}
+			return mustJSON(t, metadata)
+		default:
+			return b
+		}
+	})
+	encrypted, err := encrypt(mutated, testPassword, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Verify(context.Background(), cfg, testPassword, writeTempArchive(t, encrypted))
+	if !errors.Is(err, app.ErrInvalidManagedNodeState) {
+		t.Fatalf("verify error = %v, want %v", err, app.ErrInvalidManagedNodeState)
+	}
 }
 
 func TestRestoreRejectsNewerSchema(t *testing.T) {
@@ -556,6 +1248,77 @@ func TestSafeRestorePathStaysUnderRoot(t *testing.T) {
 	if _, err := safeRestorePath(root, "../escape"); err == nil {
 		t.Fatal("expected traversal path to be rejected")
 	}
+	if _, err := safeRestorePath(root, storage.StateLockFileName); err == nil {
+		t.Fatal("expected reserved state lock path to be rejected")
+	}
+	if _, err := safeRestorePath(root, storage.StateMutationLockFileName); err == nil {
+		t.Fatal("expected reserved state mutation lock path to be rejected")
+	}
+}
+
+func TestRestoreFilesRollsBackBeforeStateCommit(t *testing.T) {
+	for _, phase := range []string{"move-current", "install-candidate", "commit-state"} {
+		t.Run(phase, func(t *testing.T) {
+			root := t.TempDir()
+			currentState := []byte(`{"schema_version":1,"server_host":"current.example"}`)
+			for name, data := range map[string][]byte{
+				"state.json":    currentState,
+				"current-a.txt": []byte("current-a"),
+				"current-b.txt": []byte("current-b"),
+			} {
+				if err := os.WriteFile(filepath.Join(root, name), data, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			injected := errors.New("injected " + phase + " failure")
+			failed := false
+			rename := func(src, dst string) error {
+				base := filepath.Base(src)
+				shouldFail := false
+				switch phase {
+				case "move-current":
+					shouldFail = filepath.Dir(src) == root && base == "current-b.txt"
+				case "install-candidate":
+					shouldFail = strings.Contains(src, ".restore-tmp-") && base == "next-b.txt"
+				case "commit-state":
+					shouldFail = strings.Contains(src, ".restore-tmp-") && base == "state.json"
+				}
+				if !failed && shouldFail {
+					failed = true
+					return injected
+				}
+				return os.Rename(src, dst)
+			}
+			err := restoreFilesWithRename(root, []restoreFile{
+				{Path: "state.json", Data: []byte(`{"schema_version":1,"server_host":"next.example"}`)},
+				{Path: "next-a.txt", Data: []byte("next-a")},
+				{Path: "next-b.txt", Data: []byte("next-b")},
+			}, rename)
+			if !errors.Is(err, injected) {
+				t.Fatalf("restore error = %v, want %v", err, injected)
+			}
+			assertRestoredFile(t, filepath.Join(root, "state.json"), currentState)
+			assertRestoredFile(t, filepath.Join(root, "current-a.txt"), []byte("current-a"))
+			assertRestoredFile(t, filepath.Join(root, "current-b.txt"), []byte("current-b"))
+			for _, name := range []string{"next-a.txt", "next-b.txt"} {
+				if _, err := os.Stat(filepath.Join(root, name)); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("candidate file %s remains after rollback: %v", name, err)
+				}
+			}
+		})
+	}
+}
+
+func assertRestoredFile(t *testing.T, path string, want []byte) {
+	t.Helper()
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("%s = %q, want %q", path, got, want)
+	}
 }
 
 func TestWriteFileUsesPrivatePermissions(t *testing.T) {
@@ -674,10 +1437,38 @@ func assertMode(t *testing.T, path string, want os.FileMode) {
 	}
 }
 
+func managedBackupService(t *testing.T, cfg config.Config, managed *config.ManagedNodeState) (*app.Service, config.State) {
+	t.Helper()
+	svc := app.New(cfg)
+	state, err := svc.Init()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.ManagedNode = managed
+	state.Mode = config.ModeNode
+	if err := storage.New(cfg.ConfigDir).Save(state); err != nil {
+		t.Fatal(err)
+	}
+	return svc, state
+}
+
+func testManagedBackupState() *config.ManagedNodeState {
+	return &config.ManagedNodeState{
+		NodeID:       "11111111-1111-4111-8111-111111111111",
+		ControllerID: "22222222-2222-4222-8222-222222222222",
+		StateEpoch:   "33333333-3333-4333-8333-333333333333",
+		BindingEpoch: 1,
+	}
+}
+
 func testConfig(t *testing.T) config.Config {
 	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	return config.Config{
-		ConfigDir:           t.TempDir(),
+		ConfigDir:           dir,
 		TunnelName:          "awg0",
 		ServerHost:          "vpn.example.com",
 		ListenPort:          51820,

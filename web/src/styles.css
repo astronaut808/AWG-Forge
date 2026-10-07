@@ -1457,3 +1457,9 @@ textarea {
     animation-iteration-count: 1 !important;
   }
 }
+.controller-panel { max-width: 38rem; }
+.controller-qr { display: block; width: min(100%, 18rem); height: auto; border: 0.75rem solid #fff; border-radius: 0.5rem; }
+.controller-secret { display: block; overflow-wrap: anywhere; user-select: all; margin-top: 0.5rem; }
+.controller-codes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem 1.5rem; padding-left: 1.5rem; }
+.controller-codes code { user-select: all; overflow-wrap: anywhere; }
+@media (max-width: 640px) { .controller-codes { grid-template-columns: 1fr; } }

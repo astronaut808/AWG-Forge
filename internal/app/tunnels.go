@@ -68,8 +68,10 @@ func SuggestedNextTunnelSpec(profileID string, state config.State) TunnelSuggest
 }
 
 func (s *Service) SuggestTunnel(profileID string) (TunnelSuggestion, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lockStateMutation(); err != nil {
+		return TunnelSuggestion{}, err
+	}
+	defer s.unlockStateMutation()
 	if profileID == "" {
 		profileID = s.cfg.ProtocolProfile
 	}
@@ -220,8 +222,10 @@ func (s *Service) CreateTunnelWithOptions(ctx context.Context, options TunnelCre
 }
 
 func (s *Service) warpRegistrationNeeded() (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lockStateMutation(); err != nil {
+		return false, err
+	}
+	defer s.unlockStateMutation()
 	state, err := s.initLocked()
 	if err != nil {
 		return false, err
@@ -230,8 +234,10 @@ func (s *Service) warpRegistrationNeeded() (bool, error) {
 }
 
 func (s *Service) createTunnel(profileID, name, subnet string, port int, automaticPort bool, egressMode string) (config.Tunnel, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lockStateMutation(); err != nil {
+		return config.Tunnel{}, err
+	}
+	defer s.unlockStateMutation()
 	if profileID == "" {
 		profileID = s.cfg.ProtocolProfile
 	}
@@ -306,7 +312,7 @@ func (s *Service) createTunnel(profileID, name, subnet string, port int, automat
 	state.Tunnels = append(state.Tunnels, tunnel)
 	warpRoutesNeedReconcile := warpRoutesChanged(previousState, state)
 	state.UpdatedAt = time.Now().UTC()
-	if err := s.store.Save(state); err != nil {
+	if err := s.saveLocalDesiredState(&state); err != nil {
 		return config.Tunnel{}, err
 	}
 	if err := s.renderTunnelLocked(tunnel.ID, true); err != nil {
@@ -342,24 +348,26 @@ func (s *Service) UpdateTunnelSettingsContext(ctx context.Context, tunnelID stri
 }
 
 func (s *Service) ensureWarpForTunnelSettings(ctx context.Context, tunnelID string, update TunnelSettingsUpdate) error {
-	s.mu.Lock()
+	if err := s.lockStateMutation(); err != nil {
+		return err
+	}
 	state, err := s.initLocked()
 	if err != nil {
-		s.mu.Unlock()
+		s.unlockStateMutation()
 		return err
 	}
 	idx, ok := tunnelIndexByID(state, tunnelID)
 	if !ok {
-		s.mu.Unlock()
+		s.unlockStateMutation()
 		return errors.New("tunnel not found")
 	}
 	settings, err := resolveTunnelSettings(state, idx, update)
 	if err != nil {
-		s.mu.Unlock()
+		s.unlockStateMutation()
 		return err
 	}
 	needsRegistration := settings.EgressMode == config.EgressWarp && !state.Warp.Configured()
-	s.mu.Unlock()
+	s.unlockStateMutation()
 	if !needsRegistration {
 		return nil
 	}
@@ -373,8 +381,10 @@ func (s *Service) ensureWarpForTunnelSettings(ctx context.Context, tunnelID stri
 }
 
 func (s *Service) updateTunnelSettings(tunnelID string, update TunnelSettingsUpdate) (config.Tunnel, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lockStateMutation(); err != nil {
+		return config.Tunnel{}, err
+	}
+	defer s.unlockStateMutation()
 	state, err := s.initLocked()
 	if err != nil {
 		return config.Tunnel{}, err
@@ -402,7 +412,7 @@ func (s *Service) updateTunnelSettings(tunnelID string, update TunnelSettingsUpd
 		rollbackRenderedDeletes = []string{next.InterfaceName}
 	}
 	state.UpdatedAt = next.UpdatedAt
-	if err := s.store.Save(state); err != nil {
+	if err := s.saveLocalDesiredState(&state); err != nil {
 		return config.Tunnel{}, err
 	}
 	if s.cfg.ApplyConfig && firewallChanged {
@@ -587,8 +597,10 @@ func (s *Service) DeleteTunnel(tunnelID string) error {
 }
 
 func (s *Service) DeleteTunnelWithConfirmation(tunnelID, confirmationName string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lockStateMutation(); err != nil {
+		return err
+	}
+	defer s.unlockStateMutation()
 	state, err := s.initLocked()
 	if err != nil {
 		return err
@@ -621,7 +633,7 @@ func (s *Service) DeleteTunnelWithConfirmation(tunnelID, confirmationName string
 	state.Tunnels = append(state.Tunnels[:idx], state.Tunnels[idx+1:]...)
 	warpRoutesNeedReconcile := warpRoutesChanged(previousState, state)
 	state.UpdatedAt = time.Now().UTC()
-	if err := s.store.Save(state); err != nil {
+	if err := s.saveLocalDesiredState(&state); err != nil {
 		return err
 	}
 	if s.cfg.ApplyConfig {

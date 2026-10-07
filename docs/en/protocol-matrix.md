@@ -13,7 +13,7 @@ awg-forge is a launcher and manager for existing AmneziaWG implementations. It d
 
 ## AWG 3.x Experimental Boundaries
 
-The single AWG 3.x experimental profile is derived from the current AmneziaVPN self-hosted generator and the pinned `amneziawg-go` 3.1.20260828 / `amneziawg-tools` 3.1.20260812 release revisions. It uses:
+The single AWG 3.x experimental profile is derived from the current AmneziaVPN self-hosted generator and the pinned `amneziawg-go` 3.1.20260828 / `amneziawg-tools` 3.1.20260812 source revisions, fixed by commit SHA in `build/amneziawg.refs`. It uses:
 
 - `Jc`, `Jmin`, `Jmax`, `S1-S4`, `H1-H4`, `I1-I5`;
 - `HeaderProtectionKey` generated once per tunnel and kept out of public state and diagnostics; authenticated client exports include it because the client needs it;
@@ -32,7 +32,7 @@ The AWG 3.x AmneziaVPN QR and `vpn://` serializers have automated schema and rou
 
 ## Source Findings For AWG 2.0
 
-Official Amnezia docs say AmneziaWG 2.0 is supported by AmneziaVPN app version `4.8.12.9` and later. Existing AmneziaWG 1.0 installations are shown as Legacy, and moving to 2.0 requires new guest configuration files/keys; it is not an in-place upgrade.
+Use an AmneziaVPN build that supports AmneziaWG 2.0. Existing AmneziaWG 1.0 installations are shown as Legacy, and moving to 2.0 requires new guest configuration files/keys; it is not an in-place upgrade.
 
 Official Amnezia docs describe 2.0 changes versus 1.5:
 
@@ -137,6 +137,6 @@ Still requires broader validation:
 - [AmneziaVPN explicit imported MTU preservation](https://github.com/amnezia-vpn/amnezia-client/pull/3113)
 - [AmneziaVPN AWG 3.1 server/client MTU mismatch report](https://github.com/amnezia-vpn/amnezia-client/issues/3089)
 - [Pinned `awg-quick` MTU selection logic](https://github.com/amnezia-vpn/amneziawg-tools/blob/ee0f0a9aa34ff0a0da4b3433b9512781cfe02843/src/wg-quick/linux.bash)
-- [Current Amnezia client MTU defaults](https://github.com/amnezia-vpn/amnezia-client/blob/dev/client/core/utils/constants/protocolConstants.h)
+- [Amnezia client MTU defaults on the development branch](https://github.com/amnezia-vpn/amnezia-client/blob/dev/client/core/utils/constants/protocolConstants.h)
 - [RFC 8200, IPv6 minimum link MTU](https://www.rfc-editor.org/rfc/rfc8200.html#section-5)
 - [RFC 9000, QUIC: A UDP-Based Multiplexed and Secure Transport](https://www.rfc-editor.org/rfc/rfc9000)

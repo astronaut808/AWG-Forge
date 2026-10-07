@@ -1,6 +1,8 @@
 package app
 
 import (
+	"context"
+	"database/sql"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -10,6 +12,7 @@ import (
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/keys"
 	"github.com/astronaut808/awg-forge/internal/render"
+	"github.com/astronaut808/awg-forge/internal/sqldb"
 )
 
 type ClientCreateOptions struct {
@@ -40,8 +43,10 @@ func (s *Service) AddClientToTunnel(tunnelID, name string) (config.Client, error
 }
 
 func (s *Service) AddClientToTunnelWithOptions(tunnelID, name string, opts ClientCreateOptions) (config.Client, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lockStateMutation(); err != nil {
+		return config.Client{}, err
+	}
+	defer s.unlockStateMutation()
 	if opts.Persist != nil && opts.RollbackPersist == nil {
 		return config.Client{}, errors.New("client persistence requires a rollback")
 	}
@@ -97,7 +102,7 @@ func (s *Service) AddClientToTunnelWithOptions(tunnelID, name string, opts Clien
 	state.Tunnels[idx].Clients = append(state.Tunnels[idx].Clients, client)
 	state.Tunnels[idx].UpdatedAt = now
 	state.UpdatedAt = now
-	if err := s.store.Save(state); err != nil {
+	if err := s.saveLocalDesiredState(&state); err != nil {
 		return config.Client{}, rollbackPersist(err)
 	}
 	if err := s.renderTunnelLocked(state.Tunnels[idx].ID, true); err != nil {
@@ -112,8 +117,10 @@ func (s *Service) AddClientToTunnelWithOptions(tunnelID, name string, opts Clien
 }
 
 func (s *Service) RemoveClient(id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lockStateMutation(); err != nil {
+		return err
+	}
+	defer s.unlockStateMutation()
 	state, err := s.initLocked()
 	if err != nil {
 		return err
@@ -138,7 +145,7 @@ func (s *Service) RemoveClient(id string) error {
 			state.Tunnels[ti].Clients = clients
 			state.Tunnels[ti].UpdatedAt = time.Now().UTC()
 			state.UpdatedAt = state.Tunnels[ti].UpdatedAt
-			if err := s.store.Save(state); err != nil {
+			if err := s.saveLocalDesiredState(&state); err != nil {
 				return err
 			}
 			if err := s.renderTunnelLocked(state.Tunnels[ti].ID, true); err != nil {
@@ -156,9 +163,95 @@ func (s *Service) RemoveClient(id string) error {
 }
 
 func (s *Service) SetClientEnabled(id string, enabled bool) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lockStateMutation(); err != nil {
+		return err
+	}
+	defer s.unlockStateMutation()
 	return s.setClientEnabledLocked(id, enabled, nil)
+}
+
+var ErrTrafficLimitMarkerUnavailable = errors.New("traffic limit marker unavailable")
+var ErrTrafficLimitCheckUnavailable = errors.New("traffic limit check unavailable")
+var ErrTrafficLimitReleaseCheckUnavailable = errors.New("traffic limit release check unavailable")
+
+type ClientEnableResult struct {
+	Exceeded         *sqldb.ExceededTrafficLimit
+	MarkerClearError error
+}
+
+// EnableClientWithTrafficLimit checks the current quota and updates desired
+// state under one lock, so a simultaneous limit change cannot pass between
+// the check and enable operation.
+func (s *Service) EnableClientWithTrafficLimit(ctx context.Context, id string) (ClientEnableResult, error) {
+	var result ClientEnableResult
+	if err := s.lockStateMutation(); err != nil {
+		return result, err
+	}
+	defer s.unlockStateMutation()
+	checkCtx, cancel := context.WithTimeout(ctx, s.cfg.DatabaseQueryTimeout)
+	exceeded, err := sqldb.ListExceededTrafficLimits(checkCtx, s.cfg, time.Now().UTC())
+	cancel()
+	if err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, sqldb.ErrDisabled) {
+		return result, fmt.Errorf("%w: %w", ErrTrafficLimitCheckUnavailable, err)
+	}
+	for i := range exceeded {
+		if exceeded[i].ClientID == id {
+			result.Exceeded = &exceeded[i]
+			return result, nil
+		}
+	}
+	if err := s.setClientEnabledLocked(id, true, nil); err != nil {
+		return result, err
+	}
+	clearCtx, cancel := context.WithTimeout(ctx, s.cfg.DatabaseQueryTimeout)
+	err = sqldb.ClearClientTrafficLimitBlock(clearCtx, s.cfg, id)
+	cancel()
+	if err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, sqldb.ErrDisabled) {
+		result.MarkerClearError = err
+	}
+	return result, nil
+}
+
+// UpdateClientTrafficLimit serializes operator limit changes with automatic
+// quota disable and release decisions for the same desired state.
+func (s *Service) UpdateClientTrafficLimit(ctx context.Context, tunnelID, clientID string, limitBytes *uint64, period sqldb.TrafficLimitPeriod) error {
+	if err := s.lockStateMutation(); err != nil {
+		return err
+	}
+	defer s.unlockStateMutation()
+	state, err := s.initLocked()
+	if err != nil {
+		return err
+	}
+	for _, tunnel := range state.Tunnels {
+		if tunnel.ID != tunnelID {
+			continue
+		}
+		for _, client := range tunnel.Clients {
+			if client.ID == clientID {
+				queryCtx, cancel := context.WithTimeout(ctx, s.cfg.DatabaseQueryTimeout)
+				defer cancel()
+				return sqldb.SetClientTrafficLimitWithPeriod(queryCtx, s.cfg, tunnelID, clientID, limitBytes, period)
+			}
+		}
+	}
+	return errors.New("client not found")
+}
+
+// DisableClientManually clears any automatic quota block while holding the
+// same state lock used by quota enforcement.
+func (s *Service) DisableClientManually(id string, clearQuotaBlock func() error) error {
+	if clearQuotaBlock == nil {
+		return errors.New("clear quota block callback is required")
+	}
+	if err := s.lockStateMutation(); err != nil {
+		return err
+	}
+	defer s.unlockStateMutation()
+	if err := clearQuotaBlock(); err != nil {
+		return fmt.Errorf("%w: %w", ErrTrafficLimitMarkerUnavailable, err)
+	}
+	return s.setClientEnabledLocked(id, false, nil)
 }
 
 type trafficLimitDisable struct {
@@ -167,22 +260,65 @@ type trafficLimitDisable struct {
 	Period     string
 }
 
-func (s *Service) DisableClientForTrafficLimit(id string, totalBytes, limitBytes uint64, period string) (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+type TrafficLimitMarker struct {
+	Mark  func() (bool, error)
+	Clear func() error
+}
+
+func (s *Service) DisableClientForTrafficLimit(id string, totalBytes, limitBytes uint64, period string, marker TrafficLimitMarker) (bool, error) {
+	if marker.Mark == nil || marker.Clear == nil {
+		return false, errors.New("traffic limit marker callbacks are required")
+	}
+	if err := s.lockStateMutation(); err != nil {
+		return false, err
+	}
+	defer s.unlockStateMutation()
 	enabled, err := s.clientEnabledLocked(id)
 	if err != nil || !enabled {
 		return false, err
 	}
+	marked, err := marker.Mark()
+	if err != nil {
+		return false, fmt.Errorf("%w: %w", ErrTrafficLimitMarkerUnavailable, err)
+	}
+	if !marked {
+		return false, nil
+	}
 	if err := s.setClientEnabledLocked(id, false, &trafficLimitDisable{TotalBytes: totalBytes, LimitBytes: limitBytes, Period: period}); err != nil {
+		// A failed runtime rollback can leave the desired state disabled. Keep
+		// the marker in that case so a later quota release can recover it.
+		enabledAfter, inspectErr := s.clientEnabledLocked(id)
+		if inspectErr != nil || !enabledAfter {
+			return false, errors.Join(err, inspectErr)
+		}
+		if clearErr := marker.Clear(); clearErr != nil {
+			return false, errors.Join(err, fmt.Errorf("clear traffic limit marker after failed disable: %w", clearErr))
+		}
 		return false, err
 	}
 	return true, nil
 }
 
-func (s *Service) EnableClientForTrafficLimitRelease(id, period string) (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+type TrafficLimitReleaseMarker struct {
+	CanRelease func() (bool, error)
+	Clear      func() error
+}
+
+func (s *Service) EnableClientForTrafficLimitRelease(id, period string, marker TrafficLimitReleaseMarker) (bool, error) {
+	if marker.CanRelease == nil || marker.Clear == nil {
+		return false, errors.New("traffic limit release marker callbacks are required")
+	}
+	if err := s.lockStateMutation(); err != nil {
+		return false, err
+	}
+	defer s.unlockStateMutation()
+	canRelease, err := marker.CanRelease()
+	if err != nil {
+		return false, fmt.Errorf("%w: %w", ErrTrafficLimitReleaseCheckUnavailable, err)
+	}
+	if !canRelease {
+		return false, nil
+	}
 	state, err := s.initLocked()
 	if err != nil {
 		return false, err
@@ -192,13 +328,17 @@ func (s *Service) EnableClientForTrafficLimitRelease(id, period string) (bool, e
 			if client.ID != id {
 				continue
 			}
-			if client.Enabled || config.ClientExpired(client, time.Now().UTC()) {
-				return false, nil
+			released := false
+			if !client.Enabled && !config.ClientExpired(client, time.Now().UTC()) {
+				if err := s.setClientEnabledLocked(id, true, &trafficLimitDisable{Period: period}); err != nil {
+					return false, err
+				}
+				released = true
 			}
-			if err := s.setClientEnabledLocked(id, true, &trafficLimitDisable{Period: period}); err != nil {
-				return false, err
+			if err := marker.Clear(); err != nil {
+				return released, fmt.Errorf("%w: %w", ErrTrafficLimitMarkerUnavailable, err)
 			}
-			return true, nil
+			return released, nil
 		}
 	}
 	return false, errors.New("client not found")
@@ -239,7 +379,7 @@ func (s *Service) setClientEnabledLocked(id string, enabled bool, trafficLimit *
 				state.Tunnels[ti].Clients[ci].UpdatedAt = now
 				state.Tunnels[ti].UpdatedAt = now
 				state.UpdatedAt = now
-				if err := s.store.Save(state); err != nil {
+				if err := s.saveLocalDesiredState(&state); err != nil {
 					return err
 				}
 				if err := s.renderTunnelLocked(state.Tunnels[ti].ID, true); err != nil {
@@ -281,8 +421,10 @@ func (s *Service) UpdateClientSettings(id, name, notes string) (config.Client, e
 }
 
 func (s *Service) UpdateClientSettingsWithOptions(id string, update ClientSettingsUpdate) (config.Client, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lockStateMutation(); err != nil {
+		return config.Client{}, err
+	}
+	defer s.unlockStateMutation()
 	name := update.Name
 	name = strings.TrimSpace(name)
 	if !clientNameRE.MatchString(name) {
@@ -312,7 +454,7 @@ func (s *Service) UpdateClientSettingsWithOptions(id string, update ClientSettin
 				state.Tunnels[ti].Clients[ci].UpdatedAt = now
 				state.Tunnels[ti].UpdatedAt = now
 				state.UpdatedAt = now
-				if err := s.store.Save(state); err != nil {
+				if err := s.saveLocalDesiredState(&state); err != nil {
 					return config.Client{}, err
 				}
 				if expirationChanged {
@@ -404,8 +546,10 @@ func (s *Service) ClientImportKey(id string) (string, config.Client, error) {
 }
 
 func (s *Service) EnforceExpiredClients() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lockStateMutation(); err != nil {
+		return err
+	}
+	defer s.unlockStateMutation()
 	state, err := s.initLocked()
 	if err != nil {
 		return err
@@ -433,8 +577,10 @@ func (s *Service) EnforceExpiredClients() error {
 }
 
 func (s *Service) markClientConfigDelivered(id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lockStateMutation(); err != nil {
+		return err
+	}
+	defer s.unlockStateMutation()
 	state, err := s.initLocked()
 	if err != nil {
 		return err

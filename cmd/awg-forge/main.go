@@ -8,18 +8,23 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/astronaut808/awg-forge/internal/app"
 	"github.com/astronaut808/awg-forge/internal/audit"
 	"github.com/astronaut808/awg-forge/internal/backup"
 	"github.com/astronaut808/awg-forge/internal/config"
+	"github.com/astronaut808/awg-forge/internal/controlauth"
 	"github.com/astronaut808/awg-forge/internal/doctor"
 	"github.com/astronaut808/awg-forge/internal/firewall"
 	"github.com/astronaut808/awg-forge/internal/server"
 	"github.com/astronaut808/awg-forge/internal/sqldb"
+	"github.com/astronaut808/awg-forge/internal/storage"
 	"github.com/astronaut808/awg-forge/internal/support"
 	"github.com/astronaut808/awg-forge/internal/updates"
 	"github.com/astronaut808/awg-forge/internal/webtls"
@@ -45,18 +50,7 @@ func run(args []string) error {
 	}
 	switch args[0] {
 	case "serve":
-		tlsRuntime, err := webtls.Load(cfg)
-		if err != nil {
-			return err
-		}
-		svc := app.New(cfg)
-		if _, err := svc.Init(); err != nil {
-			return err
-		}
-		if err := svc.RenderAll(); err != nil {
-			return err
-		}
-		return server.Serve(cfg, svc, tlsRuntime)
+		return runServe(cfg)
 	}
 
 	svc := app.New(cfg)
@@ -85,9 +79,99 @@ func run(args []string) error {
 		return runClient(cfg, svc, args[1:])
 	case "tunnel":
 		return runTunnel(svc, args[1:])
+	case "node":
+		return runNode(cfg, svc, args[1:])
+	case "controller":
+		return runController(cfg, svc, args[1:])
 	default:
 		return usage()
 	}
+}
+
+func runServe(cfg config.Config) (err error) {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	stateLock, err := storage.AcquireStateLock(cfg.ConfigDir)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		err = errors.Join(err, stateLock.Close())
+	}()
+	if err := storage.New(cfg.ConfigDir).CheckRestorePending(); err != nil {
+		return err
+	}
+
+	tlsRuntime, err := webtls.Load(cfg)
+	if err != nil {
+		return err
+	}
+	svc := app.New(cfg)
+	state, err := svc.InitContext(ctx)
+	if err != nil {
+		return err
+	}
+	if err := svc.RenderAllContext(ctx); err != nil {
+		return err
+	}
+	svc.RuntimeLog().Info(ctx, "server", "server.startup.local_ready", "local startup prepared", nil)
+	controllerAuth, controllerDB, err := loadControllerAuthContext(ctx, cfg, state)
+	if err != nil {
+		return err
+	}
+	if controllerDB != nil {
+		defer func() { err = errors.Join(err, controllerDB.Close()) }()
+	}
+	return server.ServeContext(ctx, cfg, svc, tlsRuntime, controllerAuth)
+}
+
+func loadControllerAuth(cfg config.Config, state config.State) (*controlauth.Service, *sqldb.DB, error) {
+	return loadControllerAuthContext(context.Background(), cfg, state)
+}
+
+func loadControllerAuthContext(ctx context.Context, cfg config.Config, state config.State) (*controlauth.Service, *sqldb.DB, error) {
+	if state.EffectiveMode() != config.ModeController {
+		return nil, nil, nil
+	}
+	if cfg.DatabaseMode != sqldb.ModeSQLite {
+		return nil, nil, app.ErrControllerActivationRequiresDB
+	}
+	openCtx, cancel := context.WithTimeout(ctx, cfg.DatabaseQueryTimeout)
+	db, err := sqldb.Open(openCtx, cfg)
+	cancel()
+	if err != nil {
+		return nil, nil, fmt.Errorf("open controller authentication database: %w", err)
+	}
+	// Schema migration is a bounded startup operation, not one database query.
+	migrateCtx, cancel := context.WithTimeout(ctx, sqldb.MigrationTimeout(cfg.DatabaseQueryTimeout))
+	err = db.Migrate(migrateCtx)
+	cancel()
+	if err != nil {
+		_ = db.Close()
+		return nil, nil, fmt.Errorf("migrate controller authentication database: %w", err)
+	}
+	inspectCtx, cancel := context.WithTimeout(ctx, cfg.DatabaseQueryTimeout)
+	initialized, err := db.ControllerAuthInitialized(inspectCtx)
+	cancel()
+	if err != nil {
+		_ = db.Close()
+		return nil, nil, fmt.Errorf("inspect controller authentication: %w", err)
+	}
+	if !initialized {
+		_ = db.Close()
+		return nil, nil, errors.New("controller mode has no initialized administrator")
+	}
+	keys, err := controlauth.LoadKeys(filepath.Join(cfg.ConfigDir, controlauth.KeyFileName))
+	if err != nil {
+		_ = db.Close()
+		return nil, nil, fmt.Errorf("load controller authentication keys: %w", err)
+	}
+	auth, err := controlauth.NewService(db, keys, controlauth.Options{})
+	if err != nil {
+		_ = db.Close()
+		return nil, nil, fmt.Errorf("initialize controller authentication: %w", err)
+	}
+	return auth, db, nil
 }
 
 func runInit(cfg config.Config, svc *app.Service, args []string) error {
@@ -175,20 +259,21 @@ func runClient(cfg config.Config, svc *app.Service, args []string) error {
 		if len(args) != 2 {
 			return errors.New("usage: awg-forge client enable <id>")
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), cfg.DatabaseQueryTimeout)
-		defer cancel()
-		exceeded, found, err := cliTrafficLimitExceededForClient(ctx, cfg, args[1])
+		result, err := svc.EnableClientWithTrafficLimit(context.Background(), args[1])
 		if err != nil {
-			svc.Audit().Log(context.Background(), audit.Event{
-				Level:   "warn",
-				Event:   "client.enabled_state.rejected",
-				Message: "client enabled state request rejected",
-				Fields:  map[string]any{"client_id": args[1], "enabled": true, "reason": "traffic limit check failed"},
-				Error:   audit.Error(err),
-			})
+			if errors.Is(err, app.ErrTrafficLimitCheckUnavailable) {
+				svc.Audit().Log(context.Background(), audit.Event{
+					Level:   "warn",
+					Event:   "client.enabled_state.rejected",
+					Message: "client enabled state request rejected",
+					Fields:  map[string]any{"client_id": args[1], "enabled": true, "reason": "traffic limit check failed"},
+					Error:   audit.Error(err),
+				})
+			}
 			return err
 		}
-		if found {
+		if result.Exceeded != nil {
+			exceeded := result.Exceeded
 			svc.Audit().Log(context.Background(), audit.Event{
 				Level:   "warn",
 				Event:   "client.enabled_state.rejected",
@@ -204,16 +289,13 @@ func runClient(cfg config.Config, svc *app.Service, args []string) error {
 			})
 			return errors.New("traffic limit exceeded; increase or clear the limit before enabling")
 		}
-		if err := svc.SetClientEnabled(args[1], true); err != nil {
-			return err
-		}
-		if err := sqldb.ClearClientTrafficLimitBlock(ctx, cfg, args[1]); err != nil && !errors.Is(err, sqldb.ErrDisabled) && !errors.Is(err, sql.ErrNoRows) {
+		if result.MarkerClearError != nil {
 			svc.Audit().Log(context.Background(), audit.Event{
 				Level:   "warn",
 				Event:   "client.traffic_limit_release_marker.clear_failed",
 				Message: "client traffic limit release marker clear failed",
 				Fields:  map[string]any{"client_id": args[1], "enabled": true},
-				Error:   audit.Error(err),
+				Error:   audit.Error(result.MarkerClearError),
 			})
 		}
 		return nil
@@ -221,9 +303,18 @@ func runClient(cfg config.Config, svc *app.Service, args []string) error {
 		if len(args) != 2 {
 			return errors.New("usage: awg-forge client disable <id>")
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), cfg.DatabaseQueryTimeout)
-		defer cancel()
-		if err := sqldb.ClearClientTrafficLimitBlock(ctx, cfg, args[1]); err != nil && !errors.Is(err, sqldb.ErrDisabled) && !errors.Is(err, sql.ErrNoRows) {
+		if err := svc.DisableClientManually(args[1], func() error {
+			ctx, cancel := context.WithTimeout(context.Background(), cfg.DatabaseQueryTimeout)
+			defer cancel()
+			err := sqldb.ClearClientTrafficLimitBlock(ctx, cfg, args[1])
+			if errors.Is(err, sqldb.ErrDisabled) || errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			return err
+		}); err != nil {
+			if !errors.Is(err, app.ErrTrafficLimitMarkerUnavailable) {
+				return err
+			}
 			svc.Audit().Log(context.Background(), audit.Event{
 				Level:   "warn",
 				Event:   "client.enabled_state.rejected",
@@ -232,9 +323,6 @@ func runClient(cfg config.Config, svc *app.Service, args []string) error {
 				Error:   audit.Error(err),
 			})
 			return fmt.Errorf("traffic limit marker unavailable; retry before disabling: %w", err)
-		}
-		if err := svc.SetClientEnabled(args[1], false); err != nil {
-			return err
 		}
 		return nil
 	case "config":
@@ -252,38 +340,20 @@ func runClient(cfg config.Config, svc *app.Service, args []string) error {
 	}
 }
 
-func cliTrafficLimitExceededForClient(ctx context.Context, cfg config.Config, clientID string) (sqldb.ExceededTrafficLimit, bool, error) {
-	exceeded, err := sqldb.ListExceededTrafficLimits(ctx, cfg, time.Now().UTC())
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, sqldb.ErrDisabled) {
-			return sqldb.ExceededTrafficLimit{}, false, nil
-		}
-		return sqldb.ExceededTrafficLimit{}, false, err
-	}
-	for i := range exceeded {
-		if exceeded[i].ClientID == clientID {
-			return exceeded[i], true, nil
-		}
-	}
-	return sqldb.ExceededTrafficLimit{}, false, nil
-}
-
 func usage() error {
-	return errors.New("usage: awg-forge init|serve|render|doctor|backup|restore|support-bundle|updates|firewall|logs|db|tls|client|tunnel")
+	return errors.New("usage: awg-forge init|serve|render|doctor|backup|restore|support-bundle|updates|firewall|logs|db|tls|client|tunnel|controller|node")
 }
 
 func runDB(cfg config.Config, args []string) error {
 	if len(args) < 1 {
 		return errors.New("usage: awg-forge db status|migrate|retention apply")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), cfg.DatabaseQueryTimeout)
-	defer cancel()
 	switch args[0] {
 	case "status":
 		if len(args) != 1 {
 			return errors.New("usage: awg-forge db status")
 		}
-		status, err := sqldb.Check(ctx, cfg)
+		status, err := sqldb.Check(context.Background(), cfg)
 		if err != nil {
 			return err
 		}
@@ -293,7 +363,7 @@ func runDB(cfg config.Config, args []string) error {
 		if len(args) != 1 {
 			return errors.New("usage: awg-forge db migrate")
 		}
-		status, err := sqldb.Migrate(ctx, cfg)
+		status, err := sqldb.Migrate(context.Background(), cfg)
 		if err != nil {
 			return err
 		}
@@ -303,6 +373,8 @@ func runDB(cfg config.Config, args []string) error {
 		if len(args) != 2 || args[1] != "apply" {
 			return errors.New("usage: awg-forge db retention apply")
 		}
+		ctx, cancel := context.WithTimeout(context.Background(), max(30*time.Second, cfg.DatabaseQueryTimeout))
+		defer cancel()
 		report, err := sqldb.ApplyRetention(ctx, cfg, time.Now().UTC())
 		if err != nil {
 			return err
@@ -435,8 +507,13 @@ func runRestore(cfg config.Config, args []string) error {
 	if len(args) == 2 && args[0] == "verify" {
 		return runRestoreVerify(cfg, args[1])
 	}
-	if len(args) != 1 {
-		return errors.New("usage: BACKUP_PASSWORD=... awg-forge restore <backup.afbackup> | restore verify <backup.afbackup>")
+	flags := flag.NewFlagSet("restore", flag.ContinueOnError)
+	detachManagedNode := flags.Bool("detach-managed-node", false, "restore local configuration without the controller binding")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 1 {
+		return errors.New("usage: BACKUP_PASSWORD=... awg-forge restore [--detach-managed-node] <backup.afbackup> | restore verify <backup.afbackup>")
 	}
 	password := os.Getenv("BACKUP_PASSWORD")
 	if password == "" {
@@ -444,11 +521,20 @@ func runRestore(cfg config.Config, args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := backup.Restore(ctx, cfg, password, args[0]); err != nil {
-		audit.New(cfg).Log(context.Background(), audit.Event{Level: "error", Event: "restore.failed", Message: "encrypted backup restore failed", Fields: map[string]any{"path": args[0]}, Error: audit.Error(err)})
+	path := flags.Arg(0)
+	auditFields := map[string]any{"path": path}
+	if *detachManagedNode {
+		auditFields["detach_managed_node_requested"] = true
+	}
+	result, err := backup.RestoreWithOptions(ctx, cfg, password, path, backup.RestoreOptions{DetachManagedNode: *detachManagedNode})
+	if err != nil {
+		audit.New(cfg).Log(context.Background(), audit.Event{Level: "error", Event: "restore.failed", Message: "encrypted backup restore failed", Fields: auditFields, Error: audit.Error(err)})
 		return err
 	}
-	audit.New(cfg).Log(context.Background(), audit.Event{Level: "info", Event: "restore.completed", Message: "encrypted backup restored", Fields: map[string]any{"path": args[0]}})
+	if result.ManagedNodeDetached {
+		auditFields["managed_node_detached"] = true
+	}
+	audit.New(cfg).Log(context.Background(), audit.Event{Level: "info", Event: "restore.completed", Message: "encrypted backup restored", Fields: auditFields})
 	return nil
 }
 

@@ -3,6 +3,7 @@ package app_test
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"maps"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"github.com/astronaut808/awg-forge/internal/buildinfo"
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/protocol"
+	"github.com/astronaut808/awg-forge/internal/sqldb"
 	"github.com/astronaut808/awg-forge/internal/storage"
 )
 
@@ -96,6 +98,32 @@ func TestFreshInitDefaultsToAWG20(t *testing.T) {
 	}
 	if got := state.Tunnels[0].IPv4Subnet; got != "10.20.0.0/24" {
 		t.Fatalf("subnet = %s, want 10.20.0.0/24", got)
+	}
+}
+
+func TestInitRejectsPendingControllerRestoreBeforeStateRepair(t *testing.T) {
+	cfg := testConfig(t)
+	svc := app.New(cfg)
+	if _, err := svc.Init(); err != nil {
+		t.Fatal(err)
+	}
+	statePath := storage.New(cfg.ConfigDir).StatePath()
+	before, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.New(cfg.ConfigDir).BeginRestorePending("11111111-1111-4111-8111-111111111111"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.New(cfg).Init(); !errors.Is(err, storage.ErrRestorePending) {
+		t.Fatalf("init with pending restore error = %v", err)
+	}
+	after, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("Init changed state while a controller restore was pending")
 	}
 }
 
@@ -1148,7 +1176,9 @@ func TestDisableClientForTrafficLimitDoesNotMarkConfigStale(t *testing.T) {
 	}
 	revision := state.Tunnels[0].ConfigRevision
 
-	disabled, err := svc.DisableClientForTrafficLimit(client.ID, 6000, 5000, "lifetime")
+	disabled, err := svc.DisableClientForTrafficLimit(client.ID, 6000, 5000, "lifetime", app.TrafficLimitMarker{
+		Mark: func() (bool, error) { return true, nil }, Clear: func() error { return nil },
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1167,6 +1197,182 @@ func TestDisableClientForTrafficLimitDoesNotMarkConfigStale(t *testing.T) {
 	}
 	if state.Tunnels[0].Clients[0].ConfigRevision != revision {
 		t.Fatal("traffic limit enforcement should not mark client config stale")
+	}
+}
+
+func TestTrafficLimitMarkerFailureKeepsClientEnabled(t *testing.T) {
+	svc := app.New(testConfig(t))
+	client, err := svc.AddClient("phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	disabled, err := svc.DisableClientForTrafficLimit(client.ID, 6000, 5000, "lifetime", app.TrafficLimitMarker{
+		Mark: func() (bool, error) { return false, context.DeadlineExceeded },
+		Clear: func() error {
+			t.Fatal("marker cleanup must not run after a failed mark")
+			return nil
+		},
+	})
+	if disabled || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("disable result = %v, %v", disabled, err)
+	}
+	state, err := svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.Tunnels[0].Clients[0].Enabled {
+		t.Fatal("client was disabled without a quota marker")
+	}
+}
+
+func TestManualDisableClearsQuotaMarkerAfterAutomaticDisable(t *testing.T) {
+	svc := app.New(testConfig(t))
+	client, err := svc.AddClient("phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	markEntered := make(chan struct{})
+	releaseMark := make(chan struct{})
+	marked := false
+	autoDone := make(chan error, 1)
+	go func() {
+		_, err := svc.DisableClientForTrafficLimit(client.ID, 6000, 5000, "lifetime", app.TrafficLimitMarker{
+			Mark: func() (bool, error) {
+				marked = true
+				close(markEntered)
+				<-releaseMark
+				return true, nil
+			},
+			Clear: func() error { marked = false; return nil },
+		})
+		autoDone <- err
+	}()
+	<-markEntered
+	manualDone := make(chan error, 1)
+	manualClear := make(chan struct{})
+	go func() {
+		manualDone <- svc.DisableClientManually(client.ID, func() error {
+			marked = false
+			close(manualClear)
+			return nil
+		})
+	}()
+	select {
+	case <-manualClear:
+		close(releaseMark)
+		t.Fatal("manual disable cleared the marker before quota disable finished")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(releaseMark)
+	if err := <-autoDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-manualDone; err != nil {
+		t.Fatal(err)
+	}
+	if marked {
+		t.Fatal("manual disable left an automatic quota marker")
+	}
+	state, err := svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Tunnels[0].Clients[0].Enabled {
+		t.Fatal("client should remain manually disabled")
+	}
+}
+
+func TestStaleQuotaReleaseDoesNotUndoManualDisable(t *testing.T) {
+	svc := app.New(testConfig(t))
+	client, err := svc.AddClient("phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	marked := false
+	if _, err := svc.DisableClientForTrafficLimit(client.ID, 6000, 5000, "rolling_30d", app.TrafficLimitMarker{
+		Mark:  func() (bool, error) { marked = true; return true, nil },
+		Clear: func() error { marked = false; return nil },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DisableClientManually(client.ID, func() error { marked = false; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	released, err := svc.EnableClientForTrafficLimitRelease(client.ID, "rolling_30d", app.TrafficLimitReleaseMarker{
+		CanRelease: func() (bool, error) { return marked, nil },
+		Clear: func() error {
+			t.Fatal("stale release must not clear a new or absent marker")
+			return nil
+		},
+	})
+	if err != nil || released {
+		t.Fatalf("stale release = %v, %v", released, err)
+	}
+	state, err := svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Tunnels[0].Clients[0].Enabled {
+		t.Fatal("stale release re-enabled a manually disabled client")
+	}
+}
+
+func TestTrafficLimitUpdateGetsFreshDatabaseDeadlineAfterStateLock(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.DatabaseMode = sqldb.ModeSQLite
+	cfg.DatabasePath = filepath.Join(cfg.ConfigDir, "awg-forge.db")
+	cfg.DatabaseBusyTimeout = time.Second
+	cfg.DatabaseQueryTimeout = 200 * time.Millisecond
+	cfg.DatabaseMaxOpenConns = 1
+	cfg.DatabaseMaxIdleConns = 1
+	if _, err := sqldb.Migrate(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	svc := app.New(cfg)
+	client, err := svc.AddClient("phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockHeld := make(chan struct{})
+	releaseLock := make(chan struct{})
+	createDone := make(chan error, 1)
+	go func() {
+		_, err := svc.AddClientToTunnelWithOptions(client.TunnelID, "laptop", app.ClientCreateOptions{
+			Persist: func(config.Client) error {
+				close(lockHeld)
+				<-releaseLock
+				return nil
+			},
+			RollbackPersist: func(config.Client) error { return nil },
+		})
+		createDone <- err
+	}()
+	<-lockHeld
+	limit := uint64(5000)
+	updateDone := make(chan error, 1)
+	updateStarted := make(chan time.Time, 1)
+	go func() {
+		updateStarted <- time.Now()
+		updateDone <- svc.UpdateClientTrafficLimit(context.Background(), client.TunnelID, client.ID, &limit, sqldb.TrafficLimitPeriodLifetime)
+	}()
+	started := <-updateStarted
+	time.Sleep(400 * time.Millisecond)
+	close(releaseLock)
+	if err := <-createDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-updateDone; err != nil {
+		t.Fatalf("traffic limit update after lock wait: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed <= cfg.DatabaseQueryTimeout {
+		t.Fatalf("state lock wait did not exceed query timeout: %s", elapsed)
+	}
+	limits, err := sqldb.ListClientTrafficLimits(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(limits) != 1 || limits[0].ClientID != client.ID || limits[0].LimitBytes != limit {
+		t.Fatalf("persisted limits = %#v", limits)
 	}
 }
 
@@ -1216,7 +1422,9 @@ func TestTrafficLimitReleaseDoesNotEnableExpiredClient(t *testing.T) {
 	if err := svc.SetClientEnabled(client.ID, false); err != nil {
 		t.Fatal(err)
 	}
-	released, err := svc.EnableClientForTrafficLimitRelease(client.ID, "rolling_30d")
+	released, err := svc.EnableClientForTrafficLimitRelease(client.ID, "rolling_30d", app.TrafficLimitReleaseMarker{
+		CanRelease: func() (bool, error) { return true, nil }, Clear: func() error { return nil },
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1520,6 +1728,20 @@ func TestInitRepairsOutOfRangePersistedProtocolParams(t *testing.T) {
 	}
 	if len(matches) != 1 {
 		t.Fatalf("repair backups = %d, want 1", len(matches))
+	}
+	backupBytes, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var backupState config.State
+	if err := json.Unmarshal(backupBytes, &backupState); err != nil {
+		t.Fatal(err)
+	}
+	if got := backupState.Tunnels[0].ProtocolParams["Jc"]; got != "11" {
+		t.Fatalf("backup Jc = %q, want pre-repair value 11", got)
+	}
+	if got := backupState.Tunnels[0].ProtocolParams["S1"]; got != "142" {
+		t.Fatalf("backup S1 = %q, want pre-repair value 142", got)
 	}
 }
 
