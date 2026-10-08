@@ -9,16 +9,16 @@
     "quality:aislop": "aislop ci"
   },
   "devDependencies": {
-    "@playwright/test": "1.62.1",
+    "@playwright/test": "1.64.0",
     "@preact/preset-vite": "^2.10.2",
-    "@redocly/cli": "2.51.2",
-    "@types/node": "24.13.3",
-    "aislop": "^0.16.1",
+    "@redocly/cli": "2.60.0",
+    "@types/node": "24.19.1",
+    "aislop": "0.18.1",
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
     "preact": "^10.26.9",
     "typescript": "^5.8.3",
-    "vite": "^6.3.5"
+    "vite": "^6.4.4"
   },
   "overrides": {
     "adm-zip": "0.6.1"

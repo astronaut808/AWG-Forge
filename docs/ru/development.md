@@ -2,8 +2,8 @@
 
 ## Требования
 
-- Go `1.26.7`;
-- Node.js `24.x` и npm для сборки Web UI;
+- Go `1.26.9`;
+- Node.js `24.21.0` и npm для сборки Web UI;
 - Deno `2.x` для lint frontend source;
 - `golangci-lint` `2.x` для Go linting;
 - Docker для проверки image/runtime сценариев.
@@ -107,7 +107,7 @@ Aislop CI gate сейчас падает при score ниже `80`. Config ис
 make security
 ```
 
-`make security` запускает `govulncheck` для AWG-Forge и корневого daemon package из точного `AMNEZIAWG_GO_REF`, а также ShellCheck, Hadolint, actionlint, zizmor, Gitleaks, Trivy и полный набор Semgrep registry rules. Команде может понадобиться доступ к сети для pinned upstream source, Go tools, баз сканеров и правил. Zizmor дополняет actionlint и проверяет permissions, опасные triggers, mutable action references, обработку untrusted input и другие security-свойства GitHub Actions.
+`make security` запускает `govulncheck` для AWG-Forge и корневого daemon package из точного `AMNEZIAWG_GO_REF`, а также ShellCheck, Hadolint, actionlint, zizmor, Gitleaks, Trivy и полный набор Semgrep registry rules. Оба security gate также проверяют полный npm lock, включая dev dependencies, и отклоняют findings уровня MODERATE и выше. Команде может понадобиться доступ к сети для pinned upstream source, npm audit, Go tools, баз сканеров и правил. Zizmor дополняет actionlint и проверяет permissions, опасные triggers, mutable action references, обработку untrusted input и другие security-свойства GitHub Actions.
 
 Для более быстрой локальной проверки:
 

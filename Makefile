@@ -5,7 +5,7 @@ GITLEAKS_LOG_OPTS ?= HEAD
 GOVULNCHECK_VERSION ?= v1.1.4
 ACTIONLINT_VERSION ?= v1.7.12
 
-.PHONY: test test-race test-shell vet build lint-go lint-js lint-shell lint-docker lint-actions lint-actions-security quality ui-build ui-check ui-test api-contract ci vuln-check security security-fast docker-smoke updates updates-local updates-docker update-amneziawg-refs docker-build docker-up docker-down
+.PHONY: test test-race test-shell vet build lint-go lint-js lint-shell lint-docker lint-actions lint-actions-security quality ui-build ui-check ui-test api-contract ci vuln-check npm-audit security security-fast docker-smoke updates updates-local updates-docker update-amneziawg-refs docker-build docker-up docker-down
 
 test:
 	go test ./...
@@ -66,14 +66,17 @@ vuln-check:
 	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 	GOVULNCHECK_VERSION=$(GOVULNCHECK_VERSION) bash scripts/check-amneziawg-runtime-vulns.sh
 
+npm-audit:
+	npm audit --package-lock-only --include=dev --include=optional --include=peer --audit-level=moderate
+
 security:
-	$(MAKE) vuln-check lint-shell lint-docker lint-actions lint-actions-security
+	$(MAKE) vuln-check npm-audit lint-shell lint-docker lint-actions lint-actions-security
 	gitleaks git --redact --no-banner --log-opts="$(GITLEAKS_LOG_OPTS)" .
 	trivy fs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 .
 	semgrep --config=auto --disable-version-check --error .
 
 security-fast:
-	$(MAKE) vuln-check lint-shell lint-docker lint-actions lint-actions-security
+	$(MAKE) vuln-check npm-audit lint-shell lint-docker lint-actions lint-actions-security
 	gitleaks git --redact --no-banner --log-opts="$(GITLEAKS_LOG_OPTS)" .
 	trivy fs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --quiet .
 	semgrep --config=p/golang --config=p/typescript --disable-version-check --error .

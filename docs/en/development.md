@@ -2,8 +2,8 @@
 
 ## Requirements
 
-- Go `1.26.7`;
-- Node.js `24.x` and npm for building the Web UI;
+- Go `1.26.9`;
+- Node.js `24.21.0` and npm for building the Web UI;
 - Deno `2.x` for frontend source linting;
 - `golangci-lint` `2.x` for Go linting;
 - Docker for image/runtime testing.
@@ -107,7 +107,7 @@ Run the release security gate before publishing a version:
 make security
 ```
 
-`make security` runs `govulncheck` against AWG-Forge and the root daemon package at the exact `AMNEZIAWG_GO_REF`, plus ShellCheck, Hadolint, actionlint, zizmor, Gitleaks, Trivy, and the full Semgrep registry rules. It may need network access for the pinned upstream source, Go tools, scanner databases, and rules. Zizmor complements actionlint by checking workflow permissions, unsafe triggers, mutable action references, untrusted input handling, and other GitHub Actions security properties.
+`make security` runs `govulncheck` against AWG-Forge and the root daemon package at the exact `AMNEZIAWG_GO_REF`, plus ShellCheck, Hadolint, actionlint, zizmor, Gitleaks, Trivy, and the full Semgrep registry rules. Both security gates also audit the complete npm lock, including development dependencies, and reject MODERATE or higher findings. It may need network access for the pinned upstream source, npm audit, Go tools, scanner databases, and rules. Zizmor complements actionlint by checking workflow permissions, unsafe triggers, mutable action references, untrusted input handling, and other GitHub Actions security properties.
 
 For a faster local check:
 
