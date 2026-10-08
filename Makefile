@@ -67,7 +67,7 @@ vuln-check:
 	GOVULNCHECK_VERSION=$(GOVULNCHECK_VERSION) bash scripts/check-amneziawg-runtime-vulns.sh
 
 npm-audit:
-	npm audit --package-lock-only --include=dev --include=optional --include=peer --audit-level=moderate
+	npm audit --package-lock-only --include=dev --include=optional --include=peer --audit-level=moderate --offline=false
 
 security:
 	$(MAKE) vuln-check npm-audit lint-shell lint-docker lint-actions lint-actions-security

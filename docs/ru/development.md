@@ -25,6 +25,7 @@ make lint-shell
 make lint-docker
 make lint-actions
 make lint-actions-security
+make npm-audit
 make quality
 make ci
 make security
@@ -95,9 +96,11 @@ git diff --check
 - `npm run ui:lint`, проверяющий исходники frontend и браузерные тесты;
 - `npm run quality:aislop`, который запускает `aislop ci` с проектным `.aislop/config.yml`.
 
-Для pull request отдельно запускаются jobs `Security`, `Race` и проверка Docker-образа. Security job выполняет `govulncheck`, Gitleaks, focused Semgrep и Trivy filesystem scans, ShellCheck, Hadolint, actionlint и offline pedantic-аудит zizmor. Docker job запускает собранный образ с отключённым runtime apply, выполняет вход в API, проверяет встроенные AmneziaWG binaries и parser сгенерированного конфига, перезапускает контейнер и убеждается, что конфигурация туннеля осталась доступной и корректно разбирается.
+Для pull request отдельно запускаются jobs `Security`, `Race` и проверка Docker-образа. Security job выполняет `govulncheck`, npm audit, Gitleaks, focused Semgrep и Trivy filesystem scans, ShellCheck, Hadolint, actionlint и offline pedantic-аудит zizmor. Docker job запускает собранный образ с отключённым runtime apply, выполняет вход в API, проверяет встроенные AmneziaWG binaries и parser сгенерированного конфига, перезапускает контейнер и убеждается, что конфигурация туннеля осталась доступной и корректно разбирается.
 
 Aislop CI gate сейчас падает при score ниже `80`. Config исключает воспроизводимые generated Web UI assets и словари локализации, которые дают scanner-only шум. Source warnings стоит оставлять видимыми, если finding не является документированным false positive.
+
+Еженедельные Dependabot version updates для Go modules, GitHub Actions, npm и Docker направляются в `develop`. Dependabot security updates по правилам GitHub по-прежнему направляются в default branch репозитория, `master`, независимо от `target-branch`.
 
 ## Security Checks
 
@@ -108,6 +111,8 @@ make security
 ```
 
 `make security` запускает `govulncheck` для AWG-Forge и корневого daemon package из точного `AMNEZIAWG_GO_REF`, а также ShellCheck, Hadolint, actionlint, zizmor, Gitleaks, Trivy и полный набор Semgrep registry rules. Оба security gate также проверяют полный npm lock, включая dev dependencies, и отклоняют findings уровня MODERATE и выше. Команде может понадобиться доступ к сети для pinned upstream source, npm audit, Go tools, баз сканеров и правил. Zizmor дополняет actionlint и проверяет permissions, опасные triggers, mutable action references, обработку untrusted input и другие security-свойства GitHub Actions.
+
+`make npm-audit` отдельно запускает ту же проверку lockfile. Она явно включает dev, optional и peer dependencies и выполняет online-аудит даже при включённой настройке npm `offline`. Недоступность audit registry приводит к ошибке проверки.
 
 Для более быстрой локальной проверки:
 
