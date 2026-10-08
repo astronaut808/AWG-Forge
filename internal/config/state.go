@@ -3,14 +3,86 @@ package config
 import "time"
 
 type State struct {
-	SchemaVersion     int       `json:"schema_version"`
-	SessionSecret     string    `json:"session_secret"`
-	ServerHost        string    `json:"server_host"`
-	ExternalInterface string    `json:"external_interface"`
-	Warp              Warp      `json:"warp,omitempty"`
-	Tunnels           []Tunnel  `json:"tunnels"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
+	SchemaVersion     int                  `json:"schema_version"`
+	Mode              string               `json:"mode"`
+	SessionSecret     string               `json:"session_secret"`
+	ServerHost        string               `json:"server_host"`
+	ExternalInterface string               `json:"external_interface"`
+	Controller        *ControllerState     `json:"controller,omitempty"`
+	ManagedNode       *ManagedNodeState    `json:"managed_node,omitempty"`
+	NodeConnection    *NodeConnectionState `json:"node_connection,omitempty"`
+	Warp              Warp                 `json:"warp,omitempty"`
+	Tunnels           []Tunnel             `json:"tunnels"`
+	CreatedAt         time.Time            `json:"created_at"`
+	UpdatedAt         time.Time            `json:"updated_at"`
+}
+
+// NodeConnectionState contains only public controller routing metadata. Node
+// credentials are kept in an immutable private generation below CONFIG_DIR.
+type NodeConnectionState struct {
+	ControllerURL        string `json:"controller_url"`
+	CAPin                string `json:"ca_pin"`
+	CredentialGeneration string `json:"credential_generation"`
+}
+
+const (
+	ModeStandalone = "standalone"
+	ModeController = "controller"
+	ModeNode       = "node"
+)
+
+// EffectiveMode preserves compatibility with state written before explicit
+// roles were persisted. Managed metadata was already authoritative for the
+// dormant node role; every other legacy state is standalone.
+func (s State) EffectiveMode() string {
+	if s.Mode != "" {
+		return s.Mode
+	}
+	if s.ManagedNode != nil {
+		return ModeNode
+	}
+	return ModeStandalone
+}
+
+// ControllerState is created only by an explicit, completed controller
+// activation. Authentication secrets remain outside state.json.
+type ControllerState struct {
+	ControllerID string                `json:"controller_id"`
+	ActivatedAt  time.Time             `json:"activated_at"`
+	Control      *ControlIdentityState `json:"control,omitempty"`
+}
+
+// ControlIdentityState is public, disabled preparation metadata. Private keys
+// are stored only in protected generation files under CONFIG_DIR/control.
+type ControlIdentityState struct {
+	Enabled          bool   `json:"enabled"`
+	BindIP           string `json:"bind_ip"`
+	Advertised       string `json:"advertised"`
+	Port             int    `json:"port"`
+	CAGeneration     string `json:"ca_generation"`
+	ServerGeneration string `json:"server_generation"`
+	CAPin            string `json:"ca_pin"`
+}
+
+// ManagedNodeState exists only after explicit controller enrollment.
+// DesiredGeneration is independent from per-tunnel ConfigRevision.
+type ManagedNodeState struct {
+	NodeID             string                `json:"node_id"`
+	ControllerID       string                `json:"controller_id"`
+	StateEpoch         string                `json:"state_epoch"`
+	BindingEpoch       uint64                `json:"binding_epoch"`
+	BootSequence       uint64                `json:"boot_sequence,omitempty"`
+	DesiredGeneration  uint64                `json:"desired_generation"`
+	SuccessfulReceipts []DesiredStateReceipt `json:"successful_receipts,omitempty"`
+}
+
+// DesiredStateReceipt proves that one operation and its desired-state change
+// were committed together. The idempotency key is stored only as a hash.
+type DesiredStateReceipt struct {
+	OperationID        string    `json:"operation_id"`
+	IdempotencyKeyHash string    `json:"idempotency_key_hash"`
+	DesiredGeneration  uint64    `json:"desired_generation"`
+	CompletedAt        time.Time `json:"completed_at"`
 }
 
 type ProtocolParams map[string]string

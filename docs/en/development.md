@@ -2,8 +2,8 @@
 
 ## Requirements
 
-- Go `1.26.7`;
-- Node.js `24.x` and npm for building the Web UI;
+- Go `1.26.9`;
+- Node.js `24.21.0` and npm for building the Web UI;
 - Deno `2.x` for frontend source linting;
 - `golangci-lint` `2.x` for Go linting;
 - Docker for image/runtime testing.
@@ -25,6 +25,7 @@ make lint-shell
 make lint-docker
 make lint-actions
 make lint-actions-security
+make npm-audit
 make quality
 make ci
 make security
@@ -95,9 +96,11 @@ git diff --check
 - `npm run ui:lint`, covering frontend source and browser tests;
 - `npm run quality:aislop`, which runs `aislop ci` with the project `.aislop/config.yml`.
 
-Pull requests also run separate `Security`, `Race`, and Docker image validation jobs. The security job runs `govulncheck`, Gitleaks, focused Semgrep and Trivy filesystem scans, ShellCheck, Hadolint, actionlint, and offline pedantic zizmor analysis. The Docker job starts the built image with runtime apply disabled, authenticates to the API, verifies the bundled AmneziaWG binaries and rendered config parser, restarts the container, and checks that the tunnel configuration remains available and parseable.
+Pull requests also run separate `Security`, `Race`, and Docker image validation jobs. The security job runs `govulncheck`, npm audit, Gitleaks, focused Semgrep and Trivy filesystem scans, ShellCheck, Hadolint, actionlint, and offline pedantic zizmor analysis. The Docker job starts the built image with runtime apply disabled, authenticates to the API, verifies the bundled AmneziaWG binaries and rendered config parser, restarts the container, and checks that the tunnel configuration remains available and parseable.
 
 The Aislop CI gate currently fails below score `80`. The config excludes reproducible generated Web UI assets and locale dictionaries that produce scanner-only noise. Keep source warnings visible unless a finding is a documented false positive.
+
+Weekly Dependabot version updates for Go modules, GitHub Actions, npm, and Docker target `develop`. GitHub's Dependabot security updates still target the repository's default branch, `master`, regardless of `target-branch`.
 
 ## Security Checks
 
@@ -107,7 +110,9 @@ Run the release security gate before publishing a version:
 make security
 ```
 
-`make security` runs `govulncheck` against AWG-Forge and the root daemon package at the exact `AMNEZIAWG_GO_REF`, plus ShellCheck, Hadolint, actionlint, zizmor, Gitleaks, Trivy, and the full Semgrep registry rules. It may need network access for the pinned upstream source, Go tools, scanner databases, and rules. Zizmor complements actionlint by checking workflow permissions, unsafe triggers, mutable action references, untrusted input handling, and other GitHub Actions security properties.
+`make security` runs `govulncheck` against AWG-Forge and the root daemon package at the exact `AMNEZIAWG_GO_REF`, plus ShellCheck, Hadolint, actionlint, zizmor, Gitleaks, Trivy, and the full Semgrep registry rules. Both security gates also audit the complete npm lock, including development dependencies, and reject MODERATE or higher findings. It may need network access for the pinned upstream source, npm audit, Go tools, scanner databases, and rules. Zizmor complements actionlint by checking workflow permissions, unsafe triggers, mutable action references, untrusted input handling, and other GitHub Actions security properties.
+
+`make npm-audit` runs the same lockfile check independently. It explicitly includes development, optional, and peer dependencies and forces an online audit even if npm's `offline` setting is enabled. An unavailable audit registry fails the check.
 
 For a faster local check:
 
@@ -168,3 +173,5 @@ Main areas:
 - `internal/doctor`: diagnostics;
 - `internal/support`: secret-free support bundle generation;
 - `internal/updates`: AmneziaWG upstream update checks.
+
+`internal/protocol` owns the ordered profile registry, profile IDs, display names, versions, editable parameter keys, defaults, validation, and rendering. `internal/server` owns browser-only presentation metadata such as tabs, grouping labels, the experimental marker, and runtime exposure. The frontend consumes profile names and status from `/api/state` and must not maintain its own profile-ID mapping. When adding a profile, register it once in `internal/protocol`, add its server presentation metadata, and extend the registry/catalog completeness tests.

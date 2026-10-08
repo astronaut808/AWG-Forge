@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -27,7 +28,9 @@ import (
 	"github.com/astronaut808/awg-forge/internal/backup"
 	"github.com/astronaut808/awg-forge/internal/buildinfo"
 	"github.com/astronaut808/awg-forge/internal/config"
+	"github.com/astronaut808/awg-forge/internal/controlauth"
 	"github.com/astronaut808/awg-forge/internal/doctor"
+	"github.com/astronaut808/awg-forge/internal/nodeagent"
 	"github.com/astronaut808/awg-forge/internal/sqldb"
 	"github.com/astronaut808/awg-forge/internal/support"
 	"github.com/astronaut808/awg-forge/internal/updates"
@@ -39,14 +42,22 @@ import (
 var staticFiles embed.FS
 
 type web struct {
-	cfg      config.Config
-	service  *app.Service
-	sessions []byte
-	shutdown context.Context
-	tls      webtls.Runtime
-	limits   map[string][]time.Time
-	idem     map[string]*idempotencyEntry
-	mu       sync.Mutex
+	cfg              config.Config
+	service          *app.Service
+	controlEnableMu  sync.Mutex
+	controlReceipt   *app.ControlEnableReceipt
+	controlReceiptID string
+	controllerAuth   *controlauth.Service
+	controllerDB     *sqldb.DB
+	authMu           sync.RWMutex
+	activating       atomic.Bool
+	activationStop   chan struct{}
+	sessions         []byte
+	shutdown         context.Context
+	tls              webtls.Runtime
+	limits           map[string][]time.Time
+	idem             map[string]*idempotencyEntry
+	mu               sync.Mutex
 }
 
 const idempotencyTTL = 10 * time.Minute
@@ -68,20 +79,46 @@ type idempotencyEntry struct {
 	ready       chan struct{}
 }
 
-func Serve(cfg config.Config, service *app.Service, tlsRuntime webtls.Runtime) error {
+func Serve(cfg config.Config, service *app.Service, tlsRuntime webtls.Runtime, controllerAuth *controlauth.Service) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return ServeContext(ctx, cfg, service, tlsRuntime)
+	return ServeContext(ctx, cfg, service, tlsRuntime, controllerAuth)
 }
 
-func ServeContext(ctx context.Context, cfg config.Config, service *app.Service, tlsRuntime webtls.Runtime) error {
-	secret, err := service.SessionSecret()
+func ServeContext(ctx context.Context, cfg config.Config, service *app.Service, tlsRuntime webtls.Runtime, controllerAuth *controlauth.Service) (result error) {
+	secret, err := service.SessionSecretContext(ctx)
 	if err != nil {
 		return err
 	}
-	serverContext, stopServer := context.WithCancel(context.Background())
+	serverContext, stopServer := context.WithCancel(ctx)
 	defer stopServer()
-	w := newWeb(serverContext, cfg, service, secret, tlsRuntime)
+	service.RuntimeLog().Info(ctx, "control", "control.start.checking", "checking committed control listener", nil)
+	if err := service.StartControl(serverContext); err != nil {
+		service.RuntimeLog().Info(context.Background(), "control", "control.start.unavailable", "control listener unavailable; local recovery required", nil)
+	}
+	defer func() { result = errors.Join(result, service.ShutdownControl()) }()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	nodeDone := make(chan struct{})
+	go func() {
+		defer close(nodeDone)
+		if err := nodeagent.Run(serverContext, service, cfg); err != nil && serverContext.Err() == nil {
+			service.RuntimeLog().Info(context.Background(), "node", "node.agent.unavailable", "node connection unavailable; local forwarding continues", nil)
+		}
+	}()
+	defer func() {
+		stopServer()
+		timer := time.NewTimer(15 * time.Second)
+		defer timer.Stop()
+		select {
+		case <-nodeDone:
+		case <-timer.C:
+			result = errors.Join(result, errors.New("node worker shutdown did not finish"))
+		}
+	}()
+	w := newWeb(serverContext, cfg, service, secret, tlsRuntime, controllerAuth)
+	defer w.closeControllerDB()
 	server := newHTTPServer(webUIAddress(cfg.WebUIHost, cfg.WebUIPort), newHandler(w))
 	listener, err := net.Listen("tcp", server.Addr)
 	if err != nil {
@@ -157,8 +194,8 @@ func ServeContext(ctx context.Context, cfg config.Config, service *app.Service, 
 	}
 }
 
-func newWeb(shutdown context.Context, cfg config.Config, service *app.Service, secret string, tlsRuntime webtls.Runtime) *web {
-	return &web{cfg: cfg, service: service, sessions: []byte(secret), shutdown: shutdown, tls: tlsRuntime, limits: map[string][]time.Time{}, idem: map[string]*idempotencyEntry{}}
+func newWeb(shutdown context.Context, cfg config.Config, service *app.Service, secret string, tlsRuntime webtls.Runtime, controllerAuth *controlauth.Service) *web {
+	return &web{cfg: cfg, service: service, controllerAuth: controllerAuth, activationStop: make(chan struct{}), sessions: []byte(secret), shutdown: shutdown, tls: tlsRuntime, limits: map[string][]time.Time{}, idem: map[string]*idempotencyEntry{}}
 }
 
 func newHTTPServer(addr string, handler http.Handler) *http.Server {
@@ -181,6 +218,22 @@ func newHandler(w *web) http.Handler {
 	mux.Handle("/static/", w.securityHandler(http.FileServer(http.FS(staticFiles))))
 	mux.HandleFunc("/", w.security(w.index))
 	mux.HandleFunc("/api/login", w.security(w.loginAPI))
+	mux.HandleFunc("/api/controller/login", w.security(w.loginAPI))
+	mux.HandleFunc("/api/controller/login/recovery", w.security(w.controllerRecoveryLoginAPI))
+	mux.HandleFunc("/api/auth/status", w.security(w.authStatusAPI))
+	mux.HandleFunc("/api/auth/session", w.security(w.requireAuth(w.authSessionAPI)))
+	mux.HandleFunc("/api/controller/setup", w.security(w.requireAuth(w.controllerSetupAPI)))
+	mux.HandleFunc("/api/controller/activate", w.security(w.controllerActivateAPI))
+	mux.HandleFunc("/api/controller/reauth", w.security(w.requireAuth(w.controllerReauthAPI)))
+	mux.HandleFunc("/api/controller/recovery-codes", w.security(w.requireAuth(w.controllerRecoveryCodesAPI)))
+	mux.HandleFunc("/api/controller/control/status", w.security(w.requireAuth(w.controlStatusAPI)))
+	mux.HandleFunc("/api/controller/control/prepare", w.security(w.requireAuth(w.controlPrepareAPI)))
+	mux.HandleFunc("/api/controller/control/backup", w.security(w.requireAuth(w.controlBackupAPI)))
+	mux.HandleFunc("/api/controller/control/enable", w.security(w.requireAuth(w.controlEnableAPI)))
+	mux.HandleFunc("/api/controller/control/disable", w.security(w.requireAuth(w.controlDisableAPI)))
+	mux.HandleFunc("/api/controller/enrollments/invite", w.security(w.requireAuth(w.enrollmentInvitationAPI)))
+	mux.HandleFunc("/api/controller/enrollments/review", w.security(w.requireAuth(w.enrollmentReviewAPI)))
+	mux.HandleFunc("/api/controller/enrollments/decide", w.security(w.requireAuth(w.enrollmentDecideAPI)))
 	mux.HandleFunc("/api/logout", w.security(w.requireAuth(w.logoutAPI)))
 	mux.HandleFunc("/api/state", w.security(w.requireAuth(w.stateAPI)))
 	mux.HandleFunc("/api/events", w.security(w.requireAuth(w.eventsAPI)))
@@ -233,8 +286,6 @@ func collectTrafficHistory(ctx context.Context, cfg config.Config, service *app.
 }
 
 func collectTrafficHistoryOnce(cfg config.Config, service *app.Service) {
-	ctx, cancel := context.WithTimeout(context.Background(), cfg.DatabaseQueryTimeout)
-	defer cancel()
 	state, err := service.State()
 	if err != nil {
 		return
@@ -259,15 +310,20 @@ func collectTrafficHistoryOnce(cfg config.Config, service *app.Service) {
 			})
 		}
 	}
-	if err := sqldb.RecordTrafficSamples(ctx, cfg, samples); err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, sqldb.ErrDisabled) {
+	recordCtx, cancel := context.WithTimeout(context.Background(), cfg.DatabaseQueryTimeout)
+	err = sqldb.RecordTrafficSamples(recordCtx, cfg, samples)
+	cancel()
+	if err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, sqldb.ErrDisabled) {
 		logBackgroundWarning(service, "traffic_history.record_failed", "traffic history sample write failed", nil, err)
 		return
 	}
-	enforceTrafficLimits(ctx, cfg, service)
+	enforceTrafficLimits(context.Background(), cfg, service)
 }
 
 func enforceTrafficLimits(ctx context.Context, cfg config.Config, service *app.Service) {
-	exceeded, err := sqldb.ListExceededTrafficLimits(ctx, cfg, time.Now().UTC())
+	checkCtx, cancel := context.WithTimeout(ctx, cfg.DatabaseQueryTimeout)
+	exceeded, err := sqldb.ListExceededTrafficLimits(checkCtx, cfg, time.Now().UTC())
+	cancel()
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, sqldb.ErrDisabled) {
 			return
@@ -276,9 +332,24 @@ func enforceTrafficLimits(ctx context.Context, cfg config.Config, service *app.S
 		return
 	}
 	for _, item := range exceeded {
-		disabled, err := service.DisableClientForTrafficLimit(item.ClientID, item.TotalBytes, item.LimitBytes, string(item.Period))
+		_, err := service.DisableClientForTrafficLimit(item.ClientID, item.TotalBytes, item.LimitBytes, string(item.Period), app.TrafficLimitMarker{
+			Mark: func() (bool, error) {
+				markCtx, cancel := context.WithTimeout(ctx, cfg.DatabaseQueryTimeout)
+				defer cancel()
+				return sqldb.MarkExceededClientTrafficLimitBlocked(markCtx, cfg, item.TunnelID, item.ClientID, time.Now().UTC())
+			},
+			Clear: func() error {
+				clearCtx, cancel := context.WithTimeout(context.Background(), cfg.DatabaseQueryTimeout)
+				defer cancel()
+				return sqldb.ClearClientTrafficLimitBlock(clearCtx, cfg, item.ClientID)
+			},
+		})
 		if err != nil {
-			logBackgroundWarning(service, "traffic_limit.enforce_failed", "traffic limit enforcement failed", map[string]any{
+			event, message := "traffic_limit.enforce_failed", "traffic limit enforcement failed"
+			if errors.Is(err, app.ErrTrafficLimitMarkerUnavailable) {
+				event, message = "traffic_limit.block_mark_failed", "traffic limit block marker write failed"
+			}
+			logBackgroundWarning(service, event, message, map[string]any{
 				"tunnel_id":            item.TunnelID,
 				"client_id":            item.ClientID,
 				"traffic_total_bytes":  item.TotalBytes,
@@ -287,39 +358,36 @@ func enforceTrafficLimits(ctx context.Context, cfg config.Config, service *app.S
 			}, err)
 			continue
 		}
-		if !disabled {
-			continue
-		}
-		if err := sqldb.MarkClientTrafficLimitBlocked(ctx, cfg, item.TunnelID, item.ClientID, time.Now().UTC()); err != nil {
-			logBackgroundWarning(service, "traffic_limit.block_mark_failed", "traffic limit block marker write failed", map[string]any{
-				"tunnel_id": item.TunnelID,
-				"client_id": item.ClientID,
-			}, err)
-		}
 	}
 
-	blocks, err := sqldb.ListTrafficLimitBlocks(ctx, cfg)
+	blocksCtx, cancel := context.WithTimeout(ctx, cfg.DatabaseQueryTimeout)
+	blocks, err := sqldb.ListTrafficLimitBlocks(blocksCtx, cfg)
+	cancel()
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, sqldb.ErrDisabled) {
 			logBackgroundWarning(service, "traffic_limit.release_check_failed", "traffic limit release check failed", nil, err)
 		}
 		return
 	}
-	exceededByClient := make(map[string]struct{}, len(exceeded))
-	for _, item := range exceeded {
-		exceededByClient[item.TunnelID+"\x00"+item.ClientID] = struct{}{}
-	}
 	for _, block := range blocks {
-		if _, stillExceeded := exceededByClient[block.TunnelID+"\x00"+block.ClientID]; stillExceeded {
-			continue
-		}
-		_, err := service.EnableClientForTrafficLimitRelease(block.ClientID, string(block.Period))
+		_, err := service.EnableClientForTrafficLimitRelease(block.ClientID, string(block.Period), app.TrafficLimitReleaseMarker{
+			CanRelease: func() (bool, error) {
+				checkCtx, cancel := context.WithTimeout(ctx, cfg.DatabaseQueryTimeout)
+				defer cancel()
+				return sqldb.CanReleaseClientTrafficLimitBlock(checkCtx, cfg, block.TunnelID, block.ClientID, time.Now().UTC())
+			},
+			Clear: func() error {
+				clearCtx, cancel := context.WithTimeout(ctx, cfg.DatabaseQueryTimeout)
+				defer cancel()
+				return sqldb.ClearClientTrafficLimitBlock(clearCtx, cfg, block.ClientID)
+			},
+		})
 		if err != nil {
-			logBackgroundWarning(service, "traffic_limit.release_failed", "traffic limit client release failed", map[string]any{"tunnel_id": block.TunnelID, "client_id": block.ClientID}, err)
-			continue
-		}
-		if err := sqldb.ClearClientTrafficLimitBlock(ctx, cfg, block.ClientID); err != nil {
-			logBackgroundWarning(service, "traffic_limit.release_mark_clear_failed", "traffic limit release marker clear failed", map[string]any{"tunnel_id": block.TunnelID, "client_id": block.ClientID}, err)
+			event, message := "traffic_limit.release_failed", "traffic limit client release failed"
+			if errors.Is(err, app.ErrTrafficLimitMarkerUnavailable) {
+				event, message = "traffic_limit.release_mark_clear_failed", "traffic limit release marker unavailable"
+			}
+			logBackgroundWarning(service, event, message, map[string]any{"tunnel_id": block.TunnelID, "client_id": block.ClientID}, err)
 		}
 	}
 }
@@ -344,8 +412,19 @@ func (w *web) index(rw http.ResponseWriter, r *http.Request) {
 }
 
 func (w *web) loginAPI(rw http.ResponseWriter, r *http.Request) {
+	w.authMu.RLock()
+	defer w.authMu.RUnlock()
+	noStore(rw)
 	if r.Method != http.MethodPost || !w.validOrigin(r) {
 		writeError(rw, http.StatusForbidden, "forbidden")
+		return
+	}
+	if w.controllerAuth != nil {
+		w.controllerLoginAPI(rw, r)
+		return
+	}
+	if w.activating.Load() {
+		writeOperationError(rw, http.StatusServiceUnavailable, "auth_transition", "authentication is changing")
 		return
 	}
 	var req loginRequest
@@ -376,9 +455,19 @@ func (w *web) loginAPI(rw http.ResponseWriter, r *http.Request) {
 }
 
 func (w *web) logoutAPI(rw http.ResponseWriter, r *http.Request) {
+	noStore(rw)
 	if r.Method != http.MethodPost || !w.validOrigin(r) {
 		writeError(rw, http.StatusForbidden, "forbidden")
 		return
+	}
+	if w.controllerAuth != nil {
+		cookie, err := r.Cookie("awg_forge_session")
+		if err == nil {
+			if err := w.controllerAuth.RevokeSession(r.Context(), cookie.Value, time.Now().UTC()); err != nil {
+				writeOperationError(rw, http.StatusInternalServerError, "logout_failed", "logout failed")
+				return
+			}
+		}
 	}
 	http.SetCookie(rw, sessionCookie(r, "", -1, w.sessionCookieSecure(r)))
 	w.audit("info", "logout", "logout", nil, nil)
@@ -408,8 +497,7 @@ func (w *web) eventsAPI(rw http.ResponseWriter, r *http.Request) {
 		writeError(rw, http.StatusInternalServerError, "streaming unsupported")
 		return
 	}
-	// SSE is long-lived; retain the server-wide write timeout for ordinary responses.
-	_ = http.NewResponseController(rw).SetWriteDeadline(time.Time{})
+	// Bound each write so a stalled event client cannot hold the activation barrier forever.
 
 	noStore(rw)
 	rw.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
@@ -417,6 +505,7 @@ func (w *web) eventsAPI(rw http.ResponseWriter, r *http.Request) {
 	rw.Header().Set("X-Accel-Buffering", "no")
 
 	writeStateEvent := func() bool {
+		_ = http.NewResponseController(rw).SetWriteDeadline(time.Now().Add(webWriteTimeout))
 		state, err := w.service.State()
 		if err != nil {
 			writeServerSentEvent(rw, "error", []byte(`{"error":"state unavailable"}`))
@@ -444,11 +533,14 @@ func (w *web) eventsAPI(rw http.ResponseWriter, r *http.Request) {
 	if w.shutdown != nil {
 		shutdown = w.shutdown.Done()
 	}
+	activationStop := w.activationStop
 	for {
 		select {
 		case <-r.Context().Done():
 			return
 		case <-shutdown:
+			return
+		case <-activationStop:
 			return
 		case <-ticker.C:
 			if !writeStateEvent() {
@@ -1042,13 +1134,11 @@ func (w *web) updateClientTrafficLimitAPI(rw http.ResponseWriter, r *http.Reques
 		if !ok {
 			return http.StatusNotFound, errorPayload("client not found")
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), w.cfg.DatabaseQueryTimeout)
-		defer cancel()
-		if err := sqldb.SetClientTrafficLimitWithPeriod(ctx, w.cfg, tunnel.ID, client.ID, limitBytes, limitPeriod); err != nil {
+		if err := w.service.UpdateClientTrafficLimit(r.Context(), tunnel.ID, client.ID, limitBytes, limitPeriod); err != nil {
 			w.audit("warn", "client.traffic_limit.rejected", "client traffic limit request rejected", map[string]any{"client_id": id}, err)
 			return mutationErrorStatus(err, http.StatusBadRequest), operationErrorPayload("traffic_limit_update_failed", "failed to update client traffic limit")
 		}
-		enforceTrafficLimits(ctx, w.cfg, w.service)
+		enforceTrafficLimits(r.Context(), w.cfg, w.service)
 		w.audit("info", "client.traffic_limit.updated", "client traffic limit updated", map[string]any{"client_id": id, "limit_set": limitBytes != nil, "traffic_limit_period": limitPeriod}, nil)
 		return http.StatusOK, map[string]any{"ok": true}
 	})
@@ -1064,23 +1154,20 @@ func (w *web) setClientEnabledAPI(rw http.ResponseWriter, r *http.Request, id st
 		action = "enable-client:"
 	}
 	w.withIdempotency(rw, r, action+id, func() (int, any) {
-		if !enabled {
-			ctx, cancel := context.WithTimeout(r.Context(), w.cfg.DatabaseQueryTimeout)
-			defer cancel()
-			if err := sqldb.ClearClientTrafficLimitBlock(ctx, w.cfg, id); err != nil && !errors.Is(err, sqldb.ErrDisabled) && !errors.Is(err, sql.ErrNoRows) {
-				w.audit("warn", "client.enabled_state.rejected", "client enabled state request rejected", map[string]any{"client_id": id, "enabled": false, "reason": "traffic limit marker clear failed"}, err)
-				return http.StatusServiceUnavailable, errorPayload("traffic limit marker unavailable; retry before disabling")
-			}
-		}
 		if enabled {
-			ctx, cancel := context.WithTimeout(r.Context(), w.cfg.DatabaseQueryTimeout)
-			defer cancel()
-			exceeded, found, err := trafficLimitExceededForClient(ctx, w.cfg, id)
+			result, err := w.service.EnableClientWithTrafficLimit(r.Context(), id)
 			if err != nil {
-				w.audit("warn", "client.enabled_state.rejected", "client enabled state request rejected", map[string]any{"client_id": id, "enabled": enabled, "reason": "traffic limit check failed"}, err)
-				return mutationErrorStatus(err, http.StatusBadRequest), operationErrorPayload("client_state_update_failed", "failed to update client state")
+				fields := map[string]any{"client_id": id, "enabled": true}
+				fallback := http.StatusNotFound
+				if errors.Is(err, app.ErrTrafficLimitCheckUnavailable) {
+					fields["reason"] = "traffic limit check failed"
+					fallback = http.StatusBadRequest
+				}
+				w.audit("warn", "client.enabled_state.rejected", "client enabled state request rejected", fields, err)
+				return mutationErrorStatus(err, fallback), operationErrorPayload("client_state_update_failed", "failed to update client state")
 			}
-			if found {
+			if result.Exceeded != nil {
+				exceeded := result.Exceeded
 				w.audit("warn", "client.enabled_state.rejected", "client enabled state request rejected", map[string]any{
 					"client_id":            id,
 					"enabled":              enabled,
@@ -1091,37 +1178,31 @@ func (w *web) setClientEnabledAPI(rw http.ResponseWriter, r *http.Request, id st
 				}, nil)
 				return http.StatusConflict, operationErrorPayload("traffic_limit_exceeded", "traffic limit exceeded; increase or clear the limit before enabling")
 			}
-		}
-		if err := w.service.SetClientEnabled(id, enabled); err != nil {
-			w.audit("warn", "client.enabled_state.rejected", "client enabled state request rejected", map[string]any{"client_id": id, "enabled": enabled}, err)
-			return mutationErrorStatus(err, http.StatusNotFound), operationErrorPayload("client_state_update_failed", "failed to update client state")
-		}
-		if enabled {
-			ctx, cancel := context.WithTimeout(r.Context(), w.cfg.DatabaseQueryTimeout)
-			defer cancel()
-			if err := sqldb.ClearClientTrafficLimitBlock(ctx, w.cfg, id); err != nil && !errors.Is(err, sqldb.ErrDisabled) && !errors.Is(err, sql.ErrNoRows) {
-				w.audit("warn", "client.traffic_limit_release_marker.clear_failed", "client traffic limit release marker clear failed", map[string]any{"client_id": id, "enabled": true}, err)
+			if result.MarkerClearError != nil {
+				w.audit("warn", "client.traffic_limit_release_marker.clear_failed", "client traffic limit release marker clear failed", map[string]any{"client_id": id, "enabled": true}, result.MarkerClearError)
 			}
-			enforceTrafficLimits(ctx, w.cfg, w.service)
+			enforceTrafficLimits(r.Context(), w.cfg, w.service)
+			return http.StatusOK, map[string]any{"ok": true}
+		}
+		changeErr := w.service.DisableClientManually(id, func() error {
+			clearCtx, cancel := context.WithTimeout(r.Context(), w.cfg.DatabaseQueryTimeout)
+			defer cancel()
+			err := sqldb.ClearClientTrafficLimitBlock(clearCtx, w.cfg, id)
+			if errors.Is(err, sqldb.ErrDisabled) || errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			return err
+		})
+		if changeErr != nil {
+			if errors.Is(changeErr, app.ErrTrafficLimitMarkerUnavailable) {
+				w.audit("warn", "client.enabled_state.rejected", "client enabled state request rejected", map[string]any{"client_id": id, "enabled": false, "reason": "traffic limit marker clear failed"}, changeErr)
+				return http.StatusServiceUnavailable, errorPayload("traffic limit marker unavailable; retry before disabling")
+			}
+			w.audit("warn", "client.enabled_state.rejected", "client enabled state request rejected", map[string]any{"client_id": id, "enabled": false}, changeErr)
+			return mutationErrorStatus(changeErr, http.StatusNotFound), operationErrorPayload("client_state_update_failed", "failed to update client state")
 		}
 		return http.StatusOK, map[string]any{"ok": true}
 	})
-}
-
-func trafficLimitExceededForClient(ctx context.Context, cfg config.Config, clientID string) (sqldb.ExceededTrafficLimit, bool, error) {
-	exceeded, err := sqldb.ListExceededTrafficLimits(ctx, cfg, time.Now().UTC())
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, sqldb.ErrDisabled) {
-			return sqldb.ExceededTrafficLimit{}, false, nil
-		}
-		return sqldb.ExceededTrafficLimit{}, false, err
-	}
-	for i := range exceeded {
-		if exceeded[i].ClientID == clientID {
-			return exceeded[i], true, nil
-		}
-	}
-	return sqldb.ExceededTrafficLimit{}, false, nil
 }
 
 func (w *web) deleteClientAPI(rw http.ResponseWriter, r *http.Request, id string) {
@@ -1319,14 +1400,6 @@ func (w *web) publicState(ctx context.Context, state config.State) map[string]an
 		status, _ := w.service.TunnelStatusByID(tunnel.ID)
 		tunnels = append(tunnels, publicTunnelWithFirewall(tunnel, status, firewallSummaryForTunnel(tunnel, firewallReport, firewallErr), runtime[tunnel.ID], traffic[tunnel.ID]))
 	}
-	profiles := []map[string]any{
-		profileMeta("awg_legacy_1_0", "1.0", "Legacy", true, state),
-		profileMeta("awg_1_5", "1.5", "Modern", true, state),
-		profileMeta("awg_2_0", "2.0", "Modern", true, state),
-	}
-	if buildinfo.AWG3RuntimeEnabled() {
-		profiles = append(profiles, profileMeta("awg_3", "3.x", "Experimental", true, state))
-	}
 	return map[string]any{
 		"authenticated":       true,
 		"apply_enabled":       w.cfg.ApplyConfig,
@@ -1336,7 +1409,7 @@ func (w *web) publicState(ctx context.Context, state config.State) map[string]an
 		"tls":                 publicTLS(w.tls.ReadStatus(), w.cfg),
 		"build":               buildinfo.Current(),
 		"published_udp_ports": w.cfg.PublishedUDPPorts,
-		"profiles":            profiles,
+		"profiles":            publicProfiles(state),
 		"tunnels":             tunnels,
 	}
 }

@@ -40,6 +40,23 @@
 - `Traffic`: общая история трафика, когда включен SQLite.
 - `Audit log`: последние безопасные события аудита. Панель автообновляется, пока открыта вкладка `Audit log`, и показывает новые события сверху.
 - `Support`: скачать support bundle без секретов и посмотреть безопасную сводку runtime, БД, TLS и версии.
+- `Controller`: при включённом SQLite создать администратора, сканировать QR для MFA, подтвердить код TOTP и сохранить коды восстановления перед завершением. В режиме контроллера здесь можно повторно подтвердить личность и заменить коды.
+
+После активации вход требует имя администратора, пароль и TOTP. На странице входа
+есть отдельный вариант с кодом восстановления; каждый код действует один раз.
+Новые коды после замены нужно сохранить сразу: повторно получить их нельзя.
+
+Для локального восстановления администратора сначала остановите `awg-forge
+serve`. Под Linux root подготовьте обычный JSON-файл с полями `username` и
+`password`, владельцем root и правами `0600`, затем выполните:
+
+```bash
+awg-forge controller recover-admin --input-file /etc/awg-forge/recovery-input.json
+```
+
+Команда один раз покажет новый секрет TOTP и коды восстановления и отзовёт все
+браузерные сессии. После использования удалите входной файл. Отсутствие SQLite
+или `controller-auth.keys` считается ошибкой; не создавайте замену вручную.
 
 ## Устаревшие конфиги
 
@@ -88,16 +105,29 @@ Doctor может предупреждать о клиентах, у котор�
 
 ## CLI в Docker
 
-После restore перезапусти контейнер, чтобы загрузить все восстановленные настройки, включая TLS и состояние базы данных. При `APPLY_CONFIG=true` запуск применяет включенные туннели и согласует runtime WARP. Перезапуска только туннеля недостаточно. Перед остальными проверками дождись запуска сервиса.
+Restore должен выполняться при остановленном основном контейнере. Одноразовый
+restore-контейнер использует тот же data volume, а последующий запуск сервиса
+загружает восстановленный desired state и TLS assets. Backup standalone и
+managed-ноды не включает SQLite operational history. Backup контроллера
+включает снимок БД аутентификации и файл ключей. Если подготовлена
+control identity, в backup также входят приватные ключи и сертификаты именно
+её поколений CA и сервера. Restore отзывает все архивные сертификаты и
+привязки нод; восстановление администратора не возвращает доступ нодам.
+Restore всегда выключает control listener, даже если в архиве identity включена.
+Перед запуском смотри [восстановление контроллера](diagnostics.md).
+При `APPLY_CONFIG=true` запуск применяет
+включенные туннели и согласует runtime WARP. Перед остальными проверками дождись
+запуска сервиса.
 
 ```bash
 docker exec awg-forge awg-forge doctor
 docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge backup /tmp/awg-forge.afbackup
 docker cp awg-forge:/tmp/awg-forge.afbackup ./awg-forge-backup-YYYYMMDD-HHMMSS.afbackup
-docker cp ./<backup-file>.afbackup awg-forge:/tmp/backup.afbackup
-docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore verify /tmp/backup.afbackup
-docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore /tmp/backup.afbackup
-docker restart awg-forge
+cp ./<backup-file>.afbackup ./data/backup.afbackup
+docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore verify /etc/awg-forge/backup.afbackup
+docker compose stop awg-forge
+docker compose run --rm -e BACKUP_PASSWORD='long-random-backup-password' awg-forge restore /etc/awg-forge/backup.afbackup
+docker compose up -d awg-forge
 docker exec awg-forge awg-forge firewall repair
 docker exec awg-forge awg-forge firewall check
 docker exec awg-forge awg-forge support-bundle
@@ -115,6 +145,9 @@ docker exec awg-forge awg-forge tunnel create awg_1_5 awg15 51825 10.15.0.0/24
 
 ## Локальный CLI
 
+Перед локальным restore останови процесс `awg-forge serve`, использующий тот же
+config directory. Блокировка state directory отклонит online restore.
+
 ```bash
 awg-forge init --server-host vpn.example.com --external-interface eth0 --profile awg_2_0 --tunnel-name awg20 --listen-port 51830 --ipv4-subnet 10.20.0.0/24
 awg-forge serve
@@ -130,7 +163,86 @@ awg-forge updates
 awg-forge logs
 ```
 
-После локального restore перезапусти работающий процесс awg-forge, чтобы загрузить восстановленные настройки.
+Правила restore для managed-ноды и явный recovery-флаг
+`--detach-managed-node` описаны в разделе [Диагностика](diagnostics.md#encrypted-backup--restore).
+Для контроллера там же описаны дополнительные требования к identity, размещению
+архива и офлайн-восстановлению администратора.
+
+## Явное включение control listener и подключение ноды
+
+Этот checkpoint поддерживает enrollment и mTLS presence на явно включённом
+control endpoint. Используй браузерную сессию контроллера и недавнее
+MFA-подтверждение для внутренних маршрутов из [контракта browser API](../../api/openapi.json):
+
+1. `POST /api/controller/control/prepare`: конкретный буквальный `bind_ip`,
+   IP или DNS-имя `advertised` для SAN TLS-сертификата и отдельный `port`, отличный
+   от порта Web UI и TCP/80. Wildcard, multicast, scoped и IPv4-mapped bind
+   отклоняются. Подготовка оставляет listener выключенным.
+2. `POST /api/controller/control/backup` с паролем архива `password`. Сохрани
+   зашифрованный ответ вне каталога конфигурации и заголовок
+   `X-Control-Enable-Receipt`. Подтверждение истекает вместе с recent-auth и
+   становится недействительным после перезапуска или подготовки другого backup.
+3. После сохранения архива вызови `POST /api/controller/control/enable` с
+   `receipt` и `backup_saved: true`. Если хотя бы одно значение endpoint не является
+   буквальным loopback-адресом, также передай `allow_non_loopback: true`. Отсутствие
+   поля или `false` отклоняет включение и расходует совпавший receipt; для повтора
+   подготовь новый backup. Согласие относится только к точному подготовленному
+   endpoint. Публичные метаданные доступны через
+   `GET /api/controller/control/status`; отключение —
+   `POST /api/controller/control/disable` после недавней аутентификации.
+4. `POST /api/controller/enrollments/invite` с `{}` возвращает JSON-файл.
+   Сохрани его как обычный файл текущего пользователя с правами `0600`. Он
+   содержит одноразовый секрет и публичный CA, действует десять минут; секрет
+   нельзя помещать в логи, аргументы команд или переменные окружения.
+5. На ноде, с отдельным `CONFIG_DIR`, выполни:
+
+   ```bash
+   awg-forge node enroll --input-file ./node-invitation.json --name node
+   ```
+
+6. Для проверки вызови `POST /api/controller/enrollments/review` с
+   `invitation_id`. Сверь `verification_code` с кодом, показанным нодой.
+   Подтверди или отклони через `POST /api/controller/enrollments/decide` с
+   `enrollment_id`, совпадающим `verification_code` и `approve`. Затем запусти
+   или перезапусти `awg-forge serve` на ноде для отправки mTLS presence.
+
+Используй доступный ноде advertised-адрес с проверяемым SAN сертификата;
+DNS/NAT и firewall настраивает оператор. Listener привязывается только к заданному
+локальному IP; занятый или недоступный socket отклоняет включение. Browser UI
+может остаться на loopback HTTP. Control listener обслуживает только TLS 1.3,
+игнорирует forwarded identity headers и предоставляет существующие маршруты
+enrollment, presence и продления сертификата. На любом интерфейсе сохраняются
+mTLS-проверки registry и ограничения ресурсов. `serve` перезапускает ранее явно
+включённый точный endpoint; install/upgrade и подготовка автоматически его не
+включают. После disable или restore нужны новый проверенный backup и явное
+согласие для повторного включения.
+
+Нода проверяет pin CA и обычный TLS-сертификат до передачи секрета. Закрытый
+ключ остаётся на ноде. Приглашение принимает ровно один CSR: его точный повтор
+безопасен, конкурирующий CSR отклоняется. Существующая конфигурация и ревизии
+туннелей сохраняются; у новой ноды нет стартового туннеля. Потеря связи с
+контроллером сохраняет локальный forwarding. Отзыв останавливает соединение
+ноды и требует явного локального восстановления.
+
+Во время работы `serve` нода автоматически продлевает сертификат после двух
+третей его срока действия. Новый закрытый ключ и точный CSR сохраняются до
+запроса: после перезапуска или потери ответа повторяется тот же запрос.
+Контроллер принимает старый сертификат не более 24 часов после продления;
+отзыв немедленно прекращает этот период. Смена credentials сохраняет локальные
+туннели, ревизии конфигурации и текущую boot identity. Просроченный или отозванный
+сертификат требует локального восстановления; локальный сервис остаётся доступным.
+Контроллер также автоматически продлевает серверный сертификат под прежней CA;
+условия запуска и поведение при истечении срока описаны в [Безопасности](security.md).
+
+Холодный restore контроллера отключает listener и администратора, отзывает все
+восстановленные сертификаты/binding нод и удаляет приглашения, claim credentials
+и presence-сессии. Backup ноды включает защищённое поколение credentials;
+при незавершённом продлении backup блокируется. Restore по-прежнему проверяет
+identity или требует явного detach. Detach
+удаляет полномочия контроллера. [Офлайн-восстановление](security.md#локальное-восстановление-node)
+от Linux root поддерживает detach и новый enrollment с новой identity.
+Интеграция installer, смена endpoint, fleet UI и remote operations остаются
+отдельной работой.
 
 ## Импорт конфига клиента
 
