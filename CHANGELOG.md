@@ -14,6 +14,10 @@
 - Label the private data volume for new installations on SELinux hosts without disabling SELinux or relabeling host system paths.
 - Stop installation before creating project files when TUN remains unavailable after attempting to load its kernel module, and reject a broken legacy Compose executable.
 
+### Security
+
+- Refresh the base image's existing `perl-base` package from Debian repositories to include available security fixes and pass the release image scan.
+
 ## v0.19.0 - 2026-09-05
 
 ### Added

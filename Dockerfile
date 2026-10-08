@@ -41,7 +41,7 @@ FROM debian:bookworm-slim
 ARG AWG_FORGE_VERSION=dev
 ARG AWG_FORGE_COMMIT=unknown
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash ca-certificates dumb-init iproute2 iptables nftables procps openresolv \
+    bash ca-certificates dumb-init iproute2 iptables nftables procps openresolv perl-base \
   && rm -rf /var/lib/apt/lists/*
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
