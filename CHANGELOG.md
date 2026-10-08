@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## v0.19.1 - 2026-10-09
+
+### Added
+
+- Prepare missing Docker Engine, Docker Compose plugin and Linux host tools interactively on Ubuntu 22.04/24.04/26.04, Debian 12/13, CentOS Stream 9/10 and RHEL 8/9/10, using signed Docker package repositories when needed.
+- Cover dependency installation, existing Docker reuse, Compose-only setup, package conflicts, rejected preparation and failed package/service operations with isolated installer tests.
+
+### Fixed
+
+- Label the private data volume for new installations on SELinux hosts without disabling SELinux or relabeling host system paths.
+- Stop installation before creating project files when TUN remains unavailable after attempting to load its kernel module, and reject a broken legacy Compose executable.
+
+### Security
+
+- Refresh the base image's existing `perl-base` package from Debian repositories to include available security fixes and pass the release image scan.
+
 ## v0.19.0 - 2026-09-05
 
 ### Added

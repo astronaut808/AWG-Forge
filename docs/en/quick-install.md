@@ -2,7 +2,11 @@
 
 `install.sh` is an interactive installer for a fresh Linux/VPS server. It creates runtime `.env`, prepares `data/`, initializes the first tunnel into `state.json`, starts Docker Compose, and prints the next steps.
 
-Install [Docker Engine from the official documentation](https://docs.docker.com/engine/install/) first. If Docker or Docker Compose is unavailable, the installer exits before creating `/opt/awg-forge` or any project files.
+The installer offers to prepare missing dependencies on Ubuntu 22.04/24.04/26.04, Debian 12/13, CentOS Stream 9/10 and RHEL 8/9/10 (systemd, x86_64). It installs Docker Engine and the Compose plugin from Docker's official signed package repository when needed, plus `curl`, CA certificates, OpenSSL, `ip`/`ss`, `iptables`, `modprobe` and `awk`. Run it with `sudo`; installing packages and starting Docker require confirmation. An existing working Docker/Compose installation is reused, and conflicting container runtimes are never removed automatically. Other Linux distributions need these dependencies prepared manually. ARM64 images are not published yet.
+
+TUN must be available at `/dev/net/tun`. The installer attempts `modprobe tun` and stops before creating project files if the VPS provider or kernel does not provide TUN. The AmneziaWG userspace runtime is bundled in the image; host AmneziaWG packages or a DKMS module are not required. Provider firewall rules and public UDP/TCP reachability remain the operator's responsibility.
+
+On SELinux hosts (typically CentOS/RHEL), new installations label only the private `data/` volume using `:Z`. SELinux stays enabled. For an existing custom Compose file, configure the appropriate volume labels manually; the installer does not rewrite it. RHEL must have access to its normal package repositories (subscription or an equivalent mirror).
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
@@ -40,7 +44,7 @@ If the repository is already cloned, you can run the local file:
 
 ## What It Does
 
-- checks Linux, Docker, Docker Compose, and `/dev/net/tun`;
+- detects the distribution, offers missing dependencies, starts Docker when necessary, and checks Compose and `/dev/net/tun` before writing project files;
 - detects an existing install on repeated runs and offers reconfigure or full reinstall;
 - offers to remove old AWG-like runtime interfaces, such as `awg0`, `awg0-1`, `awg15`, or `awg20`;
 - detects the external interface with `ip route get 1.1.1.1`;
