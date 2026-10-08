@@ -17,7 +17,7 @@ warn() { printf '\033[33mWARN\033[0m %s\n' "$*"; }
 fail() { printf '\033[31mERR\033[0m  %s\n' "$*" >&2; }
 
 require_tty() {
-  if [[ ! -r /dev/tty ]]; then
+  if ! (: <> /dev/tty) 2>/dev/null; then
     fail "interactive install requires a TTY"
     printf 'Run this command from an interactive shell, not from a non-interactive job.\n' >&2
     exit 1
@@ -29,12 +29,12 @@ prompt() {
   local default="${2:-}"
   local value
   if [[ -n "$default" ]]; then
-    printf '%s [%s]: ' "$label" "$default" > /dev/tty
-    read -r value < /dev/tty
+    printf '%s [%s]: ' "$label" "$default" > /dev/tty || return 1
+    read -r value < /dev/tty || return 1
     printf '%s' "${value:-$default}"
   else
-    printf '%s: ' "$label" > /dev/tty
-    read -r value < /dev/tty
+    printf '%s: ' "$label" > /dev/tty || return 1
+    read -r value < /dev/tty || return 1
     printf '%s' "$value"
   fi
 }
@@ -48,14 +48,24 @@ confirm() {
   else
     suffix="y/N"
   fi
-  printf '%s [%s]: ' "$label" "$suffix" > /dev/tty
-  read -r value < /dev/tty
+  printf '%s [%s]: ' "$label" "$suffix" > /dev/tty || return 1
+  read -r value < /dev/tty || return 1
   value="${value:-$default}"
   [[ "$value" =~ ^[Yy]$ ]]
 }
 
 have() {
   command -v "$1" >/dev/null 2>&1
+}
+
+running_as_root() {
+  (( EUID == 0 ))
+}
+
+selinux_volume_suffix() {
+  if [[ -e /sys/fs/selinux/enforce ]]; then
+    printf ':Z'
+  fi
 }
 
 link_exists() {
@@ -105,11 +115,220 @@ compose_cmd() {
     printf 'docker compose'
     return
   fi
-  if have docker-compose; then
+  if have docker-compose && docker-compose version >/dev/null 2>&1; then
     printf 'docker-compose'
     return
   fi
   return 1
+}
+
+detect_distribution() {
+  DISTRO_ID="unknown"
+  DISTRO_VERSION=""
+  DISTRO_CODENAME=""
+  PACKAGE_FAMILY=""
+  DOCKER_REPO_DISTRO=""
+  [[ -r /etc/os-release ]] || return 0
+  local ID="" VERSION_ID="" VERSION_CODENAME=""
+  # os-release is trusted host configuration, never installation input.
+  # shellcheck disable=SC1091
+  source /etc/os-release
+  DISTRO_ID="$ID"
+  DISTRO_VERSION="$VERSION_ID"
+  DISTRO_CODENAME="$VERSION_CODENAME"
+  case "$DISTRO_ID:$DISTRO_VERSION" in
+    ubuntu:*|debian:*) PACKAGE_FAMILY=apt; DOCKER_REPO_DISTRO="$DISTRO_ID" ;;
+    centos:9|centos:10) PACKAGE_FAMILY=rpm; DOCKER_REPO_DISTRO=centos ;;
+    rhel:8*|rhel:9*|rhel:10*) PACKAGE_FAMILY=rpm; DOCKER_REPO_DISTRO=rhel ;;
+  esac
+}
+
+dependency_bootstrap_supported() {
+  case "$DISTRO_ID:$DISTRO_VERSION:$DISTRO_CODENAME" in
+    ubuntu:22.04:jammy|ubuntu:24.04:noble|ubuntu:26.04:resolute|debian:12:bookworm|debian:13:trixie)
+      have apt-get && have dpkg-query && have systemctl ;;
+    centos:9:*|centos:10:*|rhel:8:*|rhel:8.*:*|rhel:9:*|rhel:9.*:*|rhel:10:*|rhel:10.*:*)
+      have dnf && have rpm && have systemctl ;;
+    *) return 1 ;;
+  esac
+}
+
+missing_host_packages() {
+  have curl || printf '%s\n' curl
+  [[ -s /etc/ssl/certs/ca-certificates.crt || -s /etc/pki/tls/certs/ca-bundle.crt ]] || printf '%s\n' ca-certificates
+  have ip && have ss || { if [[ "$PACKAGE_FAMILY" == rpm ]]; then printf '%s\n' iproute; else printf '%s\n' iproute2; fi; }
+  have iptables || printf '%s\n' iptables
+  have openssl || printf '%s\n' openssl
+  have modprobe || printf '%s\n' kmod
+  have awk || printf '%s\n' gawk
+}
+
+apt_install_missing() {
+  # Refuse removals and preserve versions of explicitly requested installed packages.
+  apt-get install -y --no-install-recommends --no-remove --no-upgrade "$@"
+}
+
+check_docker_package_conflicts() {
+  local package status
+  if [[ "$PACKAGE_FAMILY" == rpm ]]; then
+    for package in docker docker-client docker-client-latest docker-common docker-latest docker-latest-logrotate docker-logrotate docker-engine podman podman-docker runc containerd; do
+      if rpm -q "$package" >/dev/null 2>&1; then
+        fail "conflicting package $package is installed; resolve Docker package conflicts manually"
+        return 1
+      fi
+    done
+    return 0
+  fi
+  for package in docker.io docker-compose docker-compose-v2 docker-doc docker-buildx podman-docker containerd runc; do
+    status="$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || true)"
+    if [[ "$status" == "install ok installed" ]]; then
+      fail "conflicting package $package is installed; resolve Docker package conflicts manually"
+      return 1
+    fi
+  done
+}
+
+install_docker_packages() {
+  local install_engine="$1"
+  local -a packages=(docker-compose-plugin)
+  if [[ "$install_engine" == "true" ]]; then
+    check_docker_package_conflicts || return 1
+    packages=(docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin)
+  fi
+
+  if [[ "$PACKAGE_FAMILY" == rpm ]]; then
+    local repo=/etc/yum.repos.d/awg-forge-docker.repo
+    if ! dnf -q list --available "${packages[0]}" >/dev/null 2>&1; then
+      if [[ -e "$repo" || -L "$repo" ]]; then
+        fail "Docker repository already exists but packages are unavailable; check $repo manually"
+        return 1
+      fi
+      local tmp
+      tmp="$(mktemp)" || return 1
+      if ! curl -fsSL --connect-timeout 10 --max-time 60 "https://download.docker.com/linux/$DOCKER_REPO_DISTRO/docker-ce.repo" -o "$tmp" ||
+        ! install -m 0644 "$tmp" "$repo"; then
+        rm -f "$tmp"
+        return 1
+      fi
+      rm -f "$tmp"
+    fi
+    # Never enable allowerasing: a conflict must stop rather than remove another runtime.
+    dnf install -y --setopt=install_weak_deps=False "${packages[@]}"
+    return
+  fi
+
+  # Reuse the operator's repositories where these packages are already available.
+  local candidate
+  candidate="$(apt-cache policy "${packages[0]}" | awk '/Candidate:/ {print $2; exit}')"
+  if [[ -z "$candidate" || "$candidate" == "(none)" ]]; then
+    local key=/etc/apt/keyrings/awg-forge-docker.asc
+    local repo=/etc/apt/sources.list.d/awg-forge-docker.sources
+    if [[ -e "$key" || -L "$key" || -e "$repo" || -L "$repo" ]]; then
+      fail "Docker repository files already exist but packages are unavailable; check $repo manually"
+      return 1
+    fi
+    local tmp
+    tmp="$(mktemp -d)" || return 1
+    if ! curl -fsSL --connect-timeout 10 --max-time 60 "https://download.docker.com/linux/$DISTRO_ID/gpg" -o "$tmp/docker.asc"; then
+      rm -rf "$tmp"
+      return 1
+    fi
+    cat >"$tmp/docker.sources" <<EOF
+Types: deb
+URIs: https://download.docker.com/linux/$DISTRO_ID
+Suites: $DISTRO_CODENAME
+Components: stable
+Architectures: $(dpkg --print-architecture)
+Signed-By: $key
+EOF
+    if ! install -m 0755 -d /etc/apt/keyrings ||
+      ! install -m 0644 "$tmp/docker.asc" "$key" ||
+      ! install -m 0644 "$tmp/docker.sources" "$repo"; then
+      rm -rf "$tmp"
+      return 1
+    fi
+    rm -rf "$tmp"
+    apt-get update || return 1
+  fi
+  apt_install_missing "${packages[@]}"
+}
+
+ensure_host_dependencies() {
+  detect_distribution
+  ok "distribution: $DISTRO_ID ${DISTRO_VERSION:-unknown version}"
+  local install_engine=false install_compose=false
+  have docker || install_engine=true
+  compose_cmd >/dev/null || install_compose=true
+  local -a packages=()
+  local package
+  while IFS= read -r package; do
+    packages+=("$package")
+  done < <(missing_host_packages)
+
+  if $install_engine || $install_compose || (( ${#packages[@]} > 0 )); then
+    if ! dependency_bootstrap_supported; then
+      fail "automatic preparation supports Ubuntu 22.04/24.04/26.04, Debian 12/13, CentOS Stream 9/10 and RHEL 8/9/10 with systemd"
+      printf 'Prepare Docker, Compose and host tools manually: https://docs.docker.com/engine/install/\n' >&2
+      return 1
+    fi
+    if ! running_as_root; then
+      fail "dependency installation requires root; rerun with sudo ./install.sh"
+      return 1
+    fi
+    muted "Missing host packages: ${packages[*]:-none}; Docker Engine: $install_engine; Compose: $install_compose"
+    confirm "Install missing dependencies using the package manager and Docker's official repository if needed?" "y" || return 1
+    # Check before even installing utility packages on hosts with conflicting runtimes.
+    if $install_engine; then
+      check_docker_package_conflicts || return 1
+    fi
+    if [[ "$PACKAGE_FAMILY" == rpm ]]; then
+      if (( ${#packages[@]} > 0 )); then
+        dnf install -y --setopt=install_weak_deps=False "${packages[@]}" || return 1
+      fi
+    else
+      apt-get update || return 1
+      if (( ${#packages[@]} > 0 )); then
+        apt_install_missing "${packages[@]}" || return 1
+      fi
+    fi
+    if $install_engine || $install_compose; then
+      install_docker_packages "$install_engine" || return 1
+    fi
+  fi
+
+  if [[ -n "$(missing_host_packages)" ]]; then
+    fail "required host tools are still missing after preparation"
+    return 1
+  fi
+  if ! docker info >/dev/null 2>&1; then
+    if ! running_as_root || ! have systemctl; then
+      fail "Docker daemon is not reachable; start Docker and run the installer with sudo"
+      return 1
+    fi
+    # Do not start a different local daemon when the operator targets a remote context.
+    if [[ -n "${DOCKER_HOST:-}" || -n "${DOCKER_CONTEXT:-}" ]] || [[ "$(docker context show)" != "default" ]]; then
+      fail "selected Docker context is not reachable; check it manually"
+      return 1
+    fi
+    confirm "Start the local Docker service?" "y" || return 1
+    systemctl enable --now docker || return 1
+  fi
+  if ! docker info >/dev/null 2>&1 || ! compose_cmd >/dev/null; then
+    fail "Docker or Compose is still unavailable after preparation"
+    return 1
+  fi
+  ensure_tun_device || return 1
+  ok "Docker, Compose and TUN are ready"
+}
+
+ensure_tun_device() {
+  if [[ ! -c /dev/net/tun ]] && running_as_root && have modprobe; then
+    modprobe tun || true
+  fi
+  if [[ ! -c /dev/net/tun ]]; then
+    fail "/dev/net/tun is unavailable; enable TUN in the kernel or VPS provider settings"
+    return 1
+  fi
 }
 
 random_hex() {
@@ -501,6 +720,8 @@ write_compose_if_missing() {
     ok "$COMPOSE_FILE exists"
     return
   fi
+  local volume_suffix
+  volume_suffix="$(selinux_volume_suffix)"
   cat >"$COMPOSE_FILE" <<YAML
 services:
   awg-forge:
@@ -509,7 +730,7 @@ services:
     env_file: .env
     network_mode: host
     volumes:
-      - ./data:/etc/awg-forge
+      - ./data:/etc/awg-forge$volume_suffix
       - /lib/modules:/lib/modules:ro
     cap_add:
       - NET_ADMIN
@@ -679,9 +900,11 @@ initialize_state() {
   ensure_image_available
   local data_dir_abs
   data_dir_abs="$(pwd -P)/$DATA_DIR"
+  local volume_suffix
+  volume_suffix="$(selinux_volume_suffix)"
   docker run --rm --pull=never \
     --env-file "$ENV_FILE" \
-    -v "$data_dir_abs:/etc/awg-forge" \
+    -v "$data_dir_abs:/etc/awg-forge$volume_suffix" \
     "$IMAGE" init \
       --server-host "$server_host" \
       --external-interface "$external_interface" \
@@ -809,7 +1032,7 @@ print_next_steps() {
 upgrade_install_is_managed() {
   [[ -f "$ENV_FILE" && -f "$COMPOSE_FILE" && -d "$DATA_DIR" ]] || return 1
   grep -Eq '^[[:space:]]*env_file:[[:space:]]*\.env[[:space:]]*$' "$COMPOSE_FILE" || return 1
-  grep -Eq '^[[:space:]]*-[[:space:]]*\./data:/etc/awg-forge([[:space:]]|$)' "$COMPOSE_FILE" || return 1
+  grep -Eq '^[[:space:]]*-[[:space:]]*\./data:/etc/awg-forge(:Z)?([[:space:]]|$)' "$COMPOSE_FILE" || return 1
   local config_dir database_path
   config_dir="$(env_value CONFIG_DIR)"
   database_path="$(env_value DATABASE_PATH)"
@@ -1036,37 +1259,17 @@ main() {
     exit 1
   fi
   ok "Linux detected"
-
-  if ! have docker; then
-    fail "docker is not installed"
-    printf 'Install Docker Engine first: https://docs.docker.com/engine/install/\n' >&2
+  if [[ "$(uname -m)" != "x86_64" && "$IMAGE" == ghcr.io/astronaut808/awg-forge:* ]]; then
+    fail "official images currently support x86_64 only; use a compatible custom IMAGE for this architecture"
     exit 1
   fi
-  ok "docker found"
-
-  if ! docker info >/dev/null 2>&1; then
-    fail "docker daemon is not reachable by the current user"
-    printf 'Start Docker and make sure this user can run docker commands, or run the installer with sudo.\n' >&2
-    exit 1
-  fi
-  ok "docker daemon reachable"
-
-  local compose
-  if ! compose="$(compose_cmd)"; then
-    fail "docker compose is not available"
-    printf 'Install Docker Compose plugin first.\n' >&2
-    exit 1
-  fi
-  ok "$compose found"
 
   require_tty
+  ensure_host_dependencies || exit 1
+  local compose
+  compose="$(compose_cmd)"
+  ok "$compose found"
   prepare_workdir
-
-  if [[ -e /dev/net/tun ]]; then
-    ok "/dev/net/tun exists"
-  else
-    warn "/dev/net/tun does not exist; container startup may fail until TUN is available"
-  fi
 
   handle_existing_install "$compose"
   if [[ "$INSTALL_ACTION" == "upgrade" ]]; then

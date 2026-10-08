@@ -29,7 +29,7 @@ Self-hosted AmneziaWG control panel for Docker: Go backend, embedded Web UI, and
 
 ## Quick Start
 
-Interactive install on Linux/VPS (Docker required):
+Interactive install on Linux/VPS (x86_64):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
@@ -37,7 +37,7 @@ chmod +x install.sh
 sudo ./install.sh
 ```
 
-The installer checks Docker before creating files, creates `/opt/awg-forge`, generates `.env`, password, and `SESSION_SECRET`, enables SQLite, creates the first tunnel in `state.json`, applies the initial SQLite migration, starts Docker Compose, and prints the SSH tunnel command. New installs default to AmneziaWG 2.0 for the first tunnel.
+The installer detects Ubuntu, Debian, CentOS Stream or RHEL, offers to install missing Docker Engine, Compose plugin and host tools, checks Docker and TUN before creating project files, creates `/opt/awg-forge`, generates `.env`, password, and `SESSION_SECRET`, enables SQLite, creates the first tunnel in `state.json`, applies the initial SQLite migration, starts Docker Compose, and prints the SSH tunnel command. New installs default to AmneziaWG 2.0 for the first tunnel.
 
 Update a managed installation with the installer from `master`. It matches the current release and contains that release's compatibility checks and migrations.
 
