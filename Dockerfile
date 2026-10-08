@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM --platform=$BUILDPLATFORM golang:1.26.7-bookworm AS forge-builder
+FROM --platform=$BUILDPLATFORM golang:1.26.9-bookworm AS forge-builder
 WORKDIR /src
 COPY go.mod go.sum* ./
 RUN go mod download
@@ -14,7 +14,7 @@ RUN . ./build/amneziawg.refs \
   -ldflags="-s -w -X github.com/astronaut808/awg-forge/internal/buildinfo.Version=$AWG_FORGE_VERSION -X github.com/astronaut808/awg-forge/internal/buildinfo.Commit=$AWG_FORGE_COMMIT -X github.com/astronaut808/awg-forge/internal/buildinfo.AmneziaWGGoRef=$AMNEZIAWG_GO_REF -X github.com/astronaut808/awg-forge/internal/buildinfo.AmneziaWGToolsRef=$AMNEZIAWG_TOOLS_REF -X github.com/astronaut808/awg-forge/internal/buildinfo.AWG3Runtime=true" \
   -o /out/awg-forge ./cmd/awg-forge
 
-FROM golang:1.26.7-bookworm AS awg-go-builder
+FROM golang:1.26.9-bookworm AS awg-go-builder
 RUN apt-get update && apt-get install -y --no-install-recommends git make ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY build/amneziawg.refs /tmp/amneziawg.refs
@@ -41,7 +41,7 @@ FROM debian:bookworm-slim
 ARG AWG_FORGE_VERSION=dev
 ARG AWG_FORGE_COMMIT=unknown
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash ca-certificates dumb-init iproute2 iptables nftables procps openresolv libpcre2-8-0 \
+    bash ca-certificates dumb-init iproute2 iptables nftables procps openresolv libpcre2-8-0 perl-base \
   && rm -rf /var/lib/apt/lists/*
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]

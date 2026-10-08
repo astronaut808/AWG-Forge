@@ -41,6 +41,7 @@ jobs:
           context: .
           platforms: linux/amd64
           load: true
+          pull: true
           tags: awg-forge:ci
           build-args: |
             AWG_FORGE_VERSION=pr-${{ github.event.pull_request.number }}
@@ -54,7 +55,7 @@ jobs:
       - name: Set up Trivy
         uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
         with:
-          version: v0.74.0
+          version: v0.75.0
           cache: true
 
       - name: Scan operating system packages
@@ -104,6 +105,7 @@ jobs:
           context: .
           platforms: linux/amd64
           push: true
+          pull: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
