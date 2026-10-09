@@ -212,7 +212,7 @@ DNS/NAT routing and firewall access are configured by the operator. The listener
 binds only the specified local IP; enable fails if that socket is unavailable.
 The browser UI can remain on loopback HTTP. The control listener serves TLS 1.3
 only, ignores forwarded identity headers, and exposes only the existing enrollment,
-presence and certificate-renewal routes. Existing mTLS registry checks and resource
+public CA bootstrap, presence and certificate-renewal routes. Existing mTLS registry checks and resource
 limits apply on every interface. `serve` restarts a previously enabled exact endpoint;
 install/upgrade and preparation never enable it automatically. Disable or restore
 requires a fresh verified backup and explicit consent before enabling it again.
@@ -240,8 +240,9 @@ and presence sessions. Managed-node backups include the protected credential
 generation; backup is blocked while node renewal is pending. Restore still
 enforces identity fencing or explicit detach. Detach removes controller authority.
 Linux-root [offline recovery](security.md#offline-node-recovery) supports detach
-and fresh enrollment with a new identity. Installer integration, endpoint rebind,
-fleet UI and remote operations remain separate work.
+and fresh enrollment with a new identity. Explicit installer join/rebind and the minimal onboarding UI are described in
+[Quick Install](quick-install.md#explicit-installer-connection-to-a-controller).
+Endpoint replacement, fleet UI and remote operations remain separate work.
 
 ## Client Config Import
 

@@ -16,6 +16,8 @@ test-race:
 test-shell:
 	bash -n install.sh uninstall.sh scripts/*.sh
 	bash scripts/test-install.sh
+	bash scripts/test-install-dependencies.sh
+	bash scripts/test-install-join.sh
 	bash scripts/test-upgrade.sh
 	bash scripts/test-uninstall.sh
 	bash scripts/test-release-workflow.sh

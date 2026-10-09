@@ -50,7 +50,7 @@ func VerifyControllerRegistrySnapshot(ctx context.Context, path, controllerID, i
 		return err
 	}
 	if version >= 9 {
-		return verifySnapshotEnrollment(queryCtx, db, controllerID)
+		return verifySnapshotEnrollment(queryCtx, db, controllerID, version)
 	}
 	return nil
 }
@@ -281,7 +281,7 @@ func validSnapshotNodeCertificate(certificate, ca *x509.Certificate) bool {
 	return ok && len(key) == ed25519.PublicKeySize && certificate.PublicKeyAlgorithm == x509.Ed25519 && !certificate.IsCA && certificate.BasicConstraintsValid && certificate.KeyUsage == x509.KeyUsageDigitalSignature && len(certificate.ExtKeyUsage) == 1 && certificate.ExtKeyUsage[0] == x509.ExtKeyUsageClientAuth && len(certificate.UnknownExtKeyUsage) == 0 && len(certificate.UnhandledCriticalExtensions) == 0 && len(certificate.DNSNames) == 0 && len(certificate.IPAddresses) == 0 && len(certificate.EmailAddresses) == 0 && len(certificate.URIs) == 0 && !certificate.NotBefore.Before(ca.NotBefore) && !certificate.NotAfter.After(ca.NotAfter) && certificate.NotAfter.Sub(certificate.NotBefore) <= controlpki.NodeCertificateTTL+5*time.Minute
 }
 
-func verifySnapshotEnrollment(ctx context.Context, db *sql.DB, controllerID string) error {
+func verifySnapshotEnrollment(ctx context.Context, db *sql.DB, controllerID string, version int) error {
 	invitationRows, err := db.QueryContext(ctx, `SELECT id, controller_id, node_id, secret_digest, created_at_unix_ms, expires_at_unix_ms
 FROM control_enrollment_invitations`)
 	if err != nil {
@@ -338,8 +338,16 @@ LEFT JOIN control_node_bindings b ON b.node_id = e.node_id`)
 	if rows.Err() != nil {
 		return errors.New("read controller snapshot enrollments")
 	}
-	presence, err := db.QueryContext(ctx, `SELECT p.node_id, p.controller_id, p.binding_epoch, p.state_epoch, p.boot_id, p.boot_sequence, p.session_id, p.expires_at_unix_ms,
-b.controller_id, b.binding_epoch FROM control_node_presence p JOIN control_node_bindings b ON b.node_id = p.node_id`)
+	presenceQuery := `SELECT p.node_id, p.controller_id, p.binding_epoch, p.state_epoch, p.boot_id, p.boot_sequence, p.session_id, p.expires_at_unix_ms,
+b.controller_id, b.binding_epoch FROM control_node_presence p JOIN control_node_bindings b ON b.node_id = p.node_id`
+	if version >= 10 {
+		presenceQuery = `SELECT p.node_id, p.controller_id, p.binding_epoch, p.state_epoch, p.boot_id, p.boot_sequence, p.session_id, p.expires_at_unix_ms,
+p.certificate_issuer_generation, p.certificate_serial, c.serial, b.controller_id, b.binding_epoch
+FROM control_node_presence p JOIN control_node_bindings b ON b.node_id = p.node_id
+LEFT JOIN control_node_certificates c ON c.issuer_generation = p.certificate_issuer_generation AND c.serial = p.certificate_serial
+  AND c.node_id = p.node_id AND c.controller_id = p.controller_id AND c.binding_epoch = p.binding_epoch`
+	}
+	presence, err := db.QueryContext(ctx, presenceQuery)
 	if err != nil {
 		return errors.New("read controller snapshot node presence")
 	}
@@ -347,7 +355,13 @@ b.controller_id, b.binding_epoch FROM control_node_presence p JOIN control_node_
 	for presence.Next() {
 		var nodeID, storedController, stateEpoch, bootID, sessionID, bindingController string
 		var epoch, sequence, expires, bindingEpoch int64
-		if err := presence.Scan(&nodeID, &storedController, &epoch, &stateEpoch, &bootID, &sequence, &sessionID, &expires, &bindingController, &bindingEpoch); err != nil || !validUUID(nodeID) || storedController != controllerID || bindingController != controllerID || epoch <= 0 || epoch > bindingEpoch || !validUUID(stateEpoch) || !validUUID(bootID) || !validUUID(sessionID) || sequence <= 0 || expires <= 0 {
+		var issuer, serial, certificateSerial sql.NullString
+		if version >= 10 {
+			err = presence.Scan(&nodeID, &storedController, &epoch, &stateEpoch, &bootID, &sequence, &sessionID, &expires, &issuer, &serial, &certificateSerial, &bindingController, &bindingEpoch)
+		} else {
+			err = presence.Scan(&nodeID, &storedController, &epoch, &stateEpoch, &bootID, &sequence, &sessionID, &expires, &bindingController, &bindingEpoch)
+		}
+		if err != nil || !validUUID(nodeID) || storedController != controllerID || bindingController != controllerID || epoch <= 0 || epoch > bindingEpoch || !validUUID(stateEpoch) || !validUUID(bootID) || !validUUID(sessionID) || sequence <= 0 || expires <= 0 || version >= 10 && (issuer.Valid != serial.Valid || issuer.Valid && (!validIssuerGeneration(issuer.String) || serial.String == "" || !certificateSerial.Valid)) {
 			return errors.New("controller snapshot node presence is invalid")
 		}
 	}

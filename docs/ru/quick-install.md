@@ -2,7 +2,11 @@
 
 `install.sh` — интерактивный установщик для нового Linux/VPS сервера. Он создает runtime `.env`, подготавливает `data/`, инициализирует первый туннель в `state.json`, запускает Docker Compose и показывает дальнейшие шаги.
 
-Перед запуском установи [Docker Engine с официальной документации](https://docs.docker.com/engine/install/). Если Docker или Docker Compose отсутствуют, скрипт завершится до создания `/opt/awg-forge` и любых файлов проекта.
+Установщик предлагает подготовить недостающие зависимости на Ubuntu 22.04/24.04/26.04, Debian 12/13, CentOS Stream 9/10 и RHEL 8/9/10 (systemd, x86_64). При необходимости он установит Docker Engine и Compose plugin из официального подписанного репозитория Docker, а также `curl`, CA-сертификаты, OpenSSL, `ip`/`ss`, `iptables`, `modprobe` и `awk`. Запускай его через `sudo`; установка пакетов и запуск Docker требуют подтверждения. Уже работающие Docker/Compose используются повторно; конфликтующие контейнерные runtime автоматически не удаляются. На других Linux-дистрибутивах зависимости нужно подготовить вручную. Образы ARM64 пока не публикуются.
+
+Для работы нужен `/dev/net/tun`. Установщик попробует `modprobe tun` и остановится до создания файлов проекта, если ядро или провайдер VPS не предоставляют TUN. Userspace runtime AmneziaWG уже есть в образе: устанавливать AmneziaWG или DKMS-модуль на хост не нужно. Правила firewall провайдера и доступность публичных UDP/TCP-портов остаются ответственностью оператора.
+
+На хостах с SELinux (обычно CentOS/RHEL) новая установка задаёт метку только приватному volume `data/` через `:Z`. SELinux остаётся включённым. Для существующего custom Compose подходящие метки volume нужно настроить вручную: установщик его не переписывает. RHEL должен иметь доступ к штатным репозиториям пакетов (подписка или соответствующее зеркало).
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
@@ -40,7 +44,7 @@ sudo AWG_FORGE_HOME=/srv/awg-forge ./install.sh
 
 ## Что делает скрипт
 
-- проверяет Linux, Docker, Docker Compose и `/dev/net/tun`;
+- определяет дистрибутив, предлагает недостающие зависимости, при необходимости запускает Docker и проверяет Compose и `/dev/net/tun` до записи файлов проекта;
 - при повторном запуске обнаруживает существующую установку и предлагает reconfigure или full reinstall;
 - предлагает удалить найденные старые AWG-like runtime-интерфейсы, например `awg0`, `awg0-1`, `awg15` или `awg20`;
 - определяет внешний интерфейс через `ip route get 1.1.1.1`;
@@ -174,3 +178,27 @@ curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/unins
 ```bash
 curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/uninstall.sh | sudo bash -s -- --remove-orphans
 ```
+
+## Явное подключение через installer к controller
+
+Обычная установка остаётся standalone. В Maintenance → Controller после свежего MFA подготовьте точный control endpoint, скачайте и сохраните проверенный зашифрованный backup, затем включите listener. Для внешнего endpoint нужен отдельный флажок согласия. В Add node выберите новую или существующую установку и имя. Перед approve сравните код и имя с терминалом узла; Connected появляется только после authenticated presence этого enrollment. Закрытие flow, logout, смена аккаунта, reject и expiry очищают invitation и завершают polling.
+
+Для этой develop-сборки совместимый installer ещё не опубликован. UI копирует **только публичные аргументы** и сообщает об отсутствии release. Несуществующих release URLs и fallback на `latest` нет. Для локальной проверки используйте скачанный/проверенный script с подтверждённым SHA-256 и явно собранный локальный image ID с совпадающими compiled version/commit. В шаблоне ниже только публичные placeholders; замените их проверенной artifact metadata и значениями из UI:
+
+```bash
+sudo bash ./install.sh join --workdir /opt/awg-node --mode fresh \
+  --image sha256:IMAGE_ID_64_HEX --script-sha256 SCRIPT_SHA256_64_HEX \
+  --artifact-version local-SOURCE_HASH_12_HEX --artifact-commit COMMIT_40_HEX \
+  --controller-url 'https://controller.example:9443' \
+  --ca-pin 'sha256:CA_SPKI_PIN_64_HEX' --invitation-id INVITATION_UUID --name 'node'
+```
+
+Script и локальный image должны поддерживать `installer-onboarding-v1`; несовпадение metadata, старый или отсутствующий локальный image отклоняются до остановки сервиса. Неявного pull нет. Опубликованный immutable GHCR digest допустим только с совпадающей compiled metadata. Получите invitation secret отдельно в authenticated UI и вставьте в скрытый prompt терминала. Не включайте его в команду, exported variables, heredoc или shell substitution. Для автоматизации разрешён явно переданный private pipe/FD на stdin с `--secret-fd 0`; stdin не используется неявно, в том числе при `curl | bash`.
+
+Fresh join требует несуществующий workdir непосредственно внутри существующего каталога. Он создаёт защищённые local login credentials в `.env`, loopback Web UI для break-glass, DB-off и не создаёт туннель либо WARP/ACME setup. Используйте SSH tunnel; пароль смотрите в защищённом локальном `.env`, не копируя его в логи.
+
+Для существующего root-run Compose service замените `--mode fresh` на `--mode existing --maintenance`; при необходимости укажите `--container NAME`. Обязательны точные Compose working-directory/service labels и проверенный image. Старую установку сначала обновите отдельно. Installer останавливает и запускает только этот container ID, использует его mounts/environment, сохраняя Compose, networks, logging, UI/TLS/session policy, history и локальные туннели. Неподдерживаемые container users, явные user namespaces, SELinux process/mount labels и multiline environment отклоняются до stop. Installer join/rebind требует Docker без SELinux labels и отклоняет SELinux-enabled daemon до создания fresh файлов; для установок с приватным volume `:Z` нужен отдельный offline enrollment/recovery workflow с учётом deployment. Не отключайте SELinux и не меняйте labels существующих данных ради обхода этой проверки. Действие прерывает VPN service; исходно остановленный сервис остаётся остановленным без явного `--start-service`.
+
+Для managed node используйте отдельный `rebind` с `--maintenance`, новым invitation и точными локальными `--confirm-node-id`/`--confirm-controller-id`. Он вызывает offline recovery напрямую, без detach-first. Отзыв скопированных прежних credentials на старом controller выполняется отдельно.
+
+Неудачный/прерванный fresh join сохраняет защищённый workdir для offline inspection: ошибка может возникнуть после identity commit. Не повторяйте consumed invitation и не удаляйте pending journal вслепую. До commit существующий сервис возобновляется с прежней identity, если завершение helper доказано. После commit ошибка startup/connectivity остаётся pending; сохраните новую identity и диагностируйте/повторите запуск сервиса. Подключение подтверждается только authenticated presence на controller. После setup недоступность controller не мешает локальному forwarding.

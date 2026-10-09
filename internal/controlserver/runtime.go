@@ -380,7 +380,8 @@ func (runtime *Runtime) handler() http.Handler {
 }
 
 func validBootstrapRoute(route Route) bool {
-	return route.ID == "enrollment.claim" && route.Method == http.MethodPost && route.Path == "/control/v1/enrollments/{invitation_id}/claim" ||
+	return route.ID == "enrollment.bootstrap" && route.Method == http.MethodGet && route.Path == "/control/v1/bootstrap" ||
+		route.ID == "enrollment.claim" && route.Method == http.MethodPost && route.Path == "/control/v1/enrollments/{invitation_id}/claim" ||
 		route.ID == "enrollment.status" && route.Method == http.MethodGet && route.Path == "/control/v1/enrollments/{enrollment_id}"
 }
 

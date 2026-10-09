@@ -3,7 +3,7 @@
   "info": {
     "title": "AWG-Forge node control API",
     "version": "0.1.0-draft",
-    "description": "Internal controller/node contract. Enrollment claim, status and presence are implemented only on the explicitly enabled loopback listener. Other operations remain proposed; this draft is not a public operator API. Enrollment uses pinned server TLS and one-time credentials; presence requires registry-authorized mutual TLS.",
+    "description": "Internal controller/node contract. Public CA bootstrap, enrollment claim/status, mTLS presence and certificate renewal are implemented on explicitly enabled listeners. Non-loopback exposure additionally requires exact endpoint consent and a verified retained encrypted backup. Snapshot and operation routes remain proposed; this draft is not a public operator API.",
     "license": {
       "name": "MIT",
       "identifier": "MIT"
@@ -39,6 +39,46 @@
     }
   ],
   "paths": {
+    "/control/v1/bootstrap": {
+      "get": {
+        "operationId": "getEnrollmentBootstrap",
+        "summary": "Read public controller CA for pinned bootstrap",
+        "description": "Secret-free and registry-free public CA discovery. Treat the response as untrusted: verify the exact existing CA SPKI sha256 pin, self-signed CA constraints and validity, then repeat over normally verified TLS1.3 chain/SAN/time before sending any enrollment secret. No proxy, redirect, query, Authorization or request body. Subject to existing bootstrap limits.",
+        "tags": [
+          "Enrollment"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Public CA only; no invitation expiry, registry, credentials or management data.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnrollmentBootstrap"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimitedProblem"
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
     "/control/v1/enrollments/{invitation_id}/claim": {
       "post": {
         "operationId": "claimEnrollmentInvitation",
@@ -99,7 +139,7 @@
       "get": {
         "operationId": "getEnrollmentStatus",
         "summary": "Read enrollment approval status",
-        "description": "An exact CSR retry returns the same claim capability until expiry; a competing CSR returns 409. The claim token is returned only by the successful claim response and is stored as a digest by the controller. An approved response contains the node certificate but never a private key. Claim, status and presence are implemented for the loopback checkpoint; the other operations remain draft.",
+        "description": "An exact CSR retry returns the same claim capability until expiry; a competing CSR returns 409. The claim token is returned only by the successful claim response and is stored as a digest by the controller. An approved response contains the node certificate but never a private key. Public CA bootstrap, claim/status, presence and renewal are implemented on explicitly enabled endpoints; snapshot and operation routes remain draft.",
         "tags": ["Enrollment"],
         "security": [
           {
@@ -433,6 +473,20 @@
       }
     },
     "schemas": {
+      "EnrollmentBootstrap": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ca_cert_pem"
+        ],
+        "properties": {
+          "ca_cert_pem": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8192
+          }
+        }
+      },
       "UUID": {
         "type": "string",
         "format": "uuid"

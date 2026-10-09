@@ -6,6 +6,7 @@ import { messages } from "../src/i18n";
 
 test("controller activation, TOTP login, recovery, reauthentication and mobile layout", async ({ page, browser }, testInfo) => {
   test.setTimeout(180_000);
+  page.setDefaultTimeout(15_000);
   const m = messages[testInfo.project.use.locale?.startsWith("ru") ? "ru" : "en"];
   const port = await freePort();
   const origin = `http://127.0.0.1:${port}`;
@@ -74,6 +75,28 @@ test("controller activation, TOTP login, recovery, reauthentication and mobile l
     await expect(dialog.locator(".controller-codes code")).toHaveCount(10);
     await dialog.getByLabel(m.controller.codesSaved).check();
     await dialog.getByRole("button", { name: m.controller.finish }).click();
+
+    // Exercise the real prepare -> verified encrypted archive -> retained consent
+    // -> enable flow. Secret-bearing browser artifacts remain disabled globally.
+    await page.getByRole("button", { name: m.common.maintenance, exact: true }).click();
+    dialog = page.getByRole("dialog");
+    await dialog.getByRole("button", { name: m.maintenance.tabs.controller, exact: true }).click();
+    const controlPort = await freePort();
+    await dialog.getByLabel(m.onboarding.port, { exact: true }).fill(String(controlPort));
+    const preparing = page.waitForResponse((response) => response.url().endsWith("/api/controller/control/prepare"), { timeout: 15_000 });
+    await dialog.getByRole("button", { name: m.onboarding.prepare, exact: true }).click();
+    const prepareResponse = await preparing;
+    expect(prepareResponse.status(), await prepareResponse.text()).toBe(200);
+    await dialog.getByLabel(m.onboarding.backupPassword, { exact: true }).fill("synthetic archive password only");
+    const download = page.waitForEvent("download");
+    await dialog.getByRole("button", { name: m.onboarding.backup, exact: true }).click();
+    await download;
+    const enable = dialog.getByRole("button", { name: m.onboarding.enable, exact: true });
+    await expect(enable).toBeDisabled();
+    await dialog.getByLabel(m.onboarding.retained, { exact: true }).check();
+    await enable.click();
+    await expect(dialog.getByRole("button", { name: m.onboarding.add, exact: true })).toBeVisible();
+    await dialog.getByRole("button", { name: m.common.close, exact: true }).click();
 
     await page.getByRole("button", { name: m.common.logOut, exact: true }).click();
     await page.getByLabel(m.controller.username, { exact: true }).fill("admin");

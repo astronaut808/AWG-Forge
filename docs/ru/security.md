@@ -118,3 +118,9 @@ journal `.node-local-recovery.json` разрешает прерванные stag
 заблокированными. Не удаляйте evidence для обхода проверки. Backup/restore
 отклоняют pending recovery; старый node archive не может заменить identity,
 созданную новым rebind.
+
+## Trust и secrets installer enrollment
+
+Secret-free `GET /control/v1/bootstrap` выдаёт только публичный CA certificate. Узел считает его недоверенным, проверяет переданный оператором CA SPKI pin и повторяет получение с обычной TLS 1.3 chain/SAN/time validation до передачи invitation secret. Proxy, redirects, URL confusion и слишком большие responses отклоняются. Enrollment держит тот же exclusive state-directory lock, что и serve, до approval/commit. Защищённый `--input-file` сохранён; альтернативный public metadata interface читает ограниченный secret через private FD или скрытый TTY.
+
+Browser enrollment status требует recent controller authentication, точные approved controller/node/binding данного invitation и живую registry session, authenticated активным certificate текущей CA generation. Certificate issuance и legacy presence без certificate provenance не означают Connected. DTO имеет allowlist, responses — no-store. Invitation secrets и backup receipts хранятся только в памяти flow; browser traces/screenshots/videos с secrets должны быть выключены. После прерывания installer прежние credentials не восстанавливаются поверх потенциально committed identity; перед ручным recovery проверьте journals. См. [installer lifecycle](quick-install.md).

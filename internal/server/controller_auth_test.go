@@ -166,6 +166,10 @@ func TestControllerLoginHidesAccountExistenceAndReturnsRateLimit(t *testing.T) {
 }
 
 func controllerServerTestAuth(t *testing.T) (*controlauth.Service, func(), time.Time) {
+	return controllerServerTestAuthAt(t, time.Unix(1_800_000_015, 0).UTC())
+}
+
+func controllerServerTestAuthAt(t *testing.T, now time.Time) (*controlauth.Service, func(), time.Time) {
 	t.Helper()
 	dir := t.TempDir()
 	cfg := config.Config{
@@ -197,8 +201,8 @@ func controllerServerTestAuth(t *testing.T) (*controlauth.Service, func(), time.
 		_ = db.Close()
 		t.Fatal(err)
 	}
-	now := time.Unix(1_800_000_015, 0).UTC()
-	if _, err := auth.EnrollAdmin(context.Background(), "admin", "correct horse battery staple", controllerServerTOTPSecret(), controllerServerTOTPCode(t, now), now); err != nil {
+	enrolledAt := now.Add(-time.Hour)
+	if _, err := auth.EnrollAdmin(context.Background(), "admin", "correct horse battery staple", controllerServerTOTPSecret(), controllerServerTOTPCode(t, enrolledAt), enrolledAt); err != nil {
 		_ = db.Close()
 		t.Fatal(err)
 	}

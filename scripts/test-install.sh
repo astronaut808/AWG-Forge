@@ -239,11 +239,13 @@ missing_docker_dir="$test_dir/must-not-exist"
 INSTALL_DIR_DEFAULT="$missing_docker_dir"
 unset AWG_FORGE_HOME
 uname() {
-  printf 'Linux'
+  if [[ "$1" == -m ]]; then printf x86_64; else printf Linux; fi
 }
 have() {
   [[ "$1" != "docker" ]]
 }
+require_tty() { :; }
+detect_distribution() { DISTRO_ID=unsupported; DISTRO_VERSION=1; DISTRO_CODENAME=unknown; }
 
 if (main >"$test_dir/no-docker.log" 2>&1); then
   printf 'FAIL installer succeeded without Docker\n' >&2

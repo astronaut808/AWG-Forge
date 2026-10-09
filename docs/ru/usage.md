@@ -211,7 +211,7 @@ DNS/NAT и firewall настраивает оператор. Listener привя
 локальному IP; занятый или недоступный socket отклоняет включение. Browser UI
 может остаться на loopback HTTP. Control listener обслуживает только TLS 1.3,
 игнорирует forwarded identity headers и предоставляет существующие маршруты
-enrollment, presence и продления сертификата. На любом интерфейсе сохраняются
+enrollment, публичного CA bootstrap, presence и продления сертификата. На любом интерфейсе сохраняются
 mTLS-проверки registry и ограничения ресурсов. `serve` перезапускает ранее явно
 включённый точный endpoint; install/upgrade и подготовка автоматически его не
 включают. После disable или restore нужны новый проверенный backup и явное
@@ -241,7 +241,8 @@ mTLS-проверки registry и ограничения ресурсов. `serv
 identity или требует явного detach. Detach
 удаляет полномочия контроллера. [Офлайн-восстановление](security.md#локальное-восстановление-node)
 от Linux root поддерживает detach и новый enrollment с новой identity.
-Интеграция installer, смена endpoint, fleet UI и remote operations остаются
+Явные installer join/rebind и минимальный onboarding UI описаны в
+[Quick Install](quick-install.md). Смена endpoint, fleet UI и remote operations остаются
 отдельной работой.
 
 ## Импорт конфига клиента

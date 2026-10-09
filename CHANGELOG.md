@@ -4,9 +4,12 @@
 
 ### Added
 
+- Added explicit version-checked installer fresh/existing controller join and offline rebind, with private FD/hidden TTY secret input and pinned public-CA bootstrap.
+- Added minimal controller endpoint/backup/consent and Add node UI with manual comparison approval and enrollment-bound authenticated presence confirmation; unpublished builds expose public arguments without inventing release artifacts.
+
 - Added managed-node desired-state generation and epoch fencing, bounded idempotent success receipts, and startup recovery for interrupted runtime changes.
 - Added explicit controller activation with mandatory TOTP, opaque sessions, recovery codes and Linux-root offline administrator recovery.
-- Added pinned enrollment with administrator approval, mTLS presence, process-start fencing, automatic node and controller server-certificate renewal, and explicit opt-in control listeners on specific non-loopback addresses. Installer integration, fleet UI and remote operations remain future work.
+- Added pinned enrollment with administrator approval, mTLS presence, process-start fencing, automatic node and controller server-certificate renewal, and explicit opt-in control listeners on specific non-loopback addresses. Fleet UI and remote operations remain future work.
 - Added Linux-root offline `node detach` and fresh `node rebind`, preserving local tunnels and configuration while resetting managed identity through approved enrollment.
 
 ### Changed
@@ -23,6 +26,22 @@
 - Keep enrolled nodes locally manageable while making the node the sole commit authority: Web UI, CLI, autonomous policy, and future controller transactions are serialized across processes; successful `state.json` tunnel, client, protocol, WARP, automatic repair, and traffic-limit enforcement changes advance `desired_generation`, so the controller can refresh from the node and stale remote operations fail instead of overwriting newer local state.
 - Controller backups include protected identity and a verified SQLite snapshot; cold restore disables control and atomically invalidates archived browser and node authority without erasing registry history. Administrator recovery never restores node access.
 - Identity rotation and local recovery use private atomic journals, exact generation cleanup and fail-closed startup fencing; offline node retirement does not revoke credentials copied to another machine.
+
+## v0.19.1 - 2026-10-09
+
+### Added
+
+- Prepare missing Docker Engine, Docker Compose plugin and Linux host tools interactively on Ubuntu 22.04/24.04/26.04, Debian 12/13, CentOS Stream 9/10 and RHEL 8/9/10, using signed Docker package repositories when needed.
+- Cover dependency installation, existing Docker reuse, Compose-only setup, package conflicts, rejected preparation and failed package/service operations with isolated installer tests.
+
+### Fixed
+
+- Label the private data volume for new installations on SELinux hosts without disabling SELinux or relabeling host system paths.
+- Stop installation before creating project files when TUN remains unavailable after attempting to load its kernel module, and reject a broken legacy Compose executable.
+
+### Security
+
+- Refresh the base image's existing `perl-base` package from Debian repositories to include available security fixes and pass the release image scan.
 
 ## v0.19.0 - 2026-09-05
 

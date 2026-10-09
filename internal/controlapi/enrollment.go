@@ -1,7 +1,13 @@
-// Package controlapi defines the implemented loopback enrollment wire types.
+// Package controlapi defines enrollment wire types for explicitly enabled control listeners.
 package controlapi
 
 import "time"
+
+// Bootstrap contains only public trust material. It is untrusted until its CA
+// SPKI matches the operator's pin and ordinary server TLS verification succeeds.
+type Bootstrap struct {
+	CACertPEM string `json:"ca_cert_pem"`
+}
 
 type Invitation struct {
 	InvitationID  string    `json:"invitation_id"`

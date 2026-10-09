@@ -22,7 +22,7 @@ const snapshotControllerID = "22222222-2222-4222-8222-222222222222"
 
 func TestControllerRegistrySnapshotSupportedSchemas(t *testing.T) {
 	ctx := context.Background()
-	for _, version := range []int{5, 6, 7, 8, 9} {
+	for _, version := range []int{5, 6, 7, 8, 9, 10} {
 		t.Run("schema", func(t *testing.T) {
 			db := openSnapshotSchema(t, version)
 			path := snapshotPath(t, db)
@@ -30,6 +30,34 @@ func TestControllerRegistrySnapshotSupportedSchemas(t *testing.T) {
 				t.Fatalf("schema %d: %v", version, err)
 			}
 		})
+	}
+}
+
+func TestControllerRegistrySnapshotPresenceCertificateProvenance(t *testing.T) {
+	ctx := context.Background()
+	db, material, generation, identity := populatedSnapshotSchema(t, 10, false)
+	var serial string
+	if err := db.sql.QueryRowContext(ctx, "SELECT serial FROM control_node_certificates WHERE node_id = ?", identity.NodeID).Scan(&serial); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if _, err := db.AcceptAuthenticatedNodePresence(ctx, identity, "11111111-1111-4111-8111-111111111112", "11111111-1111-4111-8111-111111111113", 1, generation, serial, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyControllerRegistrySnapshot(ctx, snapshotPath(t, db), snapshotControllerID, generation, snapshotCA(t, material)); err != nil {
+		t.Fatalf("valid presence certificate provenance: %v", err)
+	}
+	if _, err := db.sql.ExecContext(ctx, "UPDATE control_node_presence SET certificate_serial = 'orphan'"); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyControllerRegistrySnapshot(ctx, snapshotPath(t, db), snapshotControllerID, generation, snapshotCA(t, material)); err == nil {
+		t.Fatal("orphan presence certificate accepted")
+	}
+	if _, err := db.sql.ExecContext(ctx, "UPDATE control_node_presence SET certificate_issuer_generation = NULL, certificate_serial = NULL"); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyControllerRegistrySnapshot(ctx, snapshotPath(t, db), snapshotControllerID, generation, snapshotCA(t, material)); err != nil {
+		t.Fatalf("legacy null presence rejected: %v", err)
 	}
 }
 
