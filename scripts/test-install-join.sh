@@ -46,7 +46,7 @@ docker() {
       ;;
     start)
       if [[ "${2:-}" == -ai ]]; then
-        [[ "${signal_helper:-false}" != true ]] || { "$BASH" -c 'kill -TERM "$PPID"'; return 143; }
+        [[ "${signal_helper:-false}" != true ]] || { kill -TERM "$fixture_installer_pid"; return 143; }
         [[ "${fail_helper:-false}" != true ]] || return 1
       else
         [[ "${fail_start:-false}" != true ]] || return 1
@@ -61,7 +61,15 @@ timeout() {
   "$@"
 }
 join_require_prerequisites() { :; }
-run_join() { ( main "$@" ); }
+run_join() {
+  (
+    # $$ is inherited by Bash subshells. An exec'd child reports this exact
+    # installer's PID via PPID, including on Bash 3.2 without BASHPID.
+    local fixture_installer_pid
+    fixture_installer_pid="$(exec "$BASH" -c 'printf "%s\n" "$PPID"')"
+    main "$@"
+  )
+}
 
 join_require_unlabelled_docker
 if (fixture_security_options=$'name=seccomp,profile=builtin\nname=selinux'; join_require_unlabelled_docker); then
@@ -130,9 +138,10 @@ printf 'OK precommit helper failure cleans exact helper and resumes previous own
 
 : >"$docker_log"
 if ( signal_helper=true; run_join join --workdir "$owned_workdir" --maintenance "${common[@]}" </dev/null ); then exit 1; else result=$?; fi
-[[ "$result" == 143 ]]
+[[ "$result" == 143 ]] || { printf 'FAIL installer SIGTERM exit: expected 143, got %s\n' "$result" >&2; exit 1; }
 grep -qx "rm -f $fixture_helper_id" "$docker_log"
 grep -qx "start $fixture_container_id" "$docker_log"
+[[ "$before" == "$(cksum "$owned_workdir/docker-compose.yml" "$owned_workdir/.env" "$owned_workdir/data/state.json")" ]]
 printf 'OK signal returns nonzero and cleanup cannot remove a container by name\n'
 
 : >"$docker_log"
