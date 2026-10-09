@@ -64,8 +64,9 @@ with fresh enrollment, rather than reopening the former registry node. See
 [local recovery](../en/security.md#offline-node-recovery) for the operator contract.
 Non-loopback listeners require recent auth, an exact-identity verified backup receipt,
 retained-archive confirmation and explicit `allow_non_loopback: true`.
-Installer join/rebind, fleet UI, operation delivery, receipt
-acknowledgement and pruning remain outside the implemented checkpoint.
+Explicit installer join/rebind and minimal controller onboarding are implemented.
+Fleet UI, operation delivery, receipt acknowledgement and pruning remain outside
+the implemented checkpoint.
 
 `state.json` on each node is the desired-state source of truth. The controller
 is a secure remote control surface and redacted inventory cache, not an
@@ -474,3 +475,7 @@ rolling-version compatibility, and all failure tests in the companion matrix.
   [RFC 9106](https://www.rfc-editor.org/rfc/rfc9106), and
   [RFC 6238](https://www.rfc-editor.org/rfc/rfc6238) are the normative bases for
   certificate validation, Argon2, and TOTP respectively.
+
+## Installer onboarding implementation
+
+Explicit fresh/existing join and offline rebind are implemented alongside the minimal Maintenance/Controller onboarding flow. The bootstrap adds only public CA retrieval and preserves the existing CA-SPKI/TLS enrollment protocol. SQLite schema 10 records exact presence certificate provenance for enrollment-bound browser confirmation; legacy unconfirmed rows remain compatible. Unpublished builds intentionally return unsupported installer metadata and only copy public argument suffixes. See EN/RU installation/security documentation for artifact validation, stop/start ownership and interrupted-commit handling. Fleet inventory, snapshots and operation delivery remain proposed. Container/process evidence does not establish multi-host VPN continuity.

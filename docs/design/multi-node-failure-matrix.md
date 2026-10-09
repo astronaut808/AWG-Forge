@@ -99,3 +99,16 @@ corresponding capability can be released; the matrix alone is not test evidence.
 
 The matrix is release-blocking for implemented rows. Unimplemented rows do not
 justify shipping a partial controller as a stable user-facing feature.
+
+## Implemented installer onboarding boundaries
+
+| Failure | Result / authoritative state | Retry and evidence |
+|---|---|---|
+| Unsupported artifact, foreign service, missing maintenance consent or unsupported environment/user namespace | Reject before stop; original files and service unchanged | Supply compatible exact metadata and supported owned service |
+| Wrong CA pin/SAN, redirect, oversized bootstrap or unavailable endpoint | No invitation secret transmitted to unverified endpoint; no new binding | New explicit attempt with valid endpoint; no automatic invite replay |
+| Fresh helper fails or is interrupted | Protected scaffold/possible identity or journal retained; no implicit service start | Offline inspect before deleting/reusing data; a consumed invitation is never replayed automatically |
+| Existing helper fails before commit | Previous binding remains; exact owned service resumes when helper termination is proven | Fresh explicit invitation if required; preserve Compose/environment/mounts |
+| Helper termination cannot be established | Exact service remains stopped | Inspect helper/lock/journal before start |
+| Commit succeeds but service start/presence fails | New committed identity retained; connectivity pending | Diagnose/retry start; no old-backup rollback or invitation redemption |
+| Approved certificate or stale/revoked/legacy presence | Browser remains waiting | Connected requires exact active certificate provenance and enrollment-bound live registry session |
+| Flow closes, account changes, recent auth expires, rejection or expiry | Abort polling and clear transient credentials | Start a fresh authenticated flow |

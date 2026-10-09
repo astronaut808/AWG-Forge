@@ -1,6 +1,7 @@
 import { createContext, render } from "preact";
 import { useCallback, useContext, useEffect, useRef, useState } from "preact/hooks";
 import * as api from "./api";
+import { ControllerOnboarding } from "./controller-onboarding";
 import { initialLocale, localeStorageKey, messages } from "./i18n";
 import type { Locale, Messages } from "./i18n";
 import type {
@@ -1194,6 +1195,7 @@ function ControllerPanel({ state, notify, reload, close, setRecoveryCodesPending
       <button class="button" type="submit" disabled={busy}>{m.controller.reauth}</button>
     </form>
     <button class="button primary" type="button" disabled={!recent || busy} onClick={() => void perform(async () => { const result = await api.controllerRotateRecoveryCodes(); setCodes(result.recovery_codes); setRecoveryCodesPending(true); setRecent(true); })}>{m.controller.rotateCodes}</button>
+    <ControllerOnboarding recent={recent} notify={notify} m={m} />
   </section>;
 }
 

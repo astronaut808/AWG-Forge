@@ -20,6 +20,9 @@ import (
 )
 
 func runNode(cfg config.Config, service *app.Service, args []string) error {
+	if len(args) > 0 && args[0] == "installer-check" {
+		return runNodeInstallerCheck(args[1:])
+	}
 	if len(args) > 0 && (args[0] == "detach" || args[0] == "rebind") {
 		return runNodeRecoveryWithAuthority(cfg, service, args, runtime.GOOS, os.Geteuid())
 	}
@@ -27,22 +30,30 @@ func runNode(cfg config.Config, service *app.Service, args []string) error {
 		return errors.New("usage: awg-forge node enroll|detach|rebind (see node recovery documentation)")
 	}
 	flags := flag.NewFlagSet("node enroll", flag.ContinueOnError)
-	input := flags.String("input-file", "", "protected enrollment invitation")
+	var input nodeInvitationInput
+	input.flags(flags)
 	name := flags.String("name", "node", "node display name")
 	timeout := flags.Duration("timeout", 10*time.Minute, "enrollment timeout")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
-	if flags.NArg() != 0 || *input == "" || *timeout <= 0 || *timeout > 15*time.Minute {
+	if flags.NArg() != 0 || input.validate(*name) != nil || *timeout <= 0 || *timeout > 15*time.Minute {
 		return errors.New("usage: awg-forge node enroll --input-file <invitation.json> [--name name] [--timeout duration]")
 	}
-	invitation, err := readNodeInvitation(*input)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	ctx, cancel := context.WithTimeout(ctx, *timeout)
+	defer cancel()
+	session, err := service.BeginNodeEnrollment(ctx)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
-	defer cancel()
-	return nodeagent.Enroll(ctx, service, invitation, *name, func(code string) error {
+	defer func() { _ = session.Close() }()
+	invitation, err := input.read(ctx)
+	if err != nil {
+		return err
+	}
+	return nodeagent.Enroll(ctx, session, invitation, *name, func(code string) error {
 		_, err := os.Stdout.WriteString("Enrollment verification code: " + code + "\n")
 		return err
 	})
@@ -58,10 +69,11 @@ func runNodeRecoveryWithAuthority(_ config.Config, service *app.Service, args []
 	flags := flag.NewFlagSet("node "+args[0], flag.ContinueOnError)
 	nodeID := flags.String("confirm-node-id", "", "current local node identity")
 	controllerID := flags.String("confirm-controller-id", "", "current local controller identity")
-	var input, name *string
+	var input nodeInvitationInput
+	var name *string
 	var timeout *time.Duration
 	if args[0] == "rebind" {
-		input = flags.String("input-file", "", "protected fresh enrollment invitation")
+		input.flags(flags)
 		name = flags.String("name", "node", "node display name")
 		timeout = flags.Duration("timeout", 10*time.Minute, "enrollment timeout")
 	}
@@ -71,7 +83,7 @@ func runNodeRecoveryWithAuthority(_ config.Config, service *app.Service, args []
 	if flags.NArg() != 0 || *nodeID == "" || *controllerID == "" {
 		return errors.New("node recovery requires explicit current node/controller confirmation")
 	}
-	if input != nil && (*input == "" || *timeout <= 0 || *timeout > 15*time.Minute) {
+	if args[0] == "rebind" && (input.validate(*name) != nil || *timeout <= 0 || *timeout > 15*time.Minute) {
 		return errors.New("rebind requires protected invitation and bounded timeout")
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -89,7 +101,7 @@ func runNodeRecoveryWithAuthority(_ config.Config, service *app.Service, args []
 	if args[0] == "detach" {
 		return r.Detach(ctx)
 	}
-	invitation, err := readNodeInvitation(*input)
+	invitation, err := input.read(ctx)
 	if err != nil {
 		return err
 	}

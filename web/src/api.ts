@@ -24,6 +24,7 @@ type RequestOptions = {
   method?: string;
   body?: unknown;
   idempotencyKey?: string;
+  signal?: AbortSignal;
 };
 
 export function newIdempotencyKey(): string {
@@ -35,6 +36,8 @@ async function request<T>(url: string, options: RequestOptions = {}): Promise<T>
   const init: RequestInit = {
     method: options.method || "GET",
     headers: {},
+    signal: options.signal,
+    cache: "no-store",
   };
   const headers = init.headers as Record<string, string>;
   if (options.idempotencyKey) headers["Idempotency-Key"] = options.idempotencyKey;
@@ -82,8 +85,42 @@ export function authStatus(): Promise<{ mode: AuthMode }> {
   return request("/api/auth/status");
 }
 
-export function authSession(): Promise<{ mode: AuthMode; authenticated: true; username?: string; recent_auth?: boolean; expires_at?: string }> {
-  return request("/api/auth/session");
+export function authSession(signal?: AbortSignal): Promise<{ mode: AuthMode; authenticated: true; username?: string; recent_auth?: boolean; expires_at?: string }> {
+  return request("/api/auth/session", { signal });
+}
+
+export type ControlEndpoint = { enabled: boolean; bind_ip: string; advertised: string; port: number; ca_pin: string };
+export type NodeInvitation = { invitation_id: string; secret: string; controller_url: string; ca_pin: string; ca_cert_pem: string; expires_at: string };
+export type OnboardingStatus = { invitation_id: string; controller_id: string; enrollment_id?: string; node_id?: string; binding_epoch?: number; status: string; connected: boolean; expires_at: string };
+
+export function controlStatus(signal?: AbortSignal): Promise<{ controller_id: string; control: ControlEndpoint | null }> {
+  return request("/api/controller/control/status", { signal });
+}
+export function controlPrepare(body: { bind_ip: string; advertised: string; port: number }, signal?: AbortSignal): Promise<ControlEndpoint> {
+  return request("/api/controller/control/prepare", { method: "POST", body, signal });
+}
+export async function controlBackup(password: string, signal?: AbortSignal): Promise<Response> {
+  const res = await fetch("/api/controller/control/backup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password }), cache: "no-store", signal });
+  if (!res.ok) { const error = await errorDetails(res); throw new APIError(res.status, error.message, error.code); }
+  return res;
+}
+export function controlEnable(receipt: string, allowNonLoopback: boolean, signal?: AbortSignal): Promise<{ enabled: boolean }> {
+  return request("/api/controller/control/enable", { method: "POST", body: { receipt, backup_saved: true, allow_non_loopback: allowNonLoopback }, signal });
+}
+export function nodeInvitation(signal?: AbortSignal): Promise<NodeInvitation> {
+  return request("/api/controller/enrollments/invite", { method: "POST", body: {}, signal });
+}
+export function onboardingStatus(invitationID: string, signal?: AbortSignal): Promise<OnboardingStatus> {
+  return request("/api/controller/enrollments/status", { method: "POST", body: { invitation_id: invitationID }, signal });
+}
+export function enrollmentReview(invitationID: string, signal?: AbortSignal): Promise<{ enrollment_id: string; requested_name: string; verification_code: string; status: string; expires_at: string }> {
+  return request("/api/controller/enrollments/review", { method: "POST", body: { invitation_id: invitationID }, signal });
+}
+export function enrollmentDecide(enrollmentID: string, code: string, approve: boolean, signal?: AbortSignal): Promise<{ approved: boolean }> {
+  return request("/api/controller/enrollments/decide", { method: "POST", body: { enrollment_id: enrollmentID, verification_code: code, approve }, signal });
+}
+export function installerInfo(signal?: AbortSignal): Promise<{ supported: boolean; reason: string }> {
+  return request("/api/controller/installer-info", { signal });
 }
 
 export function controllerSetup(username: string): Promise<{ totp_secret: string; qr_png: string }> {

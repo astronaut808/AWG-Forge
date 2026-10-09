@@ -38,7 +38,15 @@ func TestEnrollmentProcesses(t *testing.T) {
 	runEnrollmentProcesses(t, "127.0.0.1")
 }
 
+func TestBootstrapEnrollmentProcesses(t *testing.T) {
+	runEnrollmentProcessesWithBootstrap(t, "127.0.0.1", true)
+}
+
 func runEnrollmentProcesses(t *testing.T, bindIP string) {
+	runEnrollmentProcessesWithBootstrap(t, bindIP, false)
+}
+
+func runEnrollmentProcessesWithBootstrap(t *testing.T, bindIP string, publicBootstrap bool) {
 	if testing.Short() {
 		t.Skip("process integration test")
 	}
@@ -168,7 +176,19 @@ func runEnrollmentProcesses(t *testing.T, bindIP string) {
 	if err := os.WriteFile(inputPath, input, 0600); err != nil {
 		t.Fatal(err)
 	}
-	node := enrollmentStartProcess(ctx, t, binary, enrollmentEnv(nodeDir, enrollmentFreePort(t)), "node", "enroll", "--input-file", inputPath, "--name", "node")
+	nodeEnv := func(dir string, port int) []string {
+		env := enrollmentEnv(dir, port)
+		if publicBootstrap {
+			env = append(env, "DATABASE_MODE=off", "DATABASE_PATH=")
+		}
+		return env
+	}
+	var node *enrollmentProcess
+	if publicBootstrap {
+		node = enrollmentStartProcessInput(ctx, t, binary, nodeEnv(nodeDir, enrollmentFreePort(t)), strings.NewReader(invitation.Secret+"\n"), "node", "enroll", "--controller-url", invitation.ControllerURL, "--ca-pin", invitation.CAPin, "--invitation-id", invitation.InvitationID, "--secret-fd", "0", "--name", "node")
+	} else {
+		node = enrollmentStartProcess(ctx, t, binary, nodeEnv(nodeDir, enrollmentFreePort(t)), "node", "enroll", "--input-file", inputPath, "--name", "node")
+	}
 	defer node.stop(t)
 	var review app.EnrollmentReview
 	deadline := time.Now().Add(20 * time.Second)
@@ -215,15 +235,27 @@ func runEnrollmentProcesses(t *testing.T, bindIP string) {
 	if err != nil || state.EffectiveMode() != config.ModeNode || state.ManagedNode == nil {
 		t.Fatalf("node enrollment state unavailable: %v", err)
 	}
+	if len(state.Tunnels) != 0 {
+		t.Fatal("fresh join created a default tunnel")
+	}
+	var onboarding app.EnrollmentOnboardingStatus
+	enrollmentJSON(ctx, t, client, http.MethodPost, baseURL+"/api/controller/enrollments/status", map[string]any{"invitation_id": invitation.InvitationID}, &onboarding)
+	if onboarding.Connected || onboarding.Status != "approved" {
+		t.Fatal("certificate issuance counted as connected")
+	}
 
 	// A separate `serve` process owns the persistent boot sequence and sends
 	// mTLS presence. Its first request proves the registry record is durable.
 	nodePort := enrollmentFreePort(t)
-	nodeServe := enrollmentStartProcess(ctx, t, binary, enrollmentEnv(nodeDir, nodePort), "serve")
+	nodeServe := enrollmentStartProcess(ctx, t, binary, nodeEnv(nodeDir, nodePort), "serve")
 	defer nodeServe.stop(t)
 	firstSequence := enrollmentWaitPresence(ctx, t, cfg.DatabasePath, state.ManagedNode.NodeID)
+	enrollmentJSON(ctx, t, client, http.MethodPost, baseURL+"/api/controller/enrollments/status", map[string]any{"invitation_id": invitation.InvitationID}, &onboarding)
+	if !onboarding.Connected || onboarding.NodeID != state.ManagedNode.NodeID {
+		t.Fatal("authenticated first presence did not confirm new enrollment")
+	}
 	nodeServe.stop(t)
-	nodeServe = enrollmentStartProcess(ctx, t, binary, enrollmentEnv(nodeDir, nodePort), "serve")
+	nodeServe = enrollmentStartProcess(ctx, t, binary, nodeEnv(nodeDir, nodePort), "serve")
 	defer nodeServe.stop(t)
 	secondSequence := enrollmentWaitPresenceAfter(ctx, t, cfg.DatabasePath, state.ManagedNode.NodeID, firstSequence)
 	if secondSequence != firstSequence+1 {
@@ -316,6 +348,10 @@ func runEnrollmentProcesses(t *testing.T, bindIP string) {
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
+	enrollmentJSON(ctx, t, client, http.MethodPost, baseURL+"/api/controller/enrollments/status", map[string]any{"invitation_id": invitation.InvitationID}, &onboarding)
+	if onboarding.Connected {
+		t.Fatal("revoked node remained connected in onboarding")
+	}
 	if status := enrollmentMTLSPresenceStatus(t, nodeDir, state); status != http.StatusForbidden {
 		t.Fatalf("revoked node presence status = %d, want %d", status, http.StatusForbidden)
 	}
@@ -384,6 +420,10 @@ func enrollmentEnv(dir string, port int) []string {
 	return append(os.Environ(), "CONFIG_DIR="+dir, fmt.Sprintf("WEBUI_PORT=%d", port), "WEBUI_HOST=127.0.0.1", "DATABASE_MODE=sqlite", "DATABASE_PATH="+filepath.Join(dir, "awg-forge.db"), "APPLY_CONFIG=false", "AUDIT_LOG_ENABLED=false", "SESSION_COOKIE_SECURE=false")
 }
 func enrollmentStartProcess(ctx context.Context, t *testing.T, binary string, env []string, args ...string) *enrollmentProcess {
+	return enrollmentStartProcessInput(ctx, t, binary, env, nil, args...)
+}
+
+func enrollmentStartProcessInput(ctx context.Context, t *testing.T, binary string, env []string, input io.Reader, args ...string) *enrollmentProcess {
 	t.Helper()
 	output := new(enrollmentOutput)
 	logFile, err := os.CreateTemp(t.TempDir(), "process-*.log")
@@ -396,6 +436,7 @@ func enrollmentStartProcess(ctx context.Context, t *testing.T, binary string, en
 	cmd := exec.CommandContext(ctx, "./awg-forge", args...)
 	cmd.Dir = filepath.Dir(binary)
 	cmd.Env = env
+	cmd.Stdin = input
 	cmd.Stdout = io.MultiWriter(logFile, output)
 	cmd.Stderr = cmd.Stdout
 	if err := cmd.Start(); err != nil {

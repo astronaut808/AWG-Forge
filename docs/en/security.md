@@ -116,3 +116,9 @@ deterministic journal reconciliation; malformed evidence, changed state or unsaf
 paths require offline inspection and remain fail closed. Do not delete evidence
 to bypass that check. Backup and restore reject pending recovery, and an old node
 archive cannot replace the identity established by fresh rebind.
+
+## Installer enrollment trust and secrets
+
+The secret-free `GET /control/v1/bootstrap` exposes only the public CA certificate. The node treats it as untrusted, verifies the operator-provided CA SPKI pin, and repeats retrieval with ordinary TLS 1.3 chain/SAN/time validation before transmitting any invitation secret. Proxy, redirects, URL confusion and oversized responses are rejected. Enrollment holds the same exclusive state-directory lock as serving through approval and commit. Existing protected `--input-file` remains supported; the alternative public metadata interface reads a bounded secret from a private FD or hidden TTY.
+
+Browser enrollment status requires recent controller authentication and the invitation's exact approved controller/node/binding with a live registry session authenticated by an active certificate from the current CA generation. Certificate issuance or legacy presence without certificate provenance cannot count as connected. Responses use an allowlisted DTO and no-store. Invitation secrets and backup receipts stay only in flow memory; browser traces/screenshots/videos containing secrets must stay disabled. Installer interruption never restores pre-commit credentials over a potentially committed identity; inspect journals before manual recovery. See [installer lifecycle](quick-install.md#explicit-installer-connection-to-a-controller).

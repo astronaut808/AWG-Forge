@@ -241,3 +241,7 @@ protect against raw-filesystem rollback or prove uniqueness of cloned controller
 - browser CSRF/origin, session rotation, TOTP replay, recovery-code reuse, and
   recent-auth tests;
 - controller outage and full node restart while existing tunnels continue.
+
+## Implemented installer bootstrap and onboarding
+
+The public bootstrap discloses only CA PEM and receives no invitation secret or registry identifier. The node first proves the supplied CA SPKI pin and then repeats retrieval through ordinary verified TLS before reading/transmitting credentials. Secret input stays in Go memory via protected FD/hidden terminal, never shell JSON/environment/Compose. Explicit installer maintenance checks the exact owned root Compose service and artifact before stop; no helper uncertain exit permits destructive identity rollback. Browser confirmation is enrollment-bound and verifies exact current certificate provenance in a live registry session; legacy presence cannot prove connection. Recent auth, no-store responses, manual comparison and cancellation protect the minimal onboarding flow. Fleet inventory, snapshots and remote operations remain outside this checkpoint.

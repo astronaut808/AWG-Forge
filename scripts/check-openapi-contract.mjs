@@ -20,6 +20,7 @@ const controllerActivation = ajv.compile(schemas.ControllerActivationRequest);
 const controllerLogin = ajv.compile(schemas.ControllerLoginRequest);
 const controlEnable = ajv.compile(schemas.ControlEnableRequest);
 const enrollmentDecision = ajv.compile(schemas.EnrollmentDecisionRequest);
+const enrollmentOnboardingStatus = ajv.compile(schemas.EnrollmentOnboardingStatus);
 const schemaUUID = "103354a0-e154-4d4c-bfde-f71dbbc7394f";
 const schemaPassword = "p".repeat(16);
 const schemaTOTPSecret = "A".repeat(32);
@@ -36,6 +37,8 @@ const cases = [
   ["enrollment decision supports explicit rejection", enrollmentDecision, { enrollment_id: schemaUUID, verification_code: "ABCD-EFGH", approve: false }, true],
   ["enrollment decision rejects implicit rejection", enrollmentDecision, { enrollment_id: schemaUUID, verification_code: "ABCD-EFGH" }, false],
   ["enrollment decision rejects null", enrollmentDecision, { enrollment_id: schemaUUID, verification_code: "ABCD-EFGH", approve: null }, false],
+  ["onboarding status exposes only its public fields", enrollmentOnboardingStatus, { invitation_id: schemaUUID, controller_id: schemaUUID, status: "approved", connected: true, expires_at: "2026-09-05T12:00:00Z", binding_epoch: 1 }, true],
+  ["onboarding status rejects secrets", enrollmentOnboardingStatus, { invitation_id: schemaUUID, controller_id: schemaUUID, status: "approved", connected: true, expires_at: "2026-09-05T12:00:00Z", certificate: "secret" }, false],
   ["controller activation requires MFA confirmation", controllerActivation, { username: "admin", password: schemaPassword, totp_secret: schemaTOTPSecret, confirmation_code: schemaCode }, true],
   ["controller activation rejects missing MFA confirmation", controllerActivation, { username: "admin", password: schemaPassword, totp_secret: schemaTOTPSecret }, false],
   ["controller login requires the second factor", controllerLogin, { username: "admin", password: schemaPassword, code: schemaCode }, true],
@@ -75,6 +78,10 @@ controlAjv.addSchema({
 });
 
 const enrollmentClaim = requireSchema(controlAjv, "EnrollmentClaimRequest");
+const enrollmentBootstrap = requireSchema(controlAjv, "EnrollmentBootstrap");
+if (!enrollmentBootstrap({ ca_cert_pem: "public CA" }) || enrollmentBootstrap({ ca_cert_pem: "public CA", secret: "test canary" }) || enrollmentBootstrap({ ca_cert_pem: "x".repeat(8193) })) {
+  throw new Error("Bootstrap must contain bounded public CA material only");
+}
 const certificateRenewal = requireSchema(controlAjv, "CertificateRenewalRequest");
 const nodePresence = requireSchema(controlAjv, "NodePresence");
 const presenceAccepted = requireSchema(controlAjv, "PresenceAccepted");
@@ -346,7 +353,11 @@ function assertControlSecurity(control) {
         throw new Error(`${method.toUpperCase()} ${path} must have a summary`);
       }
       const enrollmentScheme = enrollmentSchemes.get(path);
-      if (enrollmentScheme) {
+      if (path === "/control/v1/bootstrap") {
+        if (method !== "get" || JSON.stringify(operation.security) !== "[]" || operation.requestBody !== undefined || operation.parameters !== undefined) {
+          throw new Error("Only exact secret-free public CA bootstrap may omit nodeMTLS");
+        }
+      } else if (enrollmentScheme) {
         if (JSON.stringify(operation.security) !== JSON.stringify([{ [enrollmentScheme]: [] }])) {
           throw new Error(`${method.toUpperCase()} ${path} must use only ${enrollmentScheme}`);
         }

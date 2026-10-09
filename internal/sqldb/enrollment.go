@@ -314,10 +314,18 @@ func (db *DB) RejectEnrollment(ctx context.Context, id string, now time.Time) er
 
 // AcceptNodePresence persists a monotonic boot fence for a currently active node.
 func (db *DB) AcceptNodePresence(ctx context.Context, identity NodeIdentity, stateEpoch, bootID string, bootSequence uint64, now time.Time) (string, error) {
+	return db.AcceptAuthenticatedNodePresence(ctx, identity, stateEpoch, bootID, bootSequence, "", "", now)
+}
+
+// AcceptAuthenticatedNodePresence binds the live session to the exact
+// registry-authorized client certificate that made the presence request.
+// Empty certificate fields preserve compatibility for callers that cannot yet
+// attest transport identity; such legacy sessions never count as connected.
+func (db *DB) AcceptAuthenticatedNodePresence(ctx context.Context, identity NodeIdentity, stateEpoch, bootID string, bootSequence uint64, issuerGeneration, serial string, now time.Time) (string, error) {
 	if db == nil || db.sql == nil {
 		return "", ErrDisabled
 	}
-	if !validNodeIdentity(identity) || !validUUID(stateEpoch) || !validUUID(bootID) || bootSequence == 0 || bootSequence > math.MaxInt64 || now.IsZero() {
+	if !validNodeIdentity(identity) || !validUUID(stateEpoch) || !validUUID(bootID) || bootSequence == 0 || bootSequence > math.MaxInt64 || now.IsZero() || (issuerGeneration != "" && !validIssuerGeneration(issuerGeneration)) || (issuerGeneration == "") != (serial == "") {
 		return "", ErrNodeCertificateDenied
 	}
 	tx, err := db.sql.BeginTx(ctx, nil)
@@ -348,14 +356,14 @@ FROM control_node_presence WHERE node_id = ?`, identity.NodeID).Scan(&storedStat
 			newSession = sessionID
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE control_node_presence
-SET controller_id = ?, binding_epoch = ?, state_epoch = ?, boot_id = ?, boot_sequence = ?, session_id = ?, expires_at_unix_ms = ?
-WHERE node_id = ?`, identity.ControllerID, identity.BindingEpoch, stateEpoch, bootID, bootSequence, newSession, now.UTC().Add(nodePresenceTTL).UnixMilli(), identity.NodeID); err != nil {
+SET controller_id = ?, binding_epoch = ?, state_epoch = ?, boot_id = ?, boot_sequence = ?, session_id = ?, expires_at_unix_ms = ?, certificate_issuer_generation = NULLIF(?, ''), certificate_serial = NULLIF(?, '')
+WHERE node_id = ?`, identity.ControllerID, identity.BindingEpoch, stateEpoch, bootID, bootSequence, newSession, now.UTC().Add(nodePresenceTTL).UnixMilli(), issuerGeneration, serial, identity.NodeID); err != nil {
 			return "", err
 		}
 	} else if errors.Is(err, sql.ErrNoRows) {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO control_node_presence
-(node_id, controller_id, binding_epoch, state_epoch, boot_id, boot_sequence, session_id, expires_at_unix_ms)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, identity.NodeID, identity.ControllerID, identity.BindingEpoch, stateEpoch, bootID, bootSequence, newSession, now.UTC().Add(nodePresenceTTL).UnixMilli()); err != nil {
+(node_id, controller_id, binding_epoch, state_epoch, boot_id, boot_sequence, session_id, expires_at_unix_ms, certificate_issuer_generation, certificate_serial)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''))`, identity.NodeID, identity.ControllerID, identity.BindingEpoch, stateEpoch, bootID, bootSequence, newSession, now.UTC().Add(nodePresenceTTL).UnixMilli(), issuerGeneration, serial); err != nil {
 			return "", err
 		}
 	} else {

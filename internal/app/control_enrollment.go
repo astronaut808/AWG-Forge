@@ -235,11 +235,32 @@ func (s *Service) enrollmentStateLocked() (config.State, controlpki.Material, er
 
 func (s *Service) enrollmentRoutes() []controlserver.Route {
 	return []controlserver.Route{
+		{ID: "enrollment.bootstrap", Method: http.MethodGet, Path: "/control/v1/bootstrap", Bootstrap: true, Handler: http.HandlerFunc(s.enrollmentBootstrapHTTP)},
 		{ID: "enrollment.claim", Method: http.MethodPost, Path: "/control/v1/enrollments/{invitation_id}/claim", Bootstrap: true, Handler: http.HandlerFunc(s.claimEnrollmentHTTP)},
 		{ID: "enrollment.status", Method: http.MethodGet, Path: "/control/v1/enrollments/{enrollment_id}", Bootstrap: true, Handler: http.HandlerFunc(s.enrollmentStatusHTTP)},
 		{ID: "node.presence", Method: http.MethodPut, Path: "/control/v1/node/presence", Handler: http.HandlerFunc(s.nodePresenceHTTP)},
 		{ID: "node.certificate-renewal", Method: http.MethodPost, Path: "/control/v1/node/certificate-renewals", Handler: http.HandlerFunc(s.nodeCertificateRenewalHTTP)},
 	}
+}
+
+func (s *Service) enrollmentBootstrapHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.ContentLength > 0 || len(r.TransferEncoding) > 0 || r.Header.Get("Authorization") != "" || r.URL.RawQuery != "" {
+		controlProblem(w, sqldb.ErrEnrollmentDenied)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	if err := s.lockControlRequest(ctx); err != nil {
+		controlProblem(w, err)
+		return
+	}
+	defer s.unlockStateMutation()
+	_, material, err := s.enrollmentStateLocked()
+	if err != nil {
+		controlProblem(w, err)
+		return
+	}
+	controlJSON(w, http.StatusOK, controlapi.Bootstrap{CACertPEM: string(material.CACert)})
 }
 func bootstrapToken(r *http.Request) (string, error) {
 	values := r.Header.Values("Authorization")
@@ -483,7 +504,7 @@ func (s *Service) nodePresenceHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC()
-	sessionID, err := db.AcceptNodePresence(ctx, sqldb.NodeIdentity{ControllerID: identity.ControllerID, NodeID: identity.NodeID, BindingEpoch: identity.BindingEpoch}, request.StateEpoch, request.BootID, request.BootSequence, now)
+	sessionID, err := db.AcceptAuthenticatedNodePresence(ctx, sqldb.NodeIdentity{ControllerID: identity.ControllerID, NodeID: identity.NodeID, BindingEpoch: identity.BindingEpoch}, request.StateEpoch, request.BootID, request.BootSequence, state.Controller.Control.CAGeneration, r.TLS.PeerCertificates[0].SerialNumber.String(), now)
 	if err != nil {
 		controlJSON(w, 409, map[string]any{"type": "about:blank", "title": "Presence fenced", "status": 409, "code": "presence_fenced"})
 		return
