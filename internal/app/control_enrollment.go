@@ -238,6 +238,7 @@ func (s *Service) enrollmentRoutes() []controlserver.Route {
 		{ID: "enrollment.bootstrap", Method: http.MethodGet, Path: "/control/v1/bootstrap", Bootstrap: true, Handler: http.HandlerFunc(s.enrollmentBootstrapHTTP)},
 		{ID: "enrollment.claim", Method: http.MethodPost, Path: "/control/v1/enrollments/{invitation_id}/claim", Bootstrap: true, Handler: http.HandlerFunc(s.claimEnrollmentHTTP)},
 		{ID: "enrollment.status", Method: http.MethodGet, Path: "/control/v1/enrollments/{enrollment_id}", Bootstrap: true, Handler: http.HandlerFunc(s.enrollmentStatusHTTP)},
+		{ID: "node.snapshot", Method: http.MethodPut, Path: "/control/v1/node/snapshot", Handler: http.HandlerFunc(s.nodeSnapshotHTTP)},
 		{ID: "node.presence", Method: http.MethodPut, Path: "/control/v1/node/presence", Handler: http.HandlerFunc(s.nodePresenceHTTP)},
 		{ID: "node.certificate-renewal", Method: http.MethodPost, Path: "/control/v1/node/certificate-renewals", Handler: http.HandlerFunc(s.nodeCertificateRenewalHTTP)},
 	}
@@ -500,13 +501,21 @@ func (s *Service) nodePresenceHTTP(w http.ResponseWriter, r *http.Request) {
 	// Recheck the exact certificate after taking the mutation lock, closing the
 	// interval between transport authorization and disable/revocation.
 	if _, err := db.FindActiveNodeCertificate(ctx, identity.ControllerID, state.Controller.Control.CAGeneration, r.TLS.PeerCertificates[0], time.Now()); err != nil {
-		controlJSON(w, 403, map[string]any{"type": "about:blank", "title": "Forbidden", "status": 403, "code": "node_denied"})
+		if errors.Is(err, sqldb.ErrNodeCertificateDenied) {
+			controlJSON(w, 403, map[string]any{"type": "about:blank", "title": "Forbidden", "status": 403, "code": "node_denied"})
+		} else {
+			controlProblem(w, err)
+		}
 		return
 	}
 	now := time.Now().UTC()
-	sessionID, err := db.AcceptAuthenticatedNodePresence(ctx, sqldb.NodeIdentity{ControllerID: identity.ControllerID, NodeID: identity.NodeID, BindingEpoch: identity.BindingEpoch}, request.StateEpoch, request.BootID, request.BootSequence, state.Controller.Control.CAGeneration, r.TLS.PeerCertificates[0].SerialNumber.String(), now)
-	if err != nil {
+	sessionID, err := db.RecordNodePresence(ctx, sqldb.NodeIdentity{ControllerID: identity.ControllerID, NodeID: identity.NodeID, BindingEpoch: identity.BindingEpoch}, state.Controller.Control.CAGeneration, r.TLS.PeerCertificates[0].SerialNumber.String(), request, now)
+	if errors.Is(err, sqldb.ErrNodeCertificateDenied) {
 		controlJSON(w, 409, map[string]any{"type": "about:blank", "title": "Presence fenced", "status": 409, "code": "presence_fenced"})
+		return
+	}
+	if err != nil {
+		controlProblem(w, err)
 		return
 	}
 	cert := r.TLS.PeerCertificates[0]

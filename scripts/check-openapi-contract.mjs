@@ -96,44 +96,15 @@ const ids = {
   session: "7e11fcbf-21fa-4b74-aa41-b0f62aee4e39",
 };
 const redactedSnapshot = {
-  session_id: ids.session,
-  boot_id: ids.boot,
-  boot_sequence: 7,
-  snapshot_sequence: 1,
-  state_epoch: ids.epoch,
-  binding_epoch: 1,
-  desired_generation: 3,
+  contract_version: 1, session_id: ids.session, boot_id: ids.boot, boot_sequence: 7,
+  snapshot_sequence: 1, state_epoch: ids.epoch, binding_epoch: 1, desired_generation: 3,
   observed_at: "2026-09-08T00:00:00Z",
-  service_status: "ready",
-  network: { external_interface_confirmed: false },
-  tunnels: [
-    {
-      id: "7d774c16b2c92872",
-      name: "AWG 2",
-      interface: "awg20",
-      profile: "awg_2_0",
-      enabled: true,
-      runtime_status: "up",
-      listen_port: 49411,
-      subnet: "10.28.0.0/24",
-      egress: "wan",
-      clients_total: 1,
-      clients_online: 1,
-      clients: [
-        {
-          id: "12a6acf567ffb5ae",
-          name: "phone",
-          enabled: true,
-          runtime_status: "online",
-          last_seen_at: "2026-09-08T00:00:00Z",
-          expires_at: null,
-          rx_bytes: 1024,
-          tx_bytes: 2048,
-        },
-      ],
-    },
-  ],
-  findings: [],
+  desired: { tunnels: [{ id: "7d774c16b2c92872", name: "AWG 2", interface: "awg20", profile: "awg_2_0", enabled: true, listen_port: 49411, revision: 1,
+    clients: [{ id: "12a6acf567ffb5ae", name: "phone", enabled: true, address: "10.28.0.2" }] }] },
+  observations: { apply_enabled: true, history_available: false,
+    tunnels: [{ id: "7d774c16b2c92872", known: true, up: true, apply_failed: false,
+      clients: [{ id: "12a6acf567ffb5ae", present: true, last_handshake: "2026-09-08T00:00:00Z", rx_bytes: 1024, tx_bytes: 2048 }] }],
+    doctor: { scope: "runtime", tun_available: true, forwarding: true, runtime_unknown: 0, tunnels_down: 0, apply_failures: 0 } },
 };
 const snapshotWithoutSequence = structuredClone(redactedSnapshot);
 delete snapshotWithoutSequence.snapshot_sequence;

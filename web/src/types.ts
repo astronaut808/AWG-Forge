@@ -223,3 +223,10 @@ export type RestoreReport = {
   client_count: number;
   server_host: string;
 };
+
+export type SnapshotClient = { id: string; name: string; enabled: boolean; address: string };
+export type SnapshotTunnel = { id: string; name: string; interface: string; profile: string; enabled: boolean; listen_port: number; revision: number; clients: SnapshotClient[] };
+export type SnapshotObservations = { apply_enabled: boolean; history_available: boolean; tunnels: { id: string; known: boolean; up: boolean; apply_failed: boolean; clients: { id: string; present: boolean; last_handshake: string; rx_bytes: number; tx_bytes: number }[] }[]; doctor: { scope: "runtime"; tun_available: boolean; forwarding: boolean; runtime_unknown: number; tunnels_down: number; apply_failures: number } };
+export type NodeView = { node_id: string; name: string; binding_epoch: number; state_epoch: string; boot_id: string; status: "online" | "offline" | "revoked" | "incompatible"; last_confirmed_at: string | null; application_version: string; contract_version: number; capabilities: string[] };
+export type NodeInventory = { controller_id: string; nodes: NodeView[] };
+export type NodeProjection = { controller_id: string; node: NodeView; state_epoch: string; boot_id: string; desired_generation: number; snapshot_sequence: number; observed_at: string | null; received_at: string | null; stale: boolean; available: boolean; desired: { tunnels: SnapshotTunnel[] } | null; observations: SnapshotObservations | null };

@@ -122,3 +122,17 @@ archive cannot replace the identity established by fresh rebind.
 The secret-free `GET /control/v1/bootstrap` exposes only the public CA certificate. The node treats it as untrusted, verifies the operator-provided CA SPKI pin, and repeats retrieval with ordinary TLS 1.3 chain/SAN/time validation before transmitting any invitation secret. Proxy, redirects, URL confusion and oversized responses are rejected. Enrollment holds the same exclusive state-directory lock as serving through approval and commit. Existing protected `--input-file` remains supported; the alternative public metadata interface reads a bounded secret from a private FD or hidden TTY.
 
 Browser enrollment status requires recent controller authentication and the invitation's exact approved controller/node/binding with a live registry session authenticated by an active certificate from the current CA generation. Certificate issuance or legacy presence without certificate provenance cannot count as connected. Responses use an allowlisted DTO and no-store. Invitation secrets and backup receipts stay only in flow memory; browser traces/screenshots/videos containing secrets must stay disabled. Installer interruption never restores pre-commit credentials over a potentially committed identity; inspect journals before manual recovery. See [installer lifecycle](quick-install.md#explicit-installer-connection-to-a-controller).
+
+## Node observation security
+
+Nodes send bounded, allowlisted snapshots outbound through the existing TLS/mTLS
+control listener. Admission requires current registry authority and matching
+certificate, session, binding/state/boot epochs, generation and snapshot sequence;
+replays and same-generation configuration substitution are rejected. Private keys,
+PSKs, session bearers, full configs, QR/import payloads, WARP credentials and raw
+diagnostics are excluded. Authenticated controller reads are `no-store`; node views
+are read-only and retain data only in browser memory. Switching node/account/epoch
+or logging out discards the previous context and its pending responses. Cold
+controller restore clears projections and invalidates archived authority before
+control can be re-enabled. See [node observation](usage.md#read-only-node-observation)
+for freshness semantics and resource limits.

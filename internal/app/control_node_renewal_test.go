@@ -396,7 +396,7 @@ func TestInternalNodeRenewalRealLoopbackMTLS(t *testing.T) {
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	ping(reboundClient, http.StatusForbidden, nil)
+	ping(reboundClient, http.StatusServiceUnavailable, nil)
 }
 
 func renewalTestCSR(t *testing.T) ([]byte, ed25519.PrivateKey) {

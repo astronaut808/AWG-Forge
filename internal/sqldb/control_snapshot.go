@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/astronaut808/awg-forge/internal/controlapi"
 	"github.com/astronaut808/awg-forge/internal/controlpki"
 )
 
@@ -50,7 +51,12 @@ func VerifyControllerRegistrySnapshot(ctx context.Context, path, controllerID, i
 		return err
 	}
 	if version >= 9 {
-		return verifySnapshotEnrollment(queryCtx, db, controllerID, version)
+		if err := verifySnapshotEnrollment(queryCtx, db, controllerID, version); err != nil {
+			return err
+		}
+		if version >= 11 {
+			return verifySnapshotProjections(queryCtx, db, controllerID)
+		}
 	}
 	return nil
 }
@@ -426,3 +432,60 @@ func normalizeSnapshotSQL(value string) string {
 }
 
 func snapshotSQLPunctuation(c byte) bool { return c == '(' || c == ')' || c == ',' || c == ';' }
+
+func verifySnapshotProjections(ctx context.Context, db *sql.DB, controllerID string) error {
+	metadata, err := db.QueryContext(ctx, `SELECT application_version,contract_version,capabilities_json,confirmed_at_unix_ms,expires_at_unix_ms FROM control_node_presence`)
+	if err != nil {
+		return ErrSnapshotFenced
+	}
+	for metadata.Next() {
+		var v, caps string
+		var contract int
+		var confirmed, expires int64
+		var parsed []string
+		if metadata.Scan(&v, &contract, &caps, &confirmed, &expires) != nil || len(caps) > 8577 || strictProjectionJSON([]byte(caps), &parsed) != nil {
+			_ = metadata.Close()
+			return ErrSnapshotFenced
+		}
+		legacyMetadata := v == "" && contract == 0 && len(parsed) == 0 && confirmed == 0
+		confirmedMetadata := controlapi.ValidObservationMetadata(v, contract, parsed) && confirmed > 0 && confirmed <= expires
+		if !legacyMetadata && !confirmedMetadata {
+			_ = metadata.Close()
+			return ErrSnapshotFenced
+		}
+	}
+	err = metadata.Err()
+	_ = metadata.Close()
+	if err != nil {
+		return err
+	}
+	rows, err := db.QueryContext(ctx, `SELECT p.controller_id,p.binding_epoch,p.state_epoch,p.boot_id,p.boot_sequence,p.session_id,p.desired_generation,p.snapshot_sequence,p.observed_at_unix_ms,p.received_at_unix_ms,p.desired_json,p.observations_json,b.controller_id,b.binding_epoch,EXISTS(SELECT 1 FROM control_node_certificates c WHERE c.node_id=p.node_id AND c.controller_id=p.controller_id AND c.binding_epoch=p.binding_epoch) FROM control_node_projections p JOIN control_node_bindings b ON b.node_id=p.node_id`)
+	if err != nil {
+		return ErrSnapshotFenced
+	}
+	defer func() { _ = rows.Close() }()
+	total, count := 0, 0
+	for rows.Next() {
+		var s controlapi.Snapshot
+		s.ContractVersion = 1
+		var stored, bound string
+		var binding, observed, received int64
+		var certificateExists int
+		var desired, observations []byte
+		var d controlapi.DesiredProjection
+		var o controlapi.Observations
+		if rows.Scan(&stored, &s.BindingEpoch, &s.StateEpoch, &s.BootID, &s.BootSequence, &s.SessionID, &s.DesiredGeneration, &s.Sequence, &observed, &received, &desired, &observations, &bound, &binding, &certificateExists) != nil || stored != controllerID || bound != controllerID || s.BindingEpoch > uint64(binding) || certificateExists != 1 {
+			return ErrSnapshotFenced
+		}
+		s.ObservedAt = time.UnixMilli(observed).UTC()
+		if decodeStoredProjection(desired, observations, &d, &o, s, received) != nil {
+			return ErrSnapshotFenced
+		}
+		total += len(desired) + len(observations)
+		count++
+		if total > controlapi.MaxProjectionStorageBytes || count > controlapi.MaxProjectedNodes {
+			return ErrProjectionLimit
+		}
+	}
+	return rows.Err()
+}

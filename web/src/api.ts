@@ -1,5 +1,7 @@
 import type {
   AppState,
+  NodeInventory,
+  NodeProjection,
   AuditEvent,
   DoctorResult,
   FirewallReport,
@@ -318,4 +320,11 @@ export async function restoreVerify(file: File, password: string): Promise<{ rep
   const res = await fetch("/api/restore/verify", { method: "POST", body: form });
   if (!res.ok) throw new APIError(res.status, await errorText(res));
   return (await res.json()) as { report: RestoreReport };
+}
+
+export function controllerNodes(signal?: AbortSignal): Promise<NodeInventory> {
+  return request("/api/controller/nodes", { signal });
+}
+export function controllerNode(nodeID: string, signal?: AbortSignal): Promise<NodeProjection> {
+  return request(`/api/controller/nodes/${encodeURIComponent(nodeID)}`, { signal });
 }

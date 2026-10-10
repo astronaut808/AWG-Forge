@@ -12,6 +12,8 @@ import (
 	"math"
 	"time"
 
+	"encoding/json"
+	"github.com/astronaut808/awg-forge/internal/controlapi"
 	"github.com/astronaut808/awg-forge/internal/controlpki"
 	"github.com/google/uuid"
 )
@@ -322,6 +324,17 @@ func (db *DB) AcceptNodePresence(ctx context.Context, identity NodeIdentity, sta
 // Empty certificate fields preserve compatibility for callers that cannot yet
 // attest transport identity; such legacy sessions never count as connected.
 func (db *DB) AcceptAuthenticatedNodePresence(ctx context.Context, identity NodeIdentity, stateEpoch, bootID string, bootSequence uint64, issuerGeneration, serial string, now time.Time) (string, error) {
+	return db.acceptNodePresence(ctx, identity, stateEpoch, bootID, bootSequence, issuerGeneration, serial, nil, now)
+}
+
+func (db *DB) RecordNodePresence(ctx context.Context, identity NodeIdentity, issuer, serial string, p controlapi.Presence, now time.Time) (string, error) {
+	if !controlapi.ValidObservationMetadata(p.ApplicationVersion, p.ContractVersion, p.Capabilities) {
+		return "", ErrNodeCertificateDenied
+	}
+	return db.acceptNodePresence(ctx, identity, p.StateEpoch, p.BootID, p.BootSequence, issuer, serial, &p, now)
+}
+
+func (db *DB) acceptNodePresence(ctx context.Context, identity NodeIdentity, stateEpoch, bootID string, bootSequence uint64, issuerGeneration, serial string, metadata *controlapi.Presence, now time.Time) (string, error) {
 	if db == nil || db.sql == nil {
 		return "", ErrDisabled
 	}
@@ -337,22 +350,26 @@ func (db *DB) AcceptAuthenticatedNodePresence(ctx context.Context, identity Node
 	var epoch int64
 	var revoked sql.NullInt64
 	err = tx.QueryRowContext(ctx, "SELECT controller_id, binding_epoch, revoked_at_unix_ms FROM control_node_bindings WHERE node_id = ?", identity.NodeID).Scan(&controllerID, &epoch, &revoked)
-	if errors.Is(err, sql.ErrNoRows) || revoked.Valid || controllerID != identity.ControllerID || epoch != int64(identity.BindingEpoch) {
+	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrNodeCertificateDenied
 	}
 	if err != nil {
 		return "", err
 	}
+	if revoked.Valid || controllerID != identity.ControllerID || epoch != int64(identity.BindingEpoch) {
+		return "", ErrNodeCertificateDenied
+	}
 	var storedState, storedBoot, sessionID string
+	var storedIssuer, storedSerial sql.NullString
 	var storedSequence, expires int64
-	err = tx.QueryRowContext(ctx, `SELECT state_epoch, boot_id, boot_sequence, session_id, expires_at_unix_ms
-FROM control_node_presence WHERE node_id = ?`, identity.NodeID).Scan(&storedState, &storedBoot, &storedSequence, &sessionID, &expires)
+	err = tx.QueryRowContext(ctx, `SELECT state_epoch, boot_id, boot_sequence, session_id, expires_at_unix_ms, certificate_issuer_generation, certificate_serial
+FROM control_node_presence WHERE node_id = ?`, identity.NodeID).Scan(&storedState, &storedBoot, &storedSequence, &sessionID, &expires, &storedIssuer, &storedSerial)
 	newSession := uuid.NewString()
 	if err == nil {
 		if storedState != stateEpoch || bootSequence < uint64(storedSequence) || bootSequence == uint64(storedSequence) && storedBoot != bootID {
 			return "", ErrNodeCertificateDenied
 		}
-		if bootSequence == uint64(storedSequence) && now.UTC().UnixMilli() < expires {
+		if bootSequence == uint64(storedSequence) && now.UTC().UnixMilli() < expires && storedIssuer.String == issuerGeneration && storedSerial.String == serial {
 			newSession = sessionID
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE control_node_presence
@@ -368,6 +385,15 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''))`, identity.NodeID,
 		}
 	} else {
 		return "", err
+	}
+	if metadata != nil {
+		caps, err := json.Marshal(metadata.Capabilities)
+		if err != nil {
+			return "", err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE control_node_presence SET application_version=?, contract_version=?, capabilities_json=?, confirmed_at_unix_ms=? WHERE node_id=?`, metadata.ApplicationVersion, metadata.ContractVersion, string(caps), now.UnixMilli(), identity.NodeID); err != nil {
+			return "", err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return "", err

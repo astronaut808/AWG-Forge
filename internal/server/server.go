@@ -235,6 +235,8 @@ func newHandler(w *web) http.Handler {
 	mux.HandleFunc("/api/controller/enrollments/status", w.security(w.requireAuth(w.enrollmentOnboardingStatusAPI)))
 	mux.HandleFunc("/api/controller/enrollments/review", w.security(w.requireAuth(w.enrollmentReviewAPI)))
 	mux.HandleFunc("/api/controller/enrollments/decide", w.security(w.requireAuth(w.enrollmentDecideAPI)))
+	mux.HandleFunc("/api/controller/nodes", w.security(w.requireAuth(w.controllerNodesAPI)))
+	mux.HandleFunc("/api/controller/nodes/", w.security(w.requireAuth(w.controllerNodesAPI)))
 	mux.HandleFunc("/api/controller/installer-info", w.security(w.requireAuth(w.installerInfoAPI)))
 	mux.HandleFunc("/api/logout", w.security(w.requireAuth(w.logoutAPI)))
 	mux.HandleFunc("/api/state", w.security(w.requireAuth(w.stateAPI)))

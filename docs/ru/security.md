@@ -124,3 +124,17 @@ journal `.node-local-recovery.json` разрешает прерванные stag
 Secret-free `GET /control/v1/bootstrap` выдаёт только публичный CA certificate. Узел считает его недоверенным, проверяет переданный оператором CA SPKI pin и повторяет получение с обычной TLS 1.3 chain/SAN/time validation до передачи invitation secret. Proxy, redirects, URL confusion и слишком большие responses отклоняются. Enrollment держит тот же exclusive state-directory lock, что и serve, до approval/commit. Защищённый `--input-file` сохранён; альтернативный public metadata interface читает ограниченный secret через private FD или скрытый TTY.
 
 Browser enrollment status требует recent controller authentication, точные approved controller/node/binding данного invitation и живую registry session, authenticated активным certificate текущей CA generation. Certificate issuance и legacy presence без certificate provenance не означают Connected. DTO имеет allowlist, responses — no-store. Invitation secrets и backup receipts хранятся только в памяти flow; browser traces/screenshots/videos с secrets должны быть выключены. После прерывания installer прежние credentials не восстанавливаются поверх потенциально committed identity; перед ручным recovery проверьте journals. См. [installer lifecycle](quick-install.md).
+
+## Безопасность наблюдения за узлами
+
+Узлы отправляют ограниченные снимки с allowlist через существующий исходящий
+TLS/mTLS control-канал. Приём требует актуальной registry authority и совпадения
+сертификата, session, binding/state/boot epochs, generation и snapshot sequence;
+replay и подмена конфигурации при прежней generation отклоняются. Закрытые ключи,
+PSK, session bearer, полные конфиги, QR/import payloads, WARP credentials и raw
+diagnostics исключены. Чтение на контроллере требует входа и возвращает `no-store`;
+представления узлов доступны только для чтения и хранят данные лишь в памяти
+браузера. Смена узла/account/epoch или выход очищают прежний контекст и отклоняют
+его незавершённые ответы. Cold restore контроллера удаляет снимки и отзывает
+архивную authority до повторного включения control. Семантика актуальности и
+лимиты описаны в [просмотре состояния узлов](usage.md#просмотр-состояния-узлов).

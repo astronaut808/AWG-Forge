@@ -242,7 +242,7 @@ enforces identity fencing or explicit detach. Detach removes controller authorit
 Linux-root [offline recovery](security.md#offline-node-recovery) supports detach
 and fresh enrollment with a new identity. Explicit installer join/rebind and the minimal onboarding UI are described in
 [Quick Install](quick-install.md#explicit-installer-connection-to-a-controller).
-Endpoint replacement, fleet UI and remote operations remain separate work.
+Endpoint replacement and remote operations remain separate work.
 
 ## Client Config Import
 
@@ -261,3 +261,32 @@ Use the client `Config` action to choose between:
 For AWG 3.x, the structured AmneziaVPN QR uses protocol version `3.1` and includes the same Header Protection and timing fields as the rendered `.conf`. The `vpn://` value is base64url-encoded raw `.conf`, which AmneziaVPN 5.0.1.5+ passes through its normal config importer. Disabled `RandomTrailers` and `DisableCookies` options are omitted from client exports. These links and QR payloads contain the client private key, PSK, and AWG 3.x Header Protection key.
 
 If an official client cannot import the QR on a specific platform or version, download and import the `.conf` file instead.
+
+## Read-only node observation
+
+An authenticated controller administrator can select **This server** or an
+individual node. The local view retains its existing controls; node views show
+only tunnels, clients, live peer counters/handshakes and a limited runtime Doctor
+summary. No remote actions or client configuration exports are available.
+
+Node reachability and VPN health are separate. **Online** means a current
+certificate-bound presence, not a working tunnel. Snapshot observation and
+controller receipt times remain visible; offline or old snapshots are marked
+stale. Revoked or incompatible nodes expose no previous projection. Selecting a
+node, changing its identity epochs or logging out clears the prior view.
+
+Nodes send snapshots outbound over the existing TLS/mTLS listener, without an
+additional node management port. `state.json` remains authoritative; the
+controller SQLite cache keeps one allowlisted projection per identity, at most
+1024 entries and 16 MiB of payloads. Each snapshot is limited to 512 KiB, 64
+tunnels and 2048 clients. These limits fail closed; a node exceeding them has no
+new snapshot. DB-off nodes report runtime counters without invented history;
+SQLite history remains local. Cold controller restore removes projections and
+invalidates existing authority before control can be enabled again.
+
+The authenticated, no-store internal reads are `GET /api/controller/nodes` and
+`GET /api/controller/nodes/{node_id}`. They expose no keys, PSKs, session bearers,
+full configurations, protocol parameters, QR/import payloads or raw diagnostics.
+Remote mutation/command delivery and secret configuration exports remain future
+work. Local container acceptance does not close the external multi-host release
+gate.

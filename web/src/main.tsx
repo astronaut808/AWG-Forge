@@ -1,6 +1,7 @@
 import { createContext, render } from "preact";
 import { useCallback, useContext, useEffect, useRef, useState } from "preact/hooks";
 import * as api from "./api";
+import { FleetWorkspace } from "./fleet";
 import { ControllerOnboarding } from "./controller-onboarding";
 import { initialLocale, localeStorageKey, messages } from "./i18n";
 import type { Locale, Messages } from "./i18n";
@@ -71,6 +72,10 @@ function useI18n() {
 
 function App() {
   const [state, setState] = useState<AppState | null>(null);
+  const [selectedNode, setSelectedNode] = useState("");
+  const [loggingOut, setLoggingOut] = useState(false);
+  const logoutPendingRef = useRef(false);
+  const selectionGenerationRef = useRef(0);
   const [authChecked, setAuthChecked] = useState(false);
   const [authMode, setAuthMode] = useState<api.AuthMode>("standalone");
   const [modal, setModal] = useState<Modal | null>(null);
@@ -87,8 +92,30 @@ function App() {
   const controllerActivationPendingRef = useRef(false);
   messagesRef.current = m;
 
+  function clearSession() {
+    authGenerationRef.current += 1;
+    authenticatedRef.current = false;
+    setSelectedNode("");
+    setModal(null);
+    setRecoveryCodesPending(false);
+    setState(null);
+  }
+  async function logoutSession() {
+    logoutPendingRef.current = true; setLoggingOut(true);
+    clearSession();
+    try { await api.logout(); } catch { /* The local context is already cleared. */ }
+    finally { logoutPendingRef.current = false; setLoggingOut(false); }
+  }
+  function selectNode(nodeID: string) {
+    selectionGenerationRef.current += 1;
+    setModal(null);
+    setSelectedNode(nodeID);
+  }
+
+
   const load = useCallback(async (options: { quiet?: boolean } = {}): Promise<LoadResult> => {
     const generation = authGenerationRef.current;
+    if (logoutPendingRef.current) return "failed";
     try {
       const auth = await api.authStatus();
       if (generation !== authGenerationRef.current) return "failed";
@@ -104,10 +131,7 @@ function App() {
       setAuthChecked(true);
       if (err instanceof api.APIError && err.status === 401) {
         const wasAuthenticated = authenticatedRef.current;
-        authenticatedRef.current = false;
-        setModal(null);
-        setRecoveryCodesPending(false);
-        setState(null);
+        clearSession();
         if (wasAuthenticated) notify(messagesRef.current.common.sessionExpired);
         return "unauthorized";
       }
@@ -152,15 +176,18 @@ function App() {
   }, [authChecked, liveUpdatesEnabled, authMode]);
 
   function setControllerActivationPending(pending: boolean) {
+    setSelectedNode("");
     controllerActivationPendingRef.current = pending;
     authGenerationRef.current += 1;
   }
 
   useEffect(() => {
     if (!liveUpdatesEnabled) return undefined;
+    const generation = authGenerationRef.current;
     let fallback: ReturnType<typeof globalThis.setInterval> | null = null;
     const events = new EventSource("/api/events");
     events.addEventListener("state", (event) => {
+      if (generation !== authGenerationRef.current || !authenticatedRef.current) return;
       try {
         setState(JSON.parse((event as MessageEvent).data) as AppState);
       } catch {
@@ -169,6 +196,7 @@ function App() {
     });
     events.onerror = () => {
       events.close();
+      if (generation !== authGenerationRef.current || !authenticatedRef.current) return;
       void load({ quiet: true });
       fallback = globalThis.setInterval(() => void load({ quiet: true }), 5000);
     };
@@ -178,7 +206,7 @@ function App() {
       if (fallback) globalThis.clearInterval(fallback);
       globalThis.clearInterval(authCheck);
     };
-  }, [liveUpdatesEnabled, load]);
+  }, [liveUpdatesEnabled, load, authMode]);
 
   const profiles = state?.profiles || [];
   const active = defaultCreateProfile(profiles);
@@ -195,12 +223,17 @@ function App() {
   }
 
   async function runAction(label: string, fn: () => Promise<unknown>, options: RunActionOptions = { reload: true }) {
+    const generation = authGenerationRef.current;
+    const selection = selectionGenerationRef.current;
+    const current = () => generation === authGenerationRef.current && selection === selectionGenerationRef.current && !logoutPendingRef.current;
     try {
       await fn();
+      if (!current()) return;
       if (options.close !== false) setModal(null);
       if (options.reload !== false) await load({ quiet: true });
       notify(label);
     } catch (err) {
+      if (!current()) return;
       if (options.errorMode === "inline") throw err;
       const message = actionErrorMessage(err, m);
       if (message.includes("apply failed")) {
@@ -218,12 +251,12 @@ function App() {
   if (!state) {
     return (
       <I18nContext.Provider value={i18n}>
-        <Login mode={authMode} onLogin={() => load()} notify={notify} {...shellProps} />
+        <Login suspended={loggingOut} mode={authMode} onLogin={() => { authGenerationRef.current += 1; setSelectedNode(""); return load(); }} notify={notify} {...shellProps} />
         <Toast message={toast} />
       </I18nContext.Provider>
     );
   }
-  if (!active) return <I18nContext.Provider value={i18n}><Shell state={state} {...shellProps} logout={() => doLogout(setState)} openMaintenance={() => setModal({ kind: "maintenance" })}><Empty title={m.dashboard.noProfiles} text={m.dashboard.noProfilesText} /></Shell></I18nContext.Provider>;
+  if (!active) return <I18nContext.Provider value={i18n}><Shell state={state} {...shellProps} logout={() => void logoutSession()} openMaintenance={() => setModal({ kind: "maintenance" })}><Empty title={m.dashboard.noProfiles} text={m.dashboard.noProfilesText} /></Shell></I18nContext.Provider>;
 
   const renderTunnel = (tunnel: Tunnel) => (
     <TunnelCard
@@ -255,16 +288,18 @@ function App() {
 
   return (
     <I18nContext.Provider value={i18n}>
-    <Shell state={state} {...shellProps} logout={() => doLogout(setState)} openMaintenance={() => setModal({ kind: "maintenance" })}>
-      <TunnelFirstDashboard
+    <Shell state={state} remote={Boolean(selectedNode)} {...shellProps} logout={() => void logoutSession()} openMaintenance={() => setModal({ kind: "maintenance" })}>
+      {authMode === "controller" ? <FleetWorkspace key={authGenerationRef.current} selected={selectedNode} select={selectNode} unauthorized={clearSession} m={m}>
+        <TunnelFirstDashboard profiles={profiles} tunnels={allTunnels} filter={dashboardFilter} setFilter={setDashboardFilter} onCreateTunnel={(profile) => setModal({ kind: "create-tunnel", profile: profile || active })} renderTunnel={renderTunnel} />
+      </FleetWorkspace> : <TunnelFirstDashboard
         profiles={profiles}
         tunnels={allTunnels}
         filter={dashboardFilter}
         setFilter={setDashboardFilter}
         onCreateTunnel={(profile) => setModal({ kind: "create-tunnel", profile: profile || active })}
         renderTunnel={renderTunnel}
-      />
-      {modal && (
+      />}
+      {modal && !selectedNode && (
         <Dialog onClose={() => { if (recoveryCodesPending) notify(m.controller.codesNote); else setModal(null); }}>
           <ModalContent modal={modal} state={state} notify={notify} close={() => setModal(null)} reload={async () => { await load({ quiet: true }); }} runAction={runAction} recoveryCodesPending={recoveryCodesPending} setRecoveryCodesPending={setRecoveryCodesPending} setControllerActivationPending={setControllerActivationPending} />
           <Toast message={toast} />
@@ -276,7 +311,7 @@ function App() {
   );
 }
 
-function Login({ mode, onLogin, notify, theme, setTheme, locale, setLocale }: { mode: api.AuthMode; onLogin: () => Promise<LoadResult>; notify: (message: string) => void; theme: string; setTheme: (theme: string) => void; locale: Locale; setLocale: (locale: Locale) => void }) {
+function Login({ suspended, mode, onLogin, notify, theme, setTheme, locale, setLocale }: { suspended: boolean; mode: api.AuthMode; onLogin: () => Promise<LoadResult>; notify: (message: string) => void; theme: string; setTheme: (theme: string) => void; locale: Locale; setLocale: (locale: Locale) => void }) {
   const { m } = useI18n();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -294,6 +329,7 @@ function Login({ mode, onLogin, notify, theme, setTheme, locale, setLocale }: { 
             class="form single"
             onSubmit={async (event) => {
               event.preventDefault();
+              if (suspended) return;
               setBusy(true);
               setSecureCookieRejected(false);
               try {
@@ -314,7 +350,7 @@ function Login({ mode, onLogin, notify, theme, setTheme, locale, setLocale }: { 
               <button class="button" type="button" onClick={() => { setRecovery(!recovery); setCode(""); }}>{recovery ? m.controller.useAuthenticator : m.controller.useRecovery}</button>
             </>}
             {mode === "activating" && <p role="status">{m.controller.unavailable}</p>}
-            <button class="button primary wide" disabled={busy || mode === "activating"} type="submit">{busy ? m.login.loggingIn : m.login.logIn}</button>
+            <button class="button primary wide" disabled={busy || suspended || mode === "activating"} type="submit">{busy ? m.login.loggingIn : m.login.logIn}</button>
             {secureCookieRejected && (
               <div class="notice login-notice" role="alert">
                 <p>{m.login.secureCookieRejected}</p>
@@ -350,20 +386,21 @@ type ShellProps = {
   setLocale: (locale: Locale) => void;
   logout: () => void;
   openMaintenance: () => void;
+  remote?: boolean;
   children: preact.ComponentChildren;
 };
 
 function Shell(props: ShellProps) {
-  const { state, theme, setTheme, locale, setLocale, logout, openMaintenance, children } = props;
+  const { state, theme, setTheme, locale, setLocale, logout, openMaintenance, remote, children } = props;
   const { m } = useI18n();
   return (
     <main class="app-shell">
       <header class="topbar panel">
-        <Brand subtitle={<><span class="mono">{state.server_host}</span> · {m.dashboard.tunnelCount(state.tunnels.length)}</>} />
+        <Brand subtitle={remote ? m.fleet.readOnly : <><span class="mono">{state.server_host}</span> · {m.dashboard.tunnelCount(state.tunnels.length)}</>} />
         <nav class="toolbar" aria-label={m.aria.globalActions}>
           <button class="button icon" type="button" title={m.aria.toggleTheme} aria-label={m.aria.toggleTheme} onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>{theme === "dark" ? "☼" : "☾"}</button>
           <button class="button" type="button" title={m.aria.toggleLanguage} aria-label={m.aria.toggleLanguage} onClick={() => setLocale(locale === "en" ? "ru" : "en")}>{locale === "en" ? "RU" : "EN"}</button>
-          <button class="button" type="button" onClick={openMaintenance}>{m.common.maintenance}</button>
+          {!remote && <button class="button" type="button" onClick={openMaintenance}>{m.common.maintenance}</button>}
           <button class="button" type="button" onClick={logout}>{m.common.logOut}</button>
         </nav>
       </header>
@@ -1620,14 +1657,6 @@ function initParallax() {
     document.documentElement.style.setProperty("--px", `${(x * 10).toFixed(2)}px`);
     document.documentElement.style.setProperty("--py", `${(y * 8).toFixed(2)}px`);
   }, { passive: true });
-}
-
-async function doLogout(setState: (state: AppState | null) => void) {
-  try {
-    await api.logout();
-  } finally {
-    setState(null);
-  }
 }
 
 render(<App />, document.querySelector("#app")!);

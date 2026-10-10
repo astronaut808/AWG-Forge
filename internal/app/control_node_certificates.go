@@ -370,7 +370,10 @@ func (auth *ControlNodeAuthorizer) Authorize(ctx context.Context, certificate *x
 	}
 	identity, err := auth.db.FindActiveNodeCertificate(ctx, auth.controllerID, auth.issuerGeneration, certificate, now)
 	if err != nil {
-		return controlserver.NodeIdentity{}, err
+		if errors.Is(err, sqldb.ErrNodeCertificateDenied) {
+			return controlserver.NodeIdentity{}, err
+		}
+		return controlserver.NodeIdentity{}, controlserver.ErrAuthorizationUnavailable
 	}
 	return controlserver.NodeIdentity{ControllerID: identity.ControllerID, NodeID: identity.NodeID, BindingEpoch: identity.BindingEpoch}, nil
 }

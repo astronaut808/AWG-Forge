@@ -176,7 +176,7 @@ func TestControlNodeCertificateIssuanceAndRealTLSRevocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusForbidden {
+	if response.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("database outage response = %d", response.StatusCode)
 	}
 }

@@ -183,6 +183,11 @@ curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/unins
 
 Ordinary installation remains standalone. In Maintenance → Controller, use recent MFA to prepare the exact control endpoint, download and retain a verified encrypted backup, and enable it. An external endpoint needs its separate consent checkbox. Then choose Add node, fresh or existing installation, and the node name. Compare the displayed code and name with the node terminal before approving; Connected appears only after authenticated presence from that enrollment. Closing the flow, logout, account change, rejection or expiry clears the invitation and stops polling.
 
+After connection, use **This server** or select the node for
+[read-only observation](usage.md#read-only-node-observation). Connection status and
+snapshot freshness are separate from VPN health; node views have no remote actions
+or client configuration exports.
+
 This development build has no published compatible installer artifact. The UI therefore copies **public arguments only**, and reports the missing release. It does not offer a release URL or fall back to `latest`. For local testing, use a downloaded/reviewed script with its verified SHA-256, and an explicitly built local image ID with matching compiled version and commit. The skeleton below contains only public placeholders; replace each from trusted artifact metadata and the UI:
 
 ```bash
