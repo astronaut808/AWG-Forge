@@ -28,6 +28,14 @@
         "responses": { "200": { "description": "Current desired configuration and safe runtime summary.", "headers": { "X-Request-ID": { "$ref": "#/components/headers/RequestID" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/State" } } } }, "401": { "$ref": "#/components/responses/APIError" } }
       }
     },
+    "/api/server-name": {
+      "patch": {
+        "operationId": "updateServerName",
+        "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateServerNameRequest" } } } },
+        "responses": { "200": { "description": "Server name updated.", "content": { "application/json": { "schema": { "type": "object", "required": ["server_name"], "properties": { "server_name": { "type": "string" } } } } } }, "default": { "$ref": "#/components/responses/APIError" } }
+      }
+    },
     "/api/tunnels": {
       "post": {
         "operationId": "createTunnel",
@@ -145,6 +153,7 @@
       "OK": { "type": "object", "required": ["ok"], "properties": { "ok": { "type": "boolean", "const": true } } },
       "APIError": { "type": "object", "required": ["error", "code"], "properties": { "error": { "type": "string" }, "code": { "type": "string", "pattern": "^[a-z0-9_]+$" } } },
       "LoginRequest": { "type": "object", "required": ["password"], "properties": { "password": { "type": "string", "writeOnly": true } } },
+      "UpdateServerNameRequest": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string", "maxLength": 32, "pattern": "^[A-Za-z0-9]*$", "description": "Optional ASCII alphanumeric server label. An empty string removes it." } } },
       "State": { "type": "object", "description": "Current safe control-plane state. Sensitive keys, raw client configurations, and QR payloads are excluded.", "additionalProperties": true },
       "CreateTunnelRequest": { "type": "object", "required": ["profile", "name", "egress_mode", "subnet"], "properties": { "profile": { "type": "string" }, "name": { "type": "string" }, "egress_mode": { "type": "string", "enum": ["wan", "warp"] }, "port": { "type": "integer", "minimum": 1, "maximum": 65535 }, "automatic_port": { "type": "boolean" }, "subnet": { "type": "string" } } },
       "UpdateTunnelSettingsRequest": { "type": "object", "required": ["name", "server_host", "egress_mode", "port", "subnet", "dns", "allowed_ips", "keepalive", "mtu", "enabled"], "properties": { "name": { "type": "string" }, "server_host": { "type": "string" }, "egress_mode": { "type": "string", "enum": ["wan", "warp"] }, "port": { "type": "integer", "minimum": 1, "maximum": 65535 }, "subnet": { "type": "string" }, "dns": { "type": "string" }, "allowed_ips": { "type": "string" }, "keepalive": { "type": "integer", "minimum": 0 }, "mtu": { "type": "integer", "minimum": 0 }, "enabled": { "type": "boolean" } } },

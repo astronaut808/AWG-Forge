@@ -69,6 +69,7 @@ cd awg-forge
 cp .env.example .env
 mkdir -p data
 docker compose run --rm --no-deps awg-forge init \
+  --server-name MyServer \
   --server-host vpn.example.com \
   --external-interface eth0 \
   --profile awg_2_0 \
@@ -79,13 +80,14 @@ docker compose run --rm --no-deps awg-forge db migrate
 docker compose up -d
 ```
 
-Перед `init` замени пример host, интерфейса, порта и подсети. Также задай WAN-интерфейс хоста в `EXTERNAL_INTERFACE` файла `.env`, согласовав его с `--external-interface`: работающий сервис берет эту настройку из `.env`. Команда создаёт первый постоянный туннель в `data/state.json`; изменение legacy tunnel-переменных в `.env` после этого его не обновит.
+Перед `init` замени примеры имени, host, интерфейса, порта и подсети; если имя не нужно, убери `--server-name`. Также задай WAN-интерфейс хоста в `EXTERNAL_INTERFACE` файла `.env`, согласовав его с `--external-interface`: работающий сервис берет эту настройку из `.env`. Команда создаёт первый постоянный туннель в `data/state.json`; изменение legacy tunnel-переменных в `.env` после этого его не обновит.
 
 Рекомендуемый production-режим — Docker host networking. Так туннели, созданные в UI, могут использовать разные UDP-порты без изменения Docker port mappings.
 
 ## Важные настройки
 
 - `.env` хранит настройки запуска контейнера и Web UI; туннели хранятся в `data/state.json`.
+- `SERVER_NAME` — необязательное начальное имя панели из английских букв и цифр; имя всегда можно менять прямо в заголовке Web UI, и сохранённое значение не перетирается неизменившимся окружением после перезапуска.
 - `EXTERNAL_INTERFACE` — внешний интерфейс сервера для WAN egress.
 - `WEBUI_HOST=127.0.0.1` — безопасный дефолт для доступа через SSH tunnel.
 - `APPLY_CONFIG=true` — применять runtime-туннели и firewall rules.
