@@ -52,6 +52,9 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Lint Markdown
+        run: make lint-markdown
+
       - name: Typecheck UI
         run: npm run ui:check
 

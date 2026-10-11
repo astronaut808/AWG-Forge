@@ -2,34 +2,25 @@
 
 [README на русском](README.md)
 
-Self-hosted AmneziaWG control panel for Docker: Go backend, embedded Web UI, and CLI for tunnels, clients, diagnostics, backup/restore, and safe maintenance.
+Manage AmneziaWG on your own server: Web UI, CLI, and VPN runtime in one Docker image.
 
-![awg-forge dashboard](docs/assets/awg-forge-dashboard.jpg)
+![AWG-Forge dashboard](docs/assets/awg-forge-dashboard.jpg)
 
 ## Why AWG-Forge
 
-- Ready-to-run Docker-based setup: backend, Web UI, CLI, and runtime tools are shipped together.
-- Safe default for the panel: the Web UI listens on `127.0.0.1`, not on the server's public interface.
-- Multiple independent tunnels on one VPS: different profiles, UDP ports, and egress scenarios without manually editing Docker port mappings.
-- Flexible IPv4 egress: a tunnel can exit directly through the server or through Cloudflare WARP.
-- Multiple AmneziaWG generations: stable profiles through 2.0 and a built-in experimental AWG 3.x profile without changing the production default.
-- Management and maintenance in one place: daily actions through the Web UI, diagnostics and automation through the CLI.
+- Interactive installation on a VPS.
+- Multiple independent tunnels with separate ports, subnets, and profiles.
+- Manage clients, access expiration, configurations, and QR codes from the Web UI.
+- Route each tunnel's IPv4 traffic through the server or Cloudflare WARP.
+- Diagnostics, backups, and recovery from the panel and CLI.
+- The panel is local by default, accessed through an SSH tunnel.
 
-## Supported
+AmneziaWG 2.0 is the default. AWG 3.x is experimental;
+see the [profile matrix](docs/en/protocol-matrix.md) for compatibility and limitations.
 
-- Stable AmneziaWG profiles: Legacy / 1.0, 1.5-oriented profile, and 2.0. New installations default to 2.0.
-- AWG 3.x is included in the standard image as an experimental profile with an explicit UI warning. Enable and use it at your own risk; AmneziaWG 2.0 remains the production default. Available exports are `.conf`, AmneziaWG QR, structured AmneziaVPN QR for version 5.0.1.5+, and `vpn://`; `.conf` remains the stable fallback.
-- Tunnels: separate profiles, UDP ports, subnets, endpoint settings, and IPv4 egress.
-- IPv6 egress is not supported yet; generated client configs intentionally use `AllowedIPs = 0.0.0.0/0` without `::/0`.
-- Egress: `Server WAN` or Cloudflare WARP per tunnel.
-- Web UI TLS: loopback HTTP, reverse proxy, manual certificates, or managed ACME for one public domain or short-lived public IP certificate.
-- Clients: create, enable/disable, expiration, delete, and profile-dependent import through `.conf`, AmneziaWG QR, AmneziaVPN QR, or `vpn://`.
-- Diagnostics: Doctor, firewall repair, client status, last seen, received/sent counters.
-- Maintenance Center: Doctor with contextual firewall repair, WARP, backup/restore verification, traffic, audit log, and support diagnostics.
+## Quick Install
 
-## Quick Start
-
-Interactive install on Linux/VPS (x86_64):
+On a Linux/VPS server (x86_64):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
@@ -37,145 +28,27 @@ chmod +x install.sh
 sudo ./install.sh
 ```
 
-The installer detects Ubuntu, Debian, CentOS Stream or RHEL, offers to install missing Docker Engine, Compose plugin and host tools, checks Docker and TUN before creating project files, creates `/opt/awg-forge`, generates `.env`, password, and `SESSION_SECRET`, enables SQLite, creates the first tunnel in `state.json`, applies the initial SQLite migration, starts Docker Compose, and prints the SSH tunnel command. New installs default to AmneziaWG 2.0 for the first tunnel.
-
-Update a managed installation with the installer from `master`. It matches the current release and contains that release's compatibility checks and migrations.
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
-chmod +x install.sh
-sudo AWG_FORGE_HOME=/opt/awg-forge ./install.sh upgrade
-```
-
-For an installation outside `/opt/awg-forge`, set its directory: `sudo AWG_FORGE_HOME=/srv/awg-forge ./install.sh upgrade`. A regular run from the managed installation directory also detects it and offers `Upgrade` in its menu.
-
-By default the Web UI listens on `127.0.0.1:51821`. Open it through an SSH tunnel:
-
-```bash
-ssh -L 51821:127.0.0.1:51821 user@server
-```
-
-Then open:
-
-```text
-http://127.0.0.1:51821
-```
-
-## Manual Start
-
-```bash
-git clone https://github.com/astronaut808/awg-forge.git
-cd awg-forge
-cp .env.example .env
-mkdir -p data
-docker compose run --rm --no-deps awg-forge init \
-  --server-host vpn.example.com \
-  --external-interface eth0 \
-  --profile awg_2_0 \
-  --tunnel-name awg20 \
-  --listen-port 51830 \
-  --ipv4-subnet 10.20.0.0/24
-docker compose run --rm --no-deps awg-forge db migrate
-docker compose up -d
-```
-
-Replace the example host, interface, port, and subnet before running `init`. Also set `EXTERNAL_INTERFACE` in `.env` to the host's WAN interface, matching `--external-interface`; the running service uses `.env` for this setting. The command creates the first persistent tunnel in `data/state.json`; changing legacy tunnel variables in `.env` afterwards does not update it.
-
-Docker host networking is the recommended production mode. It lets tunnels created in the UI use different UDP ports without editing Docker port mappings.
-
-## Important Settings
-
-- `.env` stores container and Web UI runtime settings; tunnels are stored in `data/state.json`.
-- `EXTERNAL_INTERFACE` is the server external interface for WAN egress.
-- `WEBUI_HOST=127.0.0.1` is the safe default for SSH tunnel access.
-- `APPLY_CONFIG=true` applies runtime tunnels and firewall rules.
-- `SESSION_COOKIE_SECURE=auto|true|false` controls the Web UI Secure cookie policy.
-
-Change a tunnel endpoint from `Tunnel settings` -> `Server host`. If an upgraded `.env` still contains old tunnel variables such as `SERVER_HOST`, `LISTEN_PORT`, or `IPV4_SUBNET`, you can remove them after verifying tunnel settings in the UI.
-
-WARP can be selected while creating a tunnel or enabled later from `Tunnel settings` -> `Egress` -> `Cloudflare WARP`. If WARP is not configured yet, AWG-Forge registers the shared `warp0` automatically. See [Configuration](docs/en/configuration.md).
-
-## Startup Check
-
-1. Create a client in the UI.
-2. Open the client's `Config` and use one of the offered import methods. For AWG 3.x, use AmneziaVPN 5.0.1.5+ and fall back to `.conf` if a platform does not accept QR or `vpn://` import.
-3. Check IPv4 egress:
-
-```bash
-curl -4 https://ifconfig.co
-```
-
-Doctor:
-
-```bash
-docker exec awg-forge awg-forge doctor
-```
-
-## Uninstall
-
-Always run the current `uninstall.sh` from `master`. It contains cleanup logic for current and legacy rule formats.
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/uninstall.sh | sudo bash
-```
-
-Preview the uninstall plan:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/uninstall.sh | sudo bash -s -- --dry-run --yes
-```
-
-Backup/restore, firewall repair, support bundle, and audit log are available from `Maintenance Center` and CLI. Upstream-ref checks are available through the CLI command `awg-forge updates`.
+The installer prepares dependencies, creates the first tunnel, and prints the password
+and panel access command. See [requirements and next steps](docs/en/quick-install.md).
 
 ## Documentation
 
-- [Russian README](README.md)
-- [Contributing](CONTRIBUTING.md)
-- [Security policy](SECURITY.md)
-- [English documentation](docs/en/README.md)
-- [Quick install](docs/en/quick-install.md)
-- [Setup](docs/en/setup.md)
-- [Configuration](docs/en/configuration.md)
-- [Web UI and CLI](docs/en/usage.md)
-- [Diagnostics and troubleshooting](docs/en/diagnostics.md)
-- [AmneziaWG updates](docs/en/updates.md)
-- [Development](docs/en/development.md)
-- [Security](docs/en/security.md)
-- [Browser control API contract](docs/en/api.md)
-- [Profile and compatibility matrix](docs/en/protocol-matrix.md)
-- [Changelog](CHANGELOG.md)
-
-## Development
-
-```bash
-make ci
-```
-
-Run locally without applying runtime tunnel changes:
-
-```bash
-CONFIG_DIR=/private/tmp/awg-forge-dev \
-WEBUI_HOST=127.0.0.1 \
-WEBUI_PORT=51821 \
-PASSWORD=test \
-APPLY_CONFIG=false \
-go run ./cmd/awg-forge serve
-```
-
-Runtime and Docker image do not require Node/npm. The Web UI is built from `web/` with Vite/Preact/TypeScript and embedded into the Go binary as static files.
+- [Setup and manual installation](docs/en/setup.md)
+- [Upgrade](docs/en/quick-install.md#upgrade) · [Uninstall](docs/en/quick-install.md#uninstall)
+- [Configuration, Web UI, CLI, and diagnostics](docs/en/README.md)
+- [Development](docs/en/development.md) · [Contributing](CONTRIBUTING.md)
+- [Changelog](CHANGELOG.md) · [Security policy](SECURITY.md)
 
 ## Support the project
-
-If AWG-Forge is useful to you, you can support development with a donation:
 
 - USDT (TRC20): `TBQcgJ9UoGEBXBwPMcf97t3uJiTCRnVmji`
 - GRAM (ex TON): `UQCrUmIsUBgIJJJNKpvOO5dxpUH5r7xCz9-AJ2IHUTIckJhS`
 
 ## Project independence
 
-AWG-Forge is an independent open-source project for administering AmneziaWG infrastructure.
-
-This project is not affiliated with Amnezia.org, and is not developed or supported by the Amnezia team. The AmneziaWG name is used only to describe compatibility with the corresponding protocol and tooling.
+AWG-Forge is an independent open-source project, not affiliated with Amnezia.org
+or developed or supported by the Amnezia team. The AmneziaWG name describes
+compatibility with the protocol and tooling.
 
 ## License
 

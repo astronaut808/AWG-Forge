@@ -29,6 +29,7 @@ make ui-test
 make api-contract
 make lint-go
 make lint-js
+make lint-markdown
 make lint-shell
 make lint-docker
 make lint-actions
@@ -102,6 +103,7 @@ git diff --check
 - `npm run ui:test`, который собирает встроенный UI и выполняет регрессионные тесты Chromium;
 - `make api-contract`, который разбирает исходный OpenAPI-документ и проверяет описанные core control-plane routes и envelope ошибок;
 - `npm run ui:lint`, проверяющий исходники frontend и браузерные тесты;
+- `make lint-markdown`, проверяющий структуру Markdown и ссылки внутри документа;
 - `npm run quality:aislop`, который запускает `aislop ci` с проектным `.aislop/config.yml`.
 
 Для pull request отдельно запускаются jobs `Security`, `Race` и проверка Docker-образа. Security job выполняет `govulncheck`, npm audit, Gitleaks, focused Semgrep и Trivy filesystem scans, ShellCheck, Hadolint, actionlint и offline pedantic-аудит zizmor. Docker job запускает собранный образ с отключённым runtime apply, выполняет вход в API, проверяет встроенные AmneziaWG binaries и parser сгенерированного конфига, перезапускает контейнер и убеждается, что конфигурация туннеля осталась доступной и корректно разбирается.
@@ -109,6 +111,31 @@ git diff --check
 Aislop CI gate сейчас падает при score ниже `80`. Config исключает воспроизводимые generated Web UI assets и словари локализации, которые дают scanner-only шум. Source warnings стоит оставлять видимыми, если finding не является документированным false positive.
 
 Еженедельные Dependabot version updates для Go modules, GitHub Actions, npm и Docker направляются в `develop`. Dependabot security updates по правилам GitHub по-прежнему направляются в default branch репозитория, `master`, независимо от `target-branch`.
+
+## Проверка Markdown
+
+После `npm ci` запускайте `make lint-markdown` или `npm run docs:lint`. Эта же
+проверка входит в `make quality`, `make ci` и workflow GitHub CI.
+
+Закреплённый `markdownlint-cli` использует `.markdownlint.jsonc` с явным
+списком правил. Проверяются структура заголовков и блоков, пробелы в конце строк,
+копируемые примеры команд, язык блоков кода, пустые и перевёрнутые ссылки, локальные
+якоря, reference labels, alt-текст изображений и число столбцов таблиц. Доступность
+внешних URL и существование файлов по ссылкам не проверяются.
+
+Длина строк, нумерация и маркеры списков, стиль выделения, raw HTML, bare URL и
+визуальное выравнивание таблиц не ограничиваются. Заголовки разрешено повторять
+под разными родительскими разделами, включая версии в `CHANGELOG.md`. Табуляция
+в примерах кода и намеренный текст в квадратных скобках сохраняются. Новые правила
+требуют явного изменения конфигурации и не включаются автоматически при обновлении.
+
+Проверка охватывает Markdown во всём репозитории, учитывает `.gitignore` и исключает
+зависимости, generated UI assets и локальные каталоги инструментов.
+Она сообщает об ошибках без перезаписи файлов; автоматические исправления не входят в CI.
+
+Точечные npm overrides закрепляют исправленные версии `smol-toml`, `js-yaml` и KaTeX для
+Markdown-инструмента. Пересматривайте их при обновлении инструмента и запускайте
+`make npm-audit` перед удалением этих ограничений.
 
 ## Security Checks
 

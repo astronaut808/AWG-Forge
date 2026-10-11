@@ -29,6 +29,7 @@ make ui-test
 make api-contract
 make lint-go
 make lint-js
+make lint-markdown
 make lint-shell
 make lint-docker
 make lint-actions
@@ -102,6 +103,7 @@ git diff --check
 - `npm run ui:test`, which builds the embedded UI and runs Chromium regression tests;
 - `make api-contract`, which parses the OpenAPI source and checks the documented core control-plane routes and error envelope;
 - `npm run ui:lint`, covering frontend source and browser tests;
+- `make lint-markdown`, checking Markdown structure and references;
 - `npm run quality:aislop`, which runs `aislop ci` with the project `.aislop/config.yml`.
 
 Pull requests also run separate `Security`, `Race`, and Docker image validation jobs. The security job runs `govulncheck`, npm audit, Gitleaks, focused Semgrep and Trivy filesystem scans, ShellCheck, Hadolint, actionlint, and offline pedantic zizmor analysis. The Docker job starts the built image with runtime apply disabled, authenticates to the API, verifies the bundled AmneziaWG binaries and rendered config parser, restarts the container, and checks that the tunnel configuration remains available and parseable.
@@ -109,6 +111,31 @@ Pull requests also run separate `Security`, `Race`, and Docker image validation 
 The Aislop CI gate currently fails below score `80`. The config excludes reproducible generated Web UI assets and locale dictionaries that produce scanner-only noise. Keep source warnings visible unless a finding is a documented false positive.
 
 Weekly Dependabot version updates for Go modules, GitHub Actions, npm, and Docker target `develop`. GitHub's Dependabot security updates still target the repository's default branch, `master`, regardless of `target-branch`.
+
+## Markdown Checks
+
+After `npm ci`, run `make lint-markdown` or `npm run docs:lint`. The same check
+is included in `make quality`, `make ci`, and the GitHub CI workflow.
+
+The pinned `markdownlint-cli` uses `.markdownlint.jsonc` with an explicit
+rule allowlist. It checks heading and block structure, trailing whitespace,
+copyable command examples, fenced code languages, empty/reversed links, local
+fragments, reference labels, image alt text, and table column counts. It does not
+check whether external URLs or links to other files exist.
+
+Line length, list numbering/marker style, emphasis style, raw HTML, bare URLs,
+and visual table alignment are not enforced. Repeated headings are allowed under
+different parents, including release sections in `CHANGELOG.md`. Tabs inside code
+examples and intentional bracketed text are preserved. New rules require an
+explicit configuration change; they are not enabled automatically by an update.
+
+The check covers Markdown files throughout the repository, respects `.gitignore`,
+and excludes dependencies, generated UI assets, and local tool directories.
+It reports errors without rewriting files; automatic fixes are not part of CI.
+
+Scoped npm overrides keep the Markdown tool's `smol-toml`, `js-yaml`, and KaTeX dependencies
+on fixed versions. Review these overrides when updating the tool and run
+`make npm-audit` before removing them.
 
 ## Security Checks
 
