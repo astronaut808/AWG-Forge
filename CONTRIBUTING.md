@@ -6,6 +6,11 @@ awg-forge manages VPN configuration and secret material, so reliability and cons
 
 ## Development
 
+Create feature and bug-fix branches from the latest `develop`. When opening a
+pull request, select `develop` as the base (target) branch. GitHub may suggest
+`master` because it is the repository's default branch; change the base before
+submitting. `master` is reserved for releases.
+
 Run the full local check before opening a pull request:
 
 ```bash

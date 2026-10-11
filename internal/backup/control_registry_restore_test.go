@@ -610,7 +610,7 @@ func TestControllerRegistryRestoreLegacySchemas(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				statements := []string{"DROP TABLE control_node_presence", "DROP TABLE control_enrollments", "DROP TABLE control_enrollment_invitations"}
+				statements := []string{"DROP TABLE control_node_projections", "DROP TABLE control_node_presence", "DROP TABLE control_enrollments", "DROP TABLE control_enrollment_invitations"}
 				if version < 8 {
 					statements = append(statements, "DROP INDEX control_node_certificates_one_initial_per_binding_idx")
 				}

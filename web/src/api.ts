@@ -1,5 +1,7 @@
 import type {
   AppState,
+  NodeInventory,
+  NodeProjection,
   AuditEvent,
   DoctorResult,
   FirewallReport,
@@ -143,8 +145,16 @@ export function controllerRotateRecoveryCodes(): Promise<{ recovery_codes: strin
   return request("/api/controller/recovery-codes", { method: "POST", body: {} });
 }
 
-export function logout(): Promise<{ ok: true }> {
-  return request("/api/logout", { method: "POST", body: {} });
+export async function logout(): Promise<{ ok: true }> {
+  const controller = new AbortController();
+  const deadline = setTimeout(() => controller.abort(), 10_000);
+  try {
+    // Abort the old request before its caller permits another login; a pending
+    // logout response must not clear the cookie created by that new login.
+    return await request<{ ok: true }>("/api/logout", { method: "POST", body: {}, signal: controller.signal });
+  } finally {
+    clearTimeout(deadline);
+  }
 }
 
 export function state(): Promise<AppState> {
@@ -318,4 +328,12 @@ export async function restoreVerify(file: File, password: string): Promise<{ rep
   const res = await fetch("/api/restore/verify", { method: "POST", body: form });
   if (!res.ok) throw new APIError(res.status, await errorText(res));
   return (await res.json()) as { report: RestoreReport };
+}
+
+export function controllerNodes(signal?: AbortSignal, after = ""): Promise<NodeInventory> {
+  const query = after ? `?after=${encodeURIComponent(after)}` : "";
+  return request(`/api/controller/nodes${query}`, { signal });
+}
+export function controllerNode(nodeID: string, signal?: AbortSignal): Promise<NodeProjection> {
+  return request(`/api/controller/nodes/${encodeURIComponent(nodeID)}`, { signal });
 }

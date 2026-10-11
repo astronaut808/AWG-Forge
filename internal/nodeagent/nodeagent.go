@@ -71,7 +71,7 @@ func Enroll(ctx context.Context, service EnrollmentService, invitation controlap
 	if name == "" {
 		name = "node"
 	}
-	request := controlapi.ClaimRequest{RequestedName: name, CSRPEM: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})), BootID: bootID, ApplicationVersion: buildinfo.Current().Version, ContractVersions: []int{1}, Capabilities: []string{"presence"}}
+	request := controlapi.ClaimRequest{RequestedName: name, CSRPEM: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})), BootID: bootID, ApplicationVersion: buildinfo.Current().Version, ContractVersions: []int{1}, Capabilities: []string{"presence", "snapshot.v1"}}
 	var accepted controlapi.ClaimAccepted
 	if err := requestJSON(ctx, client, invitation.ControllerURL, http.MethodPost, "/control/v1/enrollments/"+invitation.InvitationID+"/claim", invitation.Secret, request, &accepted); err != nil {
 		return errors.New("enrollment claim failed")
@@ -148,6 +148,7 @@ func Run(ctx context.Context, service *app.Service, cfg config.Config) error {
 		return err
 	}
 	delay := time.Second
+	var snapshotSequence uint64
 	certificate, err := strictCertificate(identity.Certificate)
 	if err != nil {
 		return errors.New("node identity invalid")
@@ -165,9 +166,10 @@ func Run(ctx context.Context, service *app.Service, cfg config.Config) error {
 		if state.NodeConnection == nil || *state.NodeConnection != connection || state.ManagedNode == nil || state.ManagedNode.ControllerID != managed.ControllerID || state.ManagedNode.NodeID != managed.NodeID || state.ManagedNode.BindingEpoch != managed.BindingEpoch || state.ManagedNode.StateEpoch != boot.StateEpoch {
 			return errors.New("node binding changed")
 		}
-		p := controlapi.Presence{BootID: boot.BootID, BootSequence: boot.BootSequence, ApplicationVersion: buildinfo.Current().Version, ContractVersion: 1, StateEpoch: boot.StateEpoch, BindingEpoch: state.ManagedNode.BindingEpoch, DesiredGeneration: state.ManagedNode.DesiredGeneration, Capabilities: []string{"presence"}, ObservedAt: time.Now().UTC()}
+		p := controlapi.Presence{BootID: boot.BootID, BootSequence: boot.BootSequence, ApplicationVersion: buildinfo.Current().Version, ContractVersion: 1, StateEpoch: boot.StateEpoch, BindingEpoch: state.ManagedNode.BindingEpoch, DesiredGeneration: state.ManagedNode.DesiredGeneration, Capabilities: []string{"presence", "snapshot.v1"}, ObservedAt: time.Now().UTC()}
 		var accepted controlapi.PresenceAccepted
 		err = requestJSON(ctx, client, state.NodeConnection.ControllerURL, http.MethodPut, "/control/v1/node/presence", "", p, &accepted)
+		presenceSucceeded := err == nil
 		if err == nil {
 			if accepted.ControllerID != state.ManagedNode.ControllerID || !validUUID(accepted.SessionID) || !accepted.SessionExpiresAt.After(time.Now()) {
 				return errors.New("controller identity rejected")
@@ -176,10 +178,26 @@ func Run(ctx context.Context, service *app.Service, cfg config.Config) error {
 			if delay < time.Second || delay > 30*time.Second {
 				delay = 15 * time.Second
 			}
+			snapshotSequence++
+			snapshot, collectErr := collectSnapshot(ctx, service, cfg, accepted.SessionID, snapshotSequence)
+			if collectErr != nil {
+				err = collectErr
+			} else {
+				var ack controlapi.SnapshotAccepted
+				err = requestJSON(ctx, client, connection.ControllerURL, http.MethodPut, "/control/v1/node/snapshot", "", snapshot, &ack)
+				if err == nil && (ack.Sequence != snapshotSequence || ack.ReceivedAt.IsZero()) {
+					return errors.New("invalid snapshot acknowledgement")
+				}
+				if errors.Is(err, errForbidden) {
+					return errors.New("node authorization revoked")
+				}
+				// A session may expire during a bounded network failure. Refresh
+				// presence before retry; never resend a snapshot under an old fence.
+			}
 		} else if errors.Is(err, errForbidden) || errors.Is(err, errFenced) {
 			return errors.New("node authorization revoked")
 		}
-		if err == nil && !time.Now().Before(certificate.NotBefore.Add(certificate.NotAfter.Sub(certificate.NotBefore)*2/3)) {
+		if presenceSucceeded && !time.Now().Before(certificate.NotBefore.Add(certificate.NotAfter.Sub(certificate.NotBefore)*2/3)) {
 			renewal, prepareErr := service.PrepareNodeCertificateRenewal(ctx, connection)
 			if prepareErr != nil {
 				return errors.New("node renewal preparation failed")

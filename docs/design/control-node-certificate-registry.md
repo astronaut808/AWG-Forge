@@ -108,8 +108,10 @@ credentials require separate revocation at the former controller when applicable
    fresh verified backup, recent-auth session receipt, socket reservation before
    commit, disable/restart and live leaf rotation. Browser lifecycle handlers
    require recent authentication and confirmation that the verified backup was
-   retained. Non-loopback exposure, installer integration, fleet UI and operation
-   delivery require separate implementation and failure-matrix tests. The existing
+   retained. Non-loopback exposure, installer integration and read-only fleet
+   observation are covered by subsequent checkpoints and their failure-matrix
+   tests; see [current implementation status](multi-node-v1.md#implementation-status).
+   Operation delivery remains proposed. The existing
    standalone Web UI and DB-off node behavior remain independent throughout.
 
 The [failure matrix](multi-node-failure-matrix.md) remains the release gate for

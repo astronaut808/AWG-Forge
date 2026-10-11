@@ -126,8 +126,11 @@ test("authentication, maintenance, saved preferences and logout", async ({ page,
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("lang", m === messages.en ? "ru" : "en");
   await expect(page.locator("html")).toHaveAttribute("data-theme", colorScheme === "dark" ? "light" : "dark");
+  const loggedOut = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/logout");
   await page.getByRole("button", { name: switched.common.logOut, exact: true }).click();
   await expect(page.getByLabel(switched.login.password, { exact: true })).toBeVisible();
+  expect((await loggedOut).status()).toBe(200);
+  await expect(page.getByRole("button", { name: switched.login.logIn, exact: true })).toBeEnabled();
   expect((await page.request.get("/api/state")).status()).toBe(401);
 });
 

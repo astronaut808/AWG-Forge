@@ -37,6 +37,10 @@ type Authorizer interface {
 	Authorize(context.Context, *x509.Certificate, string) (NodeIdentity, error)
 }
 
+// ErrAuthorizationUnavailable denies the request while allowing the outbound
+// worker to retry a temporary registry failure. It never grants authority.
+var ErrAuthorizationUnavailable = errors.New("control authorization unavailable")
+
 // NodeIdentity is the registry-verified authority passed to a typed route.
 // Request headers and CSR subject fields never populate it.
 type NodeIdentity struct {
@@ -365,6 +369,10 @@ func (runtime *Runtime) handler() http.Handler {
 			return
 		}
 		identity, err := runtime.authorizer.Authorize(r.Context(), cert, route.ID)
+		if errors.Is(err, ErrAuthorizationUnavailable) {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		if err != nil || identity.ControllerID == "" || identity.NodeID == "" || identity.BindingEpoch == 0 {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return

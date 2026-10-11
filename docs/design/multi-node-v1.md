@@ -65,7 +65,12 @@ with fresh enrollment, rather than reopening the former registry node. See
 Non-loopback listeners require recent auth, an exact-identity verified backup receipt,
 retained-archive confirmation and explicit `allow_non_loopback: true`.
 Explicit installer join/rebind and minimal controller onboarding are implemented.
-Fleet UI, operation delivery, receipt acknowledgement and pruning remain outside
+Authenticated fleet inventory, bounded outbound TLS/mTLS snapshots and read-only
+node views are implemented. They separate certificate-bound reachability from VPN
+health, preserve node-local desired state and clear stale browser contexts. See
+[node observation](../en/usage.md#read-only-node-observation) for the operator
+contract and resource limits.
+Operation delivery, receipt acknowledgement and pruning remain outside
 the implemented checkpoint.
 
 `state.json` on each node is the desired-state source of truth. The controller
@@ -145,7 +150,7 @@ Keep three independent HTTP surfaces:
 The proposed node contract is tracked in
 [`api/control-v1.openapi.json`](../../api/control-v1.openapi.json). It is a
 draft of the wider protocol. Loopback claim/status, presence and certificate
-renewal are implemented; operation delivery and snapshots remain future work.
+renewal and bounded read-only snapshot observation are implemented; operation delivery remains future work.
 Each additional route requires executable threat-model and failure-matrix tests.
 
 Use a dedicated control listener. Browser reverse proxies must not be able to
@@ -478,4 +483,4 @@ rolling-version compatibility, and all failure tests in the companion matrix.
 
 ## Installer onboarding implementation
 
-Explicit fresh/existing join and offline rebind are implemented alongside the minimal Maintenance/Controller onboarding flow. The bootstrap adds only public CA retrieval and preserves the existing CA-SPKI/TLS enrollment protocol. SQLite schema 10 records exact presence certificate provenance for enrollment-bound browser confirmation; legacy unconfirmed rows remain compatible. Unpublished builds intentionally return unsupported installer metadata and only copy public argument suffixes. See EN/RU installation/security documentation for artifact validation, stop/start ownership and interrupted-commit handling. Fleet inventory, snapshots and operation delivery remain proposed. Container/process evidence does not establish multi-host VPN continuity.
+Explicit fresh/existing join and offline rebind are implemented alongside the minimal Maintenance/Controller onboarding flow. The bootstrap adds only public CA retrieval and preserves the existing CA-SPKI/TLS enrollment protocol. SQLite schema 11 records bounded observation projections and exact presence certificate provenance for enrollment-bound browser confirmation; legacy unconfirmed rows remain compatible. Unpublished builds intentionally return unsupported installer metadata and only copy public argument suffixes. See EN/RU installation/security documentation for artifact validation, stop/start ownership and interrupted-commit handling. Fleet inventory, allowlisted snapshots and read-only views are implemented; operation delivery remains proposed. Container/process evidence does not establish multi-host VPN continuity.
