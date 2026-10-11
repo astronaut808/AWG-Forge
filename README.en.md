@@ -6,17 +6,21 @@ Manage AmneziaWG on your own server: Web UI, CLI, and VPN runtime in one Docker 
 
 ![AWG-Forge dashboard](docs/assets/awg-forge-dashboard.jpg)
 
-## Why AWG-Forge
+## Features
 
-- Interactive installation on a VPS.
-- Multiple independent tunnels with separate ports, subnets, and profiles.
-- Manage clients, access expiration, configurations, and QR codes from the Web UI.
-- Route each tunnel's IPv4 traffic through the server or Cloudflare WARP.
-- Diagnostics, backups, and recovery from the panel and CLI.
-- The panel is local by default, accessed through an SSH tunnel.
+- **Multiple tunnels on one VPS:** separate AmneziaWG profiles, ports, and subnets.
+- **Routing per tunnel:** IPv4 traffic through the server or Cloudflare WARP.
+- **Clients and imports:** access management, expiration, and traffic limits; `.conf`, QR codes, and `vpn://`.
+- **Monitoring:** clients' last connection, traffic counters, and history.
+- **Panel access:** SSH tunnel or HTTPS — your own certificates, automatic domain/IP certificates, or a reverse proxy.
+- **Encrypted backups:** creation and verification in the panel, restoration through the CLI.
+- **Diagnostics and maintenance:** Doctor, firewall repair, audit log, and support bundles without secrets.
+- **Installation and upgrades:** an interactive script with dependency preparation and checks.
+- **Controller and nodes (`develop`):** MFA login and read-only monitoring of connected servers.
 
 AmneziaWG 2.0 is the default. AWG 3.x is experimental;
 see the [profile matrix](docs/en/protocol-matrix.md) for compatibility and limitations.
+Traffic history and limits require SQLite. The panel binds only to a local address by default.
 
 ## Quick Install
 
