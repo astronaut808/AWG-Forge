@@ -88,7 +88,7 @@ func (s *Service) NodeObservationState(ctx context.Context) (config.State, error
 
 // Controller reads stay in the application boundary and hold the same lock as
 // revocation/restore, so a read cannot race authority changes within this app.
-func (s *Service) ControllerNodes(ctx context.Context) (controlapi.NodeInventory, error) {
+func (s *Service) ControllerNodes(ctx context.Context, after string) (controlapi.NodeInventory, error) {
 	if err := s.lockControlRequest(ctx); err != nil {
 		return controlapi.NodeInventory{}, err
 	}
@@ -102,7 +102,7 @@ func (s *Service) ControllerNodes(ctx context.Context) (controlapi.NodeInventory
 		return controlapi.NodeInventory{}, err
 	}
 	defer func() { _ = db.Close() }()
-	return db.NodeInventory(ctx, state.Controller.ControllerID, state.Controller.Control.CAGeneration, "", time.Now().UTC())
+	return db.NodeInventoryPage(ctx, state.Controller.ControllerID, state.Controller.Control.CAGeneration, after, time.Now().UTC())
 }
 func (s *Service) ControllerNodeProjection(ctx context.Context, nodeID string) (controlapi.NodeProjection, error) {
 	if !validControlUUID(nodeID) {

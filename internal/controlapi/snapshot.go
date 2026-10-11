@@ -20,6 +20,7 @@ const (
 	MaxSnapshotClients        = 2048
 	MaxProjectedNodes         = 1024
 	MaxProjectionStorageBytes = 16 << 20
+	MaxInventoryPageNodes     = 128
 )
 
 // Snapshot is an allowlist, never a config.State or an ordinary local API
@@ -110,6 +111,7 @@ type NodeView struct {
 type NodeInventory struct {
 	ControllerID string     `json:"controller_id"`
 	Nodes        []NodeView `json:"nodes"`
+	NextCursor   string     `json:"next_cursor,omitempty"`
 }
 type NodeProjection struct {
 	ControllerID      string             `json:"controller_id"`

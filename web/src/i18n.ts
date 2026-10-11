@@ -79,6 +79,9 @@ const en = {
     unavailable: "Authentication is changing. Try again shortly.",
   },
   fleet: {
+    pages: "Node list pages",
+    firstPage: "First page",
+    nextPage: "Next page",
     "server": "Server",
     "thisServer": "This server",
     "readOnly": "Remote node · read-only",
@@ -483,6 +486,9 @@ const ru: Messages = {
     unavailable: "Режим входа меняется. Повторите попытку позже.",
   },
   fleet: {
+    pages: "Страницы списка узлов",
+    firstPage: "Первая страница",
+    nextPage: "Следующая страница",
     "server": "Сервер",
     "thisServer": "Этот сервер",
     "readOnly": "Удалённый узел · только чтение",

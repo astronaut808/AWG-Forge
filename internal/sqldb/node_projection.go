@@ -112,22 +112,36 @@ AND c.issuer_generation=? AND c.issuer_generation=p.certificate_issuer_generatio
 AND c.revoked_at_unix_ms IS NULL AND c.not_before_unix_ms<=? AND c.not_after_unix_ms>?
 AND (c.superseded_at_unix_ms IS NULL OR c.superseded_at_unix_ms>?)) THEN 1 ELSE 0 END
 FROM control_node_bindings b LEFT JOIN control_node_presence p ON p.node_id=b.node_id
-WHERE b.controller_id=? AND (?='' OR b.node_id=?) ORDER BY b.node_id LIMIT 1025`
+WHERE b.controller_id=? AND (?='' OR b.node_id=?) AND b.node_id>? ORDER BY b.node_id LIMIT ?`
 
 func (db *DB) NodeInventory(ctx context.Context, controllerID, issuer, nodeID string, now time.Time) (controlapi.NodeInventory, error) {
+	return db.nodeInventory(ctx, controllerID, issuer, nodeID, "", now)
+}
+
+// NodeInventoryPage bounds each read independently of the snapshot cache quota.
+// The last returned identity is an exclusive keyset cursor, including history.
+func (db *DB) NodeInventoryPage(ctx context.Context, controllerID, issuer, after string, now time.Time) (controlapi.NodeInventory, error) {
+	return db.nodeInventory(ctx, controllerID, issuer, "", after, now)
+}
+
+func (db *DB) nodeInventory(ctx context.Context, controllerID, issuer, nodeID, after string, now time.Time) (controlapi.NodeInventory, error) {
 	out := controlapi.NodeInventory{ControllerID: controllerID, Nodes: []controlapi.NodeView{}}
 	if db == nil || db.sql == nil {
 		return out, ErrDisabled
 	}
-	if !validUUID(controllerID) || !validIssuerGeneration(issuer) || nodeID != "" && !validUUID(nodeID) {
+	if !validUUID(controllerID) || !validIssuerGeneration(issuer) || nodeID != "" && !validUUID(nodeID) || after != "" && !validUUID(after) {
 		return out, ErrNodeCertificateDenied
 	}
-	rows, err := db.sql.QueryContext(ctx, inventoryQuery, now.UnixMilli(), issuer, now.UnixMilli(), now.UnixMilli(), now.UnixMilli(), controllerID, nodeID, nodeID)
+	rows, err := db.sql.QueryContext(ctx, inventoryQuery, now.UnixMilli(), issuer, now.UnixMilli(), now.UnixMilli(), now.UnixMilli(), controllerID, nodeID, nodeID, after, controlapi.MaxInventoryPageNodes+1)
 	if err != nil {
 		return out, err
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
+		if len(out.Nodes) == controlapi.MaxInventoryPageNodes {
+			out.NextCursor = out.Nodes[len(out.Nodes)-1].NodeID
+			break
+		}
 		var n controlapi.NodeView
 		var revoked sql.NullInt64
 		var confirmed int64
@@ -159,9 +173,6 @@ func (db *DB) NodeInventory(ctx context.Context, controllerID, issuer, nodeID st
 			n.Status = "incompatible"
 		}
 		out.Nodes = append(out.Nodes, n)
-		if len(out.Nodes) > controlapi.MaxProjectedNodes {
-			return out, ErrProjectionLimit
-		}
 	}
 	return out, rows.Err()
 }

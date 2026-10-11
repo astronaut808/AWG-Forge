@@ -269,11 +269,21 @@ individual node. The local view retains its existing controls; node views show
 only tunnels, clients, live peer counters/handshakes and a limited runtime Doctor
 summary. No remote actions or client configuration exports are available.
 
+The node list is paged in node ID order, with up to 128 identities per page.
+Use **Next page** and **First page** to browse it. Changing pages clears the
+selected node and returns to **This server**. Revoked registrations remain
+visible as history. Inventory page size is independent of the snapshot cache quota. Each page is
+a current read, so restart from the first page to include registrations added
+before the current cursor while browsing.
+
 Node reachability and VPN health are separate. **Online** means a current
 certificate-bound presence, not a working tunnel. Snapshot observation and
 controller receipt times remain visible; offline or old snapshots are marked
 stale. Revoked or incompatible nodes expose no previous projection. Selecting a
 node, changing its identity epochs or logging out clears the prior view.
+Logout waits at most 10 seconds before cancelling its request and allowing
+another login. A timeout clears the local view but does not confirm that the
+server revoked the previous session.
 
 Nodes send snapshots outbound over the existing TLS/mTLS listener, without an
 additional node management port. `state.json` remains authoritative; the
@@ -287,6 +297,9 @@ invalidates existing authority before control can be enabled again.
 The authenticated, no-store internal reads are `GET /api/controller/nodes` and
 `GET /api/controller/nodes/{node_id}`. They expose no keys, PSKs, session bearers,
 full configurations, protocol parameters, QR/import payloads or raw diagnostics.
+The inventory response includes `next_cursor` when another page is available;
+pass it as `GET /api/controller/nodes?after=<next_cursor>`. Omit `after` for the
+first page. The cursor is a canonical node UUID, not an authorization token.
 Remote mutation/command delivery and secret configuration exports remain future
 work. Local container acceptance does not close the external multi-host release
 gate.

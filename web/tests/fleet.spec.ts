@@ -26,7 +26,16 @@ test("fleet views fence delayed responses, epochs and logout and remain read-onl
   let requested = false;
   const mutations: string[] = [];
   page.on("request", (request) => { if (request.url().includes("/api/controller/nodes") && request.method() !== "GET") mutations.push(request.method()); });
-  await page.route("**/api/controller/nodes", (route) => route.fulfill({ json: { controller_id: controller, nodes } }));
+  let paginated = true;
+  let releaseInventory: (() => void) | undefined;
+  const pageRequests: string[] = [];
+  await page.route((url) => url.pathname === "/api/controller/nodes", async (route) => {
+    const cursor = new URL(route.request().url()).searchParams.get("after") || "";
+    pageRequests.push(cursor);
+    const data = !paginated ? { nodes } : cursor ? { nodes: [nodes[1]] } : { nodes: [nodes[0]], next_cursor: nodes[0].node_id };
+    if (paginated && !cursor && pageRequests.length === 2) await new Promise<void>((resolve) => { releaseInventory = resolve; });
+    return route.fulfill({ json: { controller_id: controller, ...data } }).catch(() => {});
+  });
   await page.route("**/api/controller/nodes/*", async (route) => {
     const node = nodes.find((item) => route.request().url().endsWith(item.node_id))!;
     if (node === nodes[0] && delayed) { requested = true; await new Promise<void>((resolve) => { release = resolve; }); }
@@ -37,7 +46,21 @@ test("fleet views fence delayed responses, epochs and logout and remain read-onl
   await page.route("**/api/auth/status", (route) => route.fulfill({ json: { mode: "controller" } }));
   await page.getByRole("button", { name: m.login.logIn, exact: true }).click();
   const selector = page.getByLabel(m.fleet.server, { exact: true });
+  await expect(selector.locator("option")).toHaveCount(2);
+  await expect.poll(() => Boolean(releaseInventory), { timeout: 10_000 }).toBe(true);
+  await page.getByRole("button", { name: m.fleet.nextPage, exact: true }).click();
+  await expect(selector.locator("option")).toHaveCount(2);
+  await expect(selector.locator("option").last()).toContainText("Remote 1");
+  releaseInventory?.();
+  await expect(selector.locator("option").last()).toContainText("Remote 1");
+  await selector.selectOption(nodes[1].node_id);
+  await expect(page.getByRole("heading", { name: "Remote 1", exact: true })).toBeVisible();
+  paginated = false;
+  await page.getByRole("button", { name: m.fleet.firstPage, exact: true }).click();
+  await expect(selector).toHaveValue("");
+  await expect(page.getByRole("heading", { name: "Remote 1", exact: true })).toHaveCount(0);
   await expect(selector.locator("option")).toHaveCount(3);
+  expect(pageRequests).toContain(nodes[0].node_id);
   await selector.selectOption(nodes[0].node_id);
   await expect.poll(() => requested).toBe(true);
   await selector.selectOption(nodes[1].node_id);

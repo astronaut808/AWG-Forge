@@ -61,7 +61,7 @@ func TestNodeSnapshotMTLSFencesAndProjection(t *testing.T) {
 	s := testObservationSnapshot(p, accepted.SessionID)
 	var ack controlapi.SnapshotAccepted
 	enrollmentHTTP(t, f.client, base, http.MethodPut, "/control/v1/node/snapshot", "", s, 200, &ack)
-	inv, err := f.service.ControllerNodes(ctx)
+	inv, err := f.service.ControllerNodes(ctx, "")
 	if err != nil || len(inv.Nodes) != 1 || inv.Nodes[0].Status != "online" || inv.Nodes[0].LastConfirmedAt == nil {
 		t.Fatal("inventory did not use live identity")
 	}

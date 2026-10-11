@@ -18,6 +18,8 @@ type FleetProps = {
 export function FleetWorkspace({ selected, select, unauthorized, m, children }: FleetProps) {
   const [inventory, setInventory] = useState<NodeInventory | null>(null);
   const [unavailable, setUnavailable] = useState(false);
+  const [cursor, setCursor] = useState("");
+  const cursorRef = useRef("");
   const controllerRef = useRef("");
   const selectRef = useRef(select);
   const unauthorizedRef = useRef(unauthorized);
@@ -32,24 +34,33 @@ export function FleetWorkspace({ selected, select, unauthorized, m, children }: 
       pending = new AbortController();
       const deadline = setTimeout(() => pending?.abort(), 10_000);
       try {
-        const next = await api.controllerNodes(pending.signal);
-        if (disposed) return;
-        if (controllerRef.current && controllerRef.current !== next.controller_id) selectRef.current("");
+        const next = await api.controllerNodes(pending.signal, cursor);
+        if (disposed || cursor !== cursorRef.current) return;
+        if (controllerRef.current && controllerRef.current !== next.controller_id) {
+          selectRef.current("");
+          if (cursor) { cursorRef.current = ""; setCursor(""); setInventory(null); return; }
+        }
         controllerRef.current = next.controller_id;
         setInventory(next);
         setUnavailable(false);
       } catch (err) {
-        if (disposed) return;
+        if (disposed || cursor !== cursorRef.current) return;
         setUnavailable(true);
         if (err instanceof api.APIError && err.status === 401) unauthorizedRef.current();
       } finally {
         clearTimeout(deadline);
-        if (!disposed) timer = setTimeout(refresh, 5000);
+        if (!disposed && cursor === cursorRef.current) timer = setTimeout(refresh, 5000);
       }
     };
     void refresh();
     return () => { disposed = true; clearTimeout(timer); pending?.abort(); };
-  }, []);
+  }, [cursor]);
+
+  function changePage(after: string) {
+    // A page switch starts a fresh selection context and retains only one page.
+    cursorRef.current = after;
+    select(""); setInventory(null); setUnavailable(false); setCursor(after);
+  }
 
   const node = inventory?.nodes.find((item) => item.node_id === selected);
   const status = (value: NodeView["status"]) => m.fleet[value];
@@ -61,6 +72,10 @@ export function FleetWorkspace({ selected, select, unauthorized, m, children }: 
           {inventory?.nodes.map((item) => <option key={item.node_id} value={item.node_id}>{item.name} · {item.node_id.slice(0, 8)} · {status(item.status)}</option>)}
         </select>
       </label>
+      {(cursor || inventory?.next_cursor) && <nav class="actions" aria-label={m.fleet.pages}>
+        <button class="button" type="button" disabled={!cursor} onClick={() => changePage("")}>{m.fleet.firstPage}</button>
+        <button class="button" type="button" disabled={unavailable || !inventory?.next_cursor} onClick={() => changePage(inventory?.next_cursor || "")}>{m.fleet.nextPage}</button>
+      </nav>}
       <p class="muted">{selected ? m.fleet.readOnly : m.fleet.localControls}</p>
       {unavailable && <p role="status" class="notice warn">{m.fleet.unavailable}</p>}
     </section>

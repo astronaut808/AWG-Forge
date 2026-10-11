@@ -86,6 +86,7 @@ const certificateRenewal = requireSchema(controlAjv, "CertificateRenewalRequest"
 const nodePresence = requireSchema(controlAjv, "NodePresence");
 const presenceAccepted = requireSchema(controlAjv, "PresenceAccepted");
 const nodeSnapshot = requireSchema(controlAjv, "NodeSnapshot");
+const nodeInventory = ajv.compile(normalizeControlSchemas({ ...schemas.NodeInventory, $defs: { NodeView: schemas.NodeView } }));
 const operationEnvelope = requireSchema(controlAjv, "OperationEnvelope");
 const problem = requireSchema(controlAjv, "Problem");
 
@@ -112,6 +113,10 @@ const snapshotWithoutSession = structuredClone(redactedSnapshot);
 delete snapshotWithoutSession.session_id;
 
 const controlCases = [
+  ["inventory final page", nodeInventory, { controller_id: schemaUUID, nodes: [] }, true],
+  ["inventory next page cursor", nodeInventory, { controller_id: schemaUUID, nodes: [], next_cursor: schemaUUID }, true],
+  ["inventory rejects malformed cursor", nodeInventory, { controller_id: schemaUUID, nodes: [], next_cursor: "invalid" }, false],
+  ["inventory rejects session material", nodeInventory, { controller_id: schemaUUID, nodes: [], session_id: schemaUUID }, false],
   [
     "valid enrollment claim",
     enrollmentClaim,

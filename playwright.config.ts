@@ -14,8 +14,9 @@ const projects = [
 
 export default defineConfig({
   testDir: "./web/tests",
+  outputDir: process.env.UI_TEST_OUTPUT_DIR || "test-results",
   fullyParallel: false,
-  workers: 1,
+  workers: 2,
   forbidOnly: Boolean(process.env.CI),
   retries: 0,
   timeout: 30_000,

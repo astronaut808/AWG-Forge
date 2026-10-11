@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 func (w *web) controllerNodesAPI(rw http.ResponseWriter, r *http.Request) {
@@ -22,7 +24,15 @@ func (w *web) controllerNodesAPI(rw http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	if r.URL.Path == "/api/controller/nodes" {
-		result, err := w.service.ControllerNodes(ctx)
+		after := r.URL.Query().Get("after")
+		if after != "" {
+			cursor, err := uuid.Parse(after)
+			if err != nil || cursor == uuid.Nil || cursor.String() != after {
+				writeOperationError(rw, 400, "invalid_cursor", "invalid inventory cursor")
+				return
+			}
+		}
+		result, err := w.service.ControllerNodes(ctx, after)
 		if err != nil {
 			writeError(rw, 503, "node inventory unavailable")
 			return

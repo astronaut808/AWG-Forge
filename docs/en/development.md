@@ -1,5 +1,13 @@
 # Development
 
+## Branches and Pull Requests
+
+Create feature and bug-fix branches from the latest `develop`, and target
+`develop` when opening a pull request. GitHub may suggest the default branch,
+`master`; change the base to `develop` before submitting. `master` is reserved
+for releases. See [CONTRIBUTING.md](../../CONTRIBUTING.md) for contribution and
+validation requirements.
+
 ## Requirements
 
 - Go `1.26.9`;

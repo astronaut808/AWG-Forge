@@ -233,3 +233,108 @@ func mustJSON(t *testing.T, value any) []byte {
 	}
 	return b
 }
+
+func TestNodeInventoryPagesPreserveRevokedHistoryAndOnlineIdentity(t *testing.T) {
+	for _, history := range []int{0, controlapi.MaxInventoryPageNodes - 1, controlapi.MaxInventoryPageNodes, 1024, 1025} {
+		t.Run(fmt.Sprint(history), func(t *testing.T) {
+			ctx := context.Background()
+			db, _, generation, identity, _, _, now := projectionFixture(t)
+			tx, err := db.sql.BeginTx(ctx, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = tx.Rollback() }()
+			for i := 0; i < history; i++ {
+				id := fmt.Sprintf("%08x-0000-4000-8000-000000000000", i)
+				if _, err := tx.ExecContext(ctx, "INSERT INTO control_node_bindings(node_id,controller_id,binding_epoch,revoked_at_unix_ms) VALUES(?,?,1,?)", id, identity.ControllerID, now.UnixMilli()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := tx.Commit(); err != nil {
+				t.Fatal(err)
+			}
+			seen := map[string]bool{}
+			cursor := ""
+			online, revoked := 0, 0
+			for {
+				page, err := db.NodeInventoryPage(ctx, identity.ControllerID, generation, cursor, now)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(page.Nodes) == 0 || len(page.Nodes) > controlapi.MaxInventoryPageNodes {
+					t.Fatalf("page size=%d", len(page.Nodes))
+				}
+				previous := cursor
+				for _, node := range page.Nodes {
+					if seen[node.NodeID] || node.NodeID <= previous {
+						t.Fatal("duplicate or unordered identity")
+					}
+					seen[node.NodeID] = true
+					previous = node.NodeID
+					if node.NodeID == identity.NodeID && node.Status == "online" {
+						online++
+					} else if node.Status == "revoked" {
+						revoked++
+					} else {
+						t.Fatalf("unexpected status %s", node.Status)
+					}
+				}
+				if page.NextCursor == "" {
+					break
+				}
+				if len(page.Nodes) != controlapi.MaxInventoryPageNodes || page.NextCursor != previous {
+					t.Fatal("invalid page boundary")
+				}
+				cursor = page.NextCursor
+			}
+			if online != 1 || revoked != history || len(seen) != history+1 {
+				t.Fatalf("online=%d revoked=%d identities=%d", online, revoked, len(seen))
+			}
+			var cached int
+			if err := db.sql.QueryRowContext(ctx, "SELECT count(*) FROM control_node_projections").Scan(&cached); err != nil || cached != 0 {
+				t.Fatalf("cache=%d err=%v", cached, err)
+			}
+			projection, err := db.NodeProjection(ctx, identity.ControllerID, generation, identity.NodeID, now)
+			if err != nil || projection.Node.Status != "online" {
+				t.Fatalf("individual online node unavailable: %v", err)
+			}
+			empty, err := db.NodeInventoryPage(ctx, identity.ControllerID, generation, "ffffffff-ffff-4fff-8fff-ffffffffffff", now)
+			if err != nil || len(empty.Nodes) != 0 || empty.NextCursor != "" {
+				t.Fatalf("empty terminal page: %#v %v", empty, err)
+			}
+			if _, err := db.NodeInventoryPage(ctx, identity.ControllerID, generation, "invalid", now); !errors.Is(err, ErrNodeCertificateDenied) {
+				t.Fatalf("invalid cursor accepted: %v", err)
+			}
+		})
+	}
+}
+
+func TestAcceptNodeSnapshotStillRejectsFullProjectionCache(t *testing.T) {
+	ctx := context.Background()
+	db, _, generation, identity, serial, snapshot, now := projectionFixture(t)
+	tx, err := db.sql.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	for i := 0; i < controlapi.MaxProjectedNodes; i++ {
+		id := fmt.Sprintf("%08x-0000-4000-8000-000000000000", i)
+		if _, err := tx.ExecContext(ctx, "INSERT INTO control_node_bindings(node_id,controller_id,binding_epoch) VALUES(?,?,1)", id, identity.ControllerID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO control_node_projections
+(node_id,controller_id,binding_epoch,state_epoch,boot_id,boot_sequence,session_id,desired_generation,snapshot_sequence,observed_at_unix_ms,received_at_unix_ms,desired_json,observations_json)
+VALUES (?,?,1,?,?,1,?,1,1,?,?,?,?)`, id, identity.ControllerID, snapshot.StateEpoch, snapshot.BootID, snapshot.SessionID, now.UnixMilli(), now.UnixMilli(), mustJSON(t, snapshot.Desired), mustJSON(t, snapshot.Observations)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AcceptNodeSnapshot(ctx, identity, generation, serial, snapshot, now); !errors.Is(err, ErrProjectionLimit) {
+		t.Fatalf("full cache admission error=%v", err)
+	}
+	if _, err := db.NodeInventoryPage(ctx, identity.ControllerID, generation, "", now); err != nil {
+		t.Fatalf("full cache blocked inventory: %v", err)
+	}
+}

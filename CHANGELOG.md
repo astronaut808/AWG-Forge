@@ -22,6 +22,8 @@
 
 ### Fixed
 
+- Paginate controller node inventory independently of snapshot cache quotas, preserving access to active nodes and revoked registration history beyond 1024 identities.
+- Bound browser logout to 10 seconds and cancel the request before permitting another login, preventing stalled responses from blocking re-entry or clearing a later session cookie.
 - Retry temporary control-registry failures with bounded backoff instead of treating them as terminal presence fencing failures, while continuing to reject expired, revoked and stale authority.
 
 ### Security
