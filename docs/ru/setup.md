@@ -1,24 +1,37 @@
 # Установка и запуск
 
+## Подготовка
+
+Эти шаги предназначены для новой установки на Linux x86_64 с Docker Engine,
+Compose plugin, Git и доступным `/dev/net/tun`. Выполняй Docker-команды от
+пользователя с доступом к Docker. Подготовка зависимостей и метки volume для
+SELinux описаны в [инструкции установщика](quick-install.md).
+
+Подготовь рабочий каталог и приватные файлы:
+
+```bash
+git clone https://github.com/astronaut808/awg-forge.git
+cd awg-forge
+umask 077
+cp .env.example .env
+mkdir -m 700 data
+```
+
+Перед продолжением отредактируй `.env`: замени `PASSWORD` и `SESSION_SECRET`
+независимыми случайными значениями, а в `EXTERNAL_INTERFACE` укажи WAN-интерфейс
+хоста. Сохрани приватные права файла. Пример включает SQLite; команда миграции
+ниже подготовит базу перед запуском. TLS, WARP и другие настройки описаны в
+[конфигурации](configuration.md).
+
+Выбери один из режимов сети ниже: host networking или bridge networking.
+
 ## Host Networking
 
 Host networking — рекомендуемый production-режим для awg-forge. В этом режиме туннели, созданные в UI, могут использовать любые свободные UDP-порты без изменения Docker port mappings.
 
-Интерактивный quick start:
+После подготовки `.env` создай первый туннель и запусти сервис:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
-chmod +x install.sh
-sudo ./install.sh
-```
-
-Подробнее: [Быстрая установка](quick-install.md).
-
-Ручная настройка:
-
-```bash
-cp .env.example .env
-mkdir -p data
 docker compose run --rm --no-deps awg-forge init \
   --server-host vpn.example.com \
   --external-interface eth0 \
@@ -51,8 +64,6 @@ http://127.0.0.1:51821
 Bridge networking тоже может работать, но UDP-порты должны быть опубликованы до старта контейнера. Так как awg-forge позволяет создавать туннели в UI, нужно заранее опубликовать диапазон портов и создавать туннели только внутри него.
 
 ```bash
-cp .env.example .env
-mkdir -p data
 docker compose -f docker-compose.bridge.yml run --rm --no-deps awg-forge init \
   --server-host vpn.example.com \
   --external-interface eth0 \

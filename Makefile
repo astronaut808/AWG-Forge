@@ -5,7 +5,7 @@ GITLEAKS_LOG_OPTS ?= HEAD
 GOVULNCHECK_VERSION ?= v1.1.4
 ACTIONLINT_VERSION ?= v1.7.12
 
-.PHONY: test test-race test-shell vet build lint-go lint-js lint-shell lint-docker lint-actions lint-actions-security quality ui-build ui-check ui-test api-contract ci vuln-check npm-audit security security-fast docker-smoke updates updates-local updates-docker update-amneziawg-refs docker-build docker-up docker-down
+.PHONY: test test-race test-shell vet build lint-go lint-js lint-markdown lint-shell lint-docker lint-actions lint-actions-security quality ui-build ui-check ui-test api-contract ci vuln-check npm-audit security security-fast docker-smoke updates updates-local updates-docker update-amneziawg-refs docker-build docker-up docker-down
 
 test:
 	go test ./...
@@ -34,6 +34,9 @@ lint-go:
 lint-js:
 	npm run ui:lint
 
+lint-markdown:
+	npm run docs:lint
+
 lint-shell:
 	shellcheck --severity=warning install.sh uninstall.sh scripts/*.sh
 
@@ -46,7 +49,7 @@ lint-actions:
 lint-actions-security:
 	zizmor --offline --pedantic .
 
-quality:
+quality: lint-markdown
 	npm run quality:aislop
 
 ui-check:

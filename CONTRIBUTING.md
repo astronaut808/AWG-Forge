@@ -17,6 +17,12 @@ Run the full local check before opening a pull request:
 make ci
 ```
 
+For documentation changes, `make lint-markdown` runs the Markdown checks from
+`.markdownlint.jsonc`. It is also included in `make quality` and `make ci`.
+The rules focus on structure, references, and accessibility; line wrapping and
+other presentation preferences are not enforced. See the
+[development guide](docs/en/development.md#markdown-checks) for the rule policy.
+
 Run the Web UI locally without applying runtime tunnel changes:
 
 ```bash
