@@ -267,7 +267,9 @@ If an official client cannot import the QR on a specific platform or version, do
 An authenticated controller administrator can select **This server** or an
 individual node. The local view retains its existing controls; node views show
 only tunnels, clients, live peer counters/handshakes and a limited runtime Doctor
-summary. Snapshot refresh is the only remote action; client configuration exports are unavailable.
+summary. A node that advertises `client.enabled.set.v1` also permits the narrow
+**Client access** action described below. Client configuration exports remain
+unavailable.
 
 The node list is paged in node ID order, with up to 128 identities per page.
 Use **Next page** and **First page** to browse it. Changing pages clears the
@@ -300,9 +302,29 @@ full configurations, protocol parameters, QR/import payloads or raw diagnostics.
 The inventory response includes `next_cursor` when another page is available;
 pass it as `GET /api/controller/nodes?after=<next_cursor>`. Omit `after` for the
 first page. The cursor is a canonical node UUID, not an authorization token.
-Remote mutations, arbitrary commands and secret configuration exports remain future
-work. Local container acceptance does not close the external multi-host release
-gate.
+Arbitrary commands, client creation/deletion and secret configuration exports remain
+future work. Local container acceptance does not close the external multi-host
+release gate.
+
+## Change client access on a selected node
+
+Choose a client under **Client access**, then confirm **Enable client** or
+**Disable client**. The confirmation identifies the selected node, tunnel and
+client. This operation changes only that client's enabled state; it does not
+create/delete a client or expose its configuration.
+
+Queued and applying messages show delivery progress. **Result unconfirmed** means
+the node may have saved an outcome but the controller has not confirmed it yet;
+retry uses the same request. **Client change committed** means the node durably
+saved the matching result, but the UI waits for a newer projection before showing
+current data. A missing or mismatched result is never success. Switching node,
+account or identity epochs, and logging out, clears the operation view.
+
+The request expires after two minutes. It can reconcile a saved outcome after
+expiry but cannot start a new change late. The node remains the authority: a
+local change advances its generation, so an older request conflicts instead of
+undoing it. Existing quota and traffic-limit checks still apply when enabling.
+`ConfigRevision` keeps its existing client-configuration meaning.
 
 ## Refresh a selected node
 
@@ -319,5 +341,6 @@ The request expires after two minutes. A lease lasts at most 40 seconds; deliver
 can repeat after a crash. Refresh is read-only: configuration, generation,
 ConfigRevision, runtime configuration and history remain unchanged. Empty DB-off
 nodes stay empty and DB-off. Unsupported/offline nodes cannot receive new work.
-Only this typed observation operation is available; remote mutations and secret
-exports remain future work.
+This read-only operation and `client.enabled.set` are the only delivered remote
+actions. Arbitrary commands, client creation/deletion and secret exports remain
+future work.

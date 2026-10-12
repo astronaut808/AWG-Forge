@@ -70,7 +70,7 @@ node views are implemented. They separate certificate-bound reachability from VP
 health, preserve node-local desired state and clear stale browser contexts. See
 [node observation](../en/usage.md#read-only-node-observation) for the operator
 contract and resource limits.
-`snapshot.refresh` delivery, leases, correlated results and bounded controller retention are implemented. Remote mutations and durable node mutation receipts remain future work; see [refresh delivery](snapshot-refresh-delivery.md).
+`snapshot.refresh` delivery, leases, correlated results and bounded controller retention are implemented. The narrow `client.enabled.set` mutation and durable node receipts are also implemented; see [client enabled delivery](client-enabled-delivery.md). Other remote mutations remain future work.
 
 `state.json` on each node is the desired-state source of truth. The controller
 is a secure remote control surface and redacted inventory cache, not an
@@ -149,7 +149,7 @@ Keep three independent HTTP surfaces:
 The proposed node contract is tracked in
 [`api/control-v1.openapi.json`](../../api/control-v1.openapi.json). It is a
 draft of the wider protocol. Loopback claim/status, presence and certificate
-renewal and bounded read-only snapshot observation are implemented; read-only snapshot.refresh delivery is implemented; remote mutations remain future work.
+renewal and bounded read-only snapshot observation are implemented; read-only snapshot.refresh delivery and `client.enabled.set` are implemented; other remote mutations remain future work.
 Each additional route requires executable threat-model and failure-matrix tests.
 
 Use a dedicated control listener. Browser reverse proxies must not be able to
@@ -284,8 +284,9 @@ never infer success solely from a running interface.
 
 ## Durable operations
 
-The following mutation semantics are future requirements. The implemented read-only
-refresh uses controller SQLite and permits safe repetition after node crash without
+`client.enabled.set` implements these durable mutation semantics for one existing
+client's enabled state; see [client enabled delivery](client-enabled-delivery.md).
+Read-only refresh separately permits safe repetition after node crash without
 forcing DB-off nodes to enable storage; see [refresh delivery](snapshot-refresh-delivery.md).
 
 Delivery is at least once; execution is idempotent.
@@ -304,9 +305,9 @@ Delivery is at least once; execution is idempotent.
   must choose **Run when online** and see the expiry.
 
 Operation payloads are discriminated typed schemas. There is no generic command
-string or arbitrary JSON execution path. The implemented delivery contract includes
-only a safe snapshot refresh operation; mutation payloads are added with their
-application service and failure tests.
+string or arbitrary JSON execution path. Beyond safe snapshot refresh, the only
+implemented mutation payload is `client.enabled.set`; other mutation payloads need
+their application service and failure tests.
 
 Successful mutation receipts are bounded and removed only after durable
 controller acknowledgement plus a retention window. Failed operations and
@@ -486,4 +487,4 @@ rolling-version compatibility, and all failure tests in the companion matrix.
 
 ## Installer onboarding implementation
 
-Explicit fresh/existing join and offline rebind are implemented alongside the minimal Maintenance/Controller onboarding flow. The bootstrap adds only public CA retrieval and preserves the existing CA-SPKI/TLS enrollment protocol. SQLite schema 11 records bounded observation projections and exact presence certificate provenance for enrollment-bound browser confirmation; legacy unconfirmed rows remain compatible. Unpublished builds intentionally return unsupported installer metadata and only copy public argument suffixes. See EN/RU installation/security documentation for artifact validation, stop/start ownership and interrupted-commit handling. Fleet inventory, allowlisted snapshots and read-only views are implemented; read-only snapshot.refresh delivery is implemented; remote mutations remain proposed. Container/process evidence does not establish multi-host VPN continuity.
+Explicit fresh/existing join and offline rebind are implemented alongside the minimal Maintenance/Controller onboarding flow. The bootstrap adds only public CA retrieval and preserves the existing CA-SPKI/TLS enrollment protocol. SQLite schema 11 records bounded observation projections and exact presence certificate provenance for enrollment-bound browser confirmation; legacy unconfirmed rows remain compatible. Unpublished builds intentionally return unsupported installer metadata and only copy public argument suffixes. See EN/RU installation/security documentation for artifact validation, stop/start ownership and interrupted-commit handling. Fleet inventory, allowlisted snapshots, read-only views, snapshot.refresh and narrow client-enabled delivery are implemented; other remote mutations remain proposed. Container/process evidence does not establish multi-host VPN continuity.

@@ -31,6 +31,27 @@ func (w *web) nodeRefreshAPI(rw http.ResponseWriter, r *http.Request, parts []st
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	switch {
+	case len(parts) == 2 && parts[1] == "client-enabled":
+		if r.Method != http.MethodPost {
+			writeError(rw, 405, "method not allowed")
+			return
+		}
+		if !w.validOrigin(r) {
+			writeError(rw, 403, "forbidden")
+			return
+		}
+		raw, err := io.ReadAll(http.MaxBytesReader(rw, r.Body, controlapi.MaxOperationBytes))
+		var request controlapi.ClientEnabledRequest
+		if err != nil || controlapi.DecodeOperation(raw, &request) != nil || request.Validate() != nil {
+			writeOperationError(rw, 400, "invalid_client_operation", "invalid client operation")
+			return
+		}
+		result, err := w.service.CreateNodeClientEnabled(ctx, parts[0], request)
+		if err != nil {
+			browserRefreshError(rw, err)
+			return
+		}
+		writeJSON(rw, 202, result)
 	case len(parts) == 2 && parts[1] == "refresh":
 		if r.Method != http.MethodPost {
 			writeError(rw, 405, "method not allowed")

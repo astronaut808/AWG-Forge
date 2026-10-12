@@ -233,3 +233,7 @@ export type NodeProjection = { controller_id: string; node: NodeView; state_epoc
 
 export type RefreshRequest = { operation_id: string; idempotency_key: string; expected_state_epoch: string; expected_binding_epoch: number; expected_desired_generation: number };
 export type RefreshStatus = { controller_id: string; node_id: string; operation_id: string; state_epoch: string; binding_epoch: number; expected_desired_generation: number; status: "queued" | "leased" | "succeeded" | "conflict" | "failed" | "expired" | "rejected"; code: string; issued_at: string; expires_at: string; completed_at: string | null; snapshot_sequence: number };
+
+export type ClientEnabledRequest = RefreshRequest & { tunnel_id: string; client_id: string; enabled: boolean };
+export type ClientEnabledResult = { committed_desired_generation: number; tunnel_id: string; client_id: string; enabled: boolean };
+export type ClientOperationStatus = Omit<RefreshStatus, "status"> & { status: RefreshStatus["status"] | "reconciling"; kind: "client.enabled.set"; client_result?: ClientEnabledResult };

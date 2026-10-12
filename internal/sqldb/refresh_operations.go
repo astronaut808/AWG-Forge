@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"time"
 
 	"github.com/astronaut808/awg-forge/internal/controlapi"
@@ -23,13 +24,13 @@ type refreshRow struct {
 	id, controller, node, key, status, code, token string
 	envelope, owner, receipt                       []byte
 	issued, expires, lease, sequence               int64
-	completed                                      sql.NullInt64
+	completed, acknowledged                        sql.NullInt64
 }
 
-const refreshColumns = `operation_id,controller_id,node_id,idempotency_key,envelope_json,status,code,issued_at_unix_ms,expires_at_unix_ms,completed_at_unix_ms,lease_token,lease_expires_at_unix_ms,owner_json,snapshot_sequence,receipt_json`
+const refreshColumns = `operation_id,controller_id,node_id,idempotency_key,envelope_json,status,code,issued_at_unix_ms,expires_at_unix_ms,completed_at_unix_ms,lease_token,lease_expires_at_unix_ms,owner_json,snapshot_sequence,receipt_json,node_acknowledged_at_unix_ms`
 
 func scanRefresh(row *sql.Row) (r refreshRow, err error) {
-	err = row.Scan(&r.id, &r.controller, &r.node, &r.key, &r.envelope, &r.status, &r.code, &r.issued, &r.expires, &r.completed, &r.token, &r.lease, &r.owner, &r.sequence, &r.receipt)
+	err = row.Scan(&r.id, &r.controller, &r.node, &r.key, &r.envelope, &r.status, &r.code, &r.issued, &r.expires, &r.completed, &r.token, &r.lease, &r.owner, &r.sequence, &r.receipt, &r.acknowledged)
 	return
 }
 func (r refreshRow) intent() (o controlapi.OperationEnvelope, err error) {
@@ -39,12 +40,29 @@ func (r refreshRow) intent() (o controlapi.OperationEnvelope, err error) {
 	}
 	return
 }
-func (r refreshRow) view() (controlapi.OperationStatus, error) {
+func (r refreshRow) view(at ...time.Time) (controlapi.OperationStatus, error) {
 	o, err := r.intent()
 	if err != nil || validateRefreshRow(r, r.controller) != nil {
 		return controlapi.OperationStatus{}, ErrOperationFenced
 	}
 	v := controlapi.OperationStatus{ControllerID: r.controller, NodeID: r.node, OperationID: r.id, StateEpoch: o.StateEpoch, BindingEpoch: o.BindingEpoch, Generation: o.Generation, Status: r.status, Code: r.code, IssuedAt: o.IssuedAt, ExpiresAt: o.ExpiresAt, Sequence: uint64(r.sequence)}
+	if o.Operation.Kind == "client.enabled.set" {
+		v.Kind = o.Operation.Kind
+		now := time.Now()
+		if len(at) > 0 {
+			now = at[0]
+		}
+		if r.status == "leased" && !now.Before(o.ExpiresAt) {
+			v.Status = "reconciling"
+		}
+		if r.status == "succeeded" {
+			var receipt controlapi.OperationReceipt
+			if controlapi.DecodeOperation(r.receipt, &receipt) != nil {
+				return v, ErrOperationFenced
+			}
+			v.ClientResult = receipt.ClientResult
+		}
+	}
 	if r.completed.Valid {
 		t := time.UnixMilli(r.completed.Int64).UTC()
 		v.CompletedAt = &t
@@ -53,10 +71,10 @@ func (r refreshRow) view() (controlapi.OperationStatus, error) {
 }
 func terminalRefresh(status string) bool { return status != "queued" && status != "leased" }
 func maintainRefresh(ctx context.Context, tx *sql.Tx, now time.Time) error {
-	if _, err := tx.ExecContext(ctx, `DELETE FROM control_refresh_operations WHERE expires_at_unix_ms < ?`, now.Add(-controlapi.OperationRetention).UnixMilli()); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM control_refresh_operations WHERE expires_at_unix_ms < ? AND (json_extract(envelope_json,'$.operation.kind')!='client.enabled.set' OR lease_token='' OR node_acknowledged_at_unix_ms IS NOT NULL)`, now.Add(-controlapi.OperationRetention).UnixMilli()); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE control_refresh_operations SET status='expired',code='operation_expired',completed_at_unix_ms=? WHERE status IN ('queued','leased') AND expires_at_unix_ms<=?`, now.UnixMilli(), now.UnixMilli()); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE control_refresh_operations SET status='expired',code='operation_expired',completed_at_unix_ms=? WHERE status IN ('queued','leased') AND expires_at_unix_ms<=? AND (json_extract(envelope_json,'$.operation.kind')!='client.enabled.set' OR lease_token='')`, now.UnixMilli(), now.UnixMilli()); err != nil {
 		return err
 	}
 	_, err := tx.ExecContext(ctx, `UPDATE control_refresh_operations SET status='rejected',code='operation_fenced',completed_at_unix_ms=? WHERE status IN ('queued','leased') AND NOT EXISTS (SELECT 1 FROM control_node_bindings b WHERE b.node_id=control_refresh_operations.node_id AND b.controller_id=control_refresh_operations.controller_id AND b.revoked_at_unix_ms IS NULL AND b.binding_epoch=json_extract(control_refresh_operations.envelope_json,'$.expected_binding_epoch'))`, now.UnixMilli())
@@ -66,6 +84,15 @@ func maintainRefresh(ctx context.Context, tx *sql.Tx, now time.Time) error {
 // CreateRefresh serializes intent replay, quotas and insertion in one immediate
 // transaction. Only current online compatible projection authority can enqueue.
 func (db *DB) CreateRefresh(ctx context.Context, controller, issuer, node string, r controlapi.RefreshRequest, now time.Time) (controlapi.OperationStatus, error) {
+	return db.createOperation(ctx, controller, issuer, node, r, controlapi.RefreshOperation{Kind: "snapshot.refresh", SchemaVersion: 1}, now)
+}
+func (db *DB) CreateClientEnabled(ctx context.Context, controller, issuer, node string, r controlapi.ClientEnabledRequest, now time.Time) (controlapi.OperationStatus, error) {
+	if r.Validate() != nil {
+		return controlapi.OperationStatus{}, ErrOperationFenced
+	}
+	return db.createOperation(ctx, controller, issuer, node, r.RefreshRequest, controlapi.RefreshOperation{Kind: "client.enabled.set", SchemaVersion: 1, Payload: r.ClientEnabledPayload}, now)
+}
+func (db *DB) createOperation(ctx context.Context, controller, issuer, node string, r controlapi.RefreshRequest, operation controlapi.RefreshOperation, now time.Time) (controlapi.OperationStatus, error) {
 	if db == nil || db.sql == nil {
 		return controlapi.OperationStatus{}, ErrDisabled
 	}
@@ -83,10 +110,10 @@ func (db *DB) CreateRefresh(ctx context.Context, controller, issuer, node string
 	prior, err := scanRefresh(tx.QueryRowContext(ctx, `SELECT `+refreshColumns+` FROM control_refresh_operations WHERE operation_id=? OR (controller_id=? AND node_id=? AND idempotency_key=?) LIMIT 1`, r.OperationID, controller, node, r.IdempotencyKey))
 	if err == nil {
 		o, e := prior.intent()
-		if e != nil || prior.controller != controller || prior.node != node || o.RefreshRequest != r {
+		if e != nil || prior.controller != controller || prior.node != node || o.RefreshRequest != r || !reflect.DeepEqual(o.Operation, operation) {
 			return controlapi.OperationStatus{}, ErrOperationFenced
 		}
-		v, e := prior.view()
+		v, e := prior.view(now)
 		if e != nil {
 			return v, e
 		}
@@ -111,7 +138,7 @@ func (db *DB) CreateRefresh(ctx context.Context, controller, issuer, node string
 	}
 	supported := false
 	for _, c := range capabilities {
-		if c == controlapi.RefreshCapability {
+		if c == controlapi.RefreshCapability && operation.Kind == "snapshot.refresh" || c == controlapi.ClientEnabledCapability && operation.Kind == "client.enabled.set" {
 			supported = true
 		}
 	}
@@ -128,6 +155,29 @@ func (db *DB) CreateRefresh(ctx context.Context, controller, issuer, node string
 	if r.StateEpoch != epoch || r.BindingEpoch != uint64(binding) || r.Generation != uint64(generation) {
 		return controlapi.OperationStatus{}, ErrOperationFenced
 	}
+	if operation.Kind == "client.enabled.set" {
+		var desiredRaw []byte
+		if err = tx.QueryRowContext(ctx, "SELECT desired_json FROM control_node_projections WHERE node_id=?", node).Scan(&desiredRaw); err != nil {
+			return controlapi.OperationStatus{}, err
+		}
+		var desired controlapi.DesiredProjection
+		if strictProjectionJSON(desiredRaw, &desired) != nil {
+			return controlapi.OperationStatus{}, ErrOperationFenced
+		}
+		found := false
+		for _, t := range desired.Tunnels {
+			if t.ID == operation.Payload.TunnelID {
+				for _, c := range t.Clients {
+					if c.ID == operation.Payload.ClientID {
+						found = true
+					}
+				}
+			}
+		}
+		if !found {
+			return controlapi.OperationStatus{}, ErrOperationFenced
+		}
+	}
 	var total, nodeCount, active, recent, globalRecent int
 	err = tx.QueryRowContext(ctx, `SELECT count(*),COALESCE(sum(node_id=?),0),COALESCE(sum(node_id=? AND status IN ('queued','leased')),0),COALESCE(sum(node_id=? AND issued_at_unix_ms>?),0),COALESCE(sum(issued_at_unix_ms>?),0) FROM control_refresh_operations`, node, node, node, now.Add(-5*time.Second).UnixMilli(), now.Add(-time.Minute).UnixMilli()).Scan(&total, &nodeCount, &active, &recent, &globalRecent)
 	if err != nil {
@@ -136,7 +186,7 @@ func (db *DB) CreateRefresh(ctx context.Context, controller, issuer, node string
 	if total >= controlapi.MaxOperations || nodeCount >= controlapi.MaxNodeOperations || active > 0 || recent > 0 || globalRecent >= 64 {
 		return controlapi.OperationStatus{}, ErrOperationLimit
 	}
-	o := controlapi.OperationEnvelope{RefreshRequest: r, IssuedAt: now.UTC(), ExpiresAt: now.UTC().Add(controlapi.OperationTTL), Operation: controlapi.RefreshOperation{Kind: "snapshot.refresh", SchemaVersion: 1}}
+	o := controlapi.OperationEnvelope{RefreshRequest: r, IssuedAt: now.UTC(), ExpiresAt: now.UTC().Add(controlapi.OperationTTL), Operation: operation}
 	raw, err := json.Marshal(o)
 	if err != nil {
 		return controlapi.OperationStatus{}, err
@@ -146,6 +196,9 @@ func (db *DB) CreateRefresh(ctx context.Context, controller, issuer, node string
 		return controlapi.OperationStatus{}, err
 	}
 	v := controlapi.OperationStatus{ControllerID: controller, NodeID: node, OperationID: r.OperationID, StateEpoch: r.StateEpoch, BindingEpoch: r.BindingEpoch, Generation: r.Generation, Status: "queued", IssuedAt: o.IssuedAt, ExpiresAt: o.ExpiresAt}
+	if operation.Kind == "client.enabled.set" {
+		v.Kind = operation.Kind
+	}
 	return v, tx.Commit()
 }
 
@@ -176,7 +229,7 @@ func (db *DB) LeaseRefresh(ctx context.Context, id NodeIdentity, issuer, serial 
 	if err = maintainRefresh(ctx, tx, now); err != nil {
 		return nil, err
 	}
-	row, err := scanRefresh(tx.QueryRowContext(ctx, `SELECT `+refreshColumns+` FROM control_refresh_operations WHERE node_id=? AND controller_id=? AND status IN ('queued','leased') ORDER BY issued_at_unix_ms,operation_id LIMIT 1`, id.NodeID, id.ControllerID))
+	row, err := scanRefresh(tx.QueryRowContext(ctx, `SELECT `+refreshColumns+` FROM control_refresh_operations WHERE node_id=? AND controller_id=? AND status IN ('queued','leased') AND (json_extract(envelope_json,'$.operation.kind')='snapshot.refresh' OR EXISTS(SELECT 1 FROM control_node_presence p,json_each(p.capabilities_json) c WHERE p.node_id=control_refresh_operations.node_id AND c.value='client.enabled.set.v1')) ORDER BY issued_at_unix_ms,operation_id LIMIT 1`, id.NodeID, id.ControllerID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, tx.Commit()
 	}
@@ -199,7 +252,7 @@ func (db *DB) LeaseRefresh(ctx context.Context, id NodeIdentity, issuer, serial 
 		row.sequence = 0
 		token = uuid.NewString()
 		deadline := now.Add(controlapi.OperationLease)
-		if o.ExpiresAt.Before(deadline) {
+		if o.ExpiresAt.Before(deadline) && (o.Operation.Kind != "client.enabled.set" || now.Before(o.ExpiresAt)) {
 			deadline = o.ExpiresAt
 		}
 		lease = deadline.UnixMilli()
@@ -208,7 +261,7 @@ func (db *DB) LeaseRefresh(ctx context.Context, id NodeIdentity, issuer, serial 
 			return nil, err
 		}
 	}
-	delivery := &controlapi.OperationDelivery{AcceptedSequence: uint64(row.sequence), LeaseToken: token, LeaseExpiresAt: time.UnixMilli(lease).UTC(), Operation: o}
+	delivery := &controlapi.OperationDelivery{AcceptedSequence: uint64(row.sequence), LeaseToken: token, LeaseExpiresAt: time.UnixMilli(lease).UTC(), Operation: o, ReconciliationOnly: o.Operation.Kind == "client.enabled.set" && !now.Before(o.ExpiresAt)}
 	return delivery, tx.Commit()
 }
 
@@ -236,7 +289,7 @@ func correlateRefresh(ctx context.Context, tx *sql.Tx, id NodeIdentity, issuer, 
 	owner := p
 	owner.Generation = 0
 	raw, _ := json.Marshal(owner)
-	if row.status != "leased" || row.token != s.Refresh.LeaseToken || row.lease <= now.UnixMilli() || row.expires <= now.UnixMilli() || !bytes.Equal(row.owner, raw) || o.StateEpoch != s.StateEpoch || o.BindingEpoch != s.BindingEpoch || o.Generation != s.DesiredGeneration {
+	if row.status != "leased" || row.token != s.Refresh.LeaseToken || row.lease <= now.UnixMilli() || row.expires <= now.UnixMilli() || !bytes.Equal(row.owner, raw) || o.StateEpoch != s.StateEpoch || o.BindingEpoch != s.BindingEpoch || o.Generation != s.DesiredGeneration || o.Operation.Kind != "snapshot.refresh" {
 		return ErrOperationFenced
 	}
 	// First accepted snapshot wins this lease's evidence; lost upload ack can be
@@ -269,6 +322,16 @@ func (db *DB) CompleteRefresh(ctx context.Context, id NodeIdentity, issuer, seri
 	if err != nil {
 		return err
 	}
+	o, err := row.intent()
+	if err != nil {
+		return ErrOperationFenced
+	}
+	if o.Operation.Kind == "client.enabled.set" {
+		return completeClientEnabled(ctx, tx, row, o, r, now)
+	}
+	if r.IntentHash != "" || r.ClientResult != nil {
+		return ErrOperationFenced
+	}
 	raw, _ := json.Marshal(r)
 	if row.expires <= now.Add(-controlapi.OperationRetention).UnixMilli() {
 		return ErrOperationFenced
@@ -277,10 +340,6 @@ func (db *DB) CompleteRefresh(ctx context.Context, id NodeIdentity, issuer, seri
 		if bytes.Equal(row.receipt, raw) {
 			return tx.Commit()
 		}
-		return ErrOperationFenced
-	}
-	o, err := row.intent()
-	if err != nil {
 		return ErrOperationFenced
 	}
 	owner := r.OperationPoll
@@ -324,7 +383,7 @@ func (db *DB) RefreshStatus(ctx context.Context, controller, node, operation str
 	if err != nil {
 		return controlapi.OperationStatus{}, err
 	}
-	v, err := row.view()
+	v, err := row.view(now)
 	if err != nil {
 		return v, err
 	}
@@ -334,6 +393,9 @@ func (db *DB) RefreshStatus(ctx context.Context, controller, node, operation str
 func validateRefreshRow(r refreshRow, controller string) error {
 	o, err := r.intent()
 	if err != nil || !validUUID(r.id) || !validUUID(r.node) || r.controller != controller || o.OperationID != r.id || o.IdempotencyKey != r.key || o.IssuedAt.UnixMilli() != r.issued || o.ExpiresAt.UnixMilli() != r.expires || len(r.envelope) > controlapi.MaxOperationBytes || len(r.owner) > controlapi.MaxOperationBytes || len(r.receipt) > controlapi.MaxOperationBytes {
+		return ErrOperationFenced
+	}
+	if r.acknowledged.Valid && (o.Operation.Kind != "client.enabled.set" || !r.completed.Valid || len(r.receipt) == 0 || r.acknowledged.Int64 < r.completed.Int64) {
 		return ErrOperationFenced
 	}
 	switch r.status {
@@ -353,19 +415,23 @@ func validateRefreshRow(r refreshRow, controller string) error {
 		}
 	} else {
 		var owner controlapi.OperationPoll
-		if !validUUID(r.token) || controlapi.DecodeOperation(r.owner, &owner) != nil || owner.Validate() != nil || owner.WaitSeconds != 0 || owner.Generation != 0 || owner.StateEpoch != o.StateEpoch || owner.BindingEpoch != o.BindingEpoch || r.lease <= r.issued || r.lease > r.expires {
+		if !validUUID(r.token) || controlapi.DecodeOperation(r.owner, &owner) != nil || owner.Validate() != nil || owner.WaitSeconds != 0 || owner.Generation != 0 || owner.StateEpoch != o.StateEpoch || owner.BindingEpoch != o.BindingEpoch || r.lease <= r.issued || r.lease > r.expires && o.Operation.Kind != "client.enabled.set" {
 			return ErrOperationFenced
 		}
 	}
 	if r.status == "succeeded" || r.status == "conflict" || r.status == "failed" {
 		var receipt controlapi.OperationReceipt
-		if controlapi.DecodeOperation(r.receipt, &receipt) != nil || receipt.Validate() != nil || receipt.Status != r.status || receipt.Code != r.code || receipt.LeaseToken != r.token || receipt.StateEpoch != o.StateEpoch || receipt.BindingEpoch != o.BindingEpoch {
+		if controlapi.DecodeOperation(r.receipt, &receipt) != nil || receipt.Validate() != nil || receipt.Status != r.status || receipt.Code != r.code || receipt.LeaseToken != r.token && o.Operation.Kind != "client.enabled.set" || receipt.StateEpoch != o.StateEpoch || receipt.BindingEpoch != o.BindingEpoch {
 			return ErrOperationFenced
 		}
 		owner := receipt.OperationPoll
 		owner.Generation = 0
 		raw, _ := json.Marshal(owner)
-		if !bytes.Equal(raw, r.owner) || r.status == "succeeded" && (receipt.Generation != o.Generation || r.sequence == 0 || receipt.Result.Sequence != uint64(r.sequence)) || r.status == "conflict" && receipt.Generation == o.Generation || r.status == "failed" && receipt.Generation != o.Generation {
+		if o.Operation.Kind == "client.enabled.set" {
+			if validateClientOutcome(o, receipt) != nil || r.sequence != 0 {
+				return ErrOperationFenced
+			}
+		} else if !bytes.Equal(raw, r.owner) || receipt.IntentHash != "" || receipt.ClientResult != nil || r.status == "succeeded" && (receipt.Generation != o.Generation || r.sequence == 0 || receipt.Result.Sequence != uint64(r.sequence)) || r.status == "conflict" && receipt.Generation == o.Generation || r.status == "failed" && receipt.Generation != o.Generation {
 			return ErrOperationFenced
 		}
 	} else if len(r.receipt) != 0 || r.status == "expired" && r.code != "operation_expired" || r.status == "rejected" && r.code != "operation_fenced" || (r.status == "queued" || r.status == "leased") && r.code != "" {
@@ -373,8 +439,14 @@ func validateRefreshRow(r refreshRow, controller string) error {
 	}
 	return nil
 }
-func verifySnapshotRefresh(ctx context.Context, db *sql.DB, controller string) error {
-	rows, err := db.QueryContext(ctx, `SELECT `+refreshColumns+` FROM control_refresh_operations`)
+func verifySnapshotRefresh(ctx context.Context, db *sql.DB, controller string, schema int) error {
+	var rows *sql.Rows
+	var err error
+	if schema == 12 {
+		rows, err = db.QueryContext(ctx, `SELECT operation_id,controller_id,node_id,idempotency_key,envelope_json,status,code,issued_at_unix_ms,expires_at_unix_ms,completed_at_unix_ms,lease_token,lease_expires_at_unix_ms,owner_json,snapshot_sequence,receipt_json,NULL FROM control_refresh_operations`)
+	} else {
+		rows, err = db.QueryContext(ctx, `SELECT `+refreshColumns+` FROM control_refresh_operations`)
+	}
 	if err != nil {
 		return err
 	}
@@ -384,11 +456,17 @@ func verifySnapshotRefresh(ctx context.Context, db *sql.DB, controller string) e
 	active := map[string]int{}
 	for rows.Next() {
 		var r refreshRow
-		if err = rows.Scan(&r.id, &r.controller, &r.node, &r.key, &r.envelope, &r.status, &r.code, &r.issued, &r.expires, &r.completed, &r.token, &r.lease, &r.owner, &r.sequence, &r.receipt); err != nil {
+		if err = rows.Scan(&r.id, &r.controller, &r.node, &r.key, &r.envelope, &r.status, &r.code, &r.issued, &r.expires, &r.completed, &r.token, &r.lease, &r.owner, &r.sequence, &r.receipt, &r.acknowledged); err != nil {
 			return err
 		}
 		if validateRefreshRow(r, controller) != nil {
 			return ErrOperationFenced
+		}
+		if schema == 12 {
+			o, _ := r.intent()
+			if o.Operation.Kind != "snapshot.refresh" {
+				return ErrOperationFenced
+			}
 		}
 		count++
 		nodes[r.node]++

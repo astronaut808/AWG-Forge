@@ -79,10 +79,12 @@ type ManagedNodeState struct {
 // DesiredStateReceipt proves that one operation and its desired-state change
 // were committed together. The idempotency key is stored only as a hash.
 type DesiredStateReceipt struct {
-	OperationID        string    `json:"operation_id"`
-	IdempotencyKeyHash string    `json:"idempotency_key_hash"`
-	DesiredGeneration  uint64    `json:"desired_generation"`
-	CompletedAt        time.Time `json:"completed_at"`
+	OperationID        string     `json:"operation_id"`
+	IdempotencyKeyHash string     `json:"idempotency_key_hash"`
+	DesiredGeneration  uint64     `json:"desired_generation"`
+	CompletedAt        time.Time  `json:"completed_at"`
+	IntentHash         string     `json:"intent_hash,omitempty"`
+	AcknowledgedAt     *time.Time `json:"acknowledged_at,omitempty"`
 }
 
 type ProtocolParams map[string]string

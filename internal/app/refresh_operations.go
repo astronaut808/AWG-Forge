@@ -34,6 +34,26 @@ func (s *Service) CreateNodeRefresh(ctx context.Context, node string, r controla
 	defer func() { _ = db.Close() }()
 	return db.CreateRefresh(ctx, state.Controller.ControllerID, state.Controller.Control.CAGeneration, node, r, time.Now().UTC())
 }
+
+func (s *Service) CreateNodeClientEnabled(ctx context.Context, node string, r controlapi.ClientEnabledRequest) (controlapi.OperationStatus, error) {
+	if !validControlUUID(node) || r.Validate() != nil {
+		return controlapi.OperationStatus{}, sqldb.ErrOperationFenced
+	}
+	if err := s.lockControlRequest(ctx); err != nil {
+		return controlapi.OperationStatus{}, err
+	}
+	defer s.unlockStateMutation()
+	state, _, err := s.enrollmentStateLocked()
+	if err != nil {
+		return controlapi.OperationStatus{}, err
+	}
+	db, _, err := s.openControlRegistry(ctx)
+	if err != nil {
+		return controlapi.OperationStatus{}, err
+	}
+	defer func() { _ = db.Close() }()
+	return db.CreateClientEnabled(ctx, state.Controller.ControllerID, state.Controller.Control.CAGeneration, node, r, time.Now().UTC())
+}
 func (s *Service) NodeRefreshStatus(ctx context.Context, node, operation string) (controlapi.OperationStatus, error) {
 	if !validControlUUID(node) || !validControlUUID(operation) {
 		return controlapi.OperationStatus{}, sqldb.ErrOperationFenced
@@ -153,6 +173,27 @@ func (s *Service) nodeOperationResultHTTP(w http.ResponseWriter, r *http.Request
 	}
 	err := s.withRefreshRegistry(r, func(ctx context.Context, db *sqldb.DB, id controlserver.NodeIdentity, issuer, serial string) error {
 		return db.CompleteRefresh(ctx, sqldb.NodeIdentity{ControllerID: id.ControllerID, NodeID: id.NodeID, BindingEpoch: id.BindingEpoch}, issuer, serial, parts[5], receipt, time.Now().UTC())
+	})
+	if err != nil {
+		refreshProblem(w, err)
+		return
+	}
+	w.WriteHeader(204)
+}
+
+func (s *Service) nodeClientResultAckHTTP(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) != 7 || !validControlUUID(parts[5]) {
+		http.NotFound(w, r)
+		return
+	}
+	var ack controlapi.ClientResultAck
+	if readOperationJSON(w, r, &ack) != nil || ack.Validate() != nil {
+		controlJSON(w, 400, map[string]any{"status": 400, "code": "invalid_ack"})
+		return
+	}
+	err := s.withRefreshRegistry(r, func(ctx context.Context, db *sqldb.DB, id controlserver.NodeIdentity, issuer, serial string) error {
+		return db.AcknowledgeClientResult(ctx, sqldb.NodeIdentity{ControllerID: id.ControllerID, NodeID: id.NodeID, BindingEpoch: id.BindingEpoch}, issuer, serial, parts[5], ack, time.Now().UTC())
 	})
 	if err != nil {
 		refreshProblem(w, err)

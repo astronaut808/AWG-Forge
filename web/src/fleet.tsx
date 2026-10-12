@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import * as api from "./api";
 import type { Messages } from "./i18n";
 import type { NodeInventory, NodeProjection, NodeView } from "./types";
+import { ClientEnabled } from "./client-enabled";
 import { NodeRefresh } from "./node-refresh";
 import { formatBytes } from "./utils";
 
@@ -140,6 +141,7 @@ function ReadOnlyNode({ node, controllerID, unauthorized, m }: { node: NodeView;
       <p class={`notice ${stale ? "warn" : ""}`} role="status">{stale ? m.fleet.stale : m.fleet.fresh}</p>
       <p class="muted">{m.fleet.connectionNote}</p>
       <NodeRefresh key={`${controllerID}:${node.node_id}:${node.binding_epoch}:${node.state_epoch}:${node.boot_id}`} node={node} controllerID={controllerID} view={view} updated={() => { setView(null); setRefreshVersion((value) => value + 1); }} unauthorized={unauthorized} m={m} />
+      <ClientEnabled node={node} controllerID={controllerID} view={view} updated={() => { setView(null); setRefreshVersion((value) => value + 1); }} unauthorized={unauthorized} m={m} />
     </header>
     {failed ? <p class="panel fleet-summary" role="status">{m.fleet.unavailable}</p>
       : !view ? <p role="status">{m.common.loading}</p>

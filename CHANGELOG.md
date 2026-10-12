@@ -4,6 +4,13 @@
 
 ### Added
 
+- Added the bounded `client.enabled.set` controller operation for a selected
+  enrolled node: exact-intent idempotency, atomic node state/receipt/generation
+  commit, durable reconciliation and EN/RU browser status. It changes only an
+  existing client's enabled state; client create/delete and secret export remain
+  future work, and local checkpoint acceptance does not close the multi-host
+  release gate.
+
 - Added bounded durable `snapshot.refresh` delivery with controller SQLite leases, accepted-snapshot correlation, DB-off node execution and English/Russian selected-node refresh status. Cold restore clears operation authority; remote mutations and secret exports remain future work.
 
 - Added explicit version-checked installer fresh/existing controller join and offline rebind, with private FD/hidden TTY secret input and pinned public-CA bootstrap.

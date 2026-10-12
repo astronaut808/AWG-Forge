@@ -21,6 +21,9 @@ type pendingRefresh struct {
 // One in-memory result is enough because refresh is read-only and leases can
 // safely reclaim collection after a process crash, without enabling node SQLite.
 func runRefresh(ctx context.Context, service *app.Service, cfg config.Config, client *http.Client, base string, p controlapi.OperationPoll, sequence *uint64, pending **pendingRefresh) error {
+	if err := runPendingClientResults(ctx, service, client, base, p); err != nil {
+		return err
+	}
 	if *pending != nil {
 		previous := *pending
 		if previous.receipt.SessionID != p.SessionID || previous.receipt.BootID != p.BootID || !time.Now().Before(previous.deadline) {
@@ -42,6 +45,15 @@ func runRefresh(ctx context.Context, service *app.Service, cfg config.Config, cl
 	}
 	if delivery.Validate() != nil || delivery.Operation.StateEpoch != p.StateEpoch || delivery.Operation.BindingEpoch != p.BindingEpoch || !time.Now().Before(delivery.LeaseExpiresAt) {
 		return errFenced
+	}
+	if delivery.Operation.Operation.Kind == "client.enabled.set" {
+		opCtx, cancel := context.WithDeadline(ctx, delivery.LeaseExpiresAt)
+		defer cancel()
+		outcome, err := service.ExecuteClientEnabled(opCtx, delivery.Operation)
+		if err != nil {
+			return err
+		}
+		return sendClientOutcome(ctx, service, client, base, p, delivery.LeaseToken, outcome)
 	}
 	// Recheck local committed generation at execution, not just at poll time.
 	state, err := service.NodeObservationState(ctx)

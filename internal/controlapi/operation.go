@@ -2,6 +2,8 @@ package controlapi
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -12,14 +14,15 @@ import (
 )
 
 const (
-	RefreshCapability  = "snapshot.refresh.v1"
-	MaxOperationBytes  = 4096
-	MaxOperations      = 4096
-	MaxNodeOperations  = 64
-	OperationTTL       = 2 * time.Minute
-	OperationRetention = 24 * time.Hour
-	OperationLease     = 40 * time.Second
-	MaxPollWait        = 5
+	RefreshCapability       = "snapshot.refresh.v1"
+	ClientEnabledCapability = "client.enabled.set.v1"
+	MaxOperationBytes       = 4096
+	MaxOperations           = 4096
+	MaxNodeOperations       = 64
+	OperationTTL            = 2 * time.Minute
+	OperationRetention      = 24 * time.Hour
+	OperationLease          = 40 * time.Second
+	MaxPollWait             = 5
 )
 
 // RefreshRequest has no free-form payload. IDs are immutable within retention.
@@ -56,10 +59,46 @@ func (p OperationPoll) Validate() error {
 }
 
 type RefreshOperation struct {
-	Kind          string   `json:"kind"`
-	SchemaVersion int      `json:"schema_version"`
-	Payload       struct{} `json:"payload"`
+	Kind          string               `json:"kind"`
+	SchemaVersion int                  `json:"schema_version"`
+	Payload       ClientEnabledPayload `json:"payload"`
 }
+
+type ClientEnabledPayload struct {
+	TunnelID string `json:"tunnel_id,omitempty"`
+	ClientID string `json:"client_id,omitempty"`
+	Enabled  *bool  `json:"enabled,omitempty"`
+}
+
+func (p ClientEnabledPayload) Valid() bool {
+	return validResourceID(p.TunnelID) && validResourceID(p.ClientID) && p.Enabled != nil
+}
+
+func validResourceID(id string) bool {
+	if len(id) == 0 || len(id) > 128 {
+		return false
+	}
+	for _, c := range id {
+		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+type ClientEnabledRequest struct {
+	RefreshRequest
+	ClientEnabledPayload
+}
+
+func (r ClientEnabledRequest) Validate() error {
+	if r.RefreshRequest.Validate() != nil || !r.Valid() || r.Generation >= math.MaxInt64 {
+		return errors.New("invalid client enabled intent")
+	}
+	return nil
+}
+
 type OperationEnvelope struct {
 	RefreshRequest
 	IssuedAt  time.Time        `json:"issued_at"`
@@ -68,22 +107,45 @@ type OperationEnvelope struct {
 }
 
 func (o OperationEnvelope) Validate() error {
-	if o.RefreshRequest.Validate() != nil || o.IssuedAt.IsZero() || !o.ExpiresAt.After(o.IssuedAt) || o.ExpiresAt.Sub(o.IssuedAt) > OperationTTL || o.Operation.Kind != "snapshot.refresh" || o.Operation.SchemaVersion != 1 {
+	if o.RefreshRequest.Validate() != nil || o.IssuedAt.IsZero() || !o.ExpiresAt.After(o.IssuedAt) || o.ExpiresAt.Sub(o.IssuedAt) > OperationTTL || o.Operation.SchemaVersion != 1 {
 		return errors.New("invalid operation")
+	}
+	switch o.Operation.Kind {
+	case "snapshot.refresh":
+		if o.Operation.Payload.TunnelID != "" || o.Operation.Payload.ClientID != "" || o.Operation.Payload.Enabled != nil {
+			return errors.New("invalid refresh payload")
+		}
+	case "client.enabled.set":
+		if !o.Operation.Payload.Valid() || o.Generation >= math.MaxInt64 {
+			return errors.New("invalid client payload")
+		}
+	default:
+		return errors.New("unsupported operation")
 	}
 	return nil
 }
 
+// IntentHash binds the complete immutable typed envelope, including its deadline.
+func (o OperationEnvelope) IntentHash() string {
+	raw, _ := json.Marshal(o)
+	h := sha256.Sum256(raw)
+	return hex.EncodeToString(h[:])
+}
+
 // LeaseToken is a correlation fence, never an authentication credential.
 type OperationDelivery struct {
-	AcceptedSequence uint64            `json:"accepted_snapshot_sequence"`
-	LeaseToken       string            `json:"lease_token"`
-	LeaseExpiresAt   time.Time         `json:"lease_expires_at"`
-	Operation        OperationEnvelope `json:"operation"`
+	AcceptedSequence   uint64            `json:"accepted_snapshot_sequence"`
+	LeaseToken         string            `json:"lease_token"`
+	LeaseExpiresAt     time.Time         `json:"lease_expires_at"`
+	Operation          OperationEnvelope `json:"operation"`
+	ReconciliationOnly bool              `json:"reconciliation_only,omitempty"`
 }
 
 func (d OperationDelivery) Validate() error {
-	if !validUUID(d.LeaseToken) || d.Operation.Validate() != nil || d.LeaseExpiresAt.IsZero() || d.LeaseExpiresAt.After(d.Operation.ExpiresAt) {
+	if d.ReconciliationOnly && d.Operation.Operation.Kind != "client.enabled.set" {
+		return errors.New("invalid reconciliation kind")
+	}
+	if !validUUID(d.LeaseToken) || d.Operation.Validate() != nil || d.LeaseExpiresAt.IsZero() || d.LeaseExpiresAt.After(d.Operation.ExpiresAt) && !d.ReconciliationOnly {
 		return errors.New("invalid delivery")
 	}
 	return nil
@@ -104,10 +166,24 @@ type RefreshResult struct {
 // Safe fixed codes avoid arbitrary diagnostics crossing this boundary.
 type OperationReceipt struct {
 	OperationPoll
-	LeaseToken string         `json:"lease_token"`
-	Status     string         `json:"status"`
-	Code       string         `json:"code"`
-	Result     *RefreshResult `json:"result,omitempty"`
+	LeaseToken   string               `json:"lease_token"`
+	Status       string               `json:"status"`
+	Code         string               `json:"code"`
+	Result       *RefreshResult       `json:"result,omitempty"`
+	ClientResult *ClientEnabledResult `json:"client_result,omitempty"`
+	IntentHash   string               `json:"intent_hash,omitempty"`
+}
+
+type ClientEnabledResult struct {
+	Generation uint64 `json:"committed_desired_generation"`
+	TunnelID   string `json:"tunnel_id"`
+	ClientID   string `json:"client_id"`
+	Enabled    bool   `json:"enabled"`
+}
+
+func validIntentHash(hash string) bool {
+	b, err := hex.DecodeString(hash)
+	return err == nil && len(b) == sha256.Size && hex.EncodeToString(b) == hash
 }
 
 func (r OperationReceipt) Validate() error {
@@ -116,6 +192,12 @@ func (r OperationReceipt) Validate() error {
 	}
 	switch r.Status {
 	case "succeeded":
+		if r.Code == "client_enabled_committed" {
+			if !validIntentHash(r.IntentHash) || r.Result != nil || r.ClientResult == nil || r.ClientResult.Generation == 0 || r.ClientResult.Generation > math.MaxInt64 || !validResourceID(r.ClientResult.TunnelID) || !validResourceID(r.ClientResult.ClientID) {
+				return errors.New("invalid client result")
+			}
+			return nil
+		}
 		if r.Code != "snapshot_accepted" || r.Result == nil || !r.Result.SnapshotAccepted || r.Result.Sequence == 0 || r.Result.Sequence > math.MaxInt64 {
 			return errors.New("invalid result")
 		}
@@ -124,29 +206,46 @@ func (r OperationReceipt) Validate() error {
 			return errors.New("invalid conflict")
 		}
 	case "failed":
-		if r.Code != "collection_failed" || r.Result != nil {
+		if r.Result != nil || r.Code != "collection_failed" && (!validIntentHash(r.IntentHash) || r.Code != "apply_failed" && r.Code != "execution_expired" && r.Code != "interrupted_rolled_back" && r.Code != "client_unavailable" && r.Code != "quota_exceeded" && r.Code != "receipt_limit") {
 			return errors.New("invalid failure")
 		}
 	default:
 		return errors.New("invalid status")
+	}
+	if r.ClientResult != nil || r.IntentHash != "" && !validIntentHash(r.IntentHash) || r.Result != nil && r.IntentHash != "" {
+		return errors.New("invalid result kind")
 	}
 	return nil
 }
 
 // Browser status omits certificate, session and lease material.
 type OperationStatus struct {
-	ControllerID string     `json:"controller_id"`
-	NodeID       string     `json:"node_id"`
-	OperationID  string     `json:"operation_id"`
-	StateEpoch   string     `json:"state_epoch"`
-	BindingEpoch uint64     `json:"binding_epoch"`
-	Generation   uint64     `json:"expected_desired_generation"`
-	Status       string     `json:"status"`
-	Code         string     `json:"code"`
-	IssuedAt     time.Time  `json:"issued_at"`
-	ExpiresAt    time.Time  `json:"expires_at"`
-	CompletedAt  *time.Time `json:"completed_at"`
-	Sequence     uint64     `json:"snapshot_sequence"`
+	ControllerID string               `json:"controller_id"`
+	NodeID       string               `json:"node_id"`
+	OperationID  string               `json:"operation_id"`
+	StateEpoch   string               `json:"state_epoch"`
+	BindingEpoch uint64               `json:"binding_epoch"`
+	Generation   uint64               `json:"expected_desired_generation"`
+	Status       string               `json:"status"`
+	Code         string               `json:"code"`
+	IssuedAt     time.Time            `json:"issued_at"`
+	ExpiresAt    time.Time            `json:"expires_at"`
+	CompletedAt  *time.Time           `json:"completed_at"`
+	Sequence     uint64               `json:"snapshot_sequence"`
+	Kind         string               `json:"kind,omitempty"`
+	ClientResult *ClientEnabledResult `json:"client_result,omitempty"`
+}
+
+type ClientResultAck struct {
+	OperationPoll
+	IntentHash string `json:"intent_hash"`
+}
+
+func (r ClientResultAck) Validate() error {
+	if r.OperationPoll.Validate() != nil || r.WaitSeconds != 0 || !validIntentHash(r.IntentHash) {
+		return errors.New("invalid client acknowledgement")
+	}
+	return nil
 }
 
 // DecodeOperation rejects unknown, missing and null fields before admission.
@@ -165,12 +264,16 @@ func DecodeOperation(raw []byte, target any) error {
 	switch target.(type) {
 	case *RefreshRequest:
 		required = refresh
+	case *ClientEnabledRequest:
+		required = append(refresh, "tunnel_id", "client_id", "enabled")
 	case *OperationPoll:
 		required = poll
 	case *OperationEnvelope:
 		required = append(refresh, "issued_at", "expires_at", "operation")
 	case *OperationReceipt:
 		required = append(poll, "lease_token", "status", "code")
+	case *ClientResultAck:
+		required = append(poll, "intent_hash")
 	case *OperationDelivery:
 		required = []string{"lease_token", "lease_expires_at", "accepted_snapshot_sequence", "operation"}
 	default:
@@ -194,6 +297,17 @@ func DecodeOperation(raw []byte, target any) error {
 	if !errors.Is(decoder.Decode(&extra), io.EOF) {
 		return errors.New("invalid operation JSON")
 	}
+	if body, ok := fields["client_result"]; ok {
+		var result map[string]json.RawMessage
+		if json.Unmarshal(body, &result) != nil || len(result) != 4 {
+			return errors.New("invalid client result")
+		}
+		for _, key := range []string{"committed_desired_generation", "tunnel_id", "client_id", "enabled"} {
+			if _, ok := result[key]; !ok {
+				return errors.New("missing client result field")
+			}
+		}
+	}
 	if body, ok := fields["operation"]; ok {
 		switch target.(type) {
 		case *OperationDelivery:
@@ -208,6 +322,21 @@ func DecodeOperation(raw []byte, target any) error {
 				if _, ok := operation[key]; !ok {
 					return errors.New("invalid typed operation")
 				}
+			}
+			var kind string
+			_ = json.Unmarshal(operation["kind"], &kind)
+			var payload map[string]json.RawMessage
+			if json.Unmarshal(operation["payload"], &payload) != nil || payload == nil {
+				return errors.New("invalid payload")
+			}
+			if kind == "client.enabled.set" {
+				for _, key := range []string{"tunnel_id", "client_id", "enabled"} {
+					if _, ok := payload[key]; !ok {
+						return errors.New("missing client field")
+					}
+				}
+			} else if kind == "snapshot.refresh" && len(payload) != 0 {
+				return errors.New("invalid refresh payload")
 			}
 		}
 	}
