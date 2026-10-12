@@ -136,3 +136,15 @@ or logging out discards the previous context and its pending responses. Cold
 controller restore clears projections and invalidates archived authority before
 control can be re-enabled. See [node observation](usage.md#read-only-node-observation)
 for freshness semantics and resource limits.
+
+## Refresh operation authority
+
+Refresh uses a durable controller queue and the existing outbound mTLS channel.
+Each dequeue and result rechecks current certificate, binding, session, boot and
+state epochs. A lease UUID fences old deliveries; success also requires a snapshot
+accepted atomically under that lease at the expected generation. Periodic snapshots
+and an asserted success cannot supply this evidence. Held polls never retain a
+mutation lock or database transaction and are bounded to one per node/eight globally.
+Cold restore deletes operations while disabling control and revoking old authority.
+DB-off nodes keep one pending result in memory: crash may repeat safe reads, without
+an exactly-once claim. No generic command or secret export is delivered.

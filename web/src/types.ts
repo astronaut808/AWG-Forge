@@ -230,3 +230,6 @@ export type SnapshotObservations = { apply_enabled: boolean; history_available: 
 export type NodeView = { node_id: string; name: string; binding_epoch: number; state_epoch: string; boot_id: string; status: "online" | "offline" | "revoked" | "incompatible"; last_confirmed_at: string | null; application_version: string; contract_version: number; capabilities: string[] };
 export type NodeInventory = { controller_id: string; nodes: NodeView[]; next_cursor?: string };
 export type NodeProjection = { controller_id: string; node: NodeView; state_epoch: string; boot_id: string; desired_generation: number; snapshot_sequence: number; observed_at: string | null; received_at: string | null; stale: boolean; available: boolean; desired: { tunnels: SnapshotTunnel[] } | null; observations: SnapshotObservations | null };
+
+export type RefreshRequest = { operation_id: string; idempotency_key: string; expected_state_epoch: string; expected_binding_epoch: number; expected_desired_generation: number };
+export type RefreshStatus = { controller_id: string; node_id: string; operation_id: string; state_epoch: string; binding_epoch: number; expected_desired_generation: number; status: "queued" | "leased" | "succeeded" | "conflict" | "failed" | "expired" | "rejected"; code: string; issued_at: string; expires_at: string; completed_at: string | null; snapshot_sequence: number };

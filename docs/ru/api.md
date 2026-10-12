@@ -38,3 +38,30 @@ HttpOnly cookie браузерной сессии: подписанную в sta
 доступом только по TLS, пагинацией и специально спроектированной моделью
 аутентификации. Cookie браузерной сессии не будет использоваться как внешний
 учётный ключ.
+
+## Доставка обновления снимка
+
+`POST /api/controller/nodes/{node_id}/refresh` требует действующую сессию
+администратора и существующую same-origin policy. Строгое JSON-тело содержит UUID
+`operation_id`, UUID `idempotency_key`, `expected_state_epoch`,
+`expected_binding_epoch`, `expected_desired_generation`. Оба ID передаются в теле;
+маршрут использует durable replay в SQLite, отдельно от кеша локальных mutations.
+Одинаковый intent возвращает ту же операцию, изменённый с повторным ID —
+`409 operation_fenced`. Безопасный статус читается через
+`GET /api/controller/nodes/{node_id}/operations/{operation_id}`. Ответы `no-store`
+не содержат lease, session или certificate credentials.
+
+Лимиты: строгое тело 4096 байт, один pending-запрос на узел, 64 сохранённых записи
+на узел, 4096 всего, минимум пять секунд между новыми запросами узла и 64 создания
+за минуту глобально. Превышение — `429 operation_limit`, неподдерживаемая capability —
+`409 refresh_unsupported`, отсутствие текущей presence/projection — `409 node_unavailable`,
+ошибка хранилища — `503 control_unavailable`. TTL — две минуты; retention завершается
+через 24 часа после expiry. Terminal statuses: succeeded, conflict, failed, expired,
+rejected.
+
+Реализованы mTLS-маршруты `POST /control/v1/node/operations/poll` и
+`PUT /control/v1/node/operations/{operation_id}/result`; см.
+[внутренний control contract](../../api/control-v1.openapi.json) и
+[дизайн доставки](../design/snapshot-refresh-delivery.md). Перед success контроллер
+проверяет текущую identity, lease и связь с принятым снимком. Публичного operator
+API этот протокол не добавляет.

@@ -241,7 +241,7 @@ const controlCases = [
     operationEnvelope,
     {
       operation_id: ids.operation,
-      idempotency_key: "snapshot-refresh-1",
+      idempotency_key: ids.session,
       issued_at: "2026-09-08T00:00:00Z",
       expires_at: "2026-09-08T00:05:00Z",
       expected_state_epoch: ids.epoch,
@@ -256,7 +256,7 @@ const controlCases = [
     operationEnvelope,
     {
       operation_id: ids.operation,
-      idempotency_key: "shell-1",
+      idempotency_key: ids.session,
       issued_at: "2026-09-08T00:00:00Z",
       expires_at: "2026-09-08T00:05:00Z",
       expected_state_epoch: ids.epoch,
@@ -286,7 +286,34 @@ for (const [name, validate, value, expected] of controlCases) {
 assertControlSecurity(controlDocument);
 assertNoForbiddenSnapshotFields(controlSchemas.NodeSnapshot);
 
-console.log(`OpenAPI schema checks passed (${cases.length + controlCases.length} cases)`);
+const pollSchema = requireSchema(controlAjv, "OperationPollRequest");
+const deliverySchema = requireSchema(controlAjv, "OperationDelivery");
+const receiptSchema = requireSchema(controlAjv, "OperationReceipt");
+const refreshSchema = ajv.compile(schemas.RefreshRequest);
+const poll = { session_id: ids.session, boot_id: ids.boot, boot_sequence: 1, state_epoch: ids.epoch, binding_epoch: 1, desired_generation: 0, wait_seconds: 5 };
+const refresh = { operation_id: ids.operation, idempotency_key: ids.session, expected_state_epoch: ids.epoch, expected_binding_epoch: 1, expected_desired_generation: 0 };
+const delivery = { lease_token: ids.operation, lease_expires_at: "2026-09-08T00:00:40Z", accepted_snapshot_sequence: 0, operation: { ...refresh, issued_at: "2026-09-08T00:00:00Z", expires_at: "2026-09-08T00:02:00Z", operation: { kind: "snapshot.refresh", schema_version: 1, payload: {} } } };
+const receipt = { ...poll, wait_seconds: 0, lease_token: ids.operation, status: "succeeded", code: "snapshot_accepted", result: { snapshot_accepted: true, snapshot_sequence: 2 } };
+const refreshCases = [
+  ["bounded refresh create", refreshSchema, refresh, true],
+  ["nil operation ID", refreshSchema, { ...refresh, operation_id: "00000000-0000-0000-0000-000000000000" }, false],
+  ["nil idempotency ID", refreshSchema, { ...refresh, idempotency_key: "00000000-0000-0000-0000-000000000000" }, false],
+  ["refresh generation null", refreshSchema, { ...refresh, expected_desired_generation: null }, false],
+  ["refresh arbitrary intent", refreshSchema, { ...refresh, command: "id" }, false],
+  ["bounded poll", pollSchema, poll, true],
+  ["poll exceeds write deadline", pollSchema, { ...poll, wait_seconds: 60 }, false],
+  ["leased delivery", deliverySchema, delivery, true],
+  ["correlated receipt", receiptSchema, receipt, true],
+  ["receipt cannot just assert success", receiptSchema, { ...receipt, result: { snapshot_accepted: true } }, false],
+  ["receipt rejects diagnostics", receiptSchema, { ...receipt, raw_config: "canary" }, false],
+  ["receipt rejects poll wait", receiptSchema, { ...receipt, wait_seconds: 1 }, false],
+  ["conflict receipt", receiptSchema, { ...poll, wait_seconds: 0, lease_token: ids.operation, status: "conflict", code: "generation_conflict" }, true],
+  ["failed receipt", receiptSchema, { ...poll, wait_seconds: 0, lease_token: ids.operation, status: "failed", code: "collection_failed" }, true],
+  ["conflict rejects failed code", receiptSchema, { ...poll, wait_seconds: 0, lease_token: ids.operation, status: "conflict", code: "collection_failed" }, false],
+  ["failed rejects conflict code", receiptSchema, { ...poll, wait_seconds: 0, lease_token: ids.operation, status: "failed", code: "generation_conflict" }, false],
+];
+for (const [name, validate, value, expected] of refreshCases) assertValidation(name, validate, value, expected, controlAjv);
+console.log(`OpenAPI schema checks passed (${cases.length + controlCases.length + refreshCases.length} cases)`);
 
 function readDocument(path) {
   return JSON.parse(fs.readFileSync(path, "utf8"));

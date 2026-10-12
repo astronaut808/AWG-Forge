@@ -55,6 +55,18 @@ corresponding capability can be released; the matrix alone is not test evidence.
 | Old node archive is restored after fresh rebind | Reject identity mismatch before replacing target | Fresh node identity and local configuration | Encrypted node backup/restore regression |
 | Managed backup restored onto a different installation | Restore rejects the identity mismatch; local root may explicitly detach before reuse and later enrollment establishes a new identity | Target node identity plus restored local configuration | Rejected restore writes no state; detached state has no controller authority |
 | Node data directory cloned byte for byte | Clone remains offline until local root detaches it; separately revoke copied credentials at the former controller when applicable before fresh enrollment | Copied node identity until detach and former-controller revocation | Presence fencing cannot reliably identify a complete clone; never run both copies as managed nodes |
+
+## Refresh checkpoint and future mutation requirements
+
+Read-only `snapshot.refresh` uses durable controller SQLite leases/results, with one
+in-memory node result and safe repeated collection after crash. No node SQLite or
+exactly-once execution is required. Controller success needs atomic accepted-snapshot
+correlation; stale generation conflicts. Restore deletes operations. The rows below
+that mention mutation acceptance, candidate/apply or durable node receipts describe
+future remote mutations. See [refresh delivery](snapshot-refresh-delivery.md).
+
+| Failure point | Required observable outcome | Persistent authority | Recovery/test assertion |
+| --- | --- | --- | --- |
 | Operation delivered twice before execution | Second delivery observes accepted/leased operation state | Node SQLite | Application service executes once per active operation |
 | Crash before operation acceptance is durable | Redelivery is safe and starts execution once | Controller queued operation | No local mutation occurred |
 | Crash after acceptance before candidate build | Resume the same accepted operation | Node SQLite | No mutation and no duplicate resource |

@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added bounded durable `snapshot.refresh` delivery with controller SQLite leases, accepted-snapshot correlation, DB-off node execution and English/Russian selected-node refresh status. Cold restore clears operation authority; remote mutations and secret exports remain future work.
+
 - Added explicit version-checked installer fresh/existing controller join and offline rebind, with private FD/hidden TTY secret input and pinned public-CA bootstrap.
 - Added minimal controller endpoint/backup/consent and Add node UI with manual comparison approval and enrollment-bound authenticated presence confirmation; unpublished builds expose public arguments without inventing release artifacts.
 - Added authenticated controller node inventory and English/Russian read-only node views with a This server/node selector, tunnel/client metadata, traffic counters, handshakes, runtime Doctor summaries and explicit connection/snapshot freshness states.

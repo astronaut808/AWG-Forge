@@ -150,6 +150,9 @@ func TestNodeProjectionFailsClosedOnNestedPrivateJSONAndRestoreClearsCache(t *te
 	if _, err := db.sql.ExecContext(ctx, "UPDATE control_node_projections SET desired_json=? WHERE node_id=?", mustJSON(t, snapshot.Desired), identity.NodeID); err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
 	if err := db.DisableControllerAuthAfterRestore(ctx, now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}

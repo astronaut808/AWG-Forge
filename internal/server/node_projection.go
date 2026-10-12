@@ -13,6 +13,10 @@ import (
 
 func (w *web) controllerNodesAPI(rw http.ResponseWriter, r *http.Request) {
 	noStore(rw)
+	if parts, ok := nodeRefreshPath(r.URL.Path); ok {
+		w.nodeRefreshAPI(rw, r, parts)
+		return
+	}
 	if r.Method != http.MethodGet {
 		writeError(rw, 405, "method not allowed")
 		return

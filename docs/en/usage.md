@@ -267,7 +267,7 @@ If an official client cannot import the QR on a specific platform or version, do
 An authenticated controller administrator can select **This server** or an
 individual node. The local view retains its existing controls; node views show
 only tunnels, clients, live peer counters/handshakes and a limited runtime Doctor
-summary. No remote actions or client configuration exports are available.
+summary. Snapshot refresh is the only remote action; client configuration exports are unavailable.
 
 The node list is paged in node ID order, with up to 128 identities per page.
 Use **Next page** and **First page** to browse it. Changing pages clears the
@@ -300,6 +300,24 @@ full configurations, protocol parameters, QR/import payloads or raw diagnostics.
 The inventory response includes `next_cursor` when another page is available;
 pass it as `GET /api/controller/nodes?after=<next_cursor>`. Omit `after` for the
 first page. The cursor is a canonical node UUID, not an authorization token.
-Remote mutation/command delivery and secret configuration exports remain future
+Remote mutations, arbitrary commands and secret configuration exports remain future
 work. Local container acceptance does not close the external multi-host release
 gate.
+
+## Refresh a selected node
+
+Choose **Refresh** on an online node supporting `snapshot.refresh.v1`.
+Queued and running states confirm delivery progress; only **New snapshot accepted**
+confirms a correlated snapshot accepted by the controller. A newer periodic
+snapshot alone does not complete the request. An unavailable response means the
+outcome is unconfirmed, not successful. Retry after an uncertain creation reuses
+the same request; after a generation conflict the UI reads a fresh projection
+before enabling an explicit new retry. Changing node/account/epochs or logging out
+clears the operation view and cancels pending browser reads.
+
+The request expires after two minutes. A lease lasts at most 40 seconds; delivery
+can repeat after a crash. Refresh is read-only: configuration, generation,
+ConfigRevision, runtime configuration and history remain unchanged. Empty DB-off
+nodes stay empty and DB-off. Unsupported/offline nodes cannot receive new work.
+Only this typed observation operation is available; remote mutations and secret
+exports remain future work.

@@ -419,3 +419,11 @@ Client creation and client settings can store an optional traffic limit when SQL
 When recorded traffic reaches or exceeds the configured limit, awg-forge records the quota-block marker, disables the client through the normal render/apply path, and writes an audit event. If the marker cannot be recorded, the client stays enabled and enforcement retries on a later pass. Re-enable attempts are rejected while the active limit period is exceeded. The rolling window moves forward as daily UTC aggregates age out. awg-forge automatically re-enables only clients it disabled for that quota; a manual disable clears the quota-block marker and is never auto-reversed. The HTTP API returns `409 Conflict`; the CLI returns an error.
 
 Explicit `install.sh join --mode fresh` is a separate path: no `init` or default tunnel, loopback local UI with protected credentials, and `DATABASE_MODE=off`. Existing join/rebind reuse the owned service environment and mounts without rewriting Compose or deployment settings; see [Quick Install](quick-install.md).
+
+## Refresh storage and limits
+
+Snapshot refresh adds no environment setting or node database requirement.
+Controller SQLite schema 12 stores bounded operation/lease/result rows; unavailable
+storage closes admission. DB-off node history remains disabled. Queue TTL (two
+minutes), lease (40 seconds), retention (24 hours after expiry), admission limits
+and poll bounds are fixed internal protocol limits, described in [API](api.md#snapshot-refresh-delivery).

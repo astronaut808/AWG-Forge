@@ -71,7 +71,7 @@ func Enroll(ctx context.Context, service EnrollmentService, invitation controlap
 	if name == "" {
 		name = "node"
 	}
-	request := controlapi.ClaimRequest{RequestedName: name, CSRPEM: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})), BootID: bootID, ApplicationVersion: buildinfo.Current().Version, ContractVersions: []int{1}, Capabilities: []string{"presence", "snapshot.v1"}}
+	request := controlapi.ClaimRequest{RequestedName: name, CSRPEM: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})), BootID: bootID, ApplicationVersion: buildinfo.Current().Version, ContractVersions: []int{1}, Capabilities: []string{"presence", "snapshot.v1", controlapi.RefreshCapability}}
 	var accepted controlapi.ClaimAccepted
 	if err := requestJSON(ctx, client, invitation.ControllerURL, http.MethodPost, "/control/v1/enrollments/"+invitation.InvitationID+"/claim", invitation.Secret, request, &accepted); err != nil {
 		return errors.New("enrollment claim failed")
@@ -149,6 +149,7 @@ func Run(ctx context.Context, service *app.Service, cfg config.Config) error {
 	}
 	delay := time.Second
 	var snapshotSequence uint64
+	var pending *pendingRefresh
 	certificate, err := strictCertificate(identity.Certificate)
 	if err != nil {
 		return errors.New("node identity invalid")
@@ -166,10 +167,11 @@ func Run(ctx context.Context, service *app.Service, cfg config.Config) error {
 		if state.NodeConnection == nil || *state.NodeConnection != connection || state.ManagedNode == nil || state.ManagedNode.ControllerID != managed.ControllerID || state.ManagedNode.NodeID != managed.NodeID || state.ManagedNode.BindingEpoch != managed.BindingEpoch || state.ManagedNode.StateEpoch != boot.StateEpoch {
 			return errors.New("node binding changed")
 		}
-		p := controlapi.Presence{BootID: boot.BootID, BootSequence: boot.BootSequence, ApplicationVersion: buildinfo.Current().Version, ContractVersion: 1, StateEpoch: boot.StateEpoch, BindingEpoch: state.ManagedNode.BindingEpoch, DesiredGeneration: state.ManagedNode.DesiredGeneration, Capabilities: []string{"presence", "snapshot.v1"}, ObservedAt: time.Now().UTC()}
+		p := controlapi.Presence{BootID: boot.BootID, BootSequence: boot.BootSequence, ApplicationVersion: buildinfo.Current().Version, ContractVersion: 1, StateEpoch: boot.StateEpoch, BindingEpoch: state.ManagedNode.BindingEpoch, DesiredGeneration: state.ManagedNode.DesiredGeneration, Capabilities: []string{"presence", "snapshot.v1", controlapi.RefreshCapability}, ObservedAt: time.Now().UTC()}
 		var accepted controlapi.PresenceAccepted
 		err = requestJSON(ctx, client, state.NodeConnection.ControllerURL, http.MethodPut, "/control/v1/node/presence", "", p, &accepted)
 		presenceSucceeded := err == nil
+		renewed := false
 		if err == nil {
 			if accepted.ControllerID != state.ManagedNode.ControllerID || !validUUID(accepted.SessionID) || !accepted.SessionExpiresAt.After(time.Now()) {
 				return errors.New("controller identity rejected")
@@ -225,6 +227,8 @@ func Run(ctx context.Context, service *app.Service, cfg config.Config) error {
 				}
 				client.CloseIdleConnections()
 				client = nextClient
+				renewed = true
+				pending = nil
 				connection = *nextState.NodeConnection
 				certificate, err = strictCertificate(nextIdentity.Certificate)
 				if err != nil {
@@ -235,6 +239,20 @@ func Run(ctx context.Context, service *app.Service, cfg config.Config) error {
 				// Keep refreshing presence with the predecessor while retrying
 				// the durable CSR; its server-side overlap bounds admission.
 				err = renewalErr
+			}
+		}
+		if presenceSucceeded && err == nil && !renewed {
+			poll := controlapi.OperationPoll{SessionID: accepted.SessionID, BootID: boot.BootID, BootSequence: boot.BootSequence, StateEpoch: boot.StateEpoch, BindingEpoch: managed.BindingEpoch, Generation: state.ManagedNode.DesiredGeneration, WaitSeconds: controlapi.MaxPollWait}
+			refreshCtx, cancelRefresh := context.WithDeadline(ctx, certificate.NotAfter)
+			err = runRefresh(refreshCtx, service, cfg, client, connection.ControllerURL, poll, &snapshotSequence, &pending)
+			cancelRefresh()
+			if errors.Is(err, errForbidden) {
+				return errors.New("node authorization revoked")
+			}
+			// Presence refreshes stale session fences next iteration. A 409
+			// operation conflict is not a permanent node authorization denial.
+			if err == nil {
+				delay = time.Second
 			}
 		}
 		wait := delay
@@ -262,6 +280,7 @@ func Run(ctx context.Context, service *app.Service, cfg config.Config) error {
 	}
 }
 
+var errNoOperation = errors.New("no operation")
 var errForbidden = errors.New("forbidden")
 var errFenced = errors.New("fenced")
 var errRenewalNotDue = errors.New("renewal not due")
@@ -384,6 +403,9 @@ func requestJSON(ctx context.Context, client *http.Client, base, method, route, 
 	}
 	if res.StatusCode < 200 || res.StatusCode > 299 {
 		return fmt.Errorf("control response %d", res.StatusCode)
+	}
+	if res.StatusCode == http.StatusNoContent && output != nil {
+		return errNoOperation
 	}
 	if output != nil {
 		raw, err := io.ReadAll(io.LimitReader(res.Body, (64<<10)+1))

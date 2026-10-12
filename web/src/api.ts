@@ -1,4 +1,6 @@
 import type {
+  RefreshRequest,
+  RefreshStatus,
   AppState,
   NodeInventory,
   NodeProjection,
@@ -336,4 +338,19 @@ export function controllerNodes(signal?: AbortSignal, after = ""): Promise<NodeI
 }
 export function controllerNode(nodeID: string, signal?: AbortSignal): Promise<NodeProjection> {
   return request(`/api/controller/nodes/${encodeURIComponent(nodeID)}`, { signal });
+}
+
+export function refreshUUID(): string {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  // getRandomValues remains available on HTTP node/controller browser surfaces.
+  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 15) | 64; bytes[8] = (bytes[8] & 63) | 128;
+  const hex = [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+export function createNodeRefresh(nodeID: string, body: RefreshRequest, signal: AbortSignal): Promise<RefreshStatus> {
+  return request(`/api/controller/nodes/${encodeURIComponent(nodeID)}/refresh`, { method: "POST", body, signal });
+}
+export function nodeRefreshStatus(nodeID: string, operationID: string, signal: AbortSignal): Promise<RefreshStatus> {
+  return request(`/api/controller/nodes/${encodeURIComponent(nodeID)}/operations/${encodeURIComponent(operationID)}`, { signal });
 }
