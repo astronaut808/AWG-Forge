@@ -361,3 +361,12 @@ export function createClientEnabled(nodeID: string, body: import("./types").Clie
 export function clientOperationStatus(nodeID: string, operationID: string, signal: AbortSignal): Promise<import("./types").ClientOperationStatus> {
   return request(`/api/controller/nodes/${encodeURIComponent(nodeID)}/operations/${encodeURIComponent(operationID)}`, { signal });
 }
+export function createRemoteClient(nodeID: string, body: import("./types").ClientCreateRequest, signal: AbortSignal): Promise<import("./types").ClientCRUDOperationStatus> {
+  return request(`/api/controller/nodes/${encodeURIComponent(nodeID)}/client-create`, { method: "POST", body, signal });
+}
+export function deleteRemoteClient(nodeID: string, body: import("./types").ClientDeleteRequest, signal: AbortSignal): Promise<import("./types").ClientCRUDOperationStatus> {
+  return request(`/api/controller/nodes/${encodeURIComponent(nodeID)}/client-delete`, { method: "POST", body, signal });
+}
+export function remoteClientOperationStatus(nodeID: string, operationID: string, signal: AbortSignal): Promise<import("./types").ClientCRUDOperationStatus> {
+  return request(`/api/controller/nodes/${encodeURIComponent(nodeID)}/operations/${encodeURIComponent(operationID)}`, { signal });
+}

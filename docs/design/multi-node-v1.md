@@ -70,7 +70,7 @@ node views are implemented. They separate certificate-bound reachability from VP
 health, preserve node-local desired state and clear stale browser contexts. See
 [node observation](../en/usage.md#read-only-node-observation) for the operator
 contract and resource limits.
-`snapshot.refresh` delivery, leases, correlated results and bounded controller retention are implemented. The narrow `client.enabled.set` mutation and durable node receipts are also implemented; see [client enabled delivery](client-enabled-delivery.md). Other remote mutations remain future work.
+`snapshot.refresh` delivery, leases, correlated results and bounded controller retention are implemented. The narrow `client.enabled.set` mutation and durable node receipts are also implemented; see [client enabled delivery](client-enabled-delivery.md). Client create/delete delivery is implemented; see [client CRUD delivery](client-crud-delivery.md). Other remote mutations remain future work.
 
 `state.json` on each node is the desired-state source of truth. The controller
 is a secure remote control surface and redacted inventory cache, not an
@@ -305,8 +305,7 @@ Delivery is at least once; execution is idempotent.
   must choose **Run when online** and see the expiry.
 
 Operation payloads are discriminated typed schemas. There is no generic command
-string or arbitrary JSON execution path. Beyond safe snapshot refresh, the only
-implemented mutation payload is `client.enabled.set`; other mutation payloads need
+string or arbitrary JSON execution path. Beyond safe snapshot refresh, the implemented mutation payloads are `client.enabled.set`, `client.create` and `client.delete`; other mutation payloads need
 their application service and failure tests.
 
 Successful mutation receipts are bounded and removed only after durable

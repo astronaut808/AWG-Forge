@@ -20,7 +20,7 @@ func runPendingClientResults(ctx context.Context, s *app.Service, c *http.Client
 	}
 	out := rows[0]
 	if out.Status == "accepted" {
-		out, err = s.ExecuteClientEnabled(ctx, out.Operation)
+		out, err = s.ExecuteClientOperation(ctx, out.Operation)
 		if err != nil {
 			return err
 		}
@@ -38,7 +38,7 @@ func sendClientOutcome(ctx context.Context, s *app.Service, c *http.Client, base
 	p.Generation = state.ManagedNode.DesiredGeneration
 	p.WaitSeconds = 0
 	path := "/control/v1/node/operations/" + out.Operation.OperationID
-	receipt := controlapi.OperationReceipt{OperationPoll: p, LeaseToken: token, Status: out.Status, Code: out.Code, ClientResult: out.Result, IntentHash: out.Operation.IntentHash()}
+	receipt := controlapi.OperationReceipt{OperationPoll: p, LeaseToken: token, Status: out.Status, Code: out.Code, ClientResult: out.Result, CreateResult: out.CreateResult, DeleteResult: out.DeleteResult, IntentHash: out.Operation.IntentHash()}
 	// Current authenticated session carries a stable node outcome across boot,
 	// lease expiry and lost responses. It does not fabricate a fresh snapshot.
 	if out.AcknowledgedAt == nil {

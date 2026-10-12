@@ -14,10 +14,13 @@ import (
 )
 
 var (
-	ErrOperationFenced      = errors.New("operation fenced")
-	ErrOperationLimit       = errors.New("operation limit")
-	ErrOperationUnsupported = errors.New("refresh unsupported")
-	ErrOperationOffline     = errors.New("node unavailable")
+	ErrOperationFenced           = errors.New("operation fenced")
+	ErrOperationLimit            = errors.New("operation limit")
+	ErrOperationUnsupported      = errors.New("refresh unsupported")
+	ErrOperationOffline          = errors.New("node unavailable")
+	ErrOperationTunnelMissing    = errors.New("tunnel unavailable")
+	ErrOperationClientMissing    = errors.New("client unavailable")
+	ErrOperationResourceConflict = errors.New("resource conflict")
 )
 
 type refreshRow struct {
@@ -46,7 +49,7 @@ func (r refreshRow) view(at ...time.Time) (controlapi.OperationStatus, error) {
 		return controlapi.OperationStatus{}, ErrOperationFenced
 	}
 	v := controlapi.OperationStatus{ControllerID: r.controller, NodeID: r.node, OperationID: r.id, StateEpoch: o.StateEpoch, BindingEpoch: o.BindingEpoch, Generation: o.Generation, Status: r.status, Code: r.code, IssuedAt: o.IssuedAt, ExpiresAt: o.ExpiresAt, Sequence: uint64(r.sequence)}
-	if o.Operation.Kind == "client.enabled.set" {
+	if controlapi.IsClientMutation(o.Operation.Kind) {
 		v.Kind = o.Operation.Kind
 		now := time.Now()
 		if len(at) > 0 {
@@ -61,6 +64,8 @@ func (r refreshRow) view(at ...time.Time) (controlapi.OperationStatus, error) {
 				return v, ErrOperationFenced
 			}
 			v.ClientResult = receipt.ClientResult
+			v.CreateResult = receipt.CreateResult
+			v.DeleteResult = receipt.DeleteResult
 		}
 	}
 	if r.completed.Valid {
@@ -71,10 +76,10 @@ func (r refreshRow) view(at ...time.Time) (controlapi.OperationStatus, error) {
 }
 func terminalRefresh(status string) bool { return status != "queued" && status != "leased" }
 func maintainRefresh(ctx context.Context, tx *sql.Tx, now time.Time) error {
-	if _, err := tx.ExecContext(ctx, `DELETE FROM control_refresh_operations WHERE expires_at_unix_ms < ? AND (json_extract(envelope_json,'$.operation.kind')!='client.enabled.set' OR lease_token='' OR node_acknowledged_at_unix_ms IS NOT NULL)`, now.Add(-controlapi.OperationRetention).UnixMilli()); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM control_refresh_operations WHERE expires_at_unix_ms < ? AND (json_extract(envelope_json,'$.operation.kind') NOT IN ('client.enabled.set','client.create','client.delete') OR lease_token='' OR node_acknowledged_at_unix_ms IS NOT NULL)`, now.Add(-controlapi.OperationRetention).UnixMilli()); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE control_refresh_operations SET status='expired',code='operation_expired',completed_at_unix_ms=? WHERE status IN ('queued','leased') AND expires_at_unix_ms<=? AND (json_extract(envelope_json,'$.operation.kind')!='client.enabled.set' OR lease_token='')`, now.UnixMilli(), now.UnixMilli()); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE control_refresh_operations SET status='expired',code='operation_expired',completed_at_unix_ms=? WHERE status IN ('queued','leased') AND expires_at_unix_ms<=? AND (json_extract(envelope_json,'$.operation.kind') NOT IN ('client.enabled.set','client.create','client.delete') OR lease_token='')`, now.UnixMilli(), now.UnixMilli()); err != nil {
 		return err
 	}
 	_, err := tx.ExecContext(ctx, `UPDATE control_refresh_operations SET status='rejected',code='operation_fenced',completed_at_unix_ms=? WHERE status IN ('queued','leased') AND NOT EXISTS (SELECT 1 FROM control_node_bindings b WHERE b.node_id=control_refresh_operations.node_id AND b.controller_id=control_refresh_operations.controller_id AND b.revoked_at_unix_ms IS NULL AND b.binding_epoch=json_extract(control_refresh_operations.envelope_json,'$.expected_binding_epoch'))`, now.UnixMilli())
@@ -92,11 +97,17 @@ func (db *DB) CreateClientEnabled(ctx context.Context, controller, issuer, node 
 	}
 	return db.createOperation(ctx, controller, issuer, node, r.RefreshRequest, controlapi.RefreshOperation{Kind: "client.enabled.set", SchemaVersion: 1, Payload: r.ClientEnabledPayload}, now)
 }
+func (db *DB) CreateClientMutation(ctx context.Context, controller, issuer, node string, r controlapi.RefreshRequest, kind string, p controlapi.ClientEnabledPayload, now time.Time) (controlapi.OperationStatus, error) {
+	if !controlapi.IsClientMutation(kind) || !p.ValidFor(kind) {
+		return controlapi.OperationStatus{}, ErrOperationFenced
+	}
+	return db.createOperation(ctx, controller, issuer, node, r, controlapi.RefreshOperation{Kind: kind, SchemaVersion: 1, Payload: p}, now)
+}
 func (db *DB) createOperation(ctx context.Context, controller, issuer, node string, r controlapi.RefreshRequest, operation controlapi.RefreshOperation, now time.Time) (controlapi.OperationStatus, error) {
 	if db == nil || db.sql == nil {
 		return controlapi.OperationStatus{}, ErrDisabled
 	}
-	if !validUUID(controller) || !validUUID(node) || !validIssuerGeneration(issuer) || r.Validate() != nil || now.IsZero() {
+	if !validUUID(controller) || !validUUID(node) || !validIssuerGeneration(issuer) || r.Validate() != nil || now.IsZero() || (controlapi.OperationEnvelope{RefreshRequest: r, IssuedAt: now, ExpiresAt: now.Add(controlapi.OperationTTL), Operation: operation}).Validate() != nil {
 		return controlapi.OperationStatus{}, ErrOperationFenced
 	}
 	tx, err := db.sql.BeginTx(ctx, nil)
@@ -138,7 +149,7 @@ func (db *DB) createOperation(ctx context.Context, controller, issuer, node stri
 	}
 	supported := false
 	for _, c := range capabilities {
-		if c == controlapi.RefreshCapability && operation.Kind == "snapshot.refresh" || c == controlapi.ClientEnabledCapability && operation.Kind == "client.enabled.set" {
+		if c == controlapi.OperationCapability(operation.Kind) {
 			supported = true
 		}
 	}
@@ -155,7 +166,7 @@ func (db *DB) createOperation(ctx context.Context, controller, issuer, node stri
 	if r.StateEpoch != epoch || r.BindingEpoch != uint64(binding) || r.Generation != uint64(generation) {
 		return controlapi.OperationStatus{}, ErrOperationFenced
 	}
-	if operation.Kind == "client.enabled.set" {
+	if controlapi.IsClientMutation(operation.Kind) {
 		var desiredRaw []byte
 		if err = tx.QueryRowContext(ctx, "SELECT desired_json FROM control_node_projections WHERE node_id=?", node).Scan(&desiredRaw); err != nil {
 			return controlapi.OperationStatus{}, err
@@ -165,8 +176,16 @@ func (db *DB) createOperation(ctx context.Context, controller, issuer, node stri
 			return controlapi.OperationStatus{}, ErrOperationFenced
 		}
 		found := false
+		tunnelFound := false
+		collision := false
 		for _, t := range desired.Tunnels {
+			for _, c := range t.Clients {
+				if c.ID == operation.Payload.ClientID {
+					collision = true
+				}
+			}
 			if t.ID == operation.Payload.TunnelID {
+				tunnelFound = true
 				for _, c := range t.Clients {
 					if c.ID == operation.Payload.ClientID {
 						found = true
@@ -174,8 +193,18 @@ func (db *DB) createOperation(ctx context.Context, controller, issuer, node stri
 				}
 			}
 		}
-		if !found {
+		if operation.Kind == "client.enabled.set" && !found {
 			return controlapi.OperationStatus{}, ErrOperationFenced
+		}
+		if !tunnelFound {
+			return controlapi.OperationStatus{}, ErrOperationTunnelMissing
+		}
+		if operation.Kind == "client.create" {
+			if collision {
+				return controlapi.OperationStatus{}, ErrOperationResourceConflict
+			}
+		} else if !found {
+			return controlapi.OperationStatus{}, ErrOperationClientMissing
 		}
 	}
 	var total, nodeCount, active, recent, globalRecent int
@@ -196,7 +225,7 @@ func (db *DB) createOperation(ctx context.Context, controller, issuer, node stri
 		return controlapi.OperationStatus{}, err
 	}
 	v := controlapi.OperationStatus{ControllerID: controller, NodeID: node, OperationID: r.OperationID, StateEpoch: r.StateEpoch, BindingEpoch: r.BindingEpoch, Generation: r.Generation, Status: "queued", IssuedAt: o.IssuedAt, ExpiresAt: o.ExpiresAt}
-	if operation.Kind == "client.enabled.set" {
+	if controlapi.IsClientMutation(operation.Kind) {
 		v.Kind = operation.Kind
 	}
 	return v, tx.Commit()
@@ -229,7 +258,7 @@ func (db *DB) LeaseRefresh(ctx context.Context, id NodeIdentity, issuer, serial 
 	if err = maintainRefresh(ctx, tx, now); err != nil {
 		return nil, err
 	}
-	row, err := scanRefresh(tx.QueryRowContext(ctx, `SELECT `+refreshColumns+` FROM control_refresh_operations WHERE node_id=? AND controller_id=? AND status IN ('queued','leased') AND (json_extract(envelope_json,'$.operation.kind')='snapshot.refresh' OR EXISTS(SELECT 1 FROM control_node_presence p,json_each(p.capabilities_json) c WHERE p.node_id=control_refresh_operations.node_id AND c.value='client.enabled.set.v1')) ORDER BY issued_at_unix_ms,operation_id LIMIT 1`, id.NodeID, id.ControllerID))
+	row, err := scanRefresh(tx.QueryRowContext(ctx, `SELECT `+refreshColumns+` FROM control_refresh_operations WHERE node_id=? AND controller_id=? AND status IN ('queued','leased') AND (json_extract(envelope_json,'$.operation.kind')='snapshot.refresh' OR EXISTS(SELECT 1 FROM control_node_presence p,json_each(p.capabilities_json) c WHERE p.node_id=control_refresh_operations.node_id AND c.value=CASE json_extract(control_refresh_operations.envelope_json,'$.operation.kind') WHEN 'client.enabled.set' THEN 'client.enabled.set.v1' WHEN 'client.create' THEN 'client.create.v1' WHEN 'client.delete' THEN 'client.delete.v1' ELSE '' END)) ORDER BY issued_at_unix_ms,operation_id LIMIT 1`, id.NodeID, id.ControllerID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, tx.Commit()
 	}
@@ -252,7 +281,7 @@ func (db *DB) LeaseRefresh(ctx context.Context, id NodeIdentity, issuer, serial 
 		row.sequence = 0
 		token = uuid.NewString()
 		deadline := now.Add(controlapi.OperationLease)
-		if o.ExpiresAt.Before(deadline) && (o.Operation.Kind != "client.enabled.set" || now.Before(o.ExpiresAt)) {
+		if o.ExpiresAt.Before(deadline) && (!controlapi.IsClientMutation(o.Operation.Kind) || now.Before(o.ExpiresAt)) {
 			deadline = o.ExpiresAt
 		}
 		lease = deadline.UnixMilli()
@@ -261,7 +290,7 @@ func (db *DB) LeaseRefresh(ctx context.Context, id NodeIdentity, issuer, serial 
 			return nil, err
 		}
 	}
-	delivery := &controlapi.OperationDelivery{AcceptedSequence: uint64(row.sequence), LeaseToken: token, LeaseExpiresAt: time.UnixMilli(lease).UTC(), Operation: o, ReconciliationOnly: o.Operation.Kind == "client.enabled.set" && !now.Before(o.ExpiresAt)}
+	delivery := &controlapi.OperationDelivery{AcceptedSequence: uint64(row.sequence), LeaseToken: token, LeaseExpiresAt: time.UnixMilli(lease).UTC(), Operation: o, ReconciliationOnly: controlapi.IsClientMutation(o.Operation.Kind) && !now.Before(o.ExpiresAt)}
 	return delivery, tx.Commit()
 }
 
@@ -326,10 +355,10 @@ func (db *DB) CompleteRefresh(ctx context.Context, id NodeIdentity, issuer, seri
 	if err != nil {
 		return ErrOperationFenced
 	}
-	if o.Operation.Kind == "client.enabled.set" {
+	if controlapi.IsClientMutation(o.Operation.Kind) {
 		return completeClientEnabled(ctx, tx, row, o, r, now)
 	}
-	if r.IntentHash != "" || r.ClientResult != nil {
+	if r.IntentHash != "" || r.ClientResult != nil || r.CreateResult != nil || r.DeleteResult != nil {
 		return ErrOperationFenced
 	}
 	raw, _ := json.Marshal(r)
@@ -395,7 +424,7 @@ func validateRefreshRow(r refreshRow, controller string) error {
 	if err != nil || !validUUID(r.id) || !validUUID(r.node) || r.controller != controller || o.OperationID != r.id || o.IdempotencyKey != r.key || o.IssuedAt.UnixMilli() != r.issued || o.ExpiresAt.UnixMilli() != r.expires || len(r.envelope) > controlapi.MaxOperationBytes || len(r.owner) > controlapi.MaxOperationBytes || len(r.receipt) > controlapi.MaxOperationBytes {
 		return ErrOperationFenced
 	}
-	if r.acknowledged.Valid && (o.Operation.Kind != "client.enabled.set" || !r.completed.Valid || len(r.receipt) == 0 || r.acknowledged.Int64 < r.completed.Int64) {
+	if r.acknowledged.Valid && (!controlapi.IsClientMutation(o.Operation.Kind) || !r.completed.Valid || len(r.receipt) == 0 || r.acknowledged.Int64 < r.completed.Int64) {
 		return ErrOperationFenced
 	}
 	switch r.status {
@@ -415,23 +444,23 @@ func validateRefreshRow(r refreshRow, controller string) error {
 		}
 	} else {
 		var owner controlapi.OperationPoll
-		if !validUUID(r.token) || controlapi.DecodeOperation(r.owner, &owner) != nil || owner.Validate() != nil || owner.WaitSeconds != 0 || owner.Generation != 0 || owner.StateEpoch != o.StateEpoch || owner.BindingEpoch != o.BindingEpoch || r.lease <= r.issued || r.lease > r.expires && o.Operation.Kind != "client.enabled.set" {
+		if !validUUID(r.token) || controlapi.DecodeOperation(r.owner, &owner) != nil || owner.Validate() != nil || owner.WaitSeconds != 0 || owner.Generation != 0 || owner.StateEpoch != o.StateEpoch || owner.BindingEpoch != o.BindingEpoch || r.lease <= r.issued || r.lease > r.expires && !controlapi.IsClientMutation(o.Operation.Kind) {
 			return ErrOperationFenced
 		}
 	}
 	if r.status == "succeeded" || r.status == "conflict" || r.status == "failed" {
 		var receipt controlapi.OperationReceipt
-		if controlapi.DecodeOperation(r.receipt, &receipt) != nil || receipt.Validate() != nil || receipt.Status != r.status || receipt.Code != r.code || receipt.LeaseToken != r.token && o.Operation.Kind != "client.enabled.set" || receipt.StateEpoch != o.StateEpoch || receipt.BindingEpoch != o.BindingEpoch {
+		if controlapi.DecodeOperation(r.receipt, &receipt) != nil || receipt.Validate() != nil || receipt.Status != r.status || receipt.Code != r.code || receipt.LeaseToken != r.token && !controlapi.IsClientMutation(o.Operation.Kind) || receipt.StateEpoch != o.StateEpoch || receipt.BindingEpoch != o.BindingEpoch {
 			return ErrOperationFenced
 		}
 		owner := receipt.OperationPoll
 		owner.Generation = 0
 		raw, _ := json.Marshal(owner)
-		if o.Operation.Kind == "client.enabled.set" {
+		if controlapi.IsClientMutation(o.Operation.Kind) {
 			if validateClientOutcome(o, receipt) != nil || r.sequence != 0 {
 				return ErrOperationFenced
 			}
-		} else if !bytes.Equal(raw, r.owner) || receipt.IntentHash != "" || receipt.ClientResult != nil || r.status == "succeeded" && (receipt.Generation != o.Generation || r.sequence == 0 || receipt.Result.Sequence != uint64(r.sequence)) || r.status == "conflict" && receipt.Generation == o.Generation || r.status == "failed" && receipt.Generation != o.Generation {
+		} else if !bytes.Equal(raw, r.owner) || receipt.IntentHash != "" || receipt.ClientResult != nil || receipt.CreateResult != nil || receipt.DeleteResult != nil || r.status == "succeeded" && (receipt.Generation != o.Generation || r.sequence == 0 || receipt.Result.Sequence != uint64(r.sequence)) || r.status == "conflict" && receipt.Generation == o.Generation || r.status == "failed" && receipt.Generation != o.Generation {
 			return ErrOperationFenced
 		}
 	} else if len(r.receipt) != 0 || r.status == "expired" && r.code != "operation_expired" || r.status == "rejected" && r.code != "operation_fenced" || (r.status == "queued" || r.status == "leased") && r.code != "" {

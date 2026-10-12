@@ -237,3 +237,13 @@ export type RefreshStatus = { controller_id: string; node_id: string; operation_
 export type ClientEnabledRequest = RefreshRequest & { tunnel_id: string; client_id: string; enabled: boolean };
 export type ClientEnabledResult = { committed_desired_generation: number; tunnel_id: string; client_id: string; enabled: boolean };
 export type ClientOperationStatus = Omit<RefreshStatus, "status"> & { status: RefreshStatus["status"] | "reconciling"; kind: "client.enabled.set"; client_result?: ClientEnabledResult };
+export type ClientCreateRequest = RefreshRequest & { tunnel_id: string; client_id: string; name: string };
+export type ClientDeleteRequest = RefreshRequest & { tunnel_id: string; client_id: string; confirmed: true };
+export type ClientCreateResult = { committed_desired_generation: number; tunnel_id: string; client_id: string; name: string };
+export type ClientDeleteResult = { committed_desired_generation: number; tunnel_id: string; client_id: string; deleted: true };
+export type ClientCRUDOperationStatus = Omit<RefreshStatus, "status"> & {
+  status: RefreshStatus["status"] | "reconciling";
+  kind: "client.create" | "client.delete";
+  create_result?: ClientCreateResult;
+  delete_result?: ClientDeleteResult;
+};

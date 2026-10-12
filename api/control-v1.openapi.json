@@ -986,7 +986,11 @@
                     "operation": {
                       "properties": {
                         "kind": {
-                          "const": "client.enabled.set"
+                          "enum": [
+                            "client.enabled.set",
+                            "client.create",
+                            "client.delete"
+                          ]
                         }
                       },
                       "type": "object"
@@ -1058,6 +1062,12 @@
           },
           {
             "$ref": "#/components/schemas/ClientEnabledOperation"
+          },
+          {
+            "$ref": "#/components/schemas/ClientCreateOperation"
+          },
+          {
+            "$ref": "#/components/schemas/ClientDeleteOperation"
           }
         ],
         "discriminator": {
@@ -1092,6 +1102,12 @@
           },
           {
             "$ref": "#/components/schemas/ClientEnabledFailedReceipt"
+          },
+          {
+            "$ref": "#/components/schemas/ClientCreateSucceededReceipt"
+          },
+          {
+            "$ref": "#/components/schemas/ClientDeleteSucceededReceipt"
           }
         ]
       },
@@ -1537,7 +1553,10 @@
               "client_unavailable",
               "quota_exceeded",
               "receipt_limit",
-              "generation_conflict"
+              "generation_conflict",
+              "tunnel_unavailable",
+              "resource_conflict",
+              "address_unavailable"
             ]
           },
           "intent_hash": {
@@ -1618,6 +1637,314 @@
           "intent_hash": {
             "type": "string",
             "pattern": "^[a-f0-9]{64}$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClientCreatePayload": {
+        "type": "object",
+        "required": [
+          "tunnel_id",
+          "client_id",
+          "name"
+        ],
+        "properties": {
+          "tunnel_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "client_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{16}$",
+            "minLength": 16,
+            "maxLength": 16
+          },
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_. -]{0,62}[A-Za-z0-9]$|^[A-Za-z0-9]$",
+            "minLength": 1,
+            "maxLength": 64
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClientCreateResult": {
+        "type": "object",
+        "required": [
+          "committed_desired_generation",
+          "tunnel_id",
+          "client_id",
+          "name"
+        ],
+        "properties": {
+          "committed_desired_generation": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9223372036854775807
+          },
+          "tunnel_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "client_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{16}$",
+            "minLength": 16,
+            "maxLength": 16
+          },
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_. -]{0,62}[A-Za-z0-9]$|^[A-Za-z0-9]$",
+            "minLength": 1,
+            "maxLength": 64
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClientCreateOperation": {
+        "type": "object",
+        "required": [
+          "kind",
+          "schema_version",
+          "payload"
+        ],
+        "properties": {
+          "kind": {
+            "const": "client.create",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": 1,
+            "type": "integer"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/ClientCreatePayload"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClientCreateSucceededReceipt": {
+        "type": "object",
+        "required": [
+          "session_id",
+          "boot_id",
+          "boot_sequence",
+          "state_epoch",
+          "binding_epoch",
+          "desired_generation",
+          "wait_seconds",
+          "lease_token",
+          "status",
+          "code",
+          "intent_hash",
+          "create_result"
+        ],
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "boot_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "boot_sequence": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9223372036854775807
+          },
+          "state_epoch": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "binding_epoch": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9223372036854775807
+          },
+          "desired_generation": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9223372036854775807
+          },
+          "wait_seconds": {
+            "type": "integer",
+            "const": 0
+          },
+          "lease_token": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "const": "succeeded"
+          },
+          "code": {
+            "type": "string",
+            "const": "client_created_committed"
+          },
+          "intent_hash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "create_result": {
+            "$ref": "#/components/schemas/ClientCreateResult"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClientDeletePayload": {
+        "type": "object",
+        "required": [
+          "tunnel_id",
+          "client_id",
+          "confirmed"
+        ],
+        "properties": {
+          "tunnel_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "client_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "confirmed": {
+            "type": "boolean",
+            "const": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClientDeleteResult": {
+        "type": "object",
+        "required": [
+          "committed_desired_generation",
+          "tunnel_id",
+          "client_id",
+          "deleted"
+        ],
+        "properties": {
+          "committed_desired_generation": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9223372036854775807
+          },
+          "tunnel_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "client_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "deleted": {
+            "type": "boolean",
+            "const": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClientDeleteOperation": {
+        "type": "object",
+        "required": [
+          "kind",
+          "schema_version",
+          "payload"
+        ],
+        "properties": {
+          "kind": {
+            "const": "client.delete",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": 1,
+            "type": "integer"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/ClientDeletePayload"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClientDeleteSucceededReceipt": {
+        "type": "object",
+        "required": [
+          "session_id",
+          "boot_id",
+          "boot_sequence",
+          "state_epoch",
+          "binding_epoch",
+          "desired_generation",
+          "wait_seconds",
+          "lease_token",
+          "status",
+          "code",
+          "intent_hash",
+          "delete_result"
+        ],
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "boot_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "boot_sequence": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9223372036854775807
+          },
+          "state_epoch": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "binding_epoch": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9223372036854775807
+          },
+          "desired_generation": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9223372036854775807
+          },
+          "wait_seconds": {
+            "type": "integer",
+            "const": 0
+          },
+          "lease_token": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "const": "succeeded"
+          },
+          "code": {
+            "type": "string",
+            "const": "client_deleted_committed"
+          },
+          "intent_hash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "delete_result": {
+            "$ref": "#/components/schemas/ClientDeleteResult"
           }
         },
         "additionalProperties": false

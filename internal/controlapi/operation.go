@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"math"
+	"regexp"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,6 +17,8 @@ import (
 const (
 	RefreshCapability       = "snapshot.refresh.v1"
 	ClientEnabledCapability = "client.enabled.set.v1"
+	ClientCreateCapability  = "client.create.v1"
+	ClientDeleteCapability  = "client.delete.v1"
 	MaxOperationBytes       = 4096
 	MaxOperations           = 4096
 	MaxNodeOperations       = 64
@@ -65,13 +68,91 @@ type RefreshOperation struct {
 }
 
 type ClientEnabledPayload struct {
-	TunnelID string `json:"tunnel_id,omitempty"`
-	ClientID string `json:"client_id,omitempty"`
-	Enabled  *bool  `json:"enabled,omitempty"`
+	TunnelID  string `json:"tunnel_id,omitempty"`
+	ClientID  string `json:"client_id,omitempty"`
+	Enabled   *bool  `json:"enabled,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Confirmed *bool  `json:"confirmed,omitempty"`
 }
 
 func (p ClientEnabledPayload) Valid() bool {
-	return validResourceID(p.TunnelID) && validResourceID(p.ClientID) && p.Enabled != nil
+	return validResourceID(p.TunnelID) && validResourceID(p.ClientID) && p.Enabled != nil && p.Name == "" && p.Confirmed == nil
+}
+
+var clientCreateIDRE = regexp.MustCompile(`^[a-f0-9]{16}$`)
+var clientNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_. -]{0,62}[A-Za-z0-9]$|^[A-Za-z0-9]$`)
+
+func IsClientMutation(kind string) bool {
+	return kind == "client.enabled.set" || kind == "client.create" || kind == "client.delete"
+}
+func OperationCapability(kind string) string {
+	switch kind {
+	case "snapshot.refresh":
+		return RefreshCapability
+	case "client.enabled.set":
+		return ClientEnabledCapability
+	case "client.create":
+		return ClientCreateCapability
+	case "client.delete":
+		return ClientDeleteCapability
+	}
+	return ""
+}
+func ClientCommittedCode(kind string) string {
+	switch kind {
+	case "client.enabled.set":
+		return "client_enabled_committed"
+	case "client.create":
+		return "client_created_committed"
+	case "client.delete":
+		return "client_deleted_committed"
+	}
+	return ""
+}
+func (p ClientEnabledPayload) ValidFor(kind string) bool {
+	switch kind {
+	case "client.enabled.set":
+		return p.Valid()
+	case "client.create":
+		return validResourceID(p.TunnelID) && clientCreateIDRE.MatchString(p.ClientID) && clientNameRE.MatchString(p.Name) && p.Enabled == nil && p.Confirmed == nil
+	case "client.delete":
+		return validResourceID(p.TunnelID) && validResourceID(p.ClientID) && p.Confirmed != nil && *p.Confirmed && p.Enabled == nil && p.Name == ""
+	}
+	return false
+}
+
+type ClientCreateRequest struct {
+	RefreshRequest
+	TunnelID string `json:"tunnel_id"`
+	ClientID string `json:"client_id"`
+	Name     string `json:"name"`
+}
+
+func (r ClientCreateRequest) Payload() ClientEnabledPayload {
+	return ClientEnabledPayload{TunnelID: r.TunnelID, ClientID: r.ClientID, Name: r.Name}
+}
+func (r ClientCreateRequest) Validate() error {
+	if r.RefreshRequest.Validate() != nil || r.Generation >= math.MaxInt64 || !r.Payload().ValidFor("client.create") {
+		return errors.New("invalid client create intent")
+	}
+	return nil
+}
+
+type ClientDeleteRequest struct {
+	RefreshRequest
+	TunnelID  string `json:"tunnel_id"`
+	ClientID  string `json:"client_id"`
+	Confirmed *bool  `json:"confirmed"`
+}
+
+func (r ClientDeleteRequest) Payload() ClientEnabledPayload {
+	return ClientEnabledPayload{TunnelID: r.TunnelID, ClientID: r.ClientID, Confirmed: r.Confirmed}
+}
+func (r ClientDeleteRequest) Validate() error {
+	if r.RefreshRequest.Validate() != nil || r.Generation >= math.MaxInt64 || !r.Payload().ValidFor("client.delete") {
+		return errors.New("invalid client delete intent")
+	}
+	return nil
 }
 
 func validResourceID(id string) bool {
@@ -112,11 +193,11 @@ func (o OperationEnvelope) Validate() error {
 	}
 	switch o.Operation.Kind {
 	case "snapshot.refresh":
-		if o.Operation.Payload.TunnelID != "" || o.Operation.Payload.ClientID != "" || o.Operation.Payload.Enabled != nil {
+		if o.Operation.Payload.TunnelID != "" || o.Operation.Payload.ClientID != "" || o.Operation.Payload.Enabled != nil || o.Operation.Payload.Name != "" || o.Operation.Payload.Confirmed != nil {
 			return errors.New("invalid refresh payload")
 		}
-	case "client.enabled.set":
-		if !o.Operation.Payload.Valid() || o.Generation >= math.MaxInt64 {
+	case "client.enabled.set", "client.create", "client.delete":
+		if !o.Operation.Payload.ValidFor(o.Operation.Kind) || o.Generation >= math.MaxInt64 {
 			return errors.New("invalid client payload")
 		}
 	default:
@@ -142,7 +223,7 @@ type OperationDelivery struct {
 }
 
 func (d OperationDelivery) Validate() error {
-	if d.ReconciliationOnly && d.Operation.Operation.Kind != "client.enabled.set" {
+	if d.ReconciliationOnly && !IsClientMutation(d.Operation.Operation.Kind) {
 		return errors.New("invalid reconciliation kind")
 	}
 	if !validUUID(d.LeaseToken) || d.Operation.Validate() != nil || d.LeaseExpiresAt.IsZero() || d.LeaseExpiresAt.After(d.Operation.ExpiresAt) && !d.ReconciliationOnly {
@@ -171,6 +252,8 @@ type OperationReceipt struct {
 	Code         string               `json:"code"`
 	Result       *RefreshResult       `json:"result,omitempty"`
 	ClientResult *ClientEnabledResult `json:"client_result,omitempty"`
+	CreateResult *ClientCreateResult  `json:"create_result,omitempty"`
+	DeleteResult *ClientDeleteResult  `json:"delete_result,omitempty"`
 	IntentHash   string               `json:"intent_hash,omitempty"`
 }
 
@@ -179,6 +262,52 @@ type ClientEnabledResult struct {
 	TunnelID   string `json:"tunnel_id"`
 	ClientID   string `json:"client_id"`
 	Enabled    bool   `json:"enabled"`
+}
+
+type ClientCreateResult struct {
+	Generation uint64 `json:"committed_desired_generation"`
+	TunnelID   string `json:"tunnel_id"`
+	ClientID   string `json:"client_id"`
+	Name       string `json:"name"`
+}
+type ClientDeleteResult struct {
+	Generation uint64 `json:"committed_desired_generation"`
+	TunnelID   string `json:"tunnel_id"`
+	ClientID   string `json:"client_id"`
+	Deleted    bool   `json:"deleted"`
+}
+
+// MatchesClientSuccess compares only the immutable intent and its committed generation.
+func (r OperationReceipt) MatchesClientSuccess(o OperationEnvelope) bool {
+	if r.Status != "succeeded" || r.Code != ClientCommittedCode(o.Operation.Kind) || r.Validate() != nil {
+		return false
+	}
+	p := o.Operation.Payload
+	generation := o.Generation + 1
+	switch o.Operation.Kind {
+	case "client.enabled.set":
+		x := r.ClientResult
+		return x != nil && x.Generation == generation && x.TunnelID == p.TunnelID && x.ClientID == p.ClientID && x.Enabled == *p.Enabled
+	case "client.create":
+		x := r.CreateResult
+		return x != nil && x.Generation == generation && x.TunnelID == p.TunnelID && x.ClientID == p.ClientID && x.Name == p.Name
+	case "client.delete":
+		x := r.DeleteResult
+		return x != nil && x.Generation == generation && x.TunnelID == p.TunnelID && x.ClientID == p.ClientID && x.Deleted
+	}
+	return false
+}
+func (r OperationReceipt) CommittedGeneration() uint64 {
+	if r.ClientResult != nil {
+		return r.ClientResult.Generation
+	}
+	if r.CreateResult != nil {
+		return r.CreateResult.Generation
+	}
+	if r.DeleteResult != nil {
+		return r.DeleteResult.Generation
+	}
+	return 0
 }
 
 func validIntentHash(hash string) bool {
@@ -193,11 +322,29 @@ func (r OperationReceipt) Validate() error {
 	switch r.Status {
 	case "succeeded":
 		if r.Code == "client_enabled_committed" {
-			if !validIntentHash(r.IntentHash) || r.Result != nil || r.ClientResult == nil || r.ClientResult.Generation == 0 || r.ClientResult.Generation > math.MaxInt64 || !validResourceID(r.ClientResult.TunnelID) || !validResourceID(r.ClientResult.ClientID) {
+			if !validIntentHash(r.IntentHash) || r.Result != nil || r.CreateResult != nil || r.DeleteResult != nil || r.ClientResult == nil || r.ClientResult.Generation == 0 || r.ClientResult.Generation > math.MaxInt64 || !validResourceID(r.ClientResult.TunnelID) || !validResourceID(r.ClientResult.ClientID) {
 				return errors.New("invalid client result")
 			}
 			return nil
 		}
+		if r.Code == "client_created_committed" || r.Code == "client_deleted_committed" {
+			if !validIntentHash(r.IntentHash) || r.Result != nil || r.ClientResult != nil {
+				return errors.New("invalid client result")
+			}
+			if r.Code == "client_created_committed" {
+				x := r.CreateResult
+				if x == nil || r.DeleteResult != nil || x.Generation == 0 || x.Generation > math.MaxInt64 || !validResourceID(x.TunnelID) || !clientCreateIDRE.MatchString(x.ClientID) || !clientNameRE.MatchString(x.Name) {
+					return errors.New("invalid create result")
+				}
+			} else {
+				x := r.DeleteResult
+				if x == nil || r.CreateResult != nil || x.Generation == 0 || x.Generation > math.MaxInt64 || !validResourceID(x.TunnelID) || !validResourceID(x.ClientID) || !x.Deleted {
+					return errors.New("invalid delete result")
+				}
+			}
+			return nil
+		}
+
 		if r.Code != "snapshot_accepted" || r.Result == nil || !r.Result.SnapshotAccepted || r.Result.Sequence == 0 || r.Result.Sequence > math.MaxInt64 {
 			return errors.New("invalid result")
 		}
@@ -206,13 +353,13 @@ func (r OperationReceipt) Validate() error {
 			return errors.New("invalid conflict")
 		}
 	case "failed":
-		if r.Result != nil || r.Code != "collection_failed" && (!validIntentHash(r.IntentHash) || r.Code != "apply_failed" && r.Code != "execution_expired" && r.Code != "interrupted_rolled_back" && r.Code != "client_unavailable" && r.Code != "quota_exceeded" && r.Code != "receipt_limit") {
+		if r.Result != nil || r.Code != "collection_failed" && (!validIntentHash(r.IntentHash) || r.Code != "apply_failed" && r.Code != "execution_expired" && r.Code != "interrupted_rolled_back" && r.Code != "client_unavailable" && r.Code != "quota_exceeded" && r.Code != "receipt_limit" && r.Code != "tunnel_unavailable" && r.Code != "resource_conflict" && r.Code != "address_unavailable") {
 			return errors.New("invalid failure")
 		}
 	default:
 		return errors.New("invalid status")
 	}
-	if r.ClientResult != nil || r.IntentHash != "" && !validIntentHash(r.IntentHash) || r.Result != nil && r.IntentHash != "" {
+	if r.ClientResult != nil || r.CreateResult != nil || r.DeleteResult != nil || r.IntentHash != "" && !validIntentHash(r.IntentHash) || r.Result != nil && r.IntentHash != "" {
 		return errors.New("invalid result kind")
 	}
 	return nil
@@ -234,6 +381,8 @@ type OperationStatus struct {
 	Sequence     uint64               `json:"snapshot_sequence"`
 	Kind         string               `json:"kind,omitempty"`
 	ClientResult *ClientEnabledResult `json:"client_result,omitempty"`
+	CreateResult *ClientCreateResult  `json:"create_result,omitempty"`
+	DeleteResult *ClientDeleteResult  `json:"delete_result,omitempty"`
 }
 
 type ClientResultAck struct {
@@ -266,6 +415,10 @@ func DecodeOperation(raw []byte, target any) error {
 		required = refresh
 	case *ClientEnabledRequest:
 		required = append(refresh, "tunnel_id", "client_id", "enabled")
+	case *ClientCreateRequest:
+		required = append(refresh, "tunnel_id", "client_id", "name")
+	case *ClientDeleteRequest:
+		required = append(refresh, "tunnel_id", "client_id", "confirmed")
 	case *OperationPoll:
 		required = poll
 	case *OperationEnvelope:
@@ -279,6 +432,13 @@ func DecodeOperation(raw []byte, target any) error {
 	default:
 		return errors.New("unsupported operation JSON")
 	}
+	switch target.(type) {
+	case *RefreshRequest, *ClientEnabledRequest, *ClientCreateRequest, *ClientDeleteRequest:
+		if len(fields) != len(required) {
+			return errors.New("invalid operation fields")
+		}
+	}
+
 	for _, key := range required {
 		if _, ok := fields[key]; !ok {
 			return errors.New("missing operation field")
@@ -297,14 +457,16 @@ func DecodeOperation(raw []byte, target any) error {
 	if !errors.Is(decoder.Decode(&extra), io.EOF) {
 		return errors.New("invalid operation JSON")
 	}
-	if body, ok := fields["client_result"]; ok {
-		var result map[string]json.RawMessage
-		if json.Unmarshal(body, &result) != nil || len(result) != 4 {
-			return errors.New("invalid client result")
-		}
-		for _, key := range []string{"committed_desired_generation", "tunnel_id", "client_id", "enabled"} {
-			if _, ok := result[key]; !ok {
-				return errors.New("missing client result field")
+	for field, last := range map[string]string{"client_result": "enabled", "create_result": "name", "delete_result": "deleted"} {
+		if body, ok := fields[field]; ok {
+			var result map[string]json.RawMessage
+			if json.Unmarshal(body, &result) != nil || len(result) != 4 {
+				return errors.New("invalid client result")
+			}
+			for _, key := range []string{"committed_desired_generation", "tunnel_id", "client_id", last} {
+				if _, ok := result[key]; !ok {
+					return errors.New("missing client result field")
+				}
 			}
 		}
 	}
@@ -329,8 +491,12 @@ func DecodeOperation(raw []byte, target any) error {
 			if json.Unmarshal(operation["payload"], &payload) != nil || payload == nil {
 				return errors.New("invalid payload")
 			}
-			if kind == "client.enabled.set" {
-				for _, key := range []string{"tunnel_id", "client_id", "enabled"} {
+			if IsClientMutation(kind) {
+				last := map[string]string{"client.enabled.set": "enabled", "client.create": "name", "client.delete": "confirmed"}[kind]
+				if len(payload) != 3 {
+					return errors.New("invalid client payload fields")
+				}
+				for _, key := range []string{"tunnel_id", "client_id", last} {
 					if _, ok := payload[key]; !ok {
 						return errors.New("missing client field")
 					}
