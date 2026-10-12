@@ -59,7 +59,7 @@ func VerifyControllerRegistrySnapshot(ctx context.Context, path, controllerID, i
 				return err
 			}
 			if version >= 12 {
-				return verifySnapshotRefresh(queryCtx, db, controllerID)
+				return verifySnapshotRefresh(queryCtx, db, controllerID, version)
 			}
 		}
 	}

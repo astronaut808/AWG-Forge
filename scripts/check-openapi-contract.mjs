@@ -313,7 +313,35 @@ const refreshCases = [
   ["failed rejects conflict code", receiptSchema, { ...poll, wait_seconds: 0, lease_token: ids.operation, status: "failed", code: "generation_conflict" }, false],
 ];
 for (const [name, validate, value, expected] of refreshCases) assertValidation(name, validate, value, expected, controlAjv);
-console.log(`OpenAPI schema checks passed (${cases.length + controlCases.length + refreshCases.length} cases)`);
+const clientRequestSchema = ajv.compile(schemas.ClientEnabledRequest);
+const clientStatusSchema = ajv.compile(normalizeControlSchemas({ ...schemas.ClientOperationStatus, $defs: { ClientEnabledResult: schemas.ClientEnabledResult } }));
+const clientRequest = { ...refresh, tunnel_id: "awg20", client_id: "phone", enabled: false };
+const clientDelivery = { ...delivery, operation: { ...delivery.operation, operation: { kind: "client.enabled.set", schema_version: 1, payload: { tunnel_id: "awg20", client_id: "phone", enabled: false } } } };
+const clientResult = { committed_desired_generation: 1, tunnel_id: "awg20", client_id: "phone", enabled: false };
+const clientReceipt = { ...poll, wait_seconds: 0, desired_generation: 1, lease_token: ids.operation, status: "succeeded", code: "client_enabled_committed", intent_hash: "a".repeat(64), client_result: clientResult };
+const clientStatus = { controller_id: ids.boot, node_id: ids.session, operation_id: ids.operation, state_epoch: ids.epoch, binding_epoch: 1, expected_desired_generation: 0, status: "succeeded", code: "client_enabled_committed", issued_at: delivery.operation.issued_at, expires_at: delivery.operation.expires_at, completed_at: delivery.operation.expires_at, snapshot_sequence: 0, kind: "client.enabled.set", client_result: clientResult };
+const clientCases = [
+  ["client explicit false", clientRequestSchema, clientRequest, true],
+  ["client explicit true", clientRequestSchema, { ...clientRequest, enabled: true }, true],
+  ["client missing enabled", clientRequestSchema, Object.fromEntries(Object.entries(clientRequest).filter(([key]) => key !== "enabled")), false],
+  ["client null enabled", clientRequestSchema, { ...clientRequest, enabled: null }, false],
+  ["client string enabled", clientRequestSchema, { ...clientRequest, enabled: "false" }, false],
+  ["client path injection", clientRequestSchema, { ...clientRequest, tunnel_id: "../state" }, false],
+  ["client command field", clientRequestSchema, { ...clientRequest, command: "id" }, false],
+  ["typed client delivery", deliverySchema, clientDelivery, true],
+  ["reconciliation client delivery", deliverySchema, { ...clientDelivery, reconciliation_only: true }, true],
+  ["refresh cannot reconcile a mutation", deliverySchema, { ...delivery, reconciliation_only: true }, false],
+  ["typed client receipt", receiptSchema, clientReceipt, true],
+  ["client missing receipt enabled", receiptSchema, { ...clientReceipt, client_result: { committed_desired_generation: 1, tunnel_id: "awg20", client_id: "phone" } }, false],
+  ["client no full intent", receiptSchema, Object.fromEntries(Object.entries(clientReceipt).filter(([key]) => key !== "intent_hash")), false],
+  ["client no diagnostic leak", receiptSchema, { ...clientReceipt, message: "canary" }, false],
+  ["client result ack", requireSchema(controlAjv, "ClientResultAck"), { ...poll, wait_seconds: 0, intent_hash: "a".repeat(64) }, true],
+  ["client browser committed result", clientStatusSchema, clientStatus, true],
+  ["client browser succeeded requires result", clientStatusSchema, Object.fromEntries(Object.entries(clientStatus).filter(([key]) => key !== "client_result")), false],
+  ["client browser honest reconciliation", clientStatusSchema, Object.fromEntries(Object.entries({ ...clientStatus, status: "reconciling", code: "", completed_at: null }).filter(([key]) => key !== "client_result")), true],
+];
+for (const [name, validate, value, expected] of clientCases) assertValidation(name, validate, value, expected, controlAjv);
+console.log(`OpenAPI schema checks passed (${cases.length + controlCases.length + refreshCases.length + clientCases.length} cases)`);
 
 function readDocument(path) {
   return JSON.parse(fs.readFileSync(path, "utf8"));

@@ -9,5 +9,6 @@ planned capabilities; an implemented checkpoint does not imply a stable release.
 - [Multi-node failure and recovery matrix](multi-node-failure-matrix.md)
 - [Control TLS and PKI delivery plan](control-tls-pki-plan.md)
 - [Control node certificate registry checkpoint](control-node-certificate-registry.md)
+- [Client enabled delivery checkpoint](client-enabled-delivery.md)
 
 Current user behavior remains documented under `docs/en` and `docs/ru`.

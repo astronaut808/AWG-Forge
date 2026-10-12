@@ -88,6 +88,10 @@ future remote mutations. See [refresh delivery](snapshot-refresh-delivery.md).
 | Operation expires while node is offline | Operation becomes expired and is never delivered | Controller operation row | Reconnect does not execute it |
 | Controller SQLite unavailable | Controller auth and mutations fail closed; nodes keep forwarding | Node state/runtime | No fallback auth or in-memory mutation queue |
 | Node SQLite unavailable | Remote delivery and acceptance pause; committed success replay remains available from node state | Node `state.json` success receipts | No mutation starts without its durable acceptance path; local standalone operation remains diagnosable |
+| Client-enabled create acknowledgement is lost | Browser retries the identical full intent; controller returns the retained operation | Operation ID, idempotency ID and full-intent hash | No second client change is admitted |
+| Local change occurs before client-enabled delivery | Older remote intent becomes a generation conflict | Node `state.json` desired generation | Earlier request cannot undo the local change |
+| Client-enabled result is missing or mismatched | Browser reports unconfirmed outcome and never reports success | Exact typed result and committed generation | Retry preserves the same intent; fresh projection is required after commit |
+| Controller restores, node rebinds, or authority changes | Queue is invalidated and old receipt/acknowledgement cannot revive it | Current binding/session/certificate/boot authority | Node retains only current bounded outcome journal; old authority is rejected |
 | Snapshot contains unknown/new fields | Compatible controller ignores allowed additive fields | Node remains authority | Current/previous contract compatibility test passes |
 | Node lacks requested capability | Controller disables action and node rejects forged request | Advertised capabilities | No fallback to generic command execution |
 | Secret artifact generated, then controller crashes | Artifact is lost and must be regenerated | Node state only | No secret exists in operation DB or logs |

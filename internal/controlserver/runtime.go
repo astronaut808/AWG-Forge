@@ -414,13 +414,13 @@ func (runtime *Runtime) resolveRoute(method, requestPath string) (Route, bool) {
 		return route, true
 	}
 	parts := strings.Split(requestPath, "/")
-	if len(parts) == 7 && parts[1] == "control" && parts[2] == "v1" && parts[3] == "node" && parts[4] == "operations" && parts[6] == "result" && method == http.MethodPut {
+	if len(parts) == 7 && parts[1] == "control" && parts[2] == "v1" && parts[3] == "node" && parts[4] == "operations" && (parts[6] == "result" && method == http.MethodPut || parts[6] == "ack" && method == http.MethodPost) {
 		id, err := uuid.Parse(parts[5])
 		if err != nil || id.String() != parts[5] {
 			return Route{}, false
 		}
-		route, ok := runtime.routes[routeKey{method, "/control/v1/node/operations/{operation_id}/result"}]
-		return route, ok && !route.Bootstrap && route.ID == "node.operation-result"
+		route, ok := runtime.routes[routeKey{method, "/control/v1/node/operations/{operation_id}/" + parts[6]}]
+		return route, ok && !route.Bootstrap && route.ID == "node.operation-"+parts[6]
 	}
 	if len(parts) != 5 && len(parts) != 6 || parts[1] != "control" || parts[2] != "v1" || parts[3] != "enrollments" {
 		return Route{}, false

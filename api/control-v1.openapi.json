@@ -3,7 +3,7 @@
   "info": {
     "title": "AWG-Forge node control API",
     "version": "0.1.0-draft",
-    "description": "Internal controller/node contract. Public CA bootstrap, enrollment claim/status, mTLS presence and certificate renewal are implemented on explicitly enabled listeners. Non-loopback exposure additionally requires exact endpoint consent and a verified retained encrypted backup. Snapshots are implemented; snapshot.refresh delivery is implemented; remote mutations remain proposed; this draft is not a public operator API.",
+    "description": "Internal controller/node contract. Public CA bootstrap, enrollment claim/status, mTLS presence and certificate renewal are implemented on explicitly enabled listeners. Non-loopback exposure additionally requires exact endpoint consent and a verified retained encrypted backup. Snapshots are implemented; snapshot.refresh delivery is implemented; client.enabled.set delivery is implemented; other remote mutations remain proposed; this draft is not a public operator API.",
     "license": {
       "name": "MIT",
       "identifier": "MIT"
@@ -139,7 +139,7 @@
       "get": {
         "operationId": "getEnrollmentStatus",
         "summary": "Read enrollment approval status",
-        "description": "An exact CSR retry returns the same claim capability until expiry; a competing CSR returns 409. The claim token is returned only by the successful claim response and is stored as a digest by the controller. An approved response contains the node certificate but never a private key. Public CA bootstrap, claim/status, presence and renewal are implemented on explicitly enabled endpoints; snapshot and snapshot.refresh routes are implemented; remote mutations remain draft.",
+        "description": "An exact CSR retry returns the same claim capability until expiry; a competing CSR returns 409. The claim token is returned only by the successful claim response and is stored as a digest by the controller. An approved response contains the node certificate but never a private key. Public CA bootstrap, claim/status, presence and renewal are implemented on explicitly enabled endpoints; snapshot and snapshot.refresh routes are implemented; client.enabled.set delivery is implemented; other remote mutations remain draft.",
         "tags": ["Enrollment"],
         "security": [
           {
@@ -280,7 +280,7 @@
       "post": {
         "operationId": "pollNodeOperation",
         "summary": "Wait for one typed operation",
-        "description": "Implemented snapshot.refresh only. One active held poll per node, eight globally. Wait 0\u20135 seconds without app/DB locks, 40-second lease clipped to two-minute expiry. Current certificate/session/boot/epoch fencing on every dequeue. Duplicate delivery returns the same lease/evidence; superseded session or expired lease can reclaim read-only work. DB-off node may repeat collection after crash; no exactly-once execution claim.",
+        "description": "Implemented snapshot.refresh and capability-gated client.enabled.set. One active held poll per node, eight globally. Wait 0–5 seconds without app/DB locks, 40-second lease clipped to two-minute execution expiry until reconciliation. Current certificate/session/boot/epoch fencing on every dequeue. Duplicate delivery returns the same lease/evidence; superseded session or expired lease can reclaim read-only work. DB-off node may repeat collection after crash; no exactly-once execution claim. client.enabled.set requires its own capability. Delivered mutations remain reconciling after the execution deadline; reconciliation-only delivery cannot start a new mutation.",
         "tags": [
           "Operations"
         ],
@@ -352,7 +352,7 @@
       "put": {
         "operationId": "putNodeOperationResult",
         "summary": "Publish a durable operation result",
-        "description": "Implemented allowlisted snapshot.refresh receipt. Current mTLS certificate/session/boot/epochs and unexpired exact lease required for initial completion. Succeeded result requires a snapshot accepted atomically with matching operation/lease correlation and sequence at the expected generation. Identical terminal replay under current authority is idempotent within retention (24 hours after operation expiry), even after lease expiry. Conflicting/foreign/late lease results are fenced. No secret artifacts or arbitrary diagnostics.",
+        "description": "Implemented allowlisted snapshot.refresh receipt. Current mTLS certificate/session/boot/epochs and unexpired exact lease required for initial completion. Succeeded result requires a snapshot accepted atomically with matching operation/lease correlation and sequence at the expected generation. Identical terminal replay under current authority is idempotent within retention (24 hours after operation expiry), even after lease expiry. Conflicting/foreign/late lease results are fenced. No secret artifacts or arbitrary diagnostics. Client mutations report their durable full-intent outcome under current node authority across old lease/boot/deadline; conflicting outcomes are rejected. Receipt reconciliation cannot alter node state.",
         "tags": [
           "Operations"
         ],
@@ -451,6 +451,71 @@
           "503": { "$ref": "#/components/responses/Problem" },
           "429": { "$ref": "#/components/responses/RateLimitedProblem" },
           "default": { "$ref": "#/components/responses/Problem" }
+        }
+      }
+    },
+    "/control/v1/node/operations/{operation_id}/ack": {
+      "post": {
+        "operationId": "acknowledgeClientResult",
+        "summary": "Confirm node durable acknowledgement of a client result",
+        "description": "Current node authority and exact immutable intent hash required. Node sends this only after durably recording the committed controller result. Confirmation permits bounded retention; unconfirmed results and delivered unresolved mutations are never time-evicted. Exact repeat is idempotent.",
+        "tags": [
+          "Operations"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OperationID"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClientResultAck"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Terminal result stored or an identical result replay acknowledged.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "413": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimitedProblem"
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
         }
       }
     }
@@ -895,9 +960,44 @@
           },
           "operation": {
             "$ref": "#/components/schemas/OperationEnvelope"
+          },
+          "reconciliation_only": {
+            "type": "boolean",
+            "const": true
           }
         },
-        "additionalProperties": false
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "reconciliation_only"
+              ],
+              "properties": {
+                "reconciliation_only": {
+                  "const": true
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "operation": {
+                  "properties": {
+                    "operation": {
+                      "properties": {
+                        "kind": {
+                          "const": "client.enabled.set"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            }
+          }
+        ]
       },
       "OperationEnvelope": {
         "type": "object",
@@ -953,7 +1053,12 @@
       "TypedOperation": {
         "type": "object",
         "oneOf": [
-          { "$ref": "#/components/schemas/SnapshotRefreshOperation" }
+          {
+            "$ref": "#/components/schemas/SnapshotRefreshOperation"
+          },
+          {
+            "$ref": "#/components/schemas/ClientEnabledOperation"
+          }
         ],
         "discriminator": {
           "propertyName": "kind"
@@ -976,12 +1081,19 @@
       "OperationReceipt": {
         "type": "object",
         "oneOf": [
-          { "$ref": "#/components/schemas/OperationSucceededReceipt" },
-          { "$ref": "#/components/schemas/OperationFailedReceipt" }
-        ],
-        "discriminator": {
-          "propertyName": "status"
-        }
+          {
+            "$ref": "#/components/schemas/OperationSucceededReceipt"
+          },
+          {
+            "$ref": "#/components/schemas/OperationFailedReceipt"
+          },
+          {
+            "$ref": "#/components/schemas/ClientEnabledSucceededReceipt"
+          },
+          {
+            "$ref": "#/components/schemas/ClientEnabledFailedReceipt"
+          }
+        ]
       },
       "OperationSucceededReceipt": {
         "type": "object",
@@ -1207,7 +1319,309 @@
       "TunnelObservation": {"type":"object","required":["id","known","up","apply_failed","clients"],"properties":{"id":{"type":"string","pattern":"^[a-f0-9]{16}$"},"known":{"type":"boolean"},"up":{"type":"boolean"},"apply_failed":{"type":"boolean"},"clients":{"type":"array","maxItems":2048,"items":{"$ref":"#/components/schemas/ClientObservation"}}},"additionalProperties":false},
       "DoctorSummary": {"type":"object","required":["scope","tun_available","forwarding","runtime_unknown","tunnels_down","apply_failures"],"properties":{"scope":{"type":"string","const":"runtime"},"tun_available":{"type":"boolean"},"forwarding":{"type":"boolean"},"runtime_unknown":{"type":"integer","minimum":0,"maximum":64},"tunnels_down":{"type":"integer","minimum":0,"maximum":64},"apply_failures":{"type":"integer","minimum":0,"maximum":64}},"additionalProperties":false},
       "Observations": {"type":"object","required":["apply_enabled","history_available","tunnels","doctor"],"properties":{"apply_enabled":{"type":"boolean"},"history_available":{"type":"boolean"},"tunnels":{"type":"array","maxItems":64,"items":{"$ref":"#/components/schemas/TunnelObservation"}},"doctor":{"$ref":"#/components/schemas/DoctorSummary"}},"additionalProperties":false},
-      "SnapshotAccepted": {"type":"object","required":["snapshot_sequence","received_at"],"properties":{"snapshot_sequence":{"type":"integer","minimum":1,"maximum":9223372036854775807},"received_at":{"type":"string","format":"date-time"}},"additionalProperties":false}
+      "SnapshotAccepted": {"type":"object","required":["snapshot_sequence","received_at"],"properties":{"snapshot_sequence":{"type":"integer","minimum":1,"maximum":9223372036854775807},"received_at":{"type":"string","format":"date-time"}},"additionalProperties":false},
+      "ClientEnabledPayload": {
+        "type": "object",
+        "required": [
+          "tunnel_id",
+          "client_id",
+          "enabled"
+        ],
+        "properties": {
+          "tunnel_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "client_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClientEnabledOperation": {
+        "type": "object",
+        "required": [
+          "kind",
+          "schema_version",
+          "payload"
+        ],
+        "properties": {
+          "kind": {
+            "const": "client.enabled.set",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": 1,
+            "type": "integer"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/ClientEnabledPayload"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClientEnabledResult": {
+        "type": "object",
+        "required": [
+          "committed_desired_generation",
+          "tunnel_id",
+          "client_id",
+          "enabled"
+        ],
+        "properties": {
+          "committed_desired_generation": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9223372036854775807
+          },
+          "tunnel_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "client_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClientEnabledSucceededReceipt": {
+        "type": "object",
+        "required": [
+          "session_id",
+          "boot_id",
+          "boot_sequence",
+          "state_epoch",
+          "binding_epoch",
+          "desired_generation",
+          "wait_seconds",
+          "lease_token",
+          "status",
+          "code",
+          "intent_hash",
+          "client_result"
+        ],
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "boot_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "boot_sequence": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9223372036854775807
+          },
+          "state_epoch": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "binding_epoch": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9223372036854775807
+          },
+          "desired_generation": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9223372036854775807
+          },
+          "wait_seconds": {
+            "type": "integer",
+            "const": 0
+          },
+          "lease_token": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "const": "succeeded"
+          },
+          "code": {
+            "type": "string",
+            "const": "client_enabled_committed"
+          },
+          "intent_hash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "client_result": {
+            "$ref": "#/components/schemas/ClientEnabledResult"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClientEnabledFailedReceipt": {
+        "type": "object",
+        "required": [
+          "session_id",
+          "boot_id",
+          "boot_sequence",
+          "state_epoch",
+          "binding_epoch",
+          "desired_generation",
+          "wait_seconds",
+          "lease_token",
+          "status",
+          "code",
+          "intent_hash"
+        ],
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "boot_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "boot_sequence": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9223372036854775807
+          },
+          "state_epoch": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "binding_epoch": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9223372036854775807
+          },
+          "desired_generation": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9223372036854775807
+          },
+          "wait_seconds": {
+            "type": "integer",
+            "const": 0
+          },
+          "lease_token": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "failed",
+              "conflict"
+            ]
+          },
+          "code": {
+            "type": "string",
+            "enum": [
+              "apply_failed",
+              "execution_expired",
+              "interrupted_rolled_back",
+              "client_unavailable",
+              "quota_exceeded",
+              "receipt_limit",
+              "generation_conflict"
+            ]
+          },
+          "intent_hash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        },
+        "additionalProperties": false,
+        "oneOf": [
+          {
+            "properties": {
+              "status": {
+                "const": "conflict"
+              },
+              "code": {
+                "const": "generation_conflict"
+              }
+            }
+          },
+          {
+            "properties": {
+              "status": {
+                "const": "failed"
+              },
+              "code": {
+                "not": {
+                  "const": "generation_conflict"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "ClientResultAck": {
+        "type": "object",
+        "required": [
+          "session_id",
+          "boot_id",
+          "boot_sequence",
+          "state_epoch",
+          "binding_epoch",
+          "desired_generation",
+          "wait_seconds",
+          "intent_hash"
+        ],
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "boot_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "boot_sequence": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9223372036854775807
+          },
+          "state_epoch": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "binding_epoch": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9223372036854775807
+          },
+          "desired_generation": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9223372036854775807
+          },
+          "wait_seconds": {
+            "const": 0,
+            "type": "integer"
+          },
+          "intent_hash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        },
+        "additionalProperties": false
+      }
     }
   }
 }

@@ -65,6 +65,7 @@ type DesiredStateMutationRequest struct {
 	ExpectedStateEpoch        string
 	ExpectedBindingEpoch      uint64
 	ExpectedDesiredGeneration uint64
+	IntentHash                string
 }
 
 type desiredStateMutation struct {
@@ -87,7 +88,10 @@ func (s *Service) commitDesiredState(mutation desiredStateMutation) (desiredStat
 		return desiredStateCommitResult{}, err
 	}
 	defer s.unlockStateMutation()
+	return s.commitDesiredStateLocked(mutation)
+}
 
+func (s *Service) commitDesiredStateLocked(mutation desiredStateMutation) (desiredStateCommitResult, error) {
 	if err := validateDesiredStateMutation(mutation); err != nil {
 		return desiredStateCommitResult{}, err
 	}
@@ -108,8 +112,13 @@ func (s *Service) commitDesiredState(mutation desiredStateMutation) (desiredStat
 
 	idempotencyHash := hashIdempotencyKey(mutation.Request.IdempotencyKey)
 	if receipt, ok := successfulReceipt(managed.SuccessfulReceipts, mutation.Request.OperationID); ok {
-		if receipt.IdempotencyKeyHash != idempotencyHash {
+		if receipt.IdempotencyKeyHash != idempotencyHash || receipt.IntentHash != mutation.Request.IntentHash {
 			return desiredStateCommitResult{}, ErrOperationReplayConflict
+		}
+		if mutation.Request.IntentHash != "" {
+			if err := s.store.SyncStateDirectory(); err != nil {
+				return desiredStateCommitResult{}, err
+			}
 		}
 		return desiredStateCommitResult{Receipt: receipt, Replayed: true}, nil
 	}
@@ -143,6 +152,7 @@ func (s *Service) commitDesiredState(mutation desiredStateMutation) (desiredStat
 		IdempotencyKeyHash: idempotencyHash,
 		DesiredGeneration:  managed.DesiredGeneration + 1,
 		CompletedAt:        completedAt,
+		IntentHash:         mutation.Request.IntentHash,
 	}
 	candidate.ManagedNode.DesiredGeneration = receipt.DesiredGeneration
 	candidate.ManagedNode.SuccessfulReceipts = append(candidate.ManagedNode.SuccessfulReceipts, receipt)
@@ -160,11 +170,23 @@ func (s *Service) commitDesiredState(mutation desiredStateMutation) (desiredStat
 	if err := s.store.SavePendingDesiredStateCommit(pending); err != nil {
 		return desiredStateCommitResult{}, fmt.Errorf("save desired-state commit journal: %w", err)
 	}
+	if mutation.Request.IntentHash != "" {
+		if err := s.store.SyncStateDirectory(); err != nil {
+			return desiredStateCommitResult{}, err
+		}
+	}
 	if err := mutation.Apply(current, candidate); err != nil {
 		return desiredStateCommitResult{}, s.rollbackDesiredStateMutation(current, candidate, mutation.Rollback, err)
 	}
 	if err := s.saveState(candidate); err != nil {
 		return desiredStateCommitResult{}, s.rollbackDesiredStateMutation(current, candidate, mutation.Rollback, fmt.Errorf("commit desired state: %w", err))
+	}
+	if mutation.Request.IntentHash != "" {
+		// State may already contain its receipt. Never roll it back on an
+		// uncertain directory sync; recovery/replay must settle the commit.
+		if err := s.store.SyncStateDirectory(); err != nil {
+			return desiredStateCommitResult{}, err
+		}
 	}
 	if err := s.store.DeletePendingDesiredStateCommit(); err != nil {
 		s.log("warn", "desired_state.journal.cleanup_failed", "desired-state mutation committed but its recovery journal could not be removed", map[string]any{"operation_id": receipt.OperationID}, err)
@@ -183,6 +205,12 @@ func (s *Service) rollbackDesiredStateMutation(previous, candidate config.State,
 }
 
 func validateDesiredStateMutation(mutation desiredStateMutation) error {
+	if mutation.Request.IntentHash != "" {
+		b, err := hex.DecodeString(mutation.Request.IntentHash)
+		if err != nil || len(b) != sha256.Size || hex.EncodeToString(b) != mutation.Request.IntentHash {
+			return ErrInvalidDesiredMutation
+		}
+	}
 	if !isCanonicalUUID(mutation.Request.OperationID) {
 		return fmt.Errorf("%w: operation ID must be a UUID", ErrInvalidDesiredMutation)
 	}
@@ -229,6 +257,15 @@ func validateManagedNodeState(managed *config.ManagedNodeState) error {
 	seenIdempotencyHashes := make(map[string]struct{}, len(managed.SuccessfulReceipts))
 	var previousReceiptGeneration uint64
 	for _, receipt := range managed.SuccessfulReceipts {
+		if receipt.IntentHash != "" {
+			b, err := hex.DecodeString(receipt.IntentHash)
+			if err != nil || len(b) != sha256.Size || hex.EncodeToString(b) != receipt.IntentHash {
+				return ErrInvalidManagedNodeState
+			}
+		}
+		if receipt.AcknowledgedAt != nil && (receipt.IntentHash == "" || receipt.AcknowledgedAt.Before(receipt.CompletedAt)) {
+			return ErrInvalidManagedNodeState
+		}
 		if !isCanonicalUUID(receipt.OperationID) {
 			return fmt.Errorf("%w: receipt operation ID must be a UUID", ErrInvalidManagedNodeState)
 		}

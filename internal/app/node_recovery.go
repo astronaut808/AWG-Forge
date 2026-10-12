@@ -353,6 +353,9 @@ func (s *Service) recoverNodeRecoveryLocked() error {
 		if err := s.recoveryStep("before-retirement"); err != nil {
 			return err
 		}
+		if err := s.store.RetireClientOperations(); err != nil {
+			return err
+		}
 		if err := s.store.RetireNodeGeneration(j.OldGeneration, false); err != nil {
 			return err
 		}

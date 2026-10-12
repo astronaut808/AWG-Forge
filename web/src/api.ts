@@ -354,3 +354,10 @@ export function createNodeRefresh(nodeID: string, body: RefreshRequest, signal: 
 export function nodeRefreshStatus(nodeID: string, operationID: string, signal: AbortSignal): Promise<RefreshStatus> {
   return request(`/api/controller/nodes/${encodeURIComponent(nodeID)}/operations/${encodeURIComponent(operationID)}`, { signal });
 }
+
+export function createClientEnabled(nodeID: string, body: import("./types").ClientEnabledRequest, signal: AbortSignal): Promise<import("./types").ClientOperationStatus> {
+  return request(`/api/controller/nodes/${encodeURIComponent(nodeID)}/client-enabled`, { method: "POST", body, signal });
+}
+export function clientOperationStatus(nodeID: string, operationID: string, signal: AbortSignal): Promise<import("./types").ClientOperationStatus> {
+  return request(`/api/controller/nodes/${encodeURIComponent(nodeID)}/operations/${encodeURIComponent(operationID)}`, { signal });
+}

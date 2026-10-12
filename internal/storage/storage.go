@@ -104,6 +104,61 @@ func (s Store) Save(state config.State) error {
 	return s.savePrivateJSON(s.StatePath(), ".state-*.tmp", state)
 }
 
+func (s Store) SaveClientOperations(value any) error {
+	if err := s.savePrivateJSON(filepath.Join(s.dir, ".client-operations.json"), ".client-operations-*.tmp", value); err != nil {
+		return err
+	}
+	return s.SyncStateDirectory()
+}
+
+func (s Store) LoadClientOperations(value any) error {
+	p := filepath.Join(s.dir, ".client-operations.json")
+	info, err := os.Lstat(p)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm() != 0600 || info.Size() > 2<<20 {
+		return errors.New("invalid client operation storage")
+	}
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		return err
+	}
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return errors.New("invalid client operation storage")
+	}
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.DisallowUnknownFields()
+	if err := d.Decode(value); err != nil {
+		return err
+	}
+	var extra any
+	if err := d.Decode(&extra); !errors.Is(err, io.EOF) {
+		return errors.New("invalid client operation storage")
+	}
+	return nil
+}
+
+// RetireClientOperations runs only after a proven detach/rebind state commit.
+// Authority retirement invalidates this node-local delivery journal.
+func (s Store) RetireClientOperations() error {
+	p := filepath.Join(s.dir, ".client-operations.json")
+	info, err := os.Lstat(p)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return errors.New("invalid client operation storage")
+	}
+	if err := os.Remove(p); err != nil {
+		return err
+	}
+	return s.SyncStateDirectory()
+}
+
 func (s Store) SavePendingDesiredStateCommit(pending PendingDesiredStateCommit) error {
 	return s.savePrivateJSON(s.PendingDesiredStateCommitPath(), ".desired-state-commit-*.tmp", pending)
 }
