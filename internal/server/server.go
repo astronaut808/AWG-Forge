@@ -183,6 +183,7 @@ func newHandler(w *web) http.Handler {
 	mux.HandleFunc("/api/login", w.security(w.loginAPI))
 	mux.HandleFunc("/api/logout", w.security(w.requireAuth(w.logoutAPI)))
 	mux.HandleFunc("/api/state", w.security(w.requireAuth(w.stateAPI)))
+	mux.HandleFunc("/api/server-name", w.security(w.requireAuth(w.serverNameAPI)))
 	mux.HandleFunc("/api/events", w.security(w.requireAuth(w.eventsAPI)))
 	mux.HandleFunc("/api/backup", w.security(w.requireAuth(w.backupAPI)))
 	mux.HandleFunc("/api/doctor", w.security(w.requireAuth(w.doctorAPI)))
@@ -396,6 +397,26 @@ func (w *web) stateAPI(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(rw, http.StatusOK, w.publicState(r.Context(), state))
+}
+
+func (w *web) serverNameAPI(rw http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPatch || !w.validOrigin(r) {
+		writeError(rw, http.StatusForbidden, "forbidden")
+		return
+	}
+	w.withIdempotency(rw, r, "update-server-name", func() (int, any) {
+		var req updateServerNameRequest
+		if err := readJSON(rw, r, &req); err != nil {
+			w.audit("warn", "server.name.rejected", "server name request rejected", map[string]any{"reason": "invalid json"}, err)
+			return http.StatusBadRequest, errorPayload("invalid json")
+		}
+		state, err := w.service.UpdateServerName(req.Name)
+		if err != nil {
+			w.audit("warn", "server.name.rejected", "server name request rejected", nil, err)
+			return http.StatusBadRequest, operationErrorPayload("server_name_invalid", err.Error())
+		}
+		return http.StatusOK, map[string]any{"server_name": state.ServerName}
+	})
 }
 
 func (w *web) eventsAPI(rw http.ResponseWriter, r *http.Request) {
@@ -1330,6 +1351,7 @@ func (w *web) publicState(ctx context.Context, state config.State) map[string]an
 	return map[string]any{
 		"authenticated":       true,
 		"apply_enabled":       w.cfg.ApplyConfig,
+		"server_name":         state.ServerName,
 		"server_host":         state.ServerHost,
 		"warp":                w.service.WarpSummary(state),
 		"database":            publicDatabase(w.cfg),

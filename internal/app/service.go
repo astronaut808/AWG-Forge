@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -208,6 +209,32 @@ func withDuration(fields map[string]any, started time.Time) map[string]any {
 
 func (s *Service) State() (config.State, error) {
 	return s.Init()
+}
+
+func (s *Service) UpdateServerName(name string) (config.State, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	name = strings.TrimSpace(name)
+	if err := config.ValidateServerName(name); err != nil {
+		return config.State{}, err
+	}
+	state, err := s.initLocked()
+	if err != nil {
+		return config.State{}, err
+	}
+	if state.ServerName == name {
+		return state, nil
+	}
+	state.ServerName = name
+	state.UpdatedAt = time.Now().UTC()
+	if err := s.store.Save(state); err != nil {
+		return config.State{}, err
+	}
+	if err := os.Setenv("SERVER_NAME", name); err != nil {
+		return config.State{}, err
+	}
+	s.log("info", "server.name.updated", "server name updated", map[string]any{"configured": name != ""}, nil)
+	return state, nil
 }
 
 func (s *Service) SessionSecret() (string, error) {

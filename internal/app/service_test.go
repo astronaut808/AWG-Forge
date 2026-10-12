@@ -99,6 +99,87 @@ func TestFreshInitDefaultsToAWG20(t *testing.T) {
 	}
 }
 
+func TestServerNameCanBeSetChangedAndCleared(t *testing.T) {
+	t.Setenv("SERVER_NAME", "")
+	svc := app.New(testConfig(t))
+	state, err := svc.InitWithOptions(app.InitOptions{
+		ServerName:        "Moscow01",
+		ServerHost:        "vpn.example.com",
+		ExternalInterface: "eth0",
+		ProfileID:         "awg_2_0",
+		Name:              "awg20",
+		ListenPort:        51830,
+		IPv4Subnet:        "10.20.0.0/24",
+		DNS:               "1.1.1.1",
+		AllowedIPs:        "0.0.0.0/0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.ServerName != "Moscow01" {
+		t.Fatalf("ServerName = %q", state.ServerName)
+	}
+	state, err = svc.UpdateServerName("Office2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.ServerName != "Office2" {
+		t.Fatalf("ServerName = %q", state.ServerName)
+	}
+	state, err = svc.UpdateServerName("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.ServerName != "" {
+		t.Fatalf("ServerName = %q, want empty", state.ServerName)
+	}
+}
+
+func TestServerNameEnvironmentSeedsStateAndUIChangesWin(t *testing.T) {
+	t.Setenv("SERVER_NAME", "")
+	cfg := testConfig(t)
+	base := app.New(cfg)
+	state, err := base.Init()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.ServerName = "StoredName"
+	if err := storage.New(cfg.ConfigDir).Save(state); err != nil {
+		t.Fatal(err)
+	}
+	cfg.ServerName = "EnvName"
+	service := app.New(cfg)
+	state, err = service.Init()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.ServerName != "EnvName" {
+		t.Fatalf("ServerName = %q, want EnvName", state.ServerName)
+	}
+	state, err = service.UpdateServerName("UIName")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.ServerName != "UIName" || os.Getenv("SERVER_NAME") != "UIName" {
+		t.Fatalf("UI update did not synchronize state and environment: state=%q env=%q", state.ServerName, os.Getenv("SERVER_NAME"))
+	}
+	state, err = app.New(cfg).Init()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.ServerName != "UIName" || os.Getenv("SERVER_NAME") != "UIName" {
+		t.Fatalf("unchanged startup env overwrote UI name: state=%q env=%q", state.ServerName, os.Getenv("SERVER_NAME"))
+	}
+	cfg.ServerName = "ChangedEnv"
+	state, err = app.New(cfg).Init()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.ServerName != "ChangedEnv" {
+		t.Fatalf("changed startup env was not applied: %q", state.ServerName)
+	}
+}
+
 func TestInitRejectsUnsafeLoadedInterfaceNames(t *testing.T) {
 	for _, name := range []string{"../escape", "awg/escape", `awg\\escape`, "awg..escape"} {
 		t.Run(name, func(t *testing.T) {

@@ -37,6 +37,15 @@ const en = {
   events: {
     liveUpdateFailed: "live update failed",
   },
+  serverName: {
+    name: "Name",
+    add: "Set server name",
+    edit: "Change server name",
+    title: "Server name",
+    subtitle: "A short label helps distinguish this panel from other AWG servers.",
+    hint: "Optional. Use up to 32 English letters or numbers. Clear the field to remove the name.",
+    saved: "server name saved",
+  },
   aria: {
     globalActions: "Global actions",
     projectLinks: "Project links",
@@ -354,6 +363,15 @@ const ru: Messages = {
   },
   events: {
     liveUpdateFailed: "live-обновление не выполнено",
+  },
+  serverName: {
+    name: "Имя",
+    add: "Задать имя сервера",
+    edit: "Изменить имя сервера",
+    title: "Имя сервера",
+    subtitle: "Короткое имя помогает отличать эту панель от других AWG-серверов.",
+    hint: "Необязательно. До 32 английских букв или цифр. Очистите поле, чтобы убрать имя.",
+    saved: "имя сервера сохранено",
   },
   aria: {
     globalActions: "Глобальные действия",

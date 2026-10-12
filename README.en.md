@@ -69,6 +69,7 @@ cd awg-forge
 cp .env.example .env
 mkdir -p data
 docker compose run --rm --no-deps awg-forge init \
+  --server-name MyServer \
   --server-host vpn.example.com \
   --external-interface eth0 \
   --profile awg_2_0 \
@@ -79,13 +80,14 @@ docker compose run --rm --no-deps awg-forge db migrate
 docker compose up -d
 ```
 
-Replace the example host, interface, port, and subnet before running `init`. Also set `EXTERNAL_INTERFACE` in `.env` to the host's WAN interface, matching `--external-interface`; the running service uses `.env` for this setting. The command creates the first persistent tunnel in `data/state.json`; changing legacy tunnel variables in `.env` afterwards does not update it.
+Replace the example name, host, interface, port, and subnet before running `init`; omit `--server-name` if you do not want a name. Also set `EXTERNAL_INTERFACE` in `.env` to the host's WAN interface, matching `--external-interface`; the running service uses `.env` for this setting. The command creates the first persistent tunnel in `data/state.json`; changing legacy tunnel variables in `.env` afterwards does not update it.
 
 Docker host networking is the recommended production mode. It lets tunnels created in the UI use different UDP ports without editing Docker port mappings.
 
 ## Important Settings
 
 - `.env` stores container and Web UI runtime settings; tunnels are stored in `data/state.json`.
+- `SERVER_NAME` is an optional initial ASCII alphanumeric panel name; the name always remains editable from the Web UI header, and an unchanged startup environment does not overwrite the saved value after a restart.
 - `EXTERNAL_INTERFACE` is the server external interface for WAN egress.
 - `WEBUI_HOST=127.0.0.1` is the safe default for SSH tunnel access.
 - `APPLY_CONFIG=true` applies runtime tunnels and firewall rules.

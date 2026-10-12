@@ -93,6 +93,7 @@ func run(args []string) error {
 func runInit(cfg config.Config, svc *app.Service, args []string) error {
 	options := app.InitOptionsFromConfig(cfg)
 	flags := flag.NewFlagSet("init", flag.ContinueOnError)
+	flags.StringVar(&options.ServerName, "server-name", options.ServerName, "optional ASCII alphanumeric server name shown in the Web UI")
 	flags.StringVar(&options.ServerHost, "server-host", options.ServerHost, "server host or public IP written to generated client configs")
 	flags.StringVar(&options.ExternalInterface, "external-interface", options.ExternalInterface, "external WAN interface for IPv4 masquerade")
 	flags.StringVar(&options.ProfileID, "profile", options.ProfileID, "protocol profile: awg_legacy_1_0, awg_1_5, awg_2_0, or experimental awg_3")
@@ -107,7 +108,7 @@ func runInit(cfg config.Config, svc *app.Service, args []string) error {
 		return err
 	}
 	if flags.NArg() != 0 {
-		return errors.New("usage: awg-forge init [--server-host host] [--external-interface iface] [--profile id] [--tunnel-name name] [--listen-port port] [--ipv4-subnet cidr] [--dns dns] [--allowed-ips cidr] [--keepalive seconds] [--mtu mtu]")
+		return errors.New("usage: awg-forge init [--server-name name] [--server-host host] [--external-interface iface] [--profile id] [--tunnel-name name] [--listen-port port] [--ipv4-subnet cidr] [--dns dns] [--allowed-ips cidr] [--keepalive seconds] [--mtu mtu]")
 	}
 	_, err := svc.InitWithOptions(options)
 	return err

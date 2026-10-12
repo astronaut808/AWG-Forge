@@ -2,6 +2,7 @@
 
 [`api/openapi.json`](../../api/openapi.json) is the OpenAPI 3.1 contract for the stable control-plane
 requests used by the bundled Web UI. It currently covers authentication, state,
+the optional server name,
 tunnel and client lifecycle operations, traffic limits, and WARP management.
 Download, QR, backup, restore, diagnostics, and support-bundle endpoints remain
 private Web UI details and are intentionally outside this initial contract.

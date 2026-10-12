@@ -84,6 +84,14 @@ export function state(): Promise<AppState> {
   return request("/api/state");
 }
 
+export function updateServerName(name: string) {
+  return request<{ server_name: string }>("/api/server-name", {
+    method: "PATCH",
+    body: { name },
+    idempotencyKey: newIdempotencyKey(),
+  });
+}
+
 export function createTunnel(body: { profile: string; name: string; port: number; automatic_port?: boolean; subnet: string; egress_mode: string }) {
   return request("/api/tunnels", { method: "POST", body, idempotencyKey: newIdempotencyKey() });
 }

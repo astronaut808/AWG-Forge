@@ -242,6 +242,37 @@ label small {
   color: var(--muted);
 }
 
+.server-identity {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  flex-wrap: wrap;
+}
+
+.server-name-button {
+  min-height: 0;
+  margin: 0;
+  padding: 1px 5px;
+  color: var(--muted);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  line-height: 1.35;
+  cursor: pointer;
+}
+
+.server-name-button.configured {
+  color: var(--brand);
+  border-style: solid;
+  font-weight: 650;
+}
+
+.server-name-button:hover,
+.server-name-button:focus-visible {
+  color: var(--brand-2);
+  border-color: var(--border-strong);
+}
+
 .toolbar,
 .actions,
 .badges,

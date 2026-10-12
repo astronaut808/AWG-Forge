@@ -33,6 +33,7 @@ import {
 import "./styles.css";
 
 type Modal =
+  | { kind: "server-name" }
   | { kind: "create-tunnel"; profile: Profile }
   | { kind: "settings"; tunnel: Tunnel }
   | { kind: "protocol"; tunnel: Tunnel }
@@ -188,7 +189,7 @@ function App() {
       </I18nContext.Provider>
     );
   }
-  if (!active) return <I18nContext.Provider value={i18n}><Shell state={state} {...shellProps} logout={() => doLogout(setState)} openMaintenance={() => setModal({ kind: "maintenance" })}><Empty title={m.dashboard.noProfiles} text={m.dashboard.noProfilesText} /></Shell></I18nContext.Provider>;
+  if (!active) return <I18nContext.Provider value={i18n}><Shell state={state} {...shellProps} logout={() => doLogout(setState)} editServerName={() => setModal({ kind: "server-name" })} openMaintenance={() => setModal({ kind: "maintenance" })}><Empty title={m.dashboard.noProfiles} text={m.dashboard.noProfilesText} /></Shell></I18nContext.Provider>;
 
   const renderTunnel = (tunnel: Tunnel) => (
     <TunnelCard
@@ -220,7 +221,7 @@ function App() {
 
   return (
     <I18nContext.Provider value={i18n}>
-    <Shell state={state} {...shellProps} logout={() => doLogout(setState)} openMaintenance={() => setModal({ kind: "maintenance" })}>
+    <Shell state={state} {...shellProps} logout={() => doLogout(setState)} editServerName={() => setModal({ kind: "server-name" })} openMaintenance={() => setModal({ kind: "maintenance" })}>
       <TunnelFirstDashboard
         profiles={profiles}
         tunnels={allTunnels}
@@ -304,17 +305,18 @@ type ShellProps = {
   locale: Locale;
   setLocale: (locale: Locale) => void;
   logout: () => void;
+  editServerName: () => void;
   openMaintenance: () => void;
   children: preact.ComponentChildren;
 };
 
 function Shell(props: ShellProps) {
-  const { state, theme, setTheme, locale, setLocale, logout, openMaintenance, children } = props;
+  const { state, theme, setTheme, locale, setLocale, logout, editServerName, openMaintenance, children } = props;
   const { m } = useI18n();
   return (
     <main class="app-shell">
       <header class="topbar panel">
-        <Brand subtitle={<><span class="mono">{state.server_host}</span> · {m.dashboard.tunnelCount(state.tunnels.length)}</>} />
+        <Brand subtitle={<ServerIdentity state={state} onEdit={editServerName} />} />
         <nav class="toolbar" aria-label={m.aria.globalActions}>
           <button class="button icon" type="button" title={m.aria.toggleTheme} aria-label={m.aria.toggleTheme} onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>{theme === "dark" ? "☼" : "☾"}</button>
           <button class="button" type="button" title={m.aria.toggleLanguage} aria-label={m.aria.toggleLanguage} onClick={() => setLocale(locale === "en" ? "ru" : "en")}>{locale === "en" ? "RU" : "EN"}</button>
@@ -326,6 +328,15 @@ function Shell(props: ShellProps) {
       <FooterLinks version={state.build?.version || "dev"} />
     </main>
   );
+}
+
+function ServerIdentity({ state, onEdit }: { state: AppState; onEdit: () => void }) {
+  const { m } = useI18n();
+  const address = <><span class="mono">{state.server_host}</span> · {m.dashboard.tunnelCount(state.tunnels.length)}</>;
+  if (state.server_name) {
+    return <span class="server-identity"><button class="server-name-button configured" type="button" title={m.serverName.edit} aria-label={m.serverName.edit} onClick={onEdit}>{state.server_name}</button> · {address}</span>;
+  }
+  return <span class="server-identity">{address} <button class="server-name-button" type="button" title={m.serverName.add} aria-label={m.serverName.add} onClick={onEdit}>+ {m.serverName.name}</button></span>;
 }
 
 function Brand({ subtitle }: { subtitle?: preact.ComponentChildren }) {
@@ -538,6 +549,7 @@ function ModalContent({ modal, state, notify, close, reload, runAction }: {
   reload: () => Promise<void>;
   runAction: RunAction;
 }) {
+  if (modal.kind === "server-name") return <ServerNameForm state={state} runAction={runAction} />;
   if (modal.kind === "create-tunnel") return <CreateTunnelForm state={state} profile={modal.profile} runAction={runAction} />;
   if (modal.kind === "settings") return <TunnelSettingsForm state={state} tunnel={modal.tunnel} runAction={runAction} />;
   if (modal.kind === "protocol") return <ProtocolForm tunnel={modal.tunnel} runAction={runAction} />;
@@ -548,6 +560,14 @@ function ModalContent({ modal, state, notify, close, reload, runAction }: {
   }
   if (modal.kind === "delete-tunnel") return <DeleteTunnelConfirmation tunnel={modal.tunnel} close={close} runAction={runAction} />;
   return <MaintenanceCenter state={state} notify={notify} close={close} reload={reload} />;
+}
+
+function ServerNameForm({ state, runAction }: { state: AppState; runAction: RunAction }) {
+  const { m } = useI18n();
+  return <Form title={m.serverName.title} subtitle={m.serverName.subtitle} submit={m.common.save} onSubmit={(form) => runAction(m.serverName.saved, () => api.updateServerName(field(form, "name")), { errorMode: "inline" })}>
+    <label>{m.serverName.name}<input aria-label={m.serverName.name} name="name" defaultValue={state.server_name || ""} pattern="[A-Za-z0-9]*" maxLength={32} /></label>
+    <small class="form-note">{m.serverName.hint}</small>
+  </Form>;
 }
 
 function DeleteTunnelConfirmation({ tunnel, close, runAction }: { tunnel: Tunnel; close: () => void; runAction: RunAction }) {

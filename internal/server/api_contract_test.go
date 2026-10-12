@@ -31,6 +31,7 @@ func TestOpenAPIContractDocumentsCoreControlPlane(t *testing.T) {
 	for path, method := range map[string]string{
 		"/api/login":                      http.MethodPost,
 		"/api/state":                      http.MethodGet,
+		"/api/server-name":                http.MethodPatch,
 		"/api/tunnels":                    http.MethodPost,
 		"/api/tunnels/{id}/settings":      http.MethodPatch,
 		"/api/tunnels/{id}/protocol":      http.MethodPatch,

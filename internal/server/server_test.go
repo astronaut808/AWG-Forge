@@ -162,6 +162,65 @@ func TestPublicStateExposesAWG3OnlyWithLaboratoryRuntime(t *testing.T) {
 	}
 }
 
+func TestPublicStateIncludesServerName(t *testing.T) {
+	cfg := config.Config{
+		ConfigDir:         t.TempDir(),
+		ServerName:        "EnvName",
+		ServerHost:        "vpn.example.com",
+		ExternalInterface: "eth0",
+	}
+	w := &web{cfg: cfg, service: app.New(cfg)}
+	payload := w.publicState(context.Background(), config.State{ServerName: "EnvName"})
+	if got, want := payload["server_name"], "EnvName"; got != want {
+		t.Fatalf("server_name = %v, want %v", got, want)
+	}
+}
+
+func TestServerNameAPIUpdatesAndClearsName(t *testing.T) {
+	cfg := config.Config{
+		ConfigDir:         t.TempDir(),
+		ServerHost:        "vpn.example.com",
+		ExternalInterface: "eth0",
+	}
+	w := &web{cfg: cfg, service: app.New(cfg), idem: map[string]*idempotencyEntry{}}
+	for _, tc := range []struct {
+		body string
+		want string
+	}{
+		{body: `{"name":"Moscow02"}`, want: "Moscow02"},
+		{body: `{"name":""}`, want: ""},
+	} {
+		r := httptest.NewRequest(http.MethodPatch, "http://127.0.0.1/api/server-name", strings.NewReader(tc.body))
+		r.Header.Set("Origin", "http://127.0.0.1")
+		recorder := httptest.NewRecorder()
+		w.serverNameAPI(recorder, r)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+		}
+		state, err := w.service.State()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if state.ServerName != tc.want {
+			t.Fatalf("ServerName = %q, want %q", state.ServerName, tc.want)
+		}
+	}
+}
+
+func TestServerNameAPIRejectsInvalidName(t *testing.T) {
+	t.Run("invalid", func(t *testing.T) {
+		cfg := config.Config{ConfigDir: t.TempDir(), ServerHost: "vpn.example.com", ExternalInterface: "eth0"}
+		w := &web{cfg: cfg, service: app.New(cfg), idem: map[string]*idempotencyEntry{}}
+		r := httptest.NewRequest(http.MethodPatch, "http://127.0.0.1/api/server-name", strings.NewReader(`{"name":"bad-name"}`))
+		r.Header.Set("Origin", "http://127.0.0.1")
+		recorder := httptest.NewRecorder()
+		w.serverNameAPI(recorder, r)
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+		}
+	})
+}
+
 func TestSecurityHeadersAllowOnlyImageBlobURLs(t *testing.T) {
 	w := &web{}
 	rr := httptest.NewRecorder()

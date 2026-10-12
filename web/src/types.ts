@@ -163,6 +163,7 @@ export type TLSSummary = {
 export type AppState = {
   authenticated: boolean;
   apply_enabled: boolean;
+  server_name: string;
   server_host: string;
   warp: WarpSummary;
   database: DatabaseSummary;

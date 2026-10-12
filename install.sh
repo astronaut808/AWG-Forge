@@ -624,6 +624,11 @@ validate_port() {
   [[ "$value" =~ ^[0-9]+$ ]] && (( value >= 1 && value <= 65535 ))
 }
 
+validate_server_name() {
+  local value="$1"
+  [[ -z "$value" || ( ${#value} -le 32 && "$value" =~ ^[A-Za-z0-9]+$ ) ]]
+}
+
 normalize_acme_domain() {
   local domain="$1" label
   domain="${domain#"${domain%%[![:space:]]*}"}"
@@ -829,6 +834,7 @@ write_env() {
   fi
   set_env_value WEBUI_HOST "$webui_host"
   set_env_value WEBUI_PORT "$webui_port"
+  ensure_env_value SERVER_NAME ""
   set_env_value EXTERNAL_INTERFACE "$external_interface"
   if [[ "$mode" == "fresh" ]]; then
     set_env_value PASSWORD "$password"
@@ -886,16 +892,17 @@ migrate_sqlite() {
 }
 
 initialize_state() {
-  local server_host="$1"
-  local tunnel_name="$2"
-  local listen_port="$3"
-  local external_interface="$4"
-  local ipv4_subnet="$5"
-  local dns="$6"
-  local allowed_ips="$7"
-  local keepalive="$8"
-  local mtu="$9"
-  local profile="${10}"
+  local server_name="$1"
+  local server_host="$2"
+  local tunnel_name="$3"
+  local listen_port="$4"
+  local external_interface="$5"
+  local ipv4_subnet="$6"
+  local dns="$7"
+  local allowed_ips="$8"
+  local keepalive="$9"
+  local mtu="${10}"
+  local profile="${11}"
 
   ensure_image_available
   local data_dir_abs
@@ -906,6 +913,7 @@ initialize_state() {
     --env-file "$ENV_FILE" \
     -v "$data_dir_abs:/etc/awg-forge$volume_suffix" \
     "$IMAGE" init \
+      --server-name "$server_name" \
       --server-host "$server_host" \
       --external-interface "$external_interface" \
       --profile "$profile" \
@@ -1292,9 +1300,15 @@ main() {
 
   printf '\n'
   bold "Network"
-  local server_host external_interface webui_host webui_port tls_mode tls_acme_domain tls_acme_ip tls_acme_email
+  local server_name server_host external_interface webui_host webui_port tls_mode tls_acme_domain tls_acme_ip tls_acme_email
+  server_name=""
   server_host="$default_host"
   if ! $existing_state; then
+    server_name="$(prompt "Server name (optional, letters and numbers only)")"
+    while ! validate_server_name "$server_name"; do
+      warn "Use at most 32 English letters or numbers, or leave the name empty"
+      server_name="$(prompt "Server name (optional, letters and numbers only)")"
+    done
     if [[ "$default_host" != "vpn.example.com" ]]; then
       muted "Detected outbound address: $default_host. Verify it is the public endpoint; NAT or floating IP can differ."
     fi
@@ -1483,7 +1497,7 @@ main() {
   if ! $existing_state; then
     printf '\n'
     bold "Initialize state"
-    initialize_state "$server_host" "$tunnel_name" "$listen_port" "$external_interface" "$ipv4_subnet" "$dns" "$allowed_ips" "$keepalive" "$mtu" "$profile"
+    initialize_state "$server_name" "$server_host" "$tunnel_name" "$listen_port" "$external_interface" "$ipv4_subnet" "$dns" "$allowed_ips" "$keepalive" "$mtu" "$profile"
 
     printf '\n'
     bold "Configure Web UI TLS"

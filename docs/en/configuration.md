@@ -6,6 +6,7 @@ The main example is [.env.example](../../.env.example).
 
 - `WEBUI_HOST`: Web UI bind address. Defaults to `127.0.0.1`.
 - `WEBUI_PORT`: Web UI port. Defaults to `51821`.
+- `SERVER_NAME`: optional ASCII alphanumeric name (up to 32 characters) shown in the panel header. It provides an initial or explicitly changed deployment value; the name always remains editable in the Web UI.
 - `PASSWORD`: Web UI password. Required for public binds and recommended always.
 - `SESSION_COOKIE_SECURE`: Secure cookie policy for UI sessions. Values: `auto`, `true`, `false`. Defaults to `auto`.
 - `WEBUI_TRUST_PROXY_HEADERS`: permits trusted `X-Forwarded-Proto` and `X-Forwarded-For` handling. Defaults to `false`.
@@ -32,6 +33,8 @@ The main example is [.env.example](../../.env.example).
 New installs keep runtime settings in `.env` and tunnel settings in `state.json`.
 
 During a fresh install, `install.sh` runs a one-shot `awg-forge init` container before starting the service. That command creates `data/state.json` with the selected first tunnel. After that, `docker compose up -d` starts from ready state, and tunnel settings are managed from the Web UI/API and persisted in `state.json`.
+
+The installer also offers an optional server name. It is stored in `state.json` and can later be changed or removed from the compact name control next to the server address in the header. Manual initialization can use `--server-name MyServer`, and deployment configuration can provide `SERVER_NAME=MyServer`. AWG-Forge remembers the last startup value: a later external change to `SERVER_NAME` is applied, while an unchanged old value does not overwrite a newer UI edit after restart. A UI edit also updates `SERVER_NAME` inside the running awg-forge process. Docker environment values and the host `.env` file are immutable from inside an existing container, so the host file itself is not rewritten.
 
 The installer asks for the protocol profile before tunnel defaults, so profile-specific defaults stay aligned. Pressing Enter on the profile question selects AWG 2.0. The installer selects a free UDP port from `30000-49999` by default; the profile ports below remain the defaults for manual selection:
 
