@@ -210,3 +210,16 @@ Main areas:
 - `internal/updates`: AmneziaWG upstream update checks.
 
 `internal/protocol` owns the ordered profile registry, profile IDs, display names, versions, editable parameter keys, defaults, validation, and rendering. `internal/server` owns browser-only presentation metadata such as tabs, grouping labels, the experimental marker, and runtime exposure. The frontend consumes profile names and status from `/api/state` and must not maintain its own profile-ID mapping. When adding a profile, register it once in `internal/protocol`, add its server presentation metadata, and extend the registry/catalog completeness tests.
+
+## Snapshot refresh checkpoint
+
+[Delivery design](../design/snapshot-refresh-delivery.md) defines the implemented
+read-only protocol. Controller migration 12 adds durable operations and archive
+validation; restore removes queue state within the authority-reset transaction.
+The single node worker owns sequence ordering and pending result retries, including
+DB-off. UI source remains in `web/`; regenerate embedded static files with
+`npm run ui:build`. Contracts and negative tests cover strict JSON, correlated
+success, replay and fencing. Run `make ci`, `make quality`, `make security-fast` and
+`go test -race ./...`; local final-image acceptance must include real TLS/mTLS worker
+and browser behavior plus Linux-root recovery tests. Native multi-host G12 remains
+an independent release requirement.

@@ -36,3 +36,30 @@ promise of third-party API stability. Future external multi-node automation
 will introduce a separately versioned `/api/v1` surface with scoped API tokens,
 TLS-only access, pagination, and an intentionally designed authentication model.
 It will not reuse browser session cookies as an external credential.
+
+## Snapshot refresh delivery
+
+`POST /api/controller/nodes/{node_id}/refresh` requires the existing administrator
+session and same-origin policy. Its strict JSON body includes UUID `operation_id`,
+UUID `idempotency_key`, `expected_state_epoch`, `expected_binding_epoch` and
+`expected_desired_generation`. Both IDs belong in the body; this route uses durable
+SQLite replay semantics rather than the local mutation response cache. Identical
+intent returns the same operation; changed intent with either reused ID returns
+`409 operation_fenced`. The UI reads safe status with
+`GET /api/controller/nodes/{node_id}/operations/{operation_id}`. Responses are
+`no-store` and disclose no lease, session or certificate credentials.
+
+Limits are 4096-byte strict requests/results, one pending request per node, 64
+retained rows per node, 4096 globally, at least five seconds between new requests
+per node and 64 admissions per minute globally. Capacity returns `429
+operation_limit`; unsupported capability returns `409 refresh_unsupported`, absent
+current presence/projection `409 node_unavailable`, and storage failure `503
+control_unavailable`. TTL is two minutes and retention ends 24 hours after expiry.
+Terminal statuses include succeeded, conflict, failed, expired and rejected.
+
+The implemented mTLS routes are `POST /control/v1/node/operations/poll` and
+`PUT /control/v1/node/operations/{operation_id}/result`; see the
+[internal control contract](../../api/control-v1.openapi.json) and
+[delivery design](../design/snapshot-refresh-delivery.md). The controller checks
+current identity, lease and accepted snapshot correlation before recording success.
+This internal protocol does not introduce a public operator API.

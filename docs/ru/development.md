@@ -210,3 +210,15 @@ Runtime и Docker image не требуют Node/npm/Deno. Эти инструм
 - `internal/updates`: AmneziaWG upstream update checks.
 
 `internal/protocol` владеет упорядоченным реестром профилей, их ID, отображаемыми именами, версиями, редактируемыми параметрами, значениями по умолчанию, валидацией и рендерингом. `internal/server` владеет только представлением для браузера: вкладками, групповыми метками, признаком экспериментального профиля и runtime-доступностью. Frontend получает имя и статус профиля из `/api/state` и не должен поддерживать собственную таблицу соответствия profile ID. При добавлении профиля его нужно один раз зарегистрировать в `internal/protocol`, добавить server presentation metadata и расширить тесты полноты реестра и API-каталога.
+
+## Checkpoint обновления снимка
+
+[Дизайн доставки](../design/snapshot-refresh-delivery.md) описывает реализованный
+read-only протокол. Migration 12 добавляет durable операции и archive validation;
+restore удаляет очередь в транзакции сброса authority. Единый worker узла управляет
+sequence и повторами pending result, включая DB-off. UI source хранится в `web/`;
+embedded static пересобирается через `npm run ui:build`. Contracts и negative tests
+проверяют strict JSON, коррелированный success, replay и fencing. Выполни `make ci`,
+`make quality`, `make security-fast`, `go test -race ./...`; приёмка итогового образа
+требует настоящего TLS/mTLS worker, браузера и Linux-root recovery tests. Native
+multi-host G12 остаётся самостоятельным release requirement.

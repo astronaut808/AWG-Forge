@@ -99,6 +99,9 @@ desired_json=excluded.desired_json, observations_json=excluded.observations_json
 	if err != nil {
 		return err
 	}
+	if err := correlateRefresh(ctx, tx, identity, issuer, serial, s, now); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 

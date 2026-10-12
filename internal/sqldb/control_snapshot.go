@@ -55,7 +55,12 @@ func VerifyControllerRegistrySnapshot(ctx context.Context, path, controllerID, i
 			return err
 		}
 		if version >= 11 {
-			return verifySnapshotProjections(queryCtx, db, controllerID)
+			if err := verifySnapshotProjections(queryCtx, db, controllerID); err != nil {
+				return err
+			}
+			if version >= 12 {
+				return verifySnapshotRefresh(queryCtx, db, controllerID)
+			}
 		}
 	}
 	return nil

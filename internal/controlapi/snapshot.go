@@ -27,17 +27,18 @@ const (
 // presenter. No keys, protocol parameters, notes, endpoints or raw diagnostics
 // cross this boundary. SessionID is a fence, not an authentication credential.
 type Snapshot struct {
-	ContractVersion   int               `json:"contract_version"`
-	SessionID         string            `json:"session_id"`
-	StateEpoch        string            `json:"state_epoch"`
-	BindingEpoch      uint64            `json:"binding_epoch"`
-	BootID            string            `json:"boot_id"`
-	BootSequence      uint64            `json:"boot_sequence"`
-	DesiredGeneration uint64            `json:"desired_generation"`
-	Sequence          uint64            `json:"snapshot_sequence"`
-	ObservedAt        time.Time         `json:"observed_at"`
-	Desired           DesiredProjection `json:"desired"`
-	Observations      Observations      `json:"observations"`
+	Refresh           *RefreshCorrelation `json:"refresh,omitempty"`
+	ContractVersion   int                 `json:"contract_version"`
+	SessionID         string              `json:"session_id"`
+	StateEpoch        string              `json:"state_epoch"`
+	BindingEpoch      uint64              `json:"binding_epoch"`
+	BootID            string              `json:"boot_id"`
+	BootSequence      uint64              `json:"boot_sequence"`
+	DesiredGeneration uint64              `json:"desired_generation"`
+	Sequence          uint64              `json:"snapshot_sequence"`
+	ObservedAt        time.Time           `json:"observed_at"`
+	Desired           DesiredProjection   `json:"desired"`
+	Observations      Observations        `json:"observations"`
 }
 
 type DesiredProjection struct {
@@ -153,6 +154,9 @@ func safeLabel(value string) bool {
 // JSON fields are separately rejected by the transport decoder.
 func (s Snapshot) Validate() error {
 	bad := errors.New("invalid snapshot")
+	if s.Refresh != nil && !s.Refresh.Valid() {
+		return bad
+	}
 	if s.ContractVersion != 1 || !validUUID(s.SessionID) || !validUUID(s.StateEpoch) || !validUUID(s.BootID) || s.BindingEpoch == 0 || s.BindingEpoch > math.MaxInt64 || s.BootSequence == 0 || s.BootSequence > math.MaxInt64 || s.Sequence == 0 || s.Sequence > math.MaxInt64 || s.DesiredGeneration > math.MaxInt64 || s.ObservedAt.IsZero() {
 		return bad
 	}

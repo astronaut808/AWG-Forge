@@ -8,6 +8,305 @@
   "servers": [{ "url": "/" }],
   "security": [{ "sessionCookie": [] }],
   "paths": {
+    "/api/controller/nodes/{node_id}/operations/{operation_id}": {
+      "get": {
+        "operationId": "getControllerNodeRefresh",
+        "summary": "Read durable refresh status",
+        "description": "Authenticated controller administrator; node/operation scoped allowlist with controller-owned expiry/completion time. Success requires correlated accepted snapshot. No lease/session/certificate material. Expired/fenced operations remain explicit; retry requires new IDs/current projection.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "in": "path",
+            "name": "operation_id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current durable operation status.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefreshStatus"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Safe error: invalid_refresh, controller_required, refresh_unsupported, node_unavailable, operation_fenced, operation_limit, operation_not_found or control_unavailable. No raw diagnostics.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Safe error: invalid_refresh, controller_required, refresh_unsupported, node_unavailable, operation_fenced, operation_limit, operation_not_found or control_unavailable. No raw diagnostics.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Safe error: invalid_refresh, controller_required, refresh_unsupported, node_unavailable, operation_fenced, operation_limit, operation_not_found or control_unavailable. No raw diagnostics.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Safe error: invalid_refresh, controller_required, refresh_unsupported, node_unavailable, operation_fenced, operation_limit, operation_not_found or control_unavailable. No raw diagnostics.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Safe error: invalid_refresh, controller_required, refresh_unsupported, node_unavailable, operation_fenced, operation_limit, operation_not_found or control_unavailable. No raw diagnostics.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Safe error: invalid_refresh, controller_required, refresh_unsupported, node_unavailable, operation_fenced, operation_limit, operation_not_found or control_unavailable. No raw diagnostics.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Safe error: invalid_refresh, controller_required, refresh_unsupported, node_unavailable, operation_fenced, operation_limit, operation_not_found or control_unavailable. No raw diagnostics.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/controller/nodes/{node_id}/refresh": {
+      "post": {
+        "operationId": "createControllerNodeRefresh",
+        "summary": "Request a read-only node snapshot refresh",
+        "description": "Authenticated controller administrator, same-origin/CSRF policy; no recent-auth requirement. Canonical immutable operation/idempotency UUIDs and exact expected state/binding/generation. Supported online node and current projection required. One pending per node; 64 retained rows per node, 4096 global; new request node interval 5 seconds/global 64 per minute. Fixed two-minute TTL and replay retention 24 hours after expiry. Exact intent replay returns same operation; changed intent or IDs conflicts. Durable SQLite required; never modifies node desired state or enables node SQLite. Internal browser surface only.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Durably queued or exact idempotent replay; queued is not success.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefreshStatus"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Safe error: invalid_refresh, controller_required, refresh_unsupported, node_unavailable, operation_fenced, operation_limit, operation_not_found or control_unavailable. No raw diagnostics.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Safe error: invalid_refresh, controller_required, refresh_unsupported, node_unavailable, operation_fenced, operation_limit, operation_not_found or control_unavailable. No raw diagnostics.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Safe error: invalid_refresh, controller_required, refresh_unsupported, node_unavailable, operation_fenced, operation_limit, operation_not_found or control_unavailable. No raw diagnostics.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Safe error: invalid_refresh, controller_required, refresh_unsupported, node_unavailable, operation_fenced, operation_limit, operation_not_found or control_unavailable. No raw diagnostics.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Safe error: invalid_refresh, controller_required, refresh_unsupported, node_unavailable, operation_fenced, operation_limit, operation_not_found or control_unavailable. No raw diagnostics.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Safe error: invalid_refresh, controller_required, refresh_unsupported, node_unavailable, operation_fenced, operation_limit, operation_not_found or control_unavailable. No raw diagnostics.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Safe error: invalid_refresh, controller_required, refresh_unsupported, node_unavailable, operation_fenced, operation_limit, operation_not_found or control_unavailable. No raw diagnostics.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/controller/nodes": {"get":{"operationId":"getControllerNodes","description":"Authenticated controller read-only view. No recent-auth requirement. Reachability and snapshot freshness are independent; remote mutations and secret exports are unavailable. Cache-Control: no-store. Returns at most 128 identities ordered by node_id, including revoked history. Pages are independent current reads, not a fixed registry snapshot.","responses":{"200":{"description":"Allowlisted node view.","headers":{"Cache-Control":{"$ref":"#/components/headers/NoStore"}},"content":{"application/json":{"schema":{"$ref":"#/components/schemas/NodeInventory"}}}},"401":{"$ref":"#/components/responses/AuthError"},"404":{"$ref":"#/components/responses/APIError"},"409":{"$ref":"#/components/responses/APIError"},"503":{"$ref":"#/components/responses/APIError"},"400":{"$ref":"#/components/responses/APIError"}},"parameters":[{"in":"query","name":"after","required":false,"schema":{"type":"string","format":"uuid"},"description":"Canonical node ID from next_cursor; omit for the first page."}]}},
     "/api/controller/nodes/{node_id}": {"get":{"operationId":"getControllerNodeProjection","description":"Authenticated controller read-only view. No recent-auth requirement. Reachability and snapshot freshness are independent; remote mutations and secret exports are unavailable. Cache-Control: no-store.","responses":{"200":{"description":"Allowlisted node view.","headers":{"Cache-Control":{"$ref":"#/components/headers/NoStore"}},"content":{"application/json":{"schema":{"$ref":"#/components/schemas/NodeProjection"}}}},"401":{"$ref":"#/components/responses/AuthError"},"404":{"$ref":"#/components/responses/APIError"},"409":{"$ref":"#/components/responses/APIError"},"503":{"$ref":"#/components/responses/APIError"}},"parameters":[{"in":"path","name":"node_id","required":true,"schema":{"type":"string","format":"uuid"}}]}},
     "/api/login": {
@@ -180,6 +479,136 @@
       "APIError": { "description": "Safe API error. Exact internal details are recorded only in the audit and runtime logs.", "headers": { "X-Request-ID": { "$ref": "#/components/headers/RequestID" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/APIError" } } } }
     },
     "schemas": {
+      "RefreshStatus": {
+        "type": "object",
+        "required": [
+          "controller_id",
+          "node_id",
+          "operation_id",
+          "state_epoch",
+          "binding_epoch",
+          "expected_desired_generation",
+          "status",
+          "code",
+          "issued_at",
+          "expires_at",
+          "completed_at",
+          "snapshot_sequence"
+        ],
+        "properties": {
+          "controller_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "node_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "operation_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "state_epoch": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "binding_epoch": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9223372036854775807
+          },
+          "expected_desired_generation": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9223372036854775807
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "leased",
+              "succeeded",
+              "conflict",
+              "failed",
+              "expired",
+              "rejected"
+            ]
+          },
+          "code": {
+            "type": "string",
+            "enum": [
+              "",
+              "snapshot_accepted",
+              "generation_conflict",
+              "collection_failed",
+              "operation_expired",
+              "operation_fenced"
+            ]
+          },
+          "issued_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "snapshot_sequence": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9223372036854775807
+          }
+        },
+        "additionalProperties": false
+      },
+      "RefreshRequest": {
+        "type": "object",
+        "required": [
+          "operation_id",
+          "idempotency_key",
+          "expected_state_epoch",
+          "expected_binding_epoch",
+          "expected_desired_generation"
+        ],
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "format": "uuid",
+            "not": {
+              "const": "00000000-0000-0000-0000-000000000000"
+            }
+          },
+          "idempotency_key": {
+            "type": "string",
+            "format": "uuid",
+            "not": {
+              "const": "00000000-0000-0000-0000-000000000000"
+            }
+          },
+          "expected_state_epoch": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "expected_binding_epoch": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9223372036854775807
+          },
+          "expected_desired_generation": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9223372036854775807
+          }
+        },
+        "additionalProperties": false
+      },
       "SnapshotClient": {"type":"object","required":["id","name","enabled","address"],"properties":{"id":{"type":"string","pattern":"^[a-f0-9]{16}$"},"name":{"type":"string","minLength":1,"maxLength":128},"enabled":{"type":"boolean"},"address":{"type":"string","format":"ipv4"}},"additionalProperties":false},
       "SnapshotTunnel": {"type":"object","required":["id","name","interface","profile","enabled","listen_port","revision","clients"],"properties":{"id":{"type":"string","pattern":"^[a-f0-9]{16}$"},"name":{"type":"string","minLength":1,"maxLength":128},"interface":{"type":"string","pattern":"^(?!.*\\.\\.)[a-zA-Z][a-zA-Z0-9_.-]{0,31}$"},"profile":{"type":"string","pattern":"^[a-z][a-z0-9_]{0,63}$"},"enabled":{"type":"boolean"},"listen_port":{"type":"integer","minimum":1,"maximum":65535},"revision":{"type":"integer","minimum":0,"maximum":2147483647},"clients":{"type":"array","maxItems":2048,"items":{"$ref":"#/components/schemas/SnapshotClient"}}},"additionalProperties":false},
       "DesiredProjection": {"type":"object","required":["tunnels"],"properties":{"tunnels":{"type":"array","maxItems":64,"items":{"$ref":"#/components/schemas/SnapshotTunnel"}}},"additionalProperties":false},

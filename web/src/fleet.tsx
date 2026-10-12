@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import * as api from "./api";
 import type { Messages } from "./i18n";
 import type { NodeInventory, NodeProjection, NodeView } from "./types";
+import { NodeRefresh } from "./node-refresh";
 import { formatBytes } from "./utils";
 
 type FleetProps = {
@@ -88,6 +89,7 @@ export function FleetWorkspace({ selected, select, unauthorized, m, children }: 
 function ReadOnlyNode({ node, controllerID, unauthorized, m }: { node: NodeView; controllerID: string; unauthorized: () => void; m: Messages }) {
   const [view, setView] = useState<NodeProjection | null>(null);
   const [failed, setFailed] = useState(false);
+  const [refreshVersion, setRefreshVersion] = useState(0);
   const unauthorizedRef = useRef(unauthorized);
   unauthorizedRef.current = unauthorized;
   useEffect(() => {
@@ -117,7 +119,7 @@ function ReadOnlyNode({ node, controllerID, unauthorized, m }: { node: NodeView;
     };
     void refresh();
     return () => { disposed = true; clearTimeout(timer); pending?.abort(); };
-  }, [node.node_id, node.binding_epoch, node.state_epoch, node.boot_id, controllerID]);
+  }, [node.node_id, node.binding_epoch, node.state_epoch, node.boot_id, controllerID, refreshVersion]);
 
   const data = view?.desired;
   const observations = view?.observations;
@@ -137,6 +139,7 @@ function ReadOnlyNode({ node, controllerID, unauthorized, m }: { node: NodeView;
       </div>
       <p class={`notice ${stale ? "warn" : ""}`} role="status">{stale ? m.fleet.stale : m.fleet.fresh}</p>
       <p class="muted">{m.fleet.connectionNote}</p>
+      <NodeRefresh key={`${controllerID}:${node.node_id}:${node.binding_epoch}:${node.state_epoch}:${node.boot_id}`} node={node} controllerID={controllerID} view={view} updated={() => { setView(null); setRefreshVersion((value) => value + 1); }} unauthorized={unauthorized} m={m} />
     </header>
     {failed ? <p class="panel fleet-summary" role="status">{m.fleet.unavailable}</p>
       : !view ? <p role="status">{m.common.loading}</p>

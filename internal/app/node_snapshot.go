@@ -57,7 +57,7 @@ func (s *Service) nodeSnapshotHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err = db.AcceptNodeSnapshot(ctx, sqldb.NodeIdentity{ControllerID: identity.ControllerID, NodeID: identity.NodeID, BindingEpoch: identity.BindingEpoch}, state.Controller.Control.CAGeneration, r.TLS.PeerCertificates[0].SerialNumber.String(), request, now)
-	if errors.Is(err, sqldb.ErrSnapshotFenced) {
+	if errors.Is(err, sqldb.ErrSnapshotFenced) || errors.Is(err, sqldb.ErrOperationFenced) {
 		controlJSON(w, 409, map[string]any{"type": "about:blank", "title": "Snapshot fenced", "status": 409, "code": "snapshot_fenced"})
 		return
 	}

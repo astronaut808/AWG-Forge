@@ -84,6 +84,7 @@ type Runtime struct {
 	closeReason      error
 	authorizer       Authorizer
 	routes           map[routeKey]Route
+	polls            map[string]bool
 	requests         chan struct{}
 	activeRequests   sync.WaitGroup // Admission/Add is serialized with Close by mu.
 	requestContext   context.Context
@@ -154,6 +155,7 @@ func NewWithOptions(material controlpki.Material, endpoint controlpki.Endpoint, 
 	requestContext, cancelRequests := context.WithCancel(context.Background())
 	runtime := &Runtime{
 		endpoint: endpoint, snapshot: snapshot, caPEM: append([]byte(nil), material.CACert...), pin: pin,
+		polls:       make(map[string]bool),
 		connections: make(map[*trackedConnection]struct{}), changed: make(chan struct{}, 1),
 		tlsConfig: &tls.Config{
 			MinVersion: tls.VersionTLS13,
@@ -377,6 +379,20 @@ func (runtime *Runtime) handler() http.Handler {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
+		if route.ID == "node.operation-poll" {
+			runtime.mu.Lock()
+			admitted := !runtime.polls[identity.NodeID] && len(runtime.polls) < 8
+			if admitted {
+				runtime.polls[identity.NodeID] = true
+			}
+			runtime.mu.Unlock()
+			if !admitted {
+				w.Header().Set("Retry-After", "5")
+				http.Error(w, "poll unavailable", http.StatusTooManyRequests)
+				return
+			}
+			defer func() { runtime.mu.Lock(); delete(runtime.polls, identity.NodeID); runtime.mu.Unlock() }()
+		}
 		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 		if err != nil {
 			http.Error(w, "invalid request", http.StatusRequestEntityTooLarge)
@@ -398,6 +414,14 @@ func (runtime *Runtime) resolveRoute(method, requestPath string) (Route, bool) {
 		return route, true
 	}
 	parts := strings.Split(requestPath, "/")
+	if len(parts) == 7 && parts[1] == "control" && parts[2] == "v1" && parts[3] == "node" && parts[4] == "operations" && parts[6] == "result" && method == http.MethodPut {
+		id, err := uuid.Parse(parts[5])
+		if err != nil || id.String() != parts[5] {
+			return Route{}, false
+		}
+		route, ok := runtime.routes[routeKey{method, "/control/v1/node/operations/{operation_id}/result"}]
+		return route, ok && !route.Bootstrap && route.ID == "node.operation-result"
+	}
 	if len(parts) != 5 && len(parts) != 6 || parts[1] != "control" || parts[2] != "v1" || parts[3] != "enrollments" {
 		return Route{}, false
 	}

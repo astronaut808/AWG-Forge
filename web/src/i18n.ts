@@ -79,6 +79,13 @@ const en = {
     unavailable: "Authentication is changing. Try again shortly.",
   },
   fleet: {
+    refresh: "Refresh", retryRefresh: "Retry refresh", refreshing: "Waiting for a new snapshot…",
+    refreshQueued: "Refresh queued", refreshLeased: "Updating snapshot", refreshSucceeded: "New snapshot accepted",
+    refreshConflict: "Node configuration changed. Read the current snapshot and retry.",
+    refreshExpired: "Refresh expired. Retry when the node is online.", refreshFailed: "Refresh failed. Try again.",
+    refreshRejected: "Refresh no longer authorized.", refreshUnknown: "Refresh status unavailable. Completion is unconfirmed.",
+    refreshUnsupported: "Update this node to request a snapshot refresh.", refreshLimit: "Refresh is already pending or its limit was reached. Try again shortly.",
+
     pages: "Node list pages",
     firstPage: "First page",
     nextPage: "Next page",
@@ -486,6 +493,13 @@ const ru: Messages = {
     unavailable: "Режим входа меняется. Повторите попытку позже.",
   },
   fleet: {
+    refresh: "Обновить", retryRefresh: "Повторить обновление", refreshing: "Ожидание нового снимка…",
+    refreshQueued: "Обновление в очереди", refreshLeased: "Снимок обновляется", refreshSucceeded: "Новый снимок принят",
+    refreshConflict: "Конфигурация узла изменилась. Дождитесь актуального снимка и повторите.",
+    refreshExpired: "Запрос истёк. Повторите, когда узел будет на связи.", refreshFailed: "Обновление не удалось. Повторите попытку.",
+    refreshRejected: "Обновление больше не разрешено.", refreshUnknown: "Статус недоступен. Завершение не подтверждено.",
+    refreshUnsupported: "Обновите узел, чтобы запрашивать обновление снимка.", refreshLimit: "Обновление уже ожидается или достигнут лимит. Повторите чуть позже.",
+
     pages: "Страницы списка узлов",
     firstPage: "Первая страница",
     nextPage: "Следующая страница",
