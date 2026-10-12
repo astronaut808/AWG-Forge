@@ -17,17 +17,16 @@ func validateClientOutcome(o controlapi.OperationEnvelope, r controlapi.Operatio
 	}
 	switch r.Status {
 	case "succeeded":
-		x := r.ClientResult
-		p := o.Operation.Payload
-		if r.Code != "client_enabled_committed" || x == nil || x.Generation != o.Generation+1 || x.TunnelID != p.TunnelID || x.ClientID != p.ClientID || x.Enabled != *p.Enabled || r.Generation < x.Generation {
+		if !r.MatchesClientSuccess(o) || r.Generation < r.CommittedGeneration() {
 			return ErrOperationFenced
 		}
+
 	case "conflict":
 		if r.Code != "generation_conflict" || r.Generation == o.Generation {
 			return ErrOperationFenced
 		}
 	case "failed":
-		if r.Code == "collection_failed" || r.ClientResult != nil {
+		if r.Code == "collection_failed" || r.ClientResult != nil || r.CreateResult != nil || r.DeleteResult != nil {
 			return ErrOperationFenced
 		}
 	default:
@@ -39,7 +38,9 @@ func clientSemanticReceipt(r controlapi.OperationReceipt) []byte {
 	raw, _ := json.Marshal(struct {
 		Status, Code, IntentHash string
 		Result                   *controlapi.ClientEnabledResult
-	}{r.Status, r.Code, r.IntentHash, r.ClientResult})
+		Create                   *controlapi.ClientCreateResult
+		Delete                   *controlapi.ClientDeleteResult
+	}{r.Status, r.Code, r.IntentHash, r.ClientResult, r.CreateResult, r.DeleteResult})
 	return raw
 }
 func completeClientEnabled(ctx context.Context, tx *sql.Tx, row refreshRow, o controlapi.OperationEnvelope, r controlapi.OperationReceipt, now time.Time) error {
@@ -47,7 +48,7 @@ func completeClientEnabled(ctx context.Context, tx *sql.Tx, row refreshRow, o co
 		return ErrOperationFenced
 	}
 	var cap int
-	if err := tx.QueryRowContext(ctx, `SELECT 1 FROM control_node_presence p,json_each(p.capabilities_json) c WHERE p.node_id=? AND c.value=?`, row.node, controlapi.ClientEnabledCapability).Scan(&cap); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT 1 FROM control_node_presence p,json_each(p.capabilities_json) c WHERE p.node_id=? AND c.value=?`, row.node, controlapi.OperationCapability(o.Operation.Kind)).Scan(&cap); err != nil {
 		return ErrOperationFenced
 	}
 	if terminalRefresh(row.status) {
@@ -85,7 +86,7 @@ func (db *DB) AcknowledgeClientResult(ctx context.Context, id NodeIdentity, issu
 		return err
 	}
 	var capability int
-	if err := tx.QueryRowContext(ctx, `SELECT 1 FROM control_node_presence p,json_each(p.capabilities_json) c WHERE p.node_id=? AND c.value=?`, id.NodeID, controlapi.ClientEnabledCapability).Scan(&capability); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT 1 FROM control_node_presence p,json_each(p.capabilities_json) c WHERE p.node_id=? AND c.value IN (?,?,?)`, id.NodeID, controlapi.ClientEnabledCapability, controlapi.ClientCreateCapability, controlapi.ClientDeleteCapability).Scan(&capability); err != nil {
 		return ErrOperationFenced
 	}
 	row, err := scanRefresh(tx.QueryRowContext(ctx, `SELECT `+refreshColumns+` FROM control_refresh_operations WHERE operation_id=? AND node_id=? AND controller_id=?`, operation, id.NodeID, id.ControllerID))
@@ -100,9 +101,13 @@ func (db *DB) AcknowledgeClientResult(ctx context.Context, id NodeIdentity, issu
 		return ErrOperationFenced
 	}
 	o, err := row.intent()
-	if err != nil || o.Operation.Kind != "client.enabled.set" || o.IntentHash() != a.IntentHash || o.StateEpoch != a.StateEpoch || o.BindingEpoch != a.BindingEpoch || len(row.receipt) == 0 || !terminalRefresh(row.status) {
+	if err != nil || !controlapi.IsClientMutation(o.Operation.Kind) || o.IntentHash() != a.IntentHash || o.StateEpoch != a.StateEpoch || o.BindingEpoch != a.BindingEpoch || len(row.receipt) == 0 || !terminalRefresh(row.status) {
 		return ErrOperationFenced
 	}
+	if err := tx.QueryRowContext(ctx, `SELECT 1 FROM control_node_presence p,json_each(p.capabilities_json) c WHERE p.node_id=? AND c.value=?`, id.NodeID, controlapi.OperationCapability(o.Operation.Kind)).Scan(&capability); err != nil {
+		return ErrOperationFenced
+	}
+
 	_, err = tx.ExecContext(ctx, `UPDATE control_refresh_operations SET node_acknowledged_at_unix_ms=COALESCE(node_acknowledged_at_unix_ms,?) WHERE operation_id=?`, now.UnixMilli(), row.id)
 	if err != nil {
 		return err

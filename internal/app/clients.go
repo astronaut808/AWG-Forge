@@ -65,26 +65,12 @@ func (s *Service) AddClientToTunnelWithOptions(tunnelID, name string, opts Clien
 	if err != nil {
 		return config.Client{}, err
 	}
-	ip, err := nextClientIP(state.Tunnels[idx])
+	client, err := newTunnelClient(state.Tunnels[idx], randomID(), name, opts.ExpiresAt)
 	if err != nil {
 		return config.Client{}, err
 	}
-	priv, pub, err := keys.PrivateKey()
-	if err != nil {
-		return config.Client{}, err
-	}
-	psk, err := keys.PresharedKey()
-	if err != nil {
-		return config.Client{}, err
-	}
-	now := time.Now().UTC()
-	client := config.Client{
-		ID: randomID(), TunnelID: state.Tunnels[idx].ID, Name: name, Enabled: true, IPv4Address: ip,
-		PrivateKey: priv, PublicKey: pub, PresharedKey: psk,
-		ConfigRevision: state.Tunnels[idx].ConfigRevision,
-		ExpiresAt:      opts.ExpiresAt.UTC(),
-		CreatedAt:      now, UpdatedAt: now,
-	}
+	now := client.CreatedAt
+
 	if opts.Persist != nil {
 		if err := opts.Persist(client); err != nil {
 			return config.Client{}, err
@@ -114,6 +100,27 @@ func (s *Service) AddClientToTunnelWithOptions(tunnelID, name string, opts Clien
 	}
 	s.log("info", "client.created", "client created", clientAuditFields(state.Tunnels[idx], client), nil)
 	return client, nil
+}
+
+// newTunnelClient is a candidate builder only; callers own locking and commit.
+func newTunnelClient(t config.Tunnel, id, name string, expires time.Time) (config.Client, error) {
+	if !clientNameRE.MatchString(name) {
+		return config.Client{}, errors.New("invalid client name")
+	}
+	ip, err := nextClientIP(t)
+	if err != nil {
+		return config.Client{}, err
+	}
+	priv, pub, err := keys.PrivateKey()
+	if err != nil {
+		return config.Client{}, err
+	}
+	psk, err := keys.PresharedKey()
+	if err != nil {
+		return config.Client{}, err
+	}
+	now := time.Now().UTC()
+	return config.Client{ID: id, TunnelID: t.ID, Name: name, Enabled: true, IPv4Address: ip, PrivateKey: priv, PublicKey: pub, PresharedKey: psk, ConfigRevision: t.ConfigRevision, ExpiresAt: expires.UTC(), CreatedAt: now, UpdatedAt: now}, nil
 }
 
 func (s *Service) RemoveClient(id string) error {

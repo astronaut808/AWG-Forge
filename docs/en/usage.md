@@ -267,9 +267,9 @@ If an official client cannot import the QR on a specific platform or version, do
 An authenticated controller administrator can select **This server** or an
 individual node. The local view retains its existing controls; node views show
 only tunnels, clients, live peer counters/handshakes and a limited runtime Doctor
-summary. A node that advertises `client.enabled.set.v1` also permits the narrow
-**Client access** action described below. Client configuration exports remain
-unavailable.
+summary. A node can advertise `client.enabled.set.v1`, `client.create.v1`, and
+`client.delete.v1` for the limited client actions described below. Client
+configuration exports remain unavailable.
 
 The node list is paged in node ID order, with up to 128 identities per page.
 Use **Next page** and **First page** to browse it. Changing pages clears the
@@ -302,9 +302,8 @@ full configurations, protocol parameters, QR/import payloads or raw diagnostics.
 The inventory response includes `next_cursor` when another page is available;
 pass it as `GET /api/controller/nodes?after=<next_cursor>`. Omit `after` for the
 first page. The cursor is a canonical node UUID, not an authorization token.
-Arbitrary commands, client creation/deletion and secret configuration exports remain
-future work. Local container acceptance does not close the external multi-host
-release gate.
+Arbitrary commands and secret configuration exports remain future work. Local
+container acceptance does not close the external multi-host release gate.
 
 ## Change client access on a selected node
 
@@ -341,6 +340,25 @@ The request expires after two minutes. A lease lasts at most 40 seconds; deliver
 can repeat after a crash. Refresh is read-only: configuration, generation,
 ConfigRevision, runtime configuration and history remain unchanged. Empty DB-off
 nodes stay empty and DB-off. Unsupported/offline nodes cannot receive new work.
-This read-only operation and `client.enabled.set` are the only delivered remote
-actions. Arbitrary commands, client creation/deletion and secret exports remain
-future work.
+This read-only operation and the limited client actions are the only delivered
+remote actions. Arbitrary commands and secret exports remain future work.
+
+## Create or delete a client on a selected node
+
+On an online node with a fresh projection, **Remote client management** exposes
+only the capabilities advertised by that node. Choose a tunnel, enter an ASCII
+client name, and confirm **Create client**. The browser assigns one lowercase
+16-hex client ID for that request. To remove a client, choose the tunnel and
+existing client, then confirm **Delete client**. The confirmation shows the
+node, tunnel, client, action, and complete fenced request before it is sent.
+
+The browser keeps the operation and both UUIDs only in memory. After an uncertain
+admission it retries the identical request; switching node, account, identity
+epochs, or logging out cancels browser work and clears it. Success requires the
+matching committed result and then a fresh projection at that generation with the
+new exact client ID present for creation or absent for deletion. A later
+generation can reflect an independent local change and is not overwritten.
+
+The actions remain disabled for offline, stale, unavailable, or unsupported
+nodes. They do not expose QR codes, import links, `.conf` files, private keys,
+PSKs, or other client configuration material.

@@ -341,7 +341,39 @@ const clientCases = [
   ["client browser honest reconciliation", clientStatusSchema, Object.fromEntries(Object.entries({ ...clientStatus, status: "reconciling", code: "", completed_at: null }).filter(([key]) => key !== "client_result")), true],
 ];
 for (const [name, validate, value, expected] of clientCases) assertValidation(name, validate, value, expected, controlAjv);
-console.log(`OpenAPI schema checks passed (${cases.length + controlCases.length + refreshCases.length + clientCases.length} cases)`);
+const crudCases = [];
+for (const action of ["Create", "Delete"]) {
+ const last = action === "Create" ? "name" : "confirmed";
+ const field = action.toLowerCase() + "_result";
+ const kind = "client." + action.toLowerCase();
+ const code = action === "Create" ? "client_created_committed" : "client_deleted_committed";
+ const requestSchema = ajv.compile(schemas["Client" + action + "Request"]);
+ const payload = { tunnel_id: "awg20", client_id: "0123456789abcdef", [last]: action === "Create" ? "phone" : true };
+ const request = { ...refresh, ...payload };
+ const result = { committed_desired_generation: 1, tunnel_id: payload.tunnel_id, client_id: payload.client_id, [action === "Create" ? "name" : "deleted"]: action === "Create" ? "phone" : true };
+ const receipt = { ...poll, desired_generation: 1, wait_seconds: 0, lease_token: ids.operation, status: "succeeded", code, intent_hash: "a".repeat(64), [field]: result };
+ const status = { ...clientStatus, kind, code, [field]: result }; delete status.client_result;
+ const statusSchema = ajv.compile(normalizeControlSchemas({ ...schemas["Client" + action + "OperationStatus"], $defs: { ["Client" + action + "Result"]: schemas["Client" + action + "Result"] } }));
+ crudCases.push(
+  [kind + " valid", requestSchema, request, true],
+  [kind + " missing field", requestSchema, Object.fromEntries(Object.entries(request).filter(([key]) => key !== last)), false],
+  [kind + " null", requestSchema, { ...request, [last]: null }, false],
+  [kind + " mismatched enabled", requestSchema, { ...request, enabled: false }, false],
+  [kind + " secret", requestSchema, { ...request, private_key: "canary" }, false],
+  [kind + " delivery", deliverySchema, { ...delivery, operation: { ...delivery.operation, operation: { kind, schema_version: 1, payload } } }, true],
+  [kind + " reconciliation", deliverySchema, { ...delivery, reconciliation_only: true, operation: { ...delivery.operation, operation: { kind, schema_version: 1, payload } } }, true],
+  [kind + " receipt", receiptSchema, receipt, true],
+  [kind + " mixed receipt", receiptSchema, { ...receipt, client_result: clientResult }, false],
+  [kind + " browser", statusSchema, status, true],
+  [kind + " mixed browser", statusSchema, { ...status, client_result: clientResult }, false],
+  [kind + " no result", statusSchema, Object.fromEntries(Object.entries(status).filter(([key]) => key !== field)), false],
+ );
+ if (action === "Create") {
+  crudCases.push(["create invalid stable ID", requestSchema, { ...request, client_id: "UUID" }, false], ["create invalid name", requestSchema, { ...request, name: "../" }, false], ["create max name", requestSchema, { ...request, name: "x".repeat(64) }, true]);
+ } else crudCases.push(["delete explicit false denied", requestSchema, { ...request, confirmed: false }, false]);
+}
+for (const [name, validate, value, expected] of crudCases) assertValidation(name, validate, value, expected, controlAjv);
+console.log(`OpenAPI schema checks passed (${cases.length + controlCases.length + refreshCases.length + clientCases.length + crudCases.length} cases)`);
 
 function readDocument(path) {
   return JSON.parse(fs.readFileSync(path, "utf8"));

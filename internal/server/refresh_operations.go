@@ -52,6 +52,41 @@ func (w *web) nodeRefreshAPI(rw http.ResponseWriter, r *http.Request, parts []st
 			return
 		}
 		writeJSON(rw, 202, result)
+	case len(parts) == 2 && (parts[1] == "client-create" || parts[1] == "client-delete"):
+		if r.Method != http.MethodPost {
+			writeError(rw, 405, "method not allowed")
+			return
+		}
+		if !w.validOrigin(r) {
+			writeError(rw, 403, "forbidden")
+			return
+		}
+		raw, err := io.ReadAll(http.MaxBytesReader(rw, r.Body, controlapi.MaxOperationBytes))
+		var request controlapi.RefreshRequest
+		var payload controlapi.ClientEnabledPayload
+		var kind string
+		if parts[1] == "client-create" {
+			var body controlapi.ClientCreateRequest
+			if err != nil || controlapi.DecodeOperation(raw, &body) != nil || body.Validate() != nil {
+				writeOperationError(rw, 400, "invalid_client_operation", "invalid client operation")
+				return
+			}
+			request, payload, kind = body.RefreshRequest, body.Payload(), "client.create"
+		} else {
+			var body controlapi.ClientDeleteRequest
+			if err != nil || controlapi.DecodeOperation(raw, &body) != nil || body.Validate() != nil {
+				writeOperationError(rw, 400, "invalid_client_operation", "invalid client operation")
+				return
+			}
+			request, payload, kind = body.RefreshRequest, body.Payload(), "client.delete"
+		}
+		result, err := w.service.CreateNodeClientMutation(ctx, parts[0], request, kind, payload)
+		if err != nil {
+			browserRefreshError(rw, err)
+			return
+		}
+		writeJSON(rw, 202, result)
+
 	case len(parts) == 2 && parts[1] == "refresh":
 		if r.Method != http.MethodPost {
 			writeError(rw, 405, "method not allowed")
@@ -92,6 +127,12 @@ func browserRefreshError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		writeOperationError(w, 404, "operation_not_found", "refresh not found")
+	case errors.Is(err, sqldb.ErrOperationTunnelMissing):
+		writeOperationError(w, 409, "tunnel_unavailable", "tunnel unavailable")
+	case errors.Is(err, sqldb.ErrOperationClientMissing):
+		writeOperationError(w, 409, "client_unavailable", "client unavailable")
+	case errors.Is(err, sqldb.ErrOperationResourceConflict):
+		writeOperationError(w, 409, "resource_conflict", "resource conflict")
 	case errors.Is(err, sqldb.ErrOperationFenced):
 		writeOperationError(w, 409, "operation_fenced", "refresh conflicts with current node state")
 	case errors.Is(err, sqldb.ErrOperationUnsupported):

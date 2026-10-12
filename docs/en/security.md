@@ -148,3 +148,21 @@ mutation lock or database transaction and are bounded to one per node/eight glob
 Cold restore deletes operations while disabling control and revoking old authority.
 DB-off nodes keep one pending result in memory: crash may repeat safe reads, without
 an exactly-once claim. No generic command or secret export is delivered.
+
+## Remote client mutation authority
+
+Client creation and deletion use the same durable queue, outbound mTLS channel,
+current authority checks, lease fencing, and two-minute operation expiry as other
+node operations. Admission requires the exact state epoch, binding epoch, desired
+generation, operation UUID, and idempotency UUID. A create request also carries a
+browser-assigned lowercase 16-hex client ID and an ASCII name; deletion carries
+the exact tunnel/client IDs and `confirmed: true`.
+
+The node validates all fences again before changing `state.json`, applies and
+rolls back through the existing mutation path, and returns only a matching
+committed generation and non-secret identity result. `client_unavailable`,
+`tunnel_unavailable`, `resource_conflict`, and `address_unavailable` never count
+as success. The controller and browser require a fresh projected generation with
+the exact created ID present or deleted ID absent before showing completion.
+They retain neither requests nor operation IDs in browser storage, and node
+views never provide configuration exports, QR payloads, keys, PSKs, or imports.

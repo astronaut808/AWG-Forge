@@ -54,6 +54,25 @@ func (s *Service) CreateNodeClientEnabled(ctx context.Context, node string, r co
 	defer func() { _ = db.Close() }()
 	return db.CreateClientEnabled(ctx, state.Controller.ControllerID, state.Controller.Control.CAGeneration, node, r, time.Now().UTC())
 }
+func (s *Service) CreateNodeClientMutation(ctx context.Context, node string, r controlapi.RefreshRequest, kind string, p controlapi.ClientEnabledPayload) (controlapi.OperationStatus, error) {
+	if !validControlUUID(node) || r.Validate() != nil || !controlapi.IsClientMutation(kind) || !p.ValidFor(kind) {
+		return controlapi.OperationStatus{}, sqldb.ErrOperationFenced
+	}
+	if err := s.lockControlRequest(ctx); err != nil {
+		return controlapi.OperationStatus{}, err
+	}
+	defer s.unlockStateMutation()
+	state, _, err := s.enrollmentStateLocked()
+	if err != nil {
+		return controlapi.OperationStatus{}, err
+	}
+	db, _, err := s.openControlRegistry(ctx)
+	if err != nil {
+		return controlapi.OperationStatus{}, err
+	}
+	defer func() { _ = db.Close() }()
+	return db.CreateClientMutation(ctx, state.Controller.ControllerID, state.Controller.Control.CAGeneration, node, r, kind, p, time.Now().UTC())
+}
 func (s *Service) NodeRefreshStatus(ctx context.Context, node, operation string) (controlapi.OperationStatus, error) {
 	if !validControlUUID(node) || !validControlUUID(operation) {
 		return controlapi.OperationStatus{}, sqldb.ErrOperationFenced

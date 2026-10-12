@@ -151,3 +151,22 @@ poll не удерживает mutation lock или DB transaction: максим
 authority. DB-off узел хранит один pending result в памяти: crash может повторить
 безопасное чтение, без обещания exactly-once. Произвольные команды и экспорт
 секретов не доставляются.
+
+## Authority удалённых изменений клиента
+
+Создание и удаление клиента используют ту же durable очередь, исходящий mTLS-канал,
+проверки актуальной authority, lease fencing и двухминутное истечение операции, что
+и другие действия узла. Приём требует точных state epoch, binding epoch, desired
+generation, UUID операции и UUID идемпотентности. Создание также содержит
+назначенный браузером ID из 16 строчных шестнадцатеричных символов и ASCII-имя;
+удаление содержит точные ID туннеля/клиента и `confirmed: true`.
+
+Узел снова проверяет все fences перед изменением `state.json`, применяет и
+откатывает через существующий mutation path, а в результате возвращает только
+точную committed generation и не содержащий секретов identity result.
+`client_unavailable`, `tunnel_unavailable`, `resource_conflict` и
+`address_unavailable` никогда не означают успех. Контроллер и браузер требуют
+свежий projected generation с присутствием точного созданного ID или отсутствием
+удалённого ID до показа завершения. Запросы и operation IDs не сохраняются в
+browser storage; представления узлов не выдают export конфигураций, QR payloads,
+ключи, PSK или import links.

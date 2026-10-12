@@ -46,10 +46,10 @@ func runRefresh(ctx context.Context, service *app.Service, cfg config.Config, cl
 	if delivery.Validate() != nil || delivery.Operation.StateEpoch != p.StateEpoch || delivery.Operation.BindingEpoch != p.BindingEpoch || !time.Now().Before(delivery.LeaseExpiresAt) {
 		return errFenced
 	}
-	if delivery.Operation.Operation.Kind == "client.enabled.set" {
+	if controlapi.IsClientMutation(delivery.Operation.Operation.Kind) {
 		opCtx, cancel := context.WithDeadline(ctx, delivery.LeaseExpiresAt)
 		defer cancel()
-		outcome, err := service.ExecuteClientEnabled(opCtx, delivery.Operation)
+		outcome, err := service.ExecuteClientOperation(opCtx, delivery.Operation)
 		if err != nil {
 			return err
 		}

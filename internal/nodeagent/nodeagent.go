@@ -71,7 +71,7 @@ func Enroll(ctx context.Context, service EnrollmentService, invitation controlap
 	if name == "" {
 		name = "node"
 	}
-	request := controlapi.ClaimRequest{RequestedName: name, CSRPEM: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})), BootID: bootID, ApplicationVersion: buildinfo.Current().Version, ContractVersions: []int{1}, Capabilities: []string{"presence", "snapshot.v1", controlapi.RefreshCapability, controlapi.ClientEnabledCapability}}
+	request := controlapi.ClaimRequest{RequestedName: name, CSRPEM: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})), BootID: bootID, ApplicationVersion: buildinfo.Current().Version, ContractVersions: []int{1}, Capabilities: []string{"presence", "snapshot.v1", controlapi.RefreshCapability, controlapi.ClientEnabledCapability, controlapi.ClientCreateCapability, controlapi.ClientDeleteCapability}}
 	var accepted controlapi.ClaimAccepted
 	if err := requestJSON(ctx, client, invitation.ControllerURL, http.MethodPost, "/control/v1/enrollments/"+invitation.InvitationID+"/claim", invitation.Secret, request, &accepted); err != nil {
 		return errors.New("enrollment claim failed")
@@ -167,7 +167,7 @@ func Run(ctx context.Context, service *app.Service, cfg config.Config) error {
 		if state.NodeConnection == nil || *state.NodeConnection != connection || state.ManagedNode == nil || state.ManagedNode.ControllerID != managed.ControllerID || state.ManagedNode.NodeID != managed.NodeID || state.ManagedNode.BindingEpoch != managed.BindingEpoch || state.ManagedNode.StateEpoch != boot.StateEpoch || state.ManagedNode.BootSequence != boot.BootSequence {
 			return errors.New("node binding changed")
 		}
-		p := controlapi.Presence{BootID: boot.BootID, BootSequence: boot.BootSequence, ApplicationVersion: buildinfo.Current().Version, ContractVersion: 1, StateEpoch: boot.StateEpoch, BindingEpoch: state.ManagedNode.BindingEpoch, DesiredGeneration: state.ManagedNode.DesiredGeneration, Capabilities: []string{"presence", "snapshot.v1", controlapi.RefreshCapability, controlapi.ClientEnabledCapability}, ObservedAt: time.Now().UTC()}
+		p := controlapi.Presence{BootID: boot.BootID, BootSequence: boot.BootSequence, ApplicationVersion: buildinfo.Current().Version, ContractVersion: 1, StateEpoch: boot.StateEpoch, BindingEpoch: state.ManagedNode.BindingEpoch, DesiredGeneration: state.ManagedNode.DesiredGeneration, Capabilities: []string{"presence", "snapshot.v1", controlapi.RefreshCapability, controlapi.ClientEnabledCapability, controlapi.ClientCreateCapability, controlapi.ClientDeleteCapability}, ObservedAt: time.Now().UTC()}
 		var accepted controlapi.PresenceAccepted
 		err = requestJSON(ctx, client, state.NodeConnection.ControllerURL, http.MethodPut, "/control/v1/node/presence", "", p, &accepted)
 		presenceSucceeded := err == nil
