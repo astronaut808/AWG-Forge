@@ -706,6 +706,11 @@ func validateBackupData(ctx context.Context, password string, data []byte) (vali
 }
 
 func validateStateSanity(state config.State) error {
+	for _, name := range []string{state.ServerName, state.ServerNameEnv} {
+		if err := config.ValidateServerName(name); err != nil {
+			return fmt.Errorf("backup server name is invalid: %w", err)
+		}
+	}
 	if state.NodeConnection != nil && (state.EffectiveMode() != config.ModeNode || state.ManagedNode == nil || app.ValidateNodeConnection(state.NodeConnection) != nil) {
 		return errors.New("backup node connection is invalid")
 	}

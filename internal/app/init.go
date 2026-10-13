@@ -14,6 +14,8 @@ import (
 )
 
 type InitOptions struct {
+	ServerName          string
+	ServerNameEnv       string
 	ServerHost          string
 	ExternalInterface   string
 	ProfileID           string
@@ -127,6 +129,8 @@ func (s *Service) createInitialState(options InitOptions) (config.State, error) 
 		SchemaVersion:     config.CurrentStateSchemaVersion,
 		Mode:              config.ModeStandalone,
 		SessionSecret:     secret,
+		ServerName:        options.ServerName,
+		ServerNameEnv:     options.ServerNameEnv,
 		ServerHost:        options.ServerHost,
 		ExternalInterface: options.ExternalInterface,
 		Warp:              config.Warp{InterfaceName: "warp0", MTU: 1280, PersistentKeepalive: 25},
@@ -158,6 +162,8 @@ func InitOptionsFromConfig(cfg config.Config) InitOptions {
 		externalInterface = "eth0"
 	}
 	return InitOptions{
+		ServerName:          cfg.ServerName,
+		ServerNameEnv:       cfg.ServerName,
 		ServerHost:          cfg.ServerHost,
 		ExternalInterface:   externalInterface,
 		ProfileID:           profileID,
@@ -172,6 +178,8 @@ func InitOptionsFromConfig(cfg config.Config) InitOptions {
 }
 
 func resolveInitOptions(options InitOptions) (InitOptions, tunnelSpec, error) {
+	options.ServerName = strings.TrimSpace(options.ServerName)
+	options.ServerNameEnv = strings.TrimSpace(options.ServerNameEnv)
 	options.ServerHost = strings.TrimSpace(options.ServerHost)
 	options.ExternalInterface = strings.TrimSpace(options.ExternalInterface)
 	options.ProfileID = strings.TrimSpace(options.ProfileID)
@@ -204,6 +212,12 @@ func resolveInitOptions(options InitOptions) (InitOptions, tunnelSpec, error) {
 }
 
 func validateInitialTunnelOptions(options InitOptions, spec tunnelSpec) error {
+	if err := config.ValidateServerName(options.ServerName); err != nil {
+		return err
+	}
+	if err := config.ValidateServerName(options.ServerNameEnv); err != nil {
+		return err
+	}
 	if err := validateServerHost(options.ServerHost); err != nil {
 		return err
 	}
@@ -237,7 +251,13 @@ func (s *Service) repairLoadedState(state config.State) (config.State, error) {
 		return config.State{}, fmt.Errorf("clone state before repair: %w", err)
 	}
 	changed := false
+	serverNameChanged := false
 	protocolRepaired := false
+	for _, name := range []string{state.ServerName, state.ServerNameEnv, s.cfg.ServerName} {
+		if err := config.ValidateServerName(name); err != nil {
+			return config.State{}, err
+		}
+	}
 	if state.Mode == "" {
 		state.Mode = state.EffectiveMode()
 		changed = true
@@ -269,6 +289,13 @@ func (s *Service) repairLoadedState(state config.State) (config.State, error) {
 	if state.ServerHost == "" {
 		state.ServerHost = s.cfg.ServerHost
 		changed = true
+	}
+	if s.cfg.ServerName != state.ServerNameEnv {
+		state.ServerNameEnv = s.cfg.ServerName
+		if s.cfg.ServerName != "" {
+			state.ServerName = s.cfg.ServerName
+		}
+		serverNameChanged = true
 	}
 	if state.ExternalInterface != s.cfg.ExternalInterface {
 		state.ExternalInterface = s.cfg.ExternalInterface
@@ -316,14 +343,18 @@ func (s *Service) repairLoadedState(state config.State) (config.State, error) {
 			protocolRepaired = true
 		}
 	}
-	if changed {
+	if changed || serverNameChanged {
 		state.UpdatedAt = time.Now().UTC()
 		if protocolRepaired {
 			if _, err := s.store.BackupState(originalState, "repair-protocol-params"); err != nil {
 				return config.State{}, err
 			}
 		}
-		if err := s.saveLocalDesiredState(&state); err != nil {
+		if changed {
+			if err := s.saveLocalDesiredState(&state); err != nil {
+				return config.State{}, err
+			}
+		} else if err := s.store.Save(state); err != nil {
 			return config.State{}, err
 		}
 	}

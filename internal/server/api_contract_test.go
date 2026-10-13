@@ -48,6 +48,7 @@ func TestOpenAPIContractDocumentsCoreControlPlane(t *testing.T) {
 		"/api/controller/login/recovery":     http.MethodPost,
 		"/api/controller/reauth":             http.MethodPost,
 		"/api/controller/recovery-codes":     http.MethodPost,
+		"/api/server-name":                   http.MethodPatch,
 		"/api/state":                         http.MethodGet,
 		"/api/tunnels":                       http.MethodPost,
 		"/api/tunnels/{id}/settings":         http.MethodPatch,

@@ -13,6 +13,7 @@ if (!schemas) {
 const ajv = new Ajv2020({ allErrors: true, strict: true });
 addFormats(ajv);
 
+const serverName = ajv.compile(schemas.UpdateServerNameRequest);
 const createClient = ajv.compile(schemas.CreateClientRequest);
 const updateClient = ajv.compile(schemas.UpdateClientSettingsRequest);
 const profile = ajv.compile(schemas.Profile);
@@ -26,6 +27,12 @@ const schemaPassword = "p".repeat(16);
 const schemaTOTPSecret = "A".repeat(32);
 const schemaCode = "1".repeat(6);
 const cases = [
+  ["server name set", serverName, { name: "Office02" }, true],
+  ["server name clear", serverName, { name: "" }, true],
+  ["server name missing", serverName, {}, false],
+  ["server name null", serverName, { name: null }, false],
+  ["server name invalid", serverName, { name: "invalid-name" }, false],
+  ["server name too long", serverName, { name: "a".repeat(33) }, false],
   ["control enable requires saved backup", controlEnable, { receipt: schemaUUID, backup_saved: true }, true],
   ["control enable permits explicit external consent", controlEnable, { receipt: schemaUUID, backup_saved: true, allow_non_loopback: true }, true],
   ["control enable permits default loopback restriction", controlEnable, { receipt: schemaUUID, backup_saved: true, allow_non_loopback: false }, true],

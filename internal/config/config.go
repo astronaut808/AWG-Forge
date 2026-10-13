@@ -18,6 +18,7 @@ const (
 
 type Config struct {
 	ConfigDir              string
+	ServerName             string
 	TunnelName             string
 	ServerHost             string
 	ListenPort             int
@@ -58,6 +59,7 @@ func FromEnv() (Config, error) {
 	configDir := getenv("CONFIG_DIR", DefaultConfigDir)
 	cfg := Config{
 		ConfigDir:              configDir,
+		ServerName:             strings.TrimSpace(os.Getenv("SERVER_NAME")),
 		TunnelName:             getenv("TUNNEL_NAME", ""),
 		ServerHost:             getenv("SERVER_HOST", "127.0.0.1"),
 		ListenPort:             getenvInt("LISTEN_PORT", 0),
@@ -91,6 +93,9 @@ func FromEnv() (Config, error) {
 		DatabaseMaxOpenConns:   getenvInt("DATABASE_MAX_OPEN_CONNS", 1),
 		DatabaseMaxIdleConns:   getenvInt("DATABASE_MAX_IDLE_CONNS", 1),
 		LegacyTunnelEnvVars:    legacyTunnelEnvVars(),
+	}
+	if err := ValidateServerName(cfg.ServerName); err != nil {
+		return Config{}, err
 	}
 	if cfg.WebUIHost == "0.0.0.0" || cfg.WebUIHost == "::" {
 		if cfg.Password == "" {
@@ -136,6 +141,24 @@ func FromEnv() (Config, error) {
 		return Config{}, errors.New("DATABASE_MAX_IDLE_CONNS must not be negative")
 	}
 	return cfg, nil
+}
+
+// ValidateServerName accepts an optional short ASCII alphanumeric label.
+// Keeping the character set deliberately small makes the name safe to display
+// consistently in the UI, logs, backups, and shell-managed environments.
+func ValidateServerName(name string) error {
+	if name == "" {
+		return nil
+	}
+	if len(name) > 32 {
+		return errors.New("server name must be at most 32 characters")
+	}
+	for _, r := range name {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') {
+			return errors.New("server name must contain only ASCII letters and numbers")
+		}
+	}
+	return nil
 }
 
 func configureWebTLS(cfg *Config) error {

@@ -47,6 +47,7 @@ test("fleet views fence delayed responses, epochs and logout and remain read-onl
   await page.getByRole("button", { name: m.login.logIn, exact: true }).click();
   const selector = page.getByLabel(m.fleet.server, { exact: true });
   await expect(selector.locator("option")).toHaveCount(2);
+  await expect(page.getByRole("button", { name: m.serverName.add, exact: true })).toBeVisible();
   await expect.poll(() => Boolean(releaseInventory), { timeout: 10_000 }).toBe(true);
   await page.getByRole("button", { name: m.fleet.nextPage, exact: true }).click();
   await expect(selector.locator("option")).toHaveCount(2);
@@ -68,6 +69,8 @@ test("fleet views fence delayed responses, epochs and logout and remain read-onl
   release?.(); delayed = false;
   await expect(page.getByRole("heading", { name: "Remote 0", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: m.common.maintenance, exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: m.serverName.add, exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: m.serverName.edit, exact: true })).toHaveCount(0);
   await expect(page.getByText(m.fleet.noSnapshot, { exact: true })).toBeVisible();
   nodes[1].boot_id = "44444444-4444-4444-8444-444444444444";
   nodes[1].status = "offline";
@@ -75,6 +78,7 @@ test("fleet views fence delayed responses, epochs and logout and remain read-onl
   await selector.selectOption("");
   await expect(page.getByRole("heading", { name: "Remote 1", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: m.common.maintenance, exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: m.serverName.add, exact: true })).toBeVisible();
   await selector.selectOption(nodes[1].node_id);
   let releaseLogout: (() => void) | undefined;
   await page.route("**/api/logout", async (route) => {

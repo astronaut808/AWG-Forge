@@ -33,6 +33,7 @@ Host networking — рекомендуемый production-режим для awg-
 
 ```bash
 docker compose run --rm --no-deps awg-forge init \
+  --server-name MyServer \
   --server-host vpn.example.com \
   --external-interface eth0 \
   --profile awg_2_0 \
@@ -43,7 +44,7 @@ docker compose run --rm --no-deps awg-forge db migrate
 docker compose up -d
 ```
 
-Перед `init` замени пример host, интерфейса, порта и подсети. Также задай WAN-интерфейс хоста в `EXTERNAL_INTERFACE` файла `.env`, согласовав его с `--external-interface`: работающий сервис берет эту настройку из `.env`. Команда создаёт первый постоянный туннель в `data/state.json`; изменение legacy tunnel-переменных в `.env` после этого его не обновит.
+Перед `init` замени примеры имени, host, интерфейса, порта и подсети; если имя не нужно, убери `--server-name`. Также задай WAN-интерфейс хоста в `EXTERNAL_INTERFACE` файла `.env`, согласовав его с `--external-interface`: работающий сервис берет эту настройку из `.env`. Команда создаёт первый постоянный туннель в `data/state.json`; изменение legacy tunnel-переменных в `.env` после этого его не обновит.
 
 По умолчанию Web UI слушает `127.0.0.1:51821`. Для доступа используй SSH tunnel:
 
@@ -65,6 +66,7 @@ Bridge networking тоже может работать, но UDP-порты до
 
 ```bash
 docker compose -f docker-compose.bridge.yml run --rm --no-deps awg-forge init \
+  --server-name MyServer \
   --server-host vpn.example.com \
   --external-interface eth0 \
   --profile awg_2_0 \

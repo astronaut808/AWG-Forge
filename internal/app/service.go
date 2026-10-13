@@ -269,6 +269,31 @@ func (s *Service) State() (config.State, error) {
 	return s.Init()
 }
 
+func (s *Service) UpdateServerName(name string) (config.State, error) {
+	if err := s.lockStateMutation(); err != nil {
+		return config.State{}, err
+	}
+	defer s.unlockStateMutation()
+	name = strings.TrimSpace(name)
+	if err := config.ValidateServerName(name); err != nil {
+		return config.State{}, err
+	}
+	state, err := s.initLocked()
+	if err != nil {
+		return config.State{}, err
+	}
+	if state.ServerName == name {
+		return state, nil
+	}
+	state.ServerName = name
+	state.UpdatedAt = time.Now().UTC()
+	if err := s.store.Save(state); err != nil {
+		return config.State{}, err
+	}
+	s.log("info", "server.name.updated", "server name updated", map[string]any{"configured": name != ""}, nil)
+	return state, nil
+}
+
 func (s *Service) SessionSecret() (string, error) {
 	if s.cfg.SessionSecret != "" {
 		return s.cfg.SessionSecret, nil
