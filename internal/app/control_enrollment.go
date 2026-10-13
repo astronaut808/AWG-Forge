@@ -239,6 +239,8 @@ func (s *Service) enrollmentRoutes() []controlserver.Route {
 		{ID: "enrollment.claim", Method: http.MethodPost, Path: "/control/v1/enrollments/{invitation_id}/claim", Bootstrap: true, Handler: http.HandlerFunc(s.claimEnrollmentHTTP)},
 		{ID: "enrollment.status", Method: http.MethodGet, Path: "/control/v1/enrollments/{enrollment_id}", Bootstrap: true, Handler: http.HandlerFunc(s.enrollmentStatusHTTP)},
 		{ID: "node.operation-poll", Method: http.MethodPost, Path: "/control/v1/node/operations/poll", Handler: http.HandlerFunc(s.nodeOperationPollHTTP)},
+		{ID: "node.client-config-export-poll", Method: http.MethodPost, Path: "/control/v1/node/client-config-exports/poll", Handler: http.HandlerFunc(s.nodeClientConfigExportPollHTTP)},
+		{ID: "node.client-config-export-result", Method: http.MethodPut, Path: "/control/v1/node/client-config-exports/result", Handler: http.HandlerFunc(s.nodeClientConfigExportResultHTTP)},
 		{ID: "node.operation-result", Method: http.MethodPut, Path: "/control/v1/node/operations/{operation_id}/result", Handler: http.HandlerFunc(s.nodeOperationResultHTTP)},
 		{ID: "node.operation-ack", Method: http.MethodPost, Path: "/control/v1/node/operations/{operation_id}/ack", Handler: http.HandlerFunc(s.nodeClientResultAckHTTP)},
 		{ID: "node.snapshot", Method: http.MethodPut, Path: "/control/v1/node/snapshot", Handler: http.HandlerFunc(s.nodeSnapshotHTTP)},

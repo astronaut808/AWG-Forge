@@ -14,6 +14,10 @@ import (
 func (w *web) controllerNodesAPI(rw http.ResponseWriter, r *http.Request) {
 	noStore(rw)
 	if parts, ok := nodeRefreshPath(r.URL.Path); ok {
+		if len(parts) >= 2 && parts[1] == "client-config-exports" {
+			w.clientConfigExportAPI(rw, r, parts)
+			return
+		}
 		w.nodeRefreshAPI(rw, r, parts)
 		return
 	}

@@ -394,6 +394,9 @@ func (runtime *Runtime) handler() http.Handler {
 			defer func() { runtime.mu.Lock(); delete(runtime.polls, identity.NodeID); runtime.mu.Unlock() }()
 		}
 		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
+		if route.ID == "node.client-config-export-result" {
+			defer clear(body)
+		}
 		if err != nil {
 			http.Error(w, "invalid request", http.StatusRequestEntityTooLarge)
 			return

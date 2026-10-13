@@ -247,3 +247,6 @@ export type ClientCRUDOperationStatus = Omit<RefreshStatus, "status"> & {
   create_result?: ClientCreateResult;
   delete_result?: ClientDeleteResult;
 };
+
+export type ClientConfigExportRequest = { expected_state_epoch: string; expected_binding_epoch: number; expected_desired_generation: number; tunnel_id: string; client_id: string; expected_tunnel_revision: number };
+export type ClientConfigExport = { export_id: string; node_id: string; tunnel_id: string; client_id: string; expires_at: string };

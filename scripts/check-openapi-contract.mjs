@@ -77,6 +77,31 @@ controlAjv.addSchema({
   $defs: normalizeControlSchemas(controlSchemas),
 });
 
+const exportRequestSchema = ajv.compile(schemas.ClientConfigExportRequest);
+const exportLocatorSchema = ajv.compile(schemas.ClientConfigExportLocator);
+const exportMetadataSchema = ajv.compile(schemas.ClientConfigExport);
+const exportDeliverySchema = requireSchema(controlAjv, "ClientConfigExportDelivery");
+const exportResultSchema = requireSchema(controlAjv, "ClientConfigExportResult");
+const exportRequest = { expected_state_epoch: schemaUUID, expected_binding_epoch: 1, expected_desired_generation: 0, tunnel_id: "aaaaaaaaaaaaaaaa", client_id: "bbbbbbbbbbbbbbbb", expected_tunnel_revision: 1 };
+const exportAuthority = { session_id: schemaUUID, boot_id: schemaUUID, boot_sequence: 1, state_epoch: schemaUUID, binding_epoch: 1, desired_generation: 0, wait_seconds: 0 };
+const exportCases = [
+  ["export exact prepare", exportRequestSchema, exportRequest, true, ajv],
+  ["export rejects null generation", exportRequestSchema, { ...exportRequest, expected_desired_generation: null }, false, ajv],
+  ["export rejects paths", exportRequestSchema, { ...exportRequest, client_id: "../escape" }, false, ajv],
+  ["export rejects secret prepare", exportRequestSchema, { ...exportRequest, config: "secret" }, false, ajv],
+  ["export exact locator", exportLocatorSchema, { export_id: schemaUUID }, true, ajv],
+  ["export rejects secret metadata", exportMetadataSchema, { export_id: schemaUUID, node_id: schemaUUID, tunnel_id: "aaaaaaaaaaaaaaaa", client_id: "bbbbbbbbbbbbbbbb", expires_at: "2026-10-13T00:00:00Z", config: "secret" }, false, ajv],
+  ["export delivery", exportDeliverySchema, { export_id: schemaUUID, request: exportRequest, authority: exportAuthority, expires_at: "2026-10-13T00:00:00Z" }, true, controlAjv],
+  ["export rejects held poll", exportDeliverySchema, { export_id: schemaUUID, request: exportRequest, authority: { ...exportAuthority, wait_seconds: 5 }, expires_at: "2026-10-13T00:00:00Z" }, false, controlAjv],
+  ["export ready result", exportResultSchema, { export_id: schemaUUID, authority: exportAuthority, status: "ready", config: "disposable" }, true, controlAjv],
+  ["export fixed failure", exportResultSchema, { export_id: schemaUUID, authority: exportAuthority, status: "failed", config: "" }, true, controlAjv],
+  ["export failure forbids secret", exportResultSchema, { export_id: schemaUUID, authority: exportAuthority, status: "failed", config: "secret" }, false, controlAjv],
+  ["export rejects oversized config", exportResultSchema, { export_id: schemaUUID, authority: exportAuthority, status: "ready", config: "x".repeat(16385) }, false, controlAjv],
+];
+for (const [name, validate, value, expected, validator] of exportCases) {
+  assertValidation(name, validate, value, expected, validator);
+}
+
 const enrollmentClaim = requireSchema(controlAjv, "EnrollmentClaimRequest");
 const enrollmentBootstrap = requireSchema(controlAjv, "EnrollmentBootstrap");
 if (!enrollmentBootstrap({ ca_cert_pem: "public CA" }) || enrollmentBootstrap({ ca_cert_pem: "public CA", secret: "test canary" }) || enrollmentBootstrap({ ca_cert_pem: "x".repeat(8193) })) {
@@ -373,7 +398,7 @@ for (const action of ["Create", "Delete"]) {
  } else crudCases.push(["delete explicit false denied", requestSchema, { ...request, confirmed: false }, false]);
 }
 for (const [name, validate, value, expected] of crudCases) assertValidation(name, validate, value, expected, controlAjv);
-console.log(`OpenAPI schema checks passed (${cases.length + controlCases.length + refreshCases.length + clientCases.length + crudCases.length} cases)`);
+console.log(`OpenAPI schema checks passed (${cases.length + controlCases.length + refreshCases.length + clientCases.length + crudCases.length + exportCases.length} cases)`);
 
 function readDocument(path) {
   return JSON.parse(fs.readFileSync(path, "utf8"));
