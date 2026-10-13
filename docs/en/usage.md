@@ -267,9 +267,9 @@ If an official client cannot import the QR on a specific platform or version, do
 An authenticated controller administrator can select **This server** or an
 individual node. The local view retains its existing controls; node views show
 only tunnels, clients, live peer counters/handshakes and a limited runtime Doctor
-summary. A node can advertise `client.enabled.set.v1`, `client.create.v1`, and
-`client.delete.v1` for the limited client actions described below. Client
-configuration exports remain unavailable.
+summary. A node can advertise `client.enabled.set.v1`, `client.create.v1`,
+`client.delete.v1`, and `client.config.export.v1` for the limited client actions
+described below.
 
 The node list is paged in node ID order, with up to 128 identities per page.
 Use **Next page** and **First page** to browse it. Changing pages clears the
@@ -302,8 +302,8 @@ full configurations, protocol parameters, QR/import payloads or raw diagnostics.
 The inventory response includes `next_cursor` when another page is available;
 pass it as `GET /api/controller/nodes?after=<next_cursor>`. Omit `after` for the
 first page. The cursor is a canonical node UUID, not an authorization token.
-Arbitrary commands and secret configuration exports remain future work. Local
-container acceptance does not close the external multi-host release gate.
+Arbitrary commands remain future work. Local container acceptance does not close
+the external multi-host release gate.
 
 ## Change client access on a selected node
 
@@ -362,3 +362,26 @@ generation can reflect an independent local change and is not overwritten.
 The actions remain disabled for offline, stale, unavailable, or unsupported
 nodes. They do not expose QR codes, import links, `.conf` files, private keys,
 PSKs, or other client configuration material.
+
+## One-use remote `.conf` export
+
+On an online node with a fresh projection and `client.config.export.v1`, choose
+one existing client under **Remote client configuration** and confirm the shown
+node, tunnel, and client. The browser checks the fresh generation, epochs, tunnel
+revision, capability, and client association before sending the fenced export
+request. This read-only export does not change node state, desired generation, runtime configuration, or
+`ConfigRevision`.
+
+The controller prepares one opaque export for at most 60 seconds. The browser
+then makes one consuming download request, which can wait up to 20 seconds; the
+browser deadline is 45 seconds. A response starts a raw `.conf` attachment with
+`Cache-Control: no-store`. There is no retry for a download: an interrupted,
+malformed, or lost response may already have consumed the export, so start a new
+export instead. The UI keeps neither the configuration nor its export ID in
+browser storage and revokes its temporary download URL promptly.
+
+Switching node, account, identity context, or logging out aborts browser work and
+best-effort cancels a known export. The controller also checks the same browser
+session, recent MFA, current node authority, capability, exact projection and
+client association at preparation and consumption. If recent authentication has
+expired, reauthenticate in **Maintenance** and begin a new export.

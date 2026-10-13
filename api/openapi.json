@@ -8,6 +8,201 @@
   "servers": [{ "url": "/" }],
   "security": [{ "sessionCookie": [] }],
   "paths": {
+      "/api/controller/nodes/{node_id}/client-config-exports": {
+        "post": {
+          "operationId": "prepareNodeClientConfigExport",
+          "summary": "prepareNodeClientConfigExport",
+          "description": "Internal bundled browser flow; same-origin administrator cookie and recent MFA required. Bound to the preparing session and exact current certificate/session/boot/epochs/generation/tunnel revision/client association. Memory only; no durable operation, secret history, or state mutation. Cancel, expiry, control shutdown and authority changes fail closed.",
+          "parameters": [
+            {
+              "in": "path",
+              "name": "node_id",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          ],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientConfigExportRequest"
+                }
+              }
+            }
+          },
+          "responses": {
+            "202": {
+              "description": "One-use locator expires after 60 seconds. Maximum one pending export per node, 16 in total. Locator alone grants no authority.",
+              "headers": {
+                "Cache-Control": {
+                  "$ref": "#/components/headers/NoStore"
+                }
+              },
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/ClientConfigExport"
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/APIError"
+            },
+            "401": {
+              "$ref": "#/components/responses/AuthError"
+            },
+            "403": {
+              "$ref": "#/components/responses/APIError"
+            },
+            "409": {
+              "$ref": "#/components/responses/APIError"
+            },
+            "429": {
+              "$ref": "#/components/responses/APIError"
+            },
+            "503": {
+              "$ref": "#/components/responses/APIError"
+            }
+          }
+        }
+      },
+      "/api/controller/nodes/{node_id}/client-config-exports/download": {
+        "post": {
+          "operationId": "downloadNodeClientConfigExport",
+          "summary": "downloadNodeClientConfigExport",
+          "description": "Internal bundled browser flow; same-origin administrator cookie and recent MFA required. Bound to the preparing session and exact current certificate/session/boot/epochs/generation/tunnel revision/client association. Memory only; no durable operation, secret history, or state mutation. Cancel, expiry, control shutdown and authority changes fail closed.",
+          "parameters": [
+            {
+              "in": "path",
+              "name": "node_id",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          ],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientConfigExportLocator"
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "One consuming response, at most 16 KiB; waits at most 20 seconds. A lost response or timeout requires a new export.",
+              "headers": {
+                "Cache-Control": {
+                  "$ref": "#/components/headers/NoStore"
+                },
+                "Content-Disposition": {
+                  "schema": {
+                    "type": "string"
+                  },
+                  "description": "attachment with validated client ID filename."
+                },
+                "X-Content-Type-Options": {
+                  "schema": {
+                    "type": "string",
+                    "const": "nosniff"
+                  }
+                }
+              },
+              "content": {
+                "text/plain": {
+                  "schema": {
+                    "type": "string",
+                    "maxLength": 16384
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/APIError"
+            },
+            "401": {
+              "$ref": "#/components/responses/AuthError"
+            },
+            "403": {
+              "$ref": "#/components/responses/APIError"
+            },
+            "409": {
+              "$ref": "#/components/responses/APIError"
+            },
+            "429": {
+              "$ref": "#/components/responses/APIError"
+            },
+            "503": {
+              "$ref": "#/components/responses/APIError"
+            }
+          }
+        }
+      },
+      "/api/controller/nodes/{node_id}/client-config-exports/cancel": {
+        "post": {
+          "operationId": "cancelNodeClientConfigExport",
+          "summary": "cancelNodeClientConfigExport",
+          "description": "Internal bundled browser flow; same-origin administrator cookie and recent MFA required. Bound to the preparing session and exact current certificate/session/boot/epochs/generation/tunnel revision/client association. Memory only; no durable operation, secret history, or state mutation. Cancel, expiry, control shutdown and authority changes fail closed.",
+          "parameters": [
+            {
+              "in": "path",
+              "name": "node_id",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          ],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientConfigExportLocator"
+                }
+              }
+            }
+          },
+          "responses": {
+            "204": {
+              "description": "Canceled or already absent.",
+              "headers": {
+                "Cache-Control": {
+                  "$ref": "#/components/headers/NoStore"
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/APIError"
+            },
+            "401": {
+              "$ref": "#/components/responses/AuthError"
+            },
+            "403": {
+              "$ref": "#/components/responses/APIError"
+            },
+            "409": {
+              "$ref": "#/components/responses/APIError"
+            },
+            "429": {
+              "$ref": "#/components/responses/APIError"
+            },
+            "503": {
+              "$ref": "#/components/responses/APIError"
+            }
+          }
+        }
+      },
     "/api/controller/nodes/{node_id}/operations/{operation_id}": {
       "get": {
         "operationId": "getControllerNodeRefresh",
@@ -320,8 +515,8 @@
         }
       }
     },
-    "/api/controller/nodes": {"get":{"operationId":"getControllerNodes","description":"Authenticated controller read-only view. No recent-auth requirement. Reachability and snapshot freshness are independent; Only the documented typed client access operation is available; other remote mutations and secret exports are unavailable. Cache-Control: no-store. Returns at most 128 identities ordered by node_id, including revoked history. Pages are independent current reads, not a fixed registry snapshot.","responses":{"200":{"description":"Allowlisted node view.","headers":{"Cache-Control":{"$ref":"#/components/headers/NoStore"}},"content":{"application/json":{"schema":{"$ref":"#/components/schemas/NodeInventory"}}}},"401":{"$ref":"#/components/responses/AuthError"},"404":{"$ref":"#/components/responses/APIError"},"409":{"$ref":"#/components/responses/APIError"},"503":{"$ref":"#/components/responses/APIError"},"400":{"$ref":"#/components/responses/APIError"}},"parameters":[{"in":"query","name":"after","required":false,"schema":{"type":"string","format":"uuid"},"description":"Canonical node ID from next_cursor; omit for the first page."}]}},
-    "/api/controller/nodes/{node_id}": {"get":{"operationId":"getControllerNodeProjection","description":"Authenticated controller read-only view. No recent-auth requirement. Reachability and snapshot freshness are independent; Only the documented typed client access operation is available; other remote mutations and secret exports are unavailable. Cache-Control: no-store.","responses":{"200":{"description":"Allowlisted node view.","headers":{"Cache-Control":{"$ref":"#/components/headers/NoStore"}},"content":{"application/json":{"schema":{"$ref":"#/components/schemas/NodeProjection"}}}},"401":{"$ref":"#/components/responses/AuthError"},"404":{"$ref":"#/components/responses/APIError"},"409":{"$ref":"#/components/responses/APIError"},"503":{"$ref":"#/components/responses/APIError"}},"parameters":[{"in":"path","name":"node_id","required":true,"schema":{"type":"string","format":"uuid"}}]}},
+    "/api/controller/nodes": {"get":{"operationId":"getControllerNodes","description":"Authenticated controller read-only view. No recent-auth requirement. Reachability and snapshot freshness are independent; Typed client CRUD and one-use .conf export use dedicated routes; QR/vpn links and other remote mutations are unavailable. Cache-Control: no-store. Returns at most 128 identities ordered by node_id, including revoked history. Pages are independent current reads, not a fixed registry snapshot.","responses":{"200":{"description":"Allowlisted node view.","headers":{"Cache-Control":{"$ref":"#/components/headers/NoStore"}},"content":{"application/json":{"schema":{"$ref":"#/components/schemas/NodeInventory"}}}},"401":{"$ref":"#/components/responses/AuthError"},"404":{"$ref":"#/components/responses/APIError"},"409":{"$ref":"#/components/responses/APIError"},"503":{"$ref":"#/components/responses/APIError"},"400":{"$ref":"#/components/responses/APIError"}},"parameters":[{"in":"query","name":"after","required":false,"schema":{"type":"string","format":"uuid"},"description":"Canonical node ID from next_cursor; omit for the first page."}]}},
+    "/api/controller/nodes/{node_id}": {"get":{"operationId":"getControllerNodeProjection","description":"Authenticated controller read-only view. No recent-auth requirement. Reachability and snapshot freshness are independent; Typed client CRUD and one-use .conf export use dedicated routes; QR/vpn links and other remote mutations are unavailable. Cache-Control: no-store.","responses":{"200":{"description":"Allowlisted node view.","headers":{"Cache-Control":{"$ref":"#/components/headers/NoStore"}},"content":{"application/json":{"schema":{"$ref":"#/components/schemas/NodeProjection"}}}},"401":{"$ref":"#/components/responses/AuthError"},"404":{"$ref":"#/components/responses/APIError"},"409":{"$ref":"#/components/responses/APIError"},"503":{"$ref":"#/components/responses/APIError"}},"parameters":[{"in":"path","name":"node_id","required":true,"schema":{"type":"string","format":"uuid"}}]}},
     "/api/login": {
       "post": {
         "operationId": "login",
@@ -942,6 +1137,101 @@
       "APIError": { "description": "Safe API error. Exact internal details are recorded only in the audit and runtime logs.", "headers": { "X-Request-ID": { "$ref": "#/components/headers/RequestID" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/APIError" } } } }
     },
     "schemas": {
+        "ClientConfigExportRequest": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "expected_state_epoch",
+            "expected_binding_epoch",
+            "expected_desired_generation",
+            "tunnel_id",
+            "client_id",
+            "expected_tunnel_revision"
+          ],
+          "properties": {
+            "expected_state_epoch": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "expected_binding_epoch": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9223372036854775807
+            },
+            "expected_desired_generation": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            "tunnel_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_-]+$"
+            },
+            "client_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_-]+$"
+            },
+            "expected_tunnel_revision": {
+              "type": "integer",
+              "maximum": 2147483647,
+              "minimum": 1
+            }
+          }
+        },
+        "ClientConfigExportLocator": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "export_id"
+          ],
+          "properties": {
+            "export_id": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        },
+        "ClientConfigExport": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "export_id",
+            "node_id",
+            "tunnel_id",
+            "client_id",
+            "expires_at"
+          ],
+          "properties": {
+            "export_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "node_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "tunnel_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_-]+$"
+            },
+            "client_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_-]+$"
+            },
+            "expires_at": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        },
       "RefreshStatus": {
         "type": "object",
         "required": [

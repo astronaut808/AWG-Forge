@@ -446,6 +446,7 @@ func (owner *controlRuntimeOwner) discard() {
 }
 
 func (s *Service) stopControlOwnerLocked() error {
+	s.clientConfigExports.clear()
 	if s.controlOwner == nil {
 		return nil
 	}
@@ -509,6 +510,7 @@ func (s *Service) shutdownControlLoopback() error {
 }
 
 func (s *Service) cancelControlLifetime() {
+	s.clientConfigExports.clear()
 	if owner := s.controlLifetime.Load(); owner != nil {
 		owner.runtime.Close()
 		owner.cancel()

@@ -370,3 +370,14 @@ export function deleteRemoteClient(nodeID: string, body: import("./types").Clien
 export function remoteClientOperationStatus(nodeID: string, operationID: string, signal: AbortSignal): Promise<import("./types").ClientCRUDOperationStatus> {
   return request(`/api/controller/nodes/${encodeURIComponent(nodeID)}/operations/${encodeURIComponent(operationID)}`, { signal });
 }
+export function prepareClientConfigExport(nodeID: string, body: import("./types").ClientConfigExportRequest, signal: AbortSignal): Promise<import("./types").ClientConfigExport> {
+  return request(`/api/controller/nodes/${encodeURIComponent(nodeID)}/client-config-exports`, { method: "POST", body, signal });
+}
+export async function downloadClientConfigExport(nodeID: string, exportID: string, signal: AbortSignal): Promise<Response> {
+  const res = await fetch(`/api/controller/nodes/${encodeURIComponent(nodeID)}/client-config-exports/download`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ export_id: exportID }), cache: "no-store", signal });
+  if (!res.ok) { const error = await errorDetails(res); throw new APIError(res.status, error.message, error.code); }
+  return res;
+}
+export function cancelClientConfigExport(nodeID: string, exportID: string): Promise<void> {
+  return request(`/api/controller/nodes/${encodeURIComponent(nodeID)}/client-config-exports/cancel`, { method: "POST", body: { export_id: exportID } });
+}

@@ -166,3 +166,19 @@ as success. The controller and browser require a fresh projected generation with
 the exact created ID present or deleted ID absent before showing completion.
 They retain neither requests nor operation IDs in browser storage, and node
 views never provide configuration exports, QR payloads, keys, PSKs, or imports.
+
+## One-use remote client configuration export
+
+Remote `.conf` export is available only through the separate
+`client.config.export.v1` capability. Preparation and consumption both require a
+same-origin current controller session with recent MFA and the exact current node
+authority, state epoch, binding epoch, desired generation, tunnel revision and
+client association. The controller returns only opaque export metadata at
+preparation; the ID is a locator, never a bearer credential.
+
+The one-use secret is retained for at most 60 seconds and is claimed before the
+download response waits. The response is an authenticated `text/plain` attachment
+with `Cache-Control: no-store`; duplicate, cancelled, expired, mismatched, or
+uncertain downloads are denied. Losing a response requires a new export. Browser
+memory holds the ID only while the component is mounted; the `.conf` body is a
+transient Blob and is never logged or placed in Web Storage.

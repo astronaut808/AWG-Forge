@@ -60,6 +60,7 @@ type Service struct {
 	controlOwner          *controlRuntimeOwner
 	controlLifetime       atomic.Pointer[controlRuntimeOwner] // Cancellation access without Service.mu.
 	controlEnable         *controlEnableAuthorization
+	clientConfigExports   clientConfigExportStore
 }
 
 type runtimeOperations struct {

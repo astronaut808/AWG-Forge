@@ -71,7 +71,7 @@ func Enroll(ctx context.Context, service EnrollmentService, invitation controlap
 	if name == "" {
 		name = "node"
 	}
-	request := controlapi.ClaimRequest{RequestedName: name, CSRPEM: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})), BootID: bootID, ApplicationVersion: buildinfo.Current().Version, ContractVersions: []int{1}, Capabilities: []string{"presence", "snapshot.v1", controlapi.RefreshCapability, controlapi.ClientEnabledCapability, controlapi.ClientCreateCapability, controlapi.ClientDeleteCapability}}
+	request := controlapi.ClaimRequest{RequestedName: name, CSRPEM: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})), BootID: bootID, ApplicationVersion: buildinfo.Current().Version, ContractVersions: []int{1}, Capabilities: []string{"presence", "snapshot.v1", controlapi.RefreshCapability, controlapi.ClientEnabledCapability, controlapi.ClientCreateCapability, controlapi.ClientDeleteCapability, controlapi.ClientConfigExportCapability}}
 	var accepted controlapi.ClaimAccepted
 	if err := requestJSON(ctx, client, invitation.ControllerURL, http.MethodPost, "/control/v1/enrollments/"+invitation.InvitationID+"/claim", invitation.Secret, request, &accepted); err != nil {
 		return errors.New("enrollment claim failed")
@@ -167,7 +167,7 @@ func Run(ctx context.Context, service *app.Service, cfg config.Config) error {
 		if state.NodeConnection == nil || *state.NodeConnection != connection || state.ManagedNode == nil || state.ManagedNode.ControllerID != managed.ControllerID || state.ManagedNode.NodeID != managed.NodeID || state.ManagedNode.BindingEpoch != managed.BindingEpoch || state.ManagedNode.StateEpoch != boot.StateEpoch || state.ManagedNode.BootSequence != boot.BootSequence {
 			return errors.New("node binding changed")
 		}
-		p := controlapi.Presence{BootID: boot.BootID, BootSequence: boot.BootSequence, ApplicationVersion: buildinfo.Current().Version, ContractVersion: 1, StateEpoch: boot.StateEpoch, BindingEpoch: state.ManagedNode.BindingEpoch, DesiredGeneration: state.ManagedNode.DesiredGeneration, Capabilities: []string{"presence", "snapshot.v1", controlapi.RefreshCapability, controlapi.ClientEnabledCapability, controlapi.ClientCreateCapability, controlapi.ClientDeleteCapability}, ObservedAt: time.Now().UTC()}
+		p := controlapi.Presence{BootID: boot.BootID, BootSequence: boot.BootSequence, ApplicationVersion: buildinfo.Current().Version, ContractVersion: 1, StateEpoch: boot.StateEpoch, BindingEpoch: state.ManagedNode.BindingEpoch, DesiredGeneration: state.ManagedNode.DesiredGeneration, Capabilities: []string{"presence", "snapshot.v1", controlapi.RefreshCapability, controlapi.ClientEnabledCapability, controlapi.ClientCreateCapability, controlapi.ClientDeleteCapability, controlapi.ClientConfigExportCapability}, ObservedAt: time.Now().UTC()}
 		var accepted controlapi.PresenceAccepted
 		err = requestJSON(ctx, client, state.NodeConnection.ControllerURL, http.MethodPut, "/control/v1/node/presence", "", p, &accepted)
 		presenceSucceeded := err == nil
@@ -244,6 +244,11 @@ func Run(ctx context.Context, service *app.Service, cfg config.Config) error {
 		if presenceSucceeded && err == nil && !renewed {
 			poll := controlapi.OperationPoll{SessionID: accepted.SessionID, BootID: boot.BootID, BootSequence: boot.BootSequence, StateEpoch: boot.StateEpoch, BindingEpoch: managed.BindingEpoch, Generation: state.ManagedNode.DesiredGeneration, WaitSeconds: controlapi.MaxPollWait}
 			refreshCtx, cancelRefresh := context.WithDeadline(ctx, certificate.NotAfter)
+			// Export faults must not starve the existing durable operation poll.
+			// Each ephemeral transfer is bounded independently of the loop.
+			exportCtx, cancelExport := context.WithTimeout(refreshCtx, 5*time.Second)
+			_ = runClientConfigExport(exportCtx, service, client, connection, poll)
+			cancelExport()
 			err = runRefresh(refreshCtx, service, cfg, client, connection.ControllerURL, poll, &snapshotSequence, &pending)
 			cancelRefresh()
 			if errors.Is(err, errForbidden) {
@@ -370,6 +375,9 @@ func requestJSON(ctx context.Context, client *http.Client, base, method, route, 
 		if e != nil {
 			return e
 		}
+		if route == "/control/v1/node/client-config-exports/result" {
+			defer clear(b)
+		}
 		body = bytes.NewReader(b)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, u.String(), body)
@@ -402,6 +410,9 @@ func requestJSON(ctx context.Context, client *http.Client, base, method, route, 
 		return errFenced
 	}
 	if res.StatusCode < 200 || res.StatusCode > 299 {
+		if res.StatusCode == http.StatusNotFound && route == "/control/v1/node/client-config-exports/poll" {
+			return errNoOperation
+		}
 		return fmt.Errorf("control response %d", res.StatusCode)
 	}
 	if res.StatusCode == http.StatusNoContent && output != nil {
@@ -411,6 +422,9 @@ func requestJSON(ctx context.Context, client *http.Client, base, method, route, 
 		raw, err := io.ReadAll(io.LimitReader(res.Body, (64<<10)+1))
 		if err != nil || len(raw) > 64<<10 {
 			return errors.New("invalid control response")
+		}
+		if route == "/control/v1/node/client-config-exports/poll" {
+			return controlapi.DecodeClientConfigExport(raw, output)
 		}
 		decoder := json.NewDecoder(bytes.NewReader(raw))
 		decoder.DisallowUnknownFields()
