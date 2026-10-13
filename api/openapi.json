@@ -571,6 +571,14 @@
         "responses": { "200": { "description": "Current desired configuration and safe runtime summary.", "headers": { "X-Request-ID": { "$ref": "#/components/headers/RequestID" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/State" } } } }, "401": { "$ref": "#/components/responses/APIError" } }
       }
     },
+    "/api/server-name": {
+      "patch": {
+        "operationId": "updateServerName",
+        "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateServerNameRequest" } } } },
+        "responses": { "200": { "description": "Server name updated.", "content": { "application/json": { "schema": { "type": "object", "required": ["server_name"], "properties": { "server_name": { "type": "string" } } } } } }, "default": { "$ref": "#/components/responses/APIError" } }
+      }
+    },
     "/api/tunnels": {
       "post": {
         "operationId": "createTunnel",
@@ -1390,6 +1398,7 @@
 
       "OK": { "type": "object", "required": ["ok"], "properties": { "ok": { "type": "boolean", "const": true } } },
       "APIError": { "type": "object", "required": ["error", "code"], "properties": { "error": { "type": "string" }, "code": { "type": "string", "pattern": "^[a-z0-9_]+$" } } },
+      "UpdateServerNameRequest": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string", "maxLength": 32, "pattern": "^[A-Za-z0-9]*$", "description": "Optional ASCII alphanumeric server label. An empty string removes it." } } },
       "LoginRequest": { "type": "object", "required": ["password"], "properties": { "password": { "type": "string", "writeOnly": true }, "username": { "type": "string" }, "code": { "type": "string", "writeOnly": true } } },
       "AuthStatus": { "type": "object", "required": ["mode"], "properties": { "mode": { "type": "string", "enum": ["standalone", "activating", "controller"] } }, "additionalProperties": false },
       "AuthSession": { "type": "object", "required": ["mode", "authenticated"], "properties": { "mode": { "type": "string", "enum": ["standalone", "controller"] }, "authenticated": { "type": "boolean", "const": true }, "username": { "type": "string" }, "recent_auth": { "type": "boolean" }, "expires_at": { "type": "string", "format": "date-time" } }, "additionalProperties": false },

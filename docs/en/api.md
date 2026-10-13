@@ -3,7 +3,7 @@
 [`api/openapi.json`](../../api/openapi.json) is the OpenAPI 3.1 contract for the stable control-plane
 requests used by the bundled Web UI. It covers authentication, controller activation,
 control-listener lifecycle and enrollment approval, state, tunnel and client
-operations, traffic limits, and WARP. Ordinary config/QR downloads, backup/restore,
+operations, the optional local server name, traffic limits, and WARP. Ordinary config/QR downloads, backup/restore,
 diagnostics and support bundles remain private Web UI details outside the contract;
 the dedicated controller enablement-backup route is documented.
 

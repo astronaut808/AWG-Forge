@@ -57,6 +57,17 @@ fi
 
 printf 'OK   runtime env is split from explicit state init\n'
 
+if ! grep -qx 'SERVER_NAME=' "$ENV_FILE"; then
+  printf 'FAIL runtime .env does not expose optional SERVER_NAME\n' >&2
+  exit 1
+fi
+if ! validate_server_name '' || ! validate_server_name 'Moscow02' || validate_server_name 'moscow-02' || validate_server_name 'имя'; then
+  printf 'FAIL installer server-name validation does not match the application contract\n' >&2
+  exit 1
+fi
+
+printf 'OK   optional server name is available and validated\n'
+
 if ! grep -qx 'DATABASE_MODE=sqlite' "$ENV_FILE"; then
   printf 'FAIL fresh install does not enable SQLite by default\n' >&2
   exit 1
@@ -205,10 +216,15 @@ WEBUI_HOST=127.0.0.1
 WEBUI_PORT=51821
 PASSWORD=existing-password
 SESSION_SECRET=existing-secret
+SERVER_NAME=ExistingName
 EXTERNAL_INTERFACE=eth0
 DATABASE_MODE=sqlite
 EOF
 write_env "127.0.0.1" "51900" "existing-password" "existing-secret" "ens3" reconfigure
+if ! grep -qx 'SERVER_NAME=ExistingName' "$ENV_FILE"; then
+  printf 'FAIL reconfigure changed existing server name\n' >&2
+  exit 1
+fi
 if ! grep -qx 'DATABASE_MODE=sqlite' "$ENV_FILE"; then
 	printf 'FAIL reconfigure did not preserve existing operational settings\n' >&2
 	exit 1

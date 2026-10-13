@@ -35,6 +35,8 @@ sudo ./install.sh
 The installer prepares dependencies, creates the first tunnel, and prints the password
 and panel access command. See [requirements and next steps](docs/en/quick-install.md).
 
+An optional server name can be set with `SERVER_NAME` or `init --server-name` and edited in the local Web UI header. See [configuration](docs/en/configuration.md).
+
 ## Documentation
 
 - [Setup and manual installation](docs/en/setup.md)

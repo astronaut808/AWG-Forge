@@ -85,7 +85,7 @@ func requestRoute(path string) string {
 	switch {
 	case path == "/":
 		return "/"
-	case path == "/api/login", path == "/api/logout", path == "/api/state", path == "/api/events", path == "/api/backup", path == "/api/doctor", path == "/api/audit-log", path == "/api/traffic-summary", path == "/api/firewall/repair", path == "/api/support-bundle", path == "/api/updates", path == "/api/restore/verify", path == "/api/warp", path == "/api/tunnels/suggestion", path == "/api/tunnels", path == "/api/clients":
+	case path == "/api/login", path == "/api/logout", path == "/api/state", path == "/api/server-name", path == "/api/events", path == "/api/backup", path == "/api/doctor", path == "/api/audit-log", path == "/api/traffic-summary", path == "/api/firewall/repair", path == "/api/support-bundle", path == "/api/updates", path == "/api/restore/verify", path == "/api/warp", path == "/api/tunnels/suggestion", path == "/api/tunnels", path == "/api/clients":
 		return path
 	case strings.HasPrefix(path, "/static/"):
 		return "/static/*"

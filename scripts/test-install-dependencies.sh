@@ -187,6 +187,8 @@ done
   docker() { printf '%s\n' "$*" >>"$test_dir/selinux-docker.log"; }
   initialize_state example.com awg0 51820 eth0 10.8.0.0/24 1.1.1.1 0.0.0.0/0 25 1280 awg_2_0
   grep -q -- '-v .*/data:/etc/awg-forge:Z ' "$test_dir/selinux-docker.log"
+  initialize_state example.com awg0 51820 eth0 10.8.0.0/24 1.1.1.1 0.0.0.0/0 25 1280 awg_2_0 Moscow02
+  grep -q -- '--server-name Moscow02 --server-host example.com' "$test_dir/selinux-docker.log"
   printf '# operator customization\n' >>docker-compose.yml
   write_compose_if_missing
   grep -qx '# operator customization' docker-compose.yml
