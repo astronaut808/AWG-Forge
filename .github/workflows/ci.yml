@@ -16,8 +16,47 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  go:
-    name: Go
+  backend:
+    name: Go checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Check formatting
+        run: test -z "$(gofmt -l .)"
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Test
+        run: go test ./...
+
+      - name: Test shell scripts
+        run: make test-shell
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build ./...
+
+      - name: Lint Go
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
+        with:
+          version: v2.14.0
+
+  frontend:
+    name: UI checks
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -43,12 +82,6 @@ jobs:
           node-version: 24.21.0
           cache: npm
 
-      - name: Check formatting
-        run: test -z "$(gofmt -l .)"
-
-      - name: Download modules
-        run: go mod download
-
       - name: Install frontend dependencies
         run: npm ci
 
@@ -73,25 +106,24 @@ jobs:
       - name: Browser regression tests
         run: npx --no-install playwright test
 
-      - name: Test
-        run: go test ./...
-
-      - name: Test shell scripts
-        run: make test-shell
-
-      - name: Vet
-        run: go vet ./...
-
-      - name: Build
-        run: go build ./...
-
-      - name: Lint Go
-        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
-        with:
-          version: v2.14.0
-
       - name: Lint UI
         run: npm run ui:lint
 
       - name: Aislop quality gate
         run: npm run quality:aislop
+
+  go:
+    # Keep the existing required check name and reject failed or skipped children.
+    name: Go
+    needs: [backend, frontend]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require all CI checks
+        env:
+          BACKEND_RESULT: ${{ needs.backend.result }}
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+        run: |
+          test "$BACKEND_RESULT" = success
+          test "$FRONTEND_RESULT" = success
