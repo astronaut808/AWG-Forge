@@ -16,7 +16,7 @@ export default defineConfig({
   testDir: "./web/tests",
   outputDir: process.env.UI_TEST_OUTPUT_DIR || "test-results",
   fullyParallel: false,
-  workers: 2,
+  workers: 4,
   forbidOnly: Boolean(process.env.CI),
   retries: 0,
   timeout: 30_000,

@@ -106,6 +106,17 @@ git diff --check
 - `make lint-markdown`, checking Markdown structure and references;
 - `npm run quality:aislop`, which runs `aislop ci` with the project `.aislop/config.yml`.
 
+The GitHub `CI` workflow runs `Go checks` and `UI checks` in parallel on separate
+runners. `Go checks` covers formatting, Go tests, shell tests, vet, build, and Go
+lint. `UI checks` covers Markdown lint, UI typechecking and build, the API
+contract, generated UI reproducibility, browser tests, UI lint, and Aislop.
+
+The aggregate check keeps the existing name `Go`. It waits for both jobs and
+succeeds only when both succeed; a failed, cancelled, or skipped dependency
+cannot produce a successful aggregate. Keep `Go` as the required CI check in
+branch protection. Local `make ci` still runs the full set of checks; browser
+tests use four workers; validate their timing and stability on the CI runner.
+
 Pull requests also run separate `Security`, `Race`, and Docker image validation jobs. The security job runs `govulncheck`, npm audit, Gitleaks, focused Semgrep and Trivy filesystem scans, ShellCheck, Hadolint, actionlint, and offline pedantic zizmor analysis. The Docker job starts the built image with runtime apply disabled, authenticates to the API, verifies the bundled AmneziaWG binaries and rendered config parser, restarts the container, and checks that the tunnel configuration remains available and parseable.
 
 The Aislop CI gate currently fails below score `80`. The config excludes reproducible generated Web UI assets and locale dictionaries that produce scanner-only noise. Keep source warnings visible unless a finding is a documented false positive.
