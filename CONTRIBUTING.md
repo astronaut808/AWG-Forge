@@ -6,29 +6,7 @@ awg-forge manages VPN configuration and secret material, so reliability and cons
 
 ## Development
 
-Run the full local check before opening a pull request:
-
-```bash
-make ci
-```
-
-Run the Web UI locally without applying runtime tunnel changes:
-
-```bash
-CONFIG_DIR=/private/tmp/awg-forge-dev \
-WEBUI_HOST=127.0.0.1 \
-WEBUI_PORT=51821 \
-PASSWORD=test \
-APPLY_CONFIG=false \
-SERVER_HOST=127.0.0.1 \
-go run ./cmd/awg-forge serve
-```
-
-Then open:
-
-```text
-http://127.0.0.1:51821
-```
+See the [development guide](docs/en/development.md) for local setup, the Web UI, and test commands. Run `make ci` before opening a pull request.
 
 ## Pull Requests
 

@@ -14,7 +14,12 @@ addFormats(ajv);
 
 const createClient = ajv.compile(schemas.CreateClientRequest);
 const updateClient = ajv.compile(schemas.UpdateClientSettingsRequest);
+const login = ajv.compile(schemas.LoginRequest);
 const cases = [
+  ["legacy login", login, { password: "secret" }, true],
+  ["username login", login, { username: "operator", password: "secret" }, true],
+  ["login rejects empty username", login, { username: "", password: "secret" }, false],
+  ["login rejects missing password", login, { username: "admin" }, false],
   ["create without expiration", createClient, { tunnel_id: "tunnel-1", name: "phone" }, true],
   ["create with empty expiration", createClient, { tunnel_id: "tunnel-1", name: "phone", expires_at: "" }, true],
   ["create with RFC3339 expiration", createClient, { tunnel_id: "tunnel-1", name: "phone", expires_at: "2026-09-05T12:00:00Z" }, true],

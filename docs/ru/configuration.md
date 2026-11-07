@@ -6,7 +6,8 @@
 
 - `WEBUI_HOST`: адрес Web UI. По умолчанию `127.0.0.1`.
 - `WEBUI_PORT`: порт Web UI. По умолчанию `51821`.
-- `PASSWORD`: пароль Web UI. Обязателен для публичного bind и рекомендуется всегда.
+- `WEBUI_USERNAME`: имя администратора Web UI. По умолчанию `admin`.
+- `PASSWORD`: пароль администратора Web UI. Обязателен для любой привязки, кроме явного loopback IP с выключенными trusted proxy headers. Имена хостов, включая `localhost`, требуют пароль. Изменение `WEBUI_USERNAME` сохраняет существующий пароль.
 - `SESSION_COOKIE_SECURE`: режим Secure cookie для UI session. Значения: `auto`, `true`, `false`. По умолчанию `auto`.
 - `WEBUI_TRUST_PROXY_HEADERS`: разрешает обработку trusted `X-Forwarded-Proto` и `X-Forwarded-For`. По умолчанию `false`.
 - `WEBUI_TRUSTED_PROXY_CIDRS`: CIDR через запятую, которым разрешено передавать forwarded headers. Обязателен при `WEBUI_TRUST_PROXY_HEADERS=true`.
@@ -102,10 +103,11 @@ docker restart awg-forge
 
 ```bash
 cd /opt/awg-forge
+: "${PUBLIC_IP:?Set PUBLIC_IP first}"
 # Укажи в .env WEBUI_HOST=0.0.0.0 для IPv4 или WEBUI_HOST=:: для IPv6.
 docker compose up -d --force-recreate
 docker exec awg-forge awg-forge tls use acme-ip \
-  --ip <public-ipv4-or-ipv6> --email admin@example.com --accept-tos
+  --ip "${PUBLIC_IP:?Set PUBLIC_IP first}" --email admin@example.com --accept-tos
 docker restart awg-forge
 ```
 

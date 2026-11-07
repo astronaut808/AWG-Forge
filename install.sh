@@ -2,6 +2,7 @@
 set -euo pipefail
 
 APP_NAME="awg-forge"
+UPGRADE_IMAGE="${IMAGE:-}"
 IMAGE="${IMAGE:-ghcr.io/astronaut808/awg-forge:latest}"
 INSTALL_DIR_DEFAULT="/opt/awg-forge"
 ENV_FILE=".env"
@@ -768,8 +769,7 @@ prepare_workdir() {
       target="$INSTALL_DIR_DEFAULT"
     fi
   fi
-  mkdir -p "$target"
-  cd "$target"
+  mkdir -p "$target" && cd "$target" || return 1
   ok "working directory: $target"
 }
 
@@ -793,8 +793,8 @@ set_env_value() {
   if [[ ! -e "$ENV_FILE" ]]; then
     : >"$ENV_FILE"
   fi
-  tmp="$(mktemp "${ENV_FILE}.tmp.XXXXXX")"
-  awk -v key="$key" -v value="$value" '
+  tmp="$(mktemp "${ENV_FILE}.tmp.XXXXXX")" || return 1
+  if ! awk -v key="$key" -v value="$value" '
     $0 ~ "^" key "=" {
       if (!found) print key "=" value
       found = 1
@@ -802,8 +802,10 @@ set_env_value() {
     }
     { print }
     END { if (!found) print key "=" value }
-  ' "$ENV_FILE" >"$tmp"
-  mv "$tmp" "$ENV_FILE"
+  ' "$ENV_FILE" >"$tmp" || ! mv "$tmp" "$ENV_FILE"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
 }
 
 ensure_env_value() {
@@ -1029,73 +1031,233 @@ print_next_steps() {
   printf 'docker exec %s awg-forge doctor\n' "$APP_NAME"
 }
 
-upgrade_install_is_managed() {
-  [[ -f "$ENV_FILE" && -f "$COMPOSE_FILE" && -d "$DATA_DIR" ]] || return 1
-  grep -Eq '^[[:space:]]*env_file:[[:space:]]*\.env[[:space:]]*$' "$COMPOSE_FILE" || return 1
-  grep -Eq '^[[:space:]]*-[[:space:]]*\./data:/etc/awg-forge(:Z)?([[:space:]]|$)' "$COMPOSE_FILE" || return 1
-  local config_dir database_path
-  config_dir="$(env_value CONFIG_DIR)"
-  database_path="$(env_value DATABASE_PATH)"
-  [[ -z "$config_dir" || "$config_dir" == "/etc/awg-forge" ]] || return 1
-  [[ -z "$database_path" || "$database_path" == "/etc/awg-forge/awg-forge.db" ]] || return 1
+lock_installation() {
+  # Lock the working directory inode. A backup or rollback never replaces it.
+  if ! command -v flock >/dev/null || ! exec 9<. || ! flock -n 9; then
+    fail "could not lock this installation (flock is required); check for another installer or uninstall process"
+    return 1
+  fi
+}
+
+upgrade_host_layout() {
+  local directory="$1" data_path="$2" unsafe
+  [[ -f "$ENV_FILE" && -f "$COMPOSE_FILE" && -d "$DATA_DIR" && -f "$DATA_DIR/state.json" ]] || return 1
+  [[ ! -L "$ENV_FILE" && ! -L "$DATA_DIR" && ! -L "$COMPOSE_FILE" ]] || return 1
+  findmnt --kernel --json --list -o TARGET 2>/dev/null |
+    jq -e --arg data "$data_path" --arg env "$directory/$ENV_FILE" '
+      .filesystems | type == "array" and all(.[];
+        .target as $path | $path != $env and $path != $data and
+        ($path | startswith($data + "/") | not))
+    ' >/dev/null 2>&1 || return 1
+  unsafe="$(find "$DATA_DIR" \( -type f -links +1 -o ! -type f ! -type d \) -print -quit)" || return 1
+  [[ -z "$unsafe" ]]
+}
+
+upgrade_env_layout() {
+  jq -e '
+    (.CONFIG_DIR // "") as $config |
+    (.DATABASE_PATH // "") as $db |
+    (.AUDIT_LOG_PATH // "") as $audit |
+    ($config == "" or $config == "/etc/awg-forge") and
+    ($db == "" or $db == "/etc/awg-forge/awg-forge.db") and
+    ($audit == "" or $audit == "/etc/awg-forge/audit.log") and
+    ((.DATABASE_DSN // "") == "") and
+    ((.DATABASE_MODE // "") | IN("", "off", "sqlite"))
+  ' >/dev/null 2>&1
+}
+
+upgrade_docker_env() {
+  docker "$@" --format '{{json .Config.Env}}' 2>/dev/null |
+    jq -e 'map(capture("^(?<key>[^=]+)=(?<value>.*)$"; "s")) | from_entries' 2>/dev/null
+}
+
+upgrade_container_layout() {
+  local id="$1" data_path="$2"
+  docker inspect --format '{{json .Mounts}}' "$id" 2>/dev/null |
+    jq -e --arg data "$data_path" '
+      any(.[]; .Destination == "/etc/awg-forge" and .Source == $data and .RW) and
+      all(.[]; .Type == "bind" and ((.Propagation // "") | IN("", "rprivate")) and
+        (.Destination == "/etc/awg-forge" or
+        (.Destination == "/lib/modules" and .Source == "/lib/modules" and (.RW | not))))
+    ' >/dev/null 2>&1 || return 1
+  [[ "$(docker inspect --format '{{.HostConfig.NetworkMode}}:{{len .HostConfig.Tmpfs}}' "$id" 2>/dev/null)" == "host:0" ]] ||
+    return 1
+  upgrade_docker_env inspect "$id" | upgrade_env_layout
+}
+
+upgrade_compose_layout() {
+  local directory="$1" data_path="$2"
+  shift 2
+  "$@" config --no-env-resolution --format json awg-forge 2>/dev/null |
+    jq -e --arg env "$directory/$ENV_FILE" --arg data "$data_path" '
+      .services["awg-forge"] |
+      .container_name == "awg-forge" and .network_mode == "host" and
+      .env_file == [{"path": $env}] and
+      .build == null and .entrypoint == null and (.command | IN(null, ["serve"])) and
+      ((.volumes_from // []) | length == 0) and ((.tmpfs // []) | length == 0) and
+      ((.secrets // []) | length == 0) and ((.configs // []) | length == 0) and
+      ((.environment // {}) | has("DATABASE_MODE") | not) and
+      (.volumes |
+        any(.[]; .target == "/etc/awg-forge" and .source == $data and (.read_only | not)) and
+        all(.[]; .type == "bind" and ((.bind.propagation // "") | IN("", "rprivate")) and
+          (.target == "/etc/awg-forge" or
+          (.target == "/lib/modules" and .source == "/lib/modules" and .read_only))))
+    ' >/dev/null 2>&1 || return 1
+  "$@" config --format json awg-forge 2>/dev/null |
+    jq -e '.services["awg-forge"].environment // {}' 2>/dev/null | upgrade_env_layout
+}
+
+upgrade_compose_files_match() {
+  local actual="$1" directory="$2"
+  local expected="$directory/$COMPOSE_FILE"
+  [[ "$actual" != "$expected" ]] || return 0
+
+  # Compose retains the deleted image override name in the container label.
+  local override="${actual#"$expected,"}"
+  local name="${override##*/}"
+  [[ "$actual" == "$expected,$directory/$name" &&
+     "$name" =~ ^\.awg-forge-(rollback|upgrade)\.[[:alnum:]]{6}$ &&
+     ! -e "$override" && ! -L "$override" ]]
 }
 
 upgrade_backup() {
   local backup_dir="$1"
-  mkdir -p "$backup_dir"
-  cp -a "$ENV_FILE" "$backup_dir/$ENV_FILE"
-  cp -a "$DATA_DIR" "$backup_dir/$DATA_DIR"
-  chmod 700 "$backup_dir" || true
+  cp -a "$ENV_FILE" "$backup_dir/$ENV_FILE" || return 1
+  chmod 600 "$backup_dir/$ENV_FILE" || return 1
+  cp -a "$DATA_DIR" "$backup_dir/$DATA_DIR" || return 1
   ok "upgrade backup saved to $backup_dir"
 }
 
 restore_upgrade_backup() {
   local backup_dir="$1"
+  local staging
   [[ -f "$backup_dir/$ENV_FILE" && -d "$backup_dir/$DATA_DIR" ]] || return 1
-  rm -rf "$DATA_DIR"
-  cp -a "$backup_dir/$DATA_DIR" "$DATA_DIR"
-  cp -a "$backup_dir/$ENV_FILE" "$ENV_FILE"
-  chmod 600 "$ENV_FILE" || true
+  staging="$(mktemp -d .upgrade-restore.XXXXXX)" || return 1
+  if ! cp -a "$backup_dir/$DATA_DIR" "$staging/$DATA_DIR" ||
+     ! cp -a "$backup_dir/$ENV_FILE" "$staging/$ENV_FILE" ||
+     ! chmod 600 "$staging/$ENV_FILE"; then
+    rm -rf -- "$staging"
+    return 1
+  fi
+  if [[ -e "$DATA_DIR" || -L "$DATA_DIR" ]] && ! mv -- "$DATA_DIR" "$staging/previous-data"; then
+    rm -rf -- "$staging"
+    return 1
+  fi
+  if ! mv -- "$staging/$DATA_DIR" "$DATA_DIR"; then
+    if [[ -e "$staging/previous-data" || -L "$staging/previous-data" ]]; then
+      mv -- "$staging/previous-data" "$DATA_DIR" ||
+        warn "pre-rollback data is retained at $staging/previous-data"
+    fi
+    return 1
+  fi
+  if ! mv -f -- "$staging/$ENV_FILE" "$ENV_FILE"; then
+    warn "pre-rollback data is retained at $staging/previous-data"
+    return 1
+  fi
+  rm -rf -- "$staging" || warn "could not remove rollback staging directory $staging"
 }
 
 enable_sqlite_env() {
-  set_env_value DATABASE_MODE sqlite
-  ensure_env_value DATABASE_PATH /etc/awg-forge/awg-forge.db
-  ensure_env_value DATABASE_DSN ""
-  ensure_env_value DATABASE_RETENTION_DAYS 90
-  ensure_env_value DATABASE_BUSY_TIMEOUT 5s
-  ensure_env_value DATABASE_QUERY_TIMEOUT 2s
-  ensure_env_value DATABASE_MAX_OPEN_CONNS 1
-  ensure_env_value DATABASE_MAX_IDLE_CONNS 1
-  chmod 600 "$ENV_FILE" || true
+  set_env_value DATABASE_MODE sqlite || return 1
+  ensure_env_value DATABASE_PATH /etc/awg-forge/awg-forge.db || return 1
+  ensure_env_value DATABASE_DSN "" || return 1
+  ensure_env_value DATABASE_RETENTION_DAYS 90 || return 1
+  ensure_env_value DATABASE_BUSY_TIMEOUT 5s || return 1
+  ensure_env_value DATABASE_QUERY_TIMEOUT 2s || return 1
+  ensure_env_value DATABASE_MAX_OPEN_CONNS 1 || return 1
+  ensure_env_value DATABASE_MAX_IDLE_CONNS 1 || return 1
+  chmod 600 "$ENV_FILE"
+}
+
+upgrade_probe_settings() {
+  local id="$1"
+  timeout -k 1s 4s docker inspect --format '{{json .Config.Env}}' "$id" 2>/dev/null |
+    jq -er '
+      map(capture("^(?<key>[^=]+)=(?<value>.*)$"; "s")) | from_entries |
+      (.WEBUI_HOST // "" | if . == "" then "127.0.0.1" else . end) as $host |
+      (.WEBUI_PORT // "" | if . == "" then "51821" else . end) as $port |
+      select(($host | test("^[a-zA-Z0-9.:_-]+$")) and
+             ($port | test("^[0-9]{1,5}$") and (tonumber | . > 0 and . <= 65535))) |
+      [$host, $port, (if (.PASSWORD // "") == "" then "200" else "401" end)] | @tsv
+    ' 2>/dev/null
 }
 
 upgrade_verify() {
-  local database_mode="$1"
-  local doctor_log running
-  running="$(docker inspect --format '{{.State.Running}}' "$APP_NAME" 2>/dev/null || true)"
-  if [[ "$running" != "true" ]]; then
-    fail "new container is not running"
-    return 1
+  local image="$1" schema="${2:-}"
+  local id settings host port expected scheme mode request_host observed status initial="" consecutive=0 database_status
+  local -a probe_options=(--noproxy '*')
+  local deadline=$((SECONDS + 45))
+  id="$(timeout -k 1s 4s docker inspect --format '{{.Id}}' "$APP_NAME" 2>/dev/null)" || return 1
+  settings="$(upgrade_probe_settings "$id")" || return 1
+  IFS=$'\t' read -r host port expected <<<"$settings"
+  case "$host" in
+    0.0.0.0) host=127.0.0.1 ;;
+    ::) host='[::1]' ;;
+    *:*) host="[$host]" ;;
+  esac
+  mode=off
+  if [[ -e "$DATA_DIR/tls/config.json" ]]; then
+    mode="$(jq -er '.mode' "$DATA_DIR/tls/config.json" 2>/dev/null)" || return 1
   fi
-  if [[ "$database_mode" == "sqlite" ]]; then
-    if ! docker exec "$APP_NAME" awg-forge db status; then
-      fail "SQLite status check failed"
+  request_host="$host"
+  case "$mode" in
+    off|reverse-proxy) scheme=http ;;
+    manual)
+      scheme=https
+      # Manual certificates can use an operator's private CA. This local probe
+      # sends no credentials and does not establish trust for browser sessions.
+      probe_options+=(--insecure)
+      ;;
+    acme-domain|acme-ip)
+      scheme=https
+      request_host="$(jq -er 'if .mode == "acme-domain" then .acme_domain else .acme_ip end |
+        select(test("^[a-zA-Z0-9.:_-]+$"))' "$DATA_DIR/tls/config.json" 2>/dev/null)" || return 1
+      [[ "$request_host" != *:* ]] || request_host="[$request_host]"
+      # Preserve certificate identity and domain SNI while connecting locally.
+      probe_options+=(--connect-to "${request_host}:${port}:${host}:${port}")
+      ;;
+    *) return 1 ;;
+  esac
+
+  # The probe trusts no proxy headers and discards the response body.
+  while (( SECONDS < deadline )); do
+    observed="$(timeout -k 1s 4s docker inspect --format '{{.Image}} {{.State.Status}} {{.RestartCount}} {{.State.StartedAt}}' "$id" 2>/dev/null)" ||
       return 1
+    [[ "$observed" == "$image running "* ]] || return 1
+    [[ -z "${3:-}" || "$observed" == "$image running 0 "* ]] || return 1
+    [[ -z "$initial" || "$observed" == "$initial" ]] || return 1
+    initial="$observed"
+    if status="$(curl -q --max-time 2 --silent --output /dev/null \
+      "${probe_options[@]}" --write-out '%{http_code}' -- "${scheme}://${request_host}:${port}/api/state")" &&
+       [[ "$status" == "$expected" ]]; then
+      consecutive=$((consecutive + 1))
+      if (( consecutive == 4 )); then
+        if [[ -n "$schema" ]]; then
+          database_status="$(timeout -k 1s 4s docker exec "$id" awg-forge db status 2>/dev/null)" || return 1
+          grep -Fqx 'OK   database: sqlite' <<<"$database_status" || return 1
+          grep -Fqx "$schema" <<<"$database_status" || return 1
+        fi
+        [[ "$(timeout -k 1s 4s docker inspect --format '{{.Image}} {{.State.Status}} {{.RestartCount}} {{.State.StartedAt}}' "$id" 2>/dev/null)" == "$initial" ]]
+        return
+      fi
+    else
+      consecutive=0
     fi
+    sleep 2
+  done
+  return 1
+}
+
+upgrade_doctor() {
+  local doctor_log
+  doctor_log="$(mktemp)" || return 0
+  if ! timeout -k 1s 10s docker exec "$APP_NAME" awg-forge doctor >"$doctor_log" 2>&1 ||
+     doctor_has_failures "$doctor_log"; then
+    warn "Doctor reports issues; run docker exec $APP_NAME awg-forge doctor for diagnostics"
+  else
+    ok "Doctor completed"
   fi
-  doctor_log="$(mktemp)"
-  if ! docker exec "$APP_NAME" awg-forge doctor >"$doctor_log" 2>&1; then
-    cat "$doctor_log" || true
-    rm -f "$doctor_log"
-    warn "Doctor could not complete; inspect its output before relying on the updated service"
-    return 0
-  fi
-  cat "$doctor_log"
-  if doctor_has_failures "$doctor_log"; then
-    warn "Doctor reports existing or runtime issues; inspect its output"
-  fi
-  rm -f "$doctor_log"
+  rm -f -- "$doctor_log"
 }
 
 upgrade_rollback() {
@@ -1103,37 +1265,42 @@ upgrade_rollback() {
   local backup_dir="$2"
   local previous_image="$3"
   local recreated="$4"
-  local override
+  local override="$5"
 
   warn "upgrade failed; restoring the previous installation"
-  if [[ "$recreated" == "true" ]]; then
-    $compose down --remove-orphans || true
+  if [[ "$recreated" == "true" ]] && ! $compose stop awg-forge; then
+    fail "could not stop the replacement container before restoring $backup_dir"
+    return 1
   fi
   if ! restore_upgrade_backup "$backup_dir"; then
     fail "could not restore $backup_dir automatically"
     return 1
   fi
   if [[ "$recreated" == "true" ]]; then
-    override="$(mktemp)"
-    cat >"$override" <<EOF
+    if ! cat >"$override" <<EOF
 services:
   awg-forge:
     image: $previous_image
 EOF
-    if ! $compose -f "$COMPOSE_FILE" -f "$override" up -d --force-recreate awg-forge; then
-      rm -f "$override"
+    then
+      return 1
+    fi
+    if ! $compose -f "$COMPOSE_FILE" -f "$override" up -d --no-deps --force-recreate --pull never --no-build awg-forge; then
       fail "could not restart the previous image $previous_image"
       return 1
     fi
-    rm -f "$override"
   elif ! $compose start awg-forge; then
     fail "could not restart the previous container"
+    return 1
+  fi
+  if ! upgrade_verify "$previous_image"; then
+    fail "previous image did not become ready after restoring $backup_dir"
     return 1
   fi
   warn "previous installation restored from $backup_dir"
 }
 
-upgrade_main() {
+upgrade_main() (
   bold "awg-forge upgrade"
   if [[ "$(uname -s)" != "Linux" ]]; then
     fail "install.sh is intended for Linux servers"
@@ -1149,24 +1316,63 @@ upgrade_main() {
     return 1
   fi
   require_tty
-  prepare_workdir
-  if ! upgrade_install_is_managed; then
-    fail "upgrade supports the managed .env + docker-compose.yml + ./data layout only"
-    printf 'Use a manual upgrade for custom Compose files, CONFIG_DIR, or DATABASE_PATH.\n' >&2
+  if ! prepare_workdir; then
+    fail "could not open the installation directory"
     return 1
   fi
-  if ! $compose config -q; then
-    fail "$COMPOSE_FILE is not valid"
+  lock_installation || return 1
+  upgrade_locked "$compose"
+)
+
+upgrade_locked() (
+  local compose="$1" directory data_path docker_endpoint
+  local marker=.awg-forge-upgrade-pending
+  local -a base target
+  # Use the same managed Compose project for upgrade and rollback.
+  local -x COMPOSE_FILE="$COMPOSE_FILE"
+  local -x COMPOSE_REMOVE_ORPHANS=false
+  read -r -a base <<<"$compose"
+  if [[ -e "$marker" || -L "$marker" ]]; then
+    fail "an interrupted upgrade needs manual recovery; inspect $marker for the backup location"
     return 1
   fi
-  if ! docker inspect "$APP_NAME" >/dev/null 2>&1; then
-    fail "container $APP_NAME was not found; refusing an upgrade without rollback context"
+  if ! command -v jq >/dev/null || ! command -v findmnt >/dev/null ||
+     ! command -v timeout >/dev/null || ! command -v curl >/dev/null; then
+    fail "managed upgrade requires jq, findmnt, timeout, and curl"
+    return 1
+  fi
+  if ! docker_endpoint="$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null)" ||
+     [[ "$docker_endpoint" != unix://* || "${DOCKER_HOST:-unix://}" != unix://* ]]; then
+    fail "managed upgrade requires a local Docker daemon"
+    return 1
+  fi
+  directory="$(pwd -P)" || return 1
+  data_path="$(cd "$DATA_DIR" && pwd -P)" || return 1
+  if ! upgrade_host_layout "$directory" "$data_path" ||
+     ! upgrade_compose_layout "$directory" "$data_path" "${base[@]}"; then
+    fail "target Compose service or on-disk layout cannot be restored safely; use a manual upgrade"
+    return 1
+  fi
+  local container_id compose_id config_files
+  if ! container_id="$(docker inspect --format '{{.Id}}' "$APP_NAME" 2>/dev/null)" ||
+     ! compose_id="$( "${base[@]}" ps -aq awg-forge 2>/dev/null)" ||
+     [[ -z "$container_id" || "$container_id" != "$compose_id" ]]; then
+    fail "the Compose service does not match container $APP_NAME"
+    return 1
+  fi
+  if ! config_files="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "$container_id" 2>/dev/null)" ||
+     ! upgrade_compose_files_match "$config_files" "$directory"; then
+    fail "the running container uses a custom Compose configuration; use a manual upgrade"
+    return 1
+  fi
+  if ! upgrade_container_layout "$container_id" "$data_path"; then
+    fail "the existing container layout cannot be restored safely; use a manual upgrade"
     return 1
   fi
 
   local database_mode enable_sqlite=false create_missing_sqlite=false
-  database_mode="$(env_value DATABASE_MODE)"
-  database_mode="${database_mode:-off}"
+  database_mode="$( "${base[@]}" config --format json awg-forge 2>/dev/null |
+    jq -er '.services["awg-forge"].environment.DATABASE_MODE // "" | if . == "" then "off" else . end' 2>/dev/null)" || return 1
   case "$database_mode" in
     off)
       printf '\n'
@@ -1191,53 +1397,107 @@ upgrade_main() {
       return 1
       ;;
     *)
-      fail "unsupported DATABASE_MODE=$database_mode"
+      fail "unsupported DATABASE_MODE"
       return 1
       ;;
   esac
 
-  local previous_image backup_dir recreated=false
-  previous_image="$(docker inspect --format '{{.Image}}' "$APP_NAME")"
-  backup_dir="$(mktemp -d "upgrade-backup-$(date -u +%Y%m%d-%H%M%S).XXXXXX")"
-
+  local previous_image backup_dir override target_ref target_image recreated=false schema="" migration_status
+  if ! previous_image="$(docker inspect --format '{{.Image}}' "$container_id" 2>/dev/null)" ||
+     [[ ! "$previous_image" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    fail "could not identify the previous image for rollback"
+    return 1
+  fi
+  target_ref="$UPGRADE_IMAGE"
+  if [[ -z "$target_ref" ]]; then
+    target_ref="$( "${base[@]}" config --format json awg-forge 2>/dev/null |
+      jq -er '.services["awg-forge"].image' 2>/dev/null)" || return 1
+  fi
+  if [[ ! "$target_ref" =~ ^[[:alnum:]][[:alnum:]./_:@-]*$ ]]; then
+    fail "invalid target image reference"
+    return 1
+  fi
+  override="$(mktemp .awg-forge-upgrade.XXXXXX)" || return 1
+  trap 'rm -f -- "$override"' EXIT
+  printf 'services:\n  awg-forge:\n    image: %s\n' "$target_ref" >"$override" || return 1
+  target=("${base[@]}" -f "$COMPOSE_FILE" -f "$override")
+  if ! upgrade_compose_layout "$directory" "$data_path" "${target[@]}"; then
+    fail "target Compose service cannot be restored safely"
+    return 1
+  fi
   muted "Pulling the target image..."
-  if ! $compose pull awg-forge; then
+  if ! "${target[@]}" pull awg-forge; then
     fail "could not pull the target image; the running installation was not changed"
     return 1
   fi
-  if ! $compose stop awg-forge; then
+  if ! target_image="$(docker image inspect --format '{{.Id}}' "$target_ref" 2>/dev/null)" ||
+     [[ ! "$target_image" =~ ^sha256:[0-9a-f]{64}$ ]] ||
+     ! docker image inspect --format '{{json .Config.Volumes}}' "$target_image" 2>/dev/null |
+        jq -e '(keys? // []) | all(. == "/etc/awg-forge")' >/dev/null 2>&1 ||
+     ! upgrade_docker_env image inspect "$target_image" | upgrade_env_layout; then
+    fail "could not verify a managed target image"
+    return 1
+  fi
+  # Pin both the migration and the replacement to the image we inspected.
+  printf 'services:\n  awg-forge:\n    image: %s\n' "$target_image" >"$override" || return 1
+  if ! upgrade_compose_layout "$directory" "$data_path" "${target[@]}"; then
+    fail "pinned target Compose service cannot be restored safely"
+    return 1
+  fi
+  backup_dir="$(mktemp -d "upgrade-backup-$(date -u +%Y%m%d-%H%M%S).XXXXXX")" || return 1
+  if ! "${base[@]}" stop awg-forge; then
     fail "could not stop the current container"
     return 1
   fi
+  if [[ "$(docker inspect --format '{{.State.Running}}' "$container_id" 2>/dev/null)" != false ]]; then
+    fail "could not confirm the previous container is stopped"
+    "${base[@]}" start awg-forge || fail "could not restart the previous container"
+    return 1
+  fi
   if ! upgrade_backup "$backup_dir"; then
-    $compose start awg-forge || true
-    fail "could not create an upgrade backup"
+    fail "could not complete the upgrade backup at $backup_dir"
+    "${base[@]}" start awg-forge || fail "could not restart the previous container"
+    return 1
+  fi
+  if ! (umask 077; set -o noclobber; printf '%s\n' "$backup_dir" >"$marker"); then
+    fail "could not record the recovery location at $backup_dir"
+    "${base[@]}" start awg-forge || fail "could not restart the previous container"
     return 1
   fi
   if $enable_sqlite || $create_missing_sqlite; then
-    enable_sqlite_env
+    if ! enable_sqlite_env; then
+      fail "could not update SQLite settings"
+      upgrade_rollback "$compose" "$backup_dir" "$previous_image" "$recreated" "$override" && rm -f -- "$marker"
+      return 1
+    fi
   fi
-  if [[ "$database_mode" == "sqlite" ]] && ! migrate_sqlite "$compose"; then
-    upgrade_rollback "$compose" "$backup_dir" "$previous_image" "$recreated" || true
-    return 1
+  if [[ "$database_mode" == "sqlite" ]]; then
+    muted "Applying SQLite migrations..."
+    if ! migration_status="$( "${target[@]}" run --rm --no-deps --pull never -T awg-forge db migrate 2>/dev/null)" ||
+       ! grep -Fqx 'OK   database: sqlite' <<<"$migration_status" ||
+       ! schema="$(grep -Ex 'OK   schema: [1-9][0-9]*' <<<"$migration_status")"; then
+      fail "SQLite migration failed"
+      upgrade_rollback "$compose" "$backup_dir" "$previous_image" "$recreated" "$override" && rm -f -- "$marker"
+      return 1
+    fi
   fi
 
   recreated=true
-  if ! $compose up -d --force-recreate awg-forge; then
-    upgrade_rollback "$compose" "$backup_dir" "$previous_image" "$recreated" || true
+  if ! "${target[@]}" up -d --no-deps --force-recreate --pull never --no-build awg-forge ||
+     ! upgrade_verify "$target_image" "$schema" fresh; then
+    fail "replacement container or SQLite did not become ready"
+    upgrade_rollback "$compose" "$backup_dir" "$previous_image" "$recreated" "$override" && rm -f -- "$marker"
     return 1
   fi
-  if ! upgrade_verify "$database_mode"; then
-    upgrade_rollback "$compose" "$backup_dir" "$previous_image" "$recreated" || true
-    return 1
-  fi
+  rm -f -- "$marker" || return 1
+  upgrade_doctor
   ok "upgrade completed"
   if [[ "$database_mode" == "sqlite" ]]; then
     ok "SQLite is enabled and migrated"
   fi
-}
+)
 
-main() {
+main() (
   if [[ "${1:-}" == "upgrade" ]]; then
     if (( $# != 1 )); then
       fail "usage: install.sh upgrade"
@@ -1269,11 +1529,16 @@ main() {
   local compose
   compose="$(compose_cmd)"
   ok "$compose found"
-  prepare_workdir
+  prepare_workdir || return 1
+  lock_installation || return 1
+  if [[ -e .awg-forge-upgrade-pending || -L .awg-forge-upgrade-pending ]]; then
+    fail "an interrupted upgrade needs manual recovery; inspect .awg-forge-upgrade-pending for the backup location"
+    return 1
+  fi
 
   handle_existing_install "$compose"
   if [[ "$INSTALL_ACTION" == "upgrade" ]]; then
-    upgrade_main
+    upgrade_locked "$compose"
     return
   fi
   cleanup_stale_interfaces
@@ -1532,7 +1797,7 @@ main() {
   else
     print_next_steps "$server_host" "$webui_host" "$webui_port" "" "$profile" "$compose"
   fi
-}
+)
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   main "$@"

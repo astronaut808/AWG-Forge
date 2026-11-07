@@ -204,6 +204,7 @@ cat >"$ENV_FILE" <<'EOF'
 WEBUI_HOST=127.0.0.1
 WEBUI_PORT=51821
 PASSWORD=existing-password
+WEBUI_USERNAME=operator
 SESSION_SECRET=existing-secret
 EXTERNAL_INTERFACE=eth0
 DATABASE_MODE=sqlite
@@ -221,7 +222,7 @@ if ! grep -qx 'WEBUI_PORT=51900' "$ENV_FILE" || ! grep -qx 'EXTERNAL_INTERFACE=e
   printf 'FAIL reconfigure did not update selected runtime settings\n' >&2
   exit 1
 fi
-if ! grep -qx 'PASSWORD=existing-password' "$ENV_FILE" || ! grep -qx 'SESSION_SECRET=existing-secret' "$ENV_FILE"; then
+if ! grep -qx 'WEBUI_USERNAME=operator' "$ENV_FILE" || ! grep -qx 'PASSWORD=existing-password' "$ENV_FILE" || ! grep -qx 'SESSION_SECRET=existing-secret' "$ENV_FILE"; then
   printf 'FAIL reconfigure changed existing credentials\n' >&2
   exit 1
 fi

@@ -18,7 +18,7 @@ concurrency:
 jobs:
   go:
     name: Go
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -35,13 +35,30 @@ jobs:
       - name: Set up Deno
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
-          deno-version: v2.x
+          deno-version: v2.9.8
 
       - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version: 26.13.0
+          package-manager-cache: false
           cache: npm
+
+      - name: Set up npm
+        env:
+          NPM_VERSION: "12.2.1"
+          NPM_SHA512: "6ca0a6151553fc107e60f1186d9c10d57508dcde6de31292a54d4cc4e8e8ef3de25b3281274657442d7115d10df930bb3794ddcb0681cdfd9d317189abf7b63d"
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d)
+          trap 'rm -rf "$work"' EXIT
+          curl -fsSL "https://registry.npmjs.org/npm/-/npm-${NPM_VERSION}.tgz" -o "$work/npm.tgz"
+          echo "$NPM_SHA512  $work/npm.tgz" | sha512sum -c -
+          prefix=$(mktemp -d "$RUNNER_TEMP/awg-npm.XXXXXX")
+          tar -xzf "$work/npm.tgz" --strip-components=1 -C "$prefix"
+          ln -sf npm-cli.js "$prefix/bin/npm"
+          ln -sf npx-cli.js "$prefix/bin/npx"
+          echo "$prefix/bin" >> "$GITHUB_PATH"
 
       - name: Check formatting
         run: test -z "$(gofmt -l .)"
@@ -51,6 +68,9 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm ci
+
+      - name: Use locked project tools
+        run: echo "$GITHUB_WORKSPACE/node_modules/.bin" >> "$GITHUB_PATH"
 
       - name: Typecheck UI
         run: npm run ui:check
@@ -83,9 +103,9 @@ jobs:
         run: go build ./...
 
       - name: Lint Go
-        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
-          version: v2.12.2
+          version: v2.15.0
 
       - name: Lint UI
         run: npm run ui:lint

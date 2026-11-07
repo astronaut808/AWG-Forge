@@ -52,7 +52,7 @@ Do not paste private keys or complete client configs into diagnostics reports.
 On the server, capture only the tunnel port while reproducing one connection attempt:
 
 ```bash
-sudo tcpdump -ni <external-interface> "udp dst port <listen-port>"
+sudo tcpdump -ni "${EXTERNAL_INTERFACE:?Set EXTERNAL_INTERFACE first}" "udp dst port ${LISTEN_PORT:?Set LISTEN_PORT first}"
 ```
 
 If no packets arrive on the selected interface:
@@ -179,36 +179,48 @@ When troubleshooting “connected but no internet”, useful events include:
 
 ## Encrypted Backup / Restore
 
-Backups are different from support bundles: they contain secret material, including `state.json`, private keys, preshared keys, and rendered `.conf` files.
-
-Backups are always encrypted with a dedicated password:
+Backups contain private keys and client configurations. Keep the archive and its password private. In Bash, read the password without echoing it or writing it into the command history.
 
 ```bash
-docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge backup /tmp/awg-forge.afbackup
-docker cp awg-forge:/tmp/awg-forge.afbackup ./awg-forge-backup-YYYYMMDD-HHMMSS.afbackup
+IFS= read -rsp 'Backup password: ' BACKUP_PASSWORD
+printf '\n'
+export BACKUP_PASSWORD
 ```
-
-Restore requires the same password:
 
 ```bash
-docker cp ./<backup-file>.afbackup awg-forge:/tmp/backup.afbackup
-docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore verify /tmp/backup.afbackup
-docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore /tmp/backup.afbackup
+docker exec -e BACKUP_PASSWORD awg-forge awg-forge backup /tmp/awg-forge.afbackup &&
+  docker cp awg-forge:/tmp/awg-forge.afbackup "./awg-forge-backup-$(date -u +%Y%m%d-%H%M%S).afbackup"
+docker exec awg-forge rm /tmp/awg-forge.afbackup
 ```
 
-`docker exec` can only see files inside the container filesystem. If the backup is on the host, copy it into the container with `docker cp` first, as shown above. Alternatively, place it in the mounted volume:
+To verify an existing archive, set `backup_file` to its absolute path. Run these Compose commands from the installation directory.
 
 ```bash
-cp ./<backup-file>.afbackup ./data/backup.afbackup
-docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore verify /etc/awg-forge/backup.afbackup
-docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore /etc/awg-forge/backup.afbackup
+backup_file=/absolute/path/to/backup.afbackup
+test -f "$backup_file" && docker compose run --rm --no-deps -T -e BACKUP_PASSWORD \
+  --volume "$backup_file:/tmp/backup.afbackup:ro" \
+  awg-forge restore verify /tmp/backup.afbackup
 ```
 
-`restore verify` decrypts and validates the backup, renders server and client configs in memory, and prints a redacted summary. It does not write to the config directory, create a pre-restore backup, restart tunnels, or change runtime state.
+After verification succeeds, stop the service and restore during a maintenance window. Preserve a separate copy of `data/` before restoring. The separate copy preserves SQLite history and audit logs. Restore replaces the contents of the configuration directory.
 
-In the UI, open `Maintenance` -> `Backup & restore` to upload an `.afbackup` file and run the same verification as a dry-run. Actual restore remains CLI-only.
+```bash
+test -f "$backup_file" &&
+  docker compose stop awg-forge &&
+  docker compose run --rm --no-deps -T -e BACKUP_PASSWORD \
+    --volume "$backup_file:/tmp/backup.afbackup:ro" \
+    awg-forge restore /tmp/backup.afbackup &&
+  docker compose up -d awg-forge
+unset BACKUP_PASSWORD
+```
+
+For a local binary, stop the running process before restoring. Use the same `BACKUP_PASSWORD` environment variable with `awg-forge backup`, `awg-forge restore verify`, and `awg-forge restore`.
+
+In the UI, open `Maintenance` → `Backup and restore` to verify an `.afbackup` without applying it. Verification prints a redacted summary and leaves the tunnel configuration unchanged.
 
 Before replacing the current config directory, restore keeps an encrypted pre-restore backup in `backups/` inside the restored config directory.
+
+If staging fails, restore returns entries already moved to their original locations. A failed rollback leaves the remaining original files in `.restore-pending/old/` and blocks retries. Keep the service stopped and preserve the entire configuration directory before manual recovery. Older `.restore-old-*` recovery directories also block a new restore. Delete recovery directories only after checking the recovered state. Private directories use `0700` and restored files use `0600`.
 
 Restore checks:
 
@@ -219,10 +231,9 @@ Restore checks:
 - valid `state.json`;
 - server config rendering.
 
-Restore does not apply runtime automatically. Restart the container to reload all restored settings, including TLS and database state. With `APPLY_CONFIG=true`, startup applies enabled tunnels and then reconciles WARP. `awg-forge tunnel restart` restarts only the first tunnel and does not reload the running service's settings or reconcile WARP. After startup, repair managed firewall rules and check the system:
+Restore does not apply runtime automatically. Starting the service after restore loads the restored tunnel and TLS settings. With `APPLY_CONFIG=true`, startup applies enabled tunnels and then reconciles WARP. `awg-forge tunnel restart` restarts only the first tunnel and does not reload the running service's settings or reconcile WARP. After startup, repair managed firewall rules and check the system:
 
 ```bash
-docker restart awg-forge
 docker exec awg-forge awg-forge firewall repair
 docker exec awg-forge awg-forge doctor
 ```
@@ -297,7 +308,7 @@ Then:
 - check IPv4 forwarding;
 - check host firewall/UFW;
 - in bridge mode, check that the tunnel UDP port is published;
-- issue a fresh client config from `Config` if tunnel settings or protocol params changed.
+- issue a fresh client config from `Actions` → `Connect` if tunnel settings or protocol params changed.
 
 If `doctor` reports:
 
@@ -312,12 +323,7 @@ docker exec awg-forge awg-forge tunnel restart
 docker exec awg-forge awg-forge doctor
 ```
 
-If restart does not help, remove the stale link in the host/container network namespace and apply the tunnel again. With host networking this is usually:
-
-```bash
-docker exec awg-forge ip link delete <interface>
-docker exec awg-forge awg-forge tunnel restart
-```
+If restart does not help, use Doctor and `ip link show` to confirm the exact AWG tunnel interface before removing a stale link. With host networking, commands in the container can delete interfaces on the host. Only remove the verified tunnel interface. Restart that tunnel from its page in the UI.
 
 If `doctor` reports an `external route` mismatch, NAT may be configured for the wrong interface. Check `ip route get 1.1.1.1` and update `EXTERNAL_INTERFACE`.
 

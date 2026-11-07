@@ -1,0 +1,298 @@
+import { Button } from "./ui";
+import { useMediaQuery } from "@mantine/hooks";
+import * as api from "./api";
+import { useI18n } from "./context";
+import { errorMessage, toneFromLevel } from "./errors";
+import { versionLabel } from "./form-values";
+import type { Locale } from "./i18n";
+import { ForgeMark, Icon } from "./icons";
+import type { IconName } from "./icons";
+import { MaintenanceCenter, TrafficPanel } from "./maintenance";
+import { Badge, Empty } from "./shared";
+import type { AppState, Client, Profile, TrafficSummary, Tunnel } from "./types";
+import { activeLabel, classNames, dateOnly, formatBytes, isExperimentalProfile, profileTitle, relativeTime } from "./utils";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
+
+type ShellProps = {
+  state: AppState;
+  theme: string;
+  setTheme: (theme: string) => void;
+  locale: Locale;
+  setLocale: (locale: Locale) => void;
+  logout: () => void;
+  openMaintenance: () => void;
+  resetTunnelFilter: () => void;
+  notify: (message: string) => void;
+  reload: () => Promise<void>;
+  renderClients?: () => ReactNode;
+  renderClient?: (client: Client, tunnel: Tunnel) => ReactNode;
+  onCreateTunnel?: () => void;
+  onCreateClient?: (tunnel?: Tunnel) => void;
+  overlays?: ReactNode;
+  children: ReactNode;
+};
+
+export function Shell(props: ShellProps) {
+  const { state, theme, setTheme, locale, setLocale, logout, children } = props;
+  const { m } = useI18n();
+  const [section, setSection] = useState(() => currentSection());
+  useEffect(() => {
+    const onHash = () => setSection(currentSection());
+    globalThis.addEventListener("hashchange", onHash);
+    return () => globalThis.removeEventListener("hashchange", onHash);
+  }, []);
+  const navigation: Array<{ id: string; label: string; icon: IconName }> = [
+    { id: "overview", label: m.ui.overview, icon: "home" },
+    { id: "tunnels", label: m.dashboard.tunnels, icon: "tunnels" },
+    { id: "clients", label: m.tunnel.clients, icon: "clients" },
+    { id: "traffic", label: m.maintenance.tabs.traffic, icon: "traffic" },
+    { id: "maintenance", label: m.common.maintenance, icon: "settings" },
+  ];
+  function navigate(id: string) { globalThis.location.hash = `/${id}`; setSection(id); }
+  function openTunnel(tunnel: Tunnel) {
+    localStorage.setItem("awg-forge.selected-tunnel", tunnel.id);
+    props.resetTunnelFilter();
+    navigate("tunnels");
+  }
+  return <main className="app-shell">
+    <aside className="sidebar">
+      <div className="sidebar-top"><Brand /><div className="server-scope"><Icon name="server" /><div><strong>{state.server_host}</strong><span>{m.ui.server}</span></div></div></div>
+      <nav className="main-nav" aria-label={m.aria.globalActions}>{navigation.map((item) => <Button key={item.id} type="button" className={classNames(section === item.id && "active")} aria-current={section === item.id ? "page" : undefined} onClick={() => navigate(item.id)}><Icon name={item.icon} />{item.label}</Button>)}</nav>
+      <div className="sidebar-bottom">
+        <label className="sidebar-preference"><Icon name={theme === "dark" ? "moon" : "sun"} /><span>{m.ui.theme}</span><select aria-label={m.aria.toggleTheme} value={theme} onChange={(event) => setTheme(event.currentTarget.value)}><option value="light">{m.ui.lightTheme}</option><option value="dark">{m.ui.darkTheme}</option></select></label>
+        <label className="sidebar-preference"><Icon name="language" /><span>{m.ui.language}</span><select aria-label={m.aria.toggleLanguage} value={locale} onChange={(event) => setLocale(event.currentTarget.value as Locale)}><option value="ru">Русский</option><option value="en">English</option></select></label>
+        <Button className="sidebar-setting" type="button" onClick={logout}><Icon name="logout" />{m.common.logOut}</Button>
+        <FooterLinks />
+      </div>
+    </aside>
+    <div className="workspace-main">
+      {section === "tunnels" ? children : <>
+        <div className="page-heading"><div><h1>{section === "overview" ? (locale === "ru" ? "Обзор сервера" : "Server overview") : navigation.find((item) => item.id === section)?.label}</h1>{section === "overview" && <p className="page-description">{locale === "ru" ? "Туннели, клиенты и трафик" : "Tunnels, clients and traffic"}</p>}</div>{section === "overview" && props.onCreateTunnel && <Button className="button primary" type="button" disabled={!state.profiles.some((profile) => profile.available)} onClick={props.onCreateTunnel}><Icon name="plus" />{m.common.createTunnel}</Button>}</div>
+        <div className="content-page">{section === "overview" ? <Overview state={state} openTunnel={openTunnel} navigate={navigate} renderClient={props.renderClient} onCreateClient={props.onCreateClient} /> : section === "clients" ? props.renderClients?.() : section === "traffic" ? <TrafficView state={state} /> : <MaintenanceCenter embedded state={state} notify={props.notify} reload={props.reload} close={() => navigate("tunnels")} />}</div>
+        {props.overlays}
+      </>}
+    </div>
+  </main>;
+}
+
+function currentSection(): string {
+  const section = globalThis.location.hash.replace(/^#\/?/, "").split("/")[0];
+  return ["overview", "tunnels", "clients", "traffic", "maintenance"].includes(section) ? section : "overview";
+}
+
+function Overview({ state, openTunnel, navigate, renderClient, onCreateClient }: {
+  state: AppState; openTunnel: (tunnel: Tunnel) => void; navigate: (section: string) => void;
+  renderClient?: (client: Client, tunnel: Tunnel) => ReactNode; onCreateClient?: (tunnel?: Tunnel) => void;
+}) {
+  const { m, locale } = useI18n();
+  const [traffic, setTraffic] = useState<TrafficSummary | null>(null);
+  const [trafficError, setTrafficError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const copy = locale === "ru" ? {
+    allTunnels: "Все туннели", allClients: "Все клиенты", recorded: "Записанный трафик", period: "Сумма за период",
+    traffic30d: "Трафик за 30 дней", trafficPair: "Получено и отправлено", history: "История SQLite",
+    running: "работают", stopped: "не работают", active: "активны сейчас", name: "Название", egress: "Выход",
+  } : {
+    allTunnels: "All tunnels", allClients: "All clients", recorded: "Recorded traffic", period: "Total per period",
+    traffic30d: "Traffic in 30 days", trafficPair: "Received and sent", history: "SQLite history",
+    running: "up", stopped: "down", active: "active now", name: "Name", egress: "Egress",
+  };
+  const loadTraffic = useCallback(async () => {
+    if (!state.database?.enabled) { setLoading(false); setTraffic(null); return; }
+    setLoading(true);
+    try { setTraffic(await api.trafficSummary()); setTrafficError(""); }
+    catch (err) { setTrafficError(errorMessage(err, m.common.requestFailed)); setTraffic(null); }
+    finally { setLoading(false); }
+  }, [state.database?.enabled, m.common.requestFailed]);
+  useEffect(() => { void loadTraffic(); }, [loadTraffic]);
+  const allClients = state.tunnels.flatMap((tunnel) => tunnel.clients.map((client) => ({ client, tunnel })));
+  const activeCount = allClients.filter(({ client }) => client.enabled && !client.expired && activeLabel(client.runtime?.last_seen_at || client.last_seen_at) === "active now").length;
+  const totals = (traffic?.rows || []).reduce((sum, row) => ({ today: sum.today + row.rx_today + row.tx_today, week: sum.week + row.rx_7d + row.tx_7d, month: sum.month + row.rx_30d + row.tx_30d }), { today: 0, week: 0, month: 0 });
+  const hasHistory = Boolean(traffic?.enabled && traffic.rows?.length);
+  const periods = [{ label: m.maintenance.today, value: totals.today }, { label: m.maintenance.last7d, value: totals.week }, { label: m.maintenance.last30d, value: totals.month }];
+  const scale = Math.max(...periods.map((period) => period.value), 1);
+  return <div className="overview">
+    <div className="overview-metrics">
+      <section className="overview-metric metric-lead"><Icon name="tunnels" /><div><span>{m.dashboard.tunnels}</span><strong>{state.tunnels.length}</strong><small>{state.tunnels.filter((tunnel) => tunnel.status?.up === true).length} {copy.running} · {state.tunnels.filter((tunnel) => tunnel.status?.up === false).length} {copy.stopped}{state.tunnels.some((tunnel) => !tunnel.status) && <> · {state.tunnels.filter((tunnel) => !tunnel.status).length} {m.ui.noRuntimeData}</>}</small></div></section>
+      <section className="overview-metric"><Icon name="clients" /><div><span>{m.tunnel.clients}</span><strong>{allClients.length}</strong><small>{activeCount} {copy.active}</small></div></section>
+      <section className="overview-metric"><Icon name="traffic" /><div><span>{copy.traffic30d}</span><strong aria-busy={loading}>{hasHistory ? formatBytes(totals.month) : "—"}</strong><small>{copy.trafficPair}</small></div></section>
+    </div>
+    <div className="overview-middle">
+      <section className="overview-tunnels"><div className="section-head"><h2>{m.dashboard.tunnels}</h2><Button className="text-link" type="button" onClick={() => navigate("tunnels")}>{copy.allTunnels}<Icon name="chevron" /></Button></div>
+        {!state.tunnels.length ? <Empty title={m.dashboard.noTunnelsYet} text={m.dashboard.createFirstTunnel} /> : <div className="overview-table"><div className="overview-table-head" aria-hidden="true"><span>{copy.name}</span><span>{m.tunnel.protocol}</span><span className="numeric">UDP</span><span>{copy.egress}</span><span>{m.ui.status}</span><span /></div>{state.tunnels.slice(0, 5).map((tunnel) => <Button className="overview-table-row overview-card" type="button" key={tunnel.id} onClick={() => openTunnel(tunnel)} aria-label={`${m.ui.viewTunnel}: ${tunnel.name}`}><strong>{tunnel.name}</strong><span className="overview-protocol">{profileTitle(tunnel.profile)}{isExperimentalProfile(tunnel.profile) && <Badge tone="brand">{m.common.experimental}</Badge>}</span><span className="numeric"><span className="mobile-label">UDP </span>{tunnel.listen_port}</span><span>{tunnel.egress_mode === "warp" ? "WARP" : m.ui.server}</span><span className="table-status"><span className={classNames("status-dot", tunnel.status?.up ? "up" : "down")} />{tunnel.status ? tunnel.status.up ? m.status.up : m.status.down : m.ui.runtimeUnknown}</span><Icon name="chevron" /></Button>)}</div>}
+      </section>
+      <section className="overview-traffic"><div className="section-head"><div><h2>{copy.recorded}</h2><p>{copy.period}</p></div></div>
+        {loading ? <output className="overview-traffic-state">{m.common.loading}</output> : trafficError ? <div className="overview-traffic-state"><p className="form-error" role="alert">{trafficError}</p><Button className="button" type="button" onClick={() => void loadTraffic()}>{m.common.retry}</Button></div> : !state.database?.enabled || !traffic?.enabled ? <p className="overview-traffic-state note">{m.maintenance.trafficDisabled}</p> : !hasHistory ? <p className="overview-traffic-state note">{m.maintenance.noTrafficData}</p> : <div className="period-bars">{periods.map((period) => <div className="period-row" key={period.label}><span>{period.label}</span><div className="period-track" aria-hidden="true"><div className="period-fill" style={{ width: `${period.value / scale * 100}%` }} /></div><strong>{formatBytes(period.value)}</strong></div>)}</div>}
+        <Button className="text-link traffic-history-link" type="button" onClick={() => navigate("traffic")}>{copy.history}<Icon name="chevron" /></Button>
+      </section>
+    </div>
+    <section className="overview-clients"><div className="section-head"><div><h2>{m.tunnel.clients}</h2><p>{m.tunnel.clientTotal(allClients.length)}</p></div><Button className="text-link" type="button" onClick={() => navigate("clients")}>{copy.allClients}<Icon name="chevron" /></Button></div>
+      {!allClients.length ? <Empty title={m.tunnel.noClientsYet} text={state.tunnels.length ? m.tunnel.createFirstClient : m.dashboard.createFirstTunnel} action={onCreateClient && state.tunnels.length ? <Button className="button primary" onClick={() => onCreateClient()}><Icon name="plus" />{m.common.createClient}</Button> : undefined} /> : renderClient ? <div className="client-table has-tunnel"><ClientTableHead withTunnel />{allClients.slice(0, 4).map(({ client, tunnel }) => renderClient(client, tunnel))}</div> : <Button className="button" type="button" onClick={() => navigate("clients")}>{copy.allClients}</Button>}
+    </section>
+  </div>;
+}
+
+function TrafficView({ state }: { state: AppState }) {
+  return <TrafficPanel state={state} />;
+}
+
+export function AllClients({ state, renderClient, onCreateClient, onCreateTunnel, tunnelFilter, setTunnelFilter }: {
+  state: AppState; renderClient: (client: Client, tunnel: Tunnel) => ReactNode; onCreateClient?: (tunnel?: Tunnel) => void; tunnelFilter: string; setTunnelFilter: (value: string) => void; onCreateTunnel: () => void;
+}) {
+  const { m, locale } = useI18n();
+  const [query, setQuery] = useState("");
+  const effectiveFilter = state.tunnels.some((tunnel) => tunnel.id === tunnelFilter) ? tunnelFilter : "all";
+  const clients = state.tunnels.flatMap((tunnel) => tunnel.clients.map((client) => ({ client, tunnel }))).filter(({ client, tunnel }) => (effectiveFilter === "all" || tunnel.id === effectiveFilter) && `${client.name} ${client.address} ${client.notes} ${tunnel.name}`.toLowerCase().includes(query.toLowerCase()));
+  const clientTunnel = state.tunnels.find((tunnel) => tunnel.id === effectiveFilter);
+  return <section className="clients all-clients">
+    <div className="clients-toolbar"><span>{m.tunnel.clientTotal(clients.length)}</span>{onCreateClient && <Button className="button primary" type="button" disabled={!state.tunnels.length} onClick={() => onCreateClient(clientTunnel)}><Icon name="plus" />{m.common.createClient}</Button>}</div>
+    <div className="client-filters"><input className="client-search" type="search" aria-label={m.ui.searchClients} placeholder={m.ui.searchClients} value={query} onInput={(event) => setQuery(event.currentTarget.value)} /><select aria-label={m.aria.tunnelFilters} value={effectiveFilter} onChange={(event) => setTunnelFilter(event.currentTarget.value)}><option value="all">{locale === "ru" ? "Все туннели" : "All tunnels"}</option>{state.tunnels.map((tunnel) => <option key={tunnel.id} value={tunnel.id}>{tunnel.name}</option>)}</select></div>
+    {clients.length ? <div className="client-table has-tunnel"><ClientTableHead withTunnel />{clients.map(({ client, tunnel }) => renderClient(client, tunnel))}</div> : <Empty title={!state.tunnels.length ? m.dashboard.noTunnelsYet : query ? m.ui.noMatches : m.tunnel.noClientsYet} text={query ? m.ui.searchClients : state.tunnels.length ? m.tunnel.createFirstClient : m.dashboard.createFirstTunnel} action={!state.tunnels.length ? <Button className="button primary" onClick={onCreateTunnel}>{m.common.createTunnel}</Button> : undefined} />}
+  </section>;
+}
+
+export function Brand({ subtitle }: { subtitle?: ReactNode }) {
+  return <div className="brand"><span className="brand-mark"><ForgeMark /></span><div><strong>AWG-Forge</strong>{subtitle && <p>{subtitle}</p>}</div></div>;
+}
+
+export function FooterLinks({ version, extra }: { version?: string; extra?: ReactNode }) {
+  const { locale, m } = useI18n();
+  const label = version ? versionLabel(version) : "";
+  const docsPath = locale === "ru" ? "ru" : "en";
+  return (
+    <footer className="app-footer" aria-label={m.aria.projectLinks}>
+      <a className="footer-link icon" href="https://github.com/astronaut808/awg-forge" target="_blank" rel="noreferrer" aria-label="awg-forge on GitHub">
+        <svg aria-hidden="true" viewBox="0 0 24 24">
+          <path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.69c-2.78.6-3.37-1.18-3.37-1.18-.45-1.15-1.11-1.46-1.11-1.46-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.89 1.52 2.34 1.08 2.91.82.09-.65.35-1.08.63-1.33-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02A9.57 9.57 0 0 1 12 7.01c.85 0 1.71.11 2.51.34 1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.69-4.57 4.94.36.31.68.92.68 1.86v2.56c0 .27.18.58.69.48A10 10 0 0 0 12 2Z" />
+        </svg>
+      </a>
+      <a className="footer-link" href={`https://github.com/astronaut808/awg-forge/tree/master/docs/${docsPath}`} target="_blank" rel="noreferrer">{m.common.docs}</a>
+      {version && <span className="footer-version" title="awg-forge version">{label}</span>}
+      {extra}
+    </footer>
+  );
+}
+
+export function TunnelFirstDashboard({ profiles, tunnels, filter, setFilter, onCreateTunnel, renderTunnel }: {
+  profiles: Profile[]; tunnels: Tunnel[]; filter: string; setFilter: (filter: string) => void;
+  onCreateTunnel: (profile?: Profile) => void; renderTunnel: (tunnel: Tunnel) => ReactNode;
+}) {
+  const { m } = useI18n();
+  const [selectedID, setSelectedID] = useState(localStorage.getItem("awg-forge.selected-tunnel") || "");
+  const [query, setQuery] = useState("");
+  const compact = useMediaQuery("(max-width:760px)", undefined, { getInitialValueInEffect: false });
+  const [showTools, setShowTools] = useState(false);
+  const previousIDs = useRef(new Set(tunnels.map((tunnel) => tunnel.id)));
+  useEffect(() => {
+    const added = tunnels.find((tunnel) => !previousIDs.current.has(tunnel.id));
+    previousIDs.current = new Set(tunnels.map((tunnel) => tunnel.id));
+    if (added) { setSelectedID(added.id); setFilter("all"); setQuery(""); }
+  }, [tunnels, setFilter]);
+  const availableFilters = profiles.filter((profile) => tunnels.some((tunnel) => tunnel.profile === profile.id));
+  const effectiveFilter = availableFilters.some((profile) => profile.id === filter) ? filter : "all";
+  const visible = tunnels.filter((tunnel) => (effectiveFilter === "all" || tunnel.profile === effectiveFilter) && `${tunnel.name} ${profileTitle(tunnel.profile)} ${tunnel.listen_port}`.toLowerCase().includes(query.toLowerCase()));
+  const selected = visible.find((tunnel) => tunnel.id === selectedID) || visible[0];
+  function select(id: string) { setSelectedID(id); localStorage.setItem("awg-forge.selected-tunnel", id); setShowTools(false); }
+  return <>
+    <div className="page-heading"><div><h1>{m.dashboard.tunnels}</h1><span>{m.dashboard.tunnelCount(tunnels.length)}</span></div>{tunnels.length > 0 && <Button className="button primary" type="button" disabled={!profiles.some((profile) => profile.available)} onClick={() => onCreateTunnel()}><Icon name="plus" />{m.common.createTunnel}</Button>}</div>
+    <section className="tunnel-workspace">
+      {compact && <div className="tunnel-mobile-picker"><label htmlFor="mobile-tunnel">{m.ui.selectedTunnel}</label><div><select id="mobile-tunnel" value={selected?.id || ""} onChange={(event) => select(event.currentTarget.value)}>{!selected && <option value="">{m.ui.chooseTunnel}</option>}{visible.map((tunnel) => <option key={tunnel.id} value={tunnel.id}>{tunnel.name} · {profileTitle(tunnel.profile)}</option>)}</select><Button className="button tunnel-tool-toggle" aria-label={m.ui.searchAndFilter} title={m.ui.searchAndFilter} aria-expanded={showTools} aria-controls="tunnel-tools" onClick={() => setShowTools(!showTools)}><Icon name="search" /></Button></div>{(effectiveFilter !== "all" || query) && <div className="tunnel-filter-state"><span className="help">{effectiveFilter !== "all" ? profileTitle(effectiveFilter) : ""}{query ? ` · ${query}` : ""}</span><Button className="button text" onClick={() => { setFilter("all"); setQuery(""); }}>{m.ui.clearTunnelFilters}</Button></div>}</div>}
+      {(!compact || showTools) && <aside className="tunnel-nav" id="tunnel-tools" aria-label={m.dashboard.tunnels}>
+        <div className="tunnel-nav-toolbar"><input type="search" aria-label={m.ui.searchTunnels} placeholder={m.ui.searchTunnels} value={query} onInput={(event) => setQuery(event.currentTarget.value)} />
+          {availableFilters.length > 1 && <select aria-label={m.aria.tunnelFilters} value={effectiveFilter} onChange={(event) => setFilter(event.currentTarget.value)}><option value="all">{m.common.all}</option>{availableFilters.map((profile) => <option key={profile.id} value={profile.id}>{profileTitle(profile.id)}</option>)}</select>}
+        </div>
+        {visible.map((tunnel) => <Button key={tunnel.id} className={classNames("tunnel-choice", tunnel.id === selected?.id && "active")} type="button" aria-current={tunnel.id === selected?.id ? "true" : undefined} onClick={() => select(tunnel.id)}><span className="tunnel-choice-head"><span className={classNames("status-dot", tunnel.status?.up ? "up" : "down")} /><strong>{tunnel.name}</strong><Icon name="chevron" /></span><span className="tunnel-choice-meta">{profileTitle(tunnel.profile)} · {tunnel.listen_port}</span></Button>)}
+      </aside>}
+      <div className="tunnel-details">{selected ? renderTunnel(selected) : <Empty title={tunnels.length ? m.dashboard.noTunnelsInFilter : m.dashboard.noTunnelsYet} text={tunnels.length ? m.ui.clearTunnelFilters : m.dashboard.createFirstTunnel} action={!tunnels.length ? <Button className="button primary" type="button" disabled={!profiles.some((profile) => profile.available)} onClick={() => onCreateTunnel()}>{m.common.createTunnel}</Button> : !compact ? <Button className="button" onClick={() => { setFilter("all"); setQuery(""); }}>{m.ui.clearTunnelFilters}</Button> : undefined} />}</div>
+    </section>
+  </>;
+}
+
+export function TunnelCard(props: {
+  tunnel: Tunnel; onCreateClient: () => void; onSettings: () => void; onProtocol: () => void;
+  onRestart: () => void; onRegenerate: () => void; onDelete: () => void;
+  renderSettings: () => ReactNode; renderProtocol: () => ReactNode;
+  onClientConfig: (client: Client) => void; onClientSettings: (client: Client) => void;
+  onClientToggle: (client: Client) => void; onClientDelete: (client: Client) => void;
+}) {
+  const { m } = useI18n();
+  const { tunnel } = props;
+  const compact = useMediaQuery("(max-width:760px)", undefined, { getInitialValueInEffect: false });
+  const [factsOpen, setFactsOpen] = useState(!compact);
+  useEffect(() => { setFactsOpen(!compact); }, [compact, tunnel.id]);
+  const [tab, setTab] = useState("clients");
+  const [query, setQuery] = useState("");
+  const clients = tunnel.clients.filter((client) => `${client.name} ${client.address} ${client.notes}`.toLowerCase().includes(query.toLowerCase()));
+  return <article className="tunnel-card">
+      <div className="tunnel-head"><div className="tunnel-title"><h2>{tunnel.name}</h2><Badge tone={tunnel.status?.up ? "ok" : "neutral"}>{!tunnel.status ? m.ui.runtimeUnknown : tunnel.status.up ? m.status.up : m.status.down}</Badge></div>
+      <div className="header-actions">{tab !== "protocol" && <Button className="button text" type="button" onClick={props.onRegenerate}><Icon name="refresh" />{m.forms.regenerate}</Button>}<Button className="button text" type="button" onClick={props.onRestart}><Icon name="play" />{m.common.restart}</Button></div>
+    </div>
+    <nav className="tunnel-tabs" aria-label={m.ui.selectedTunnel}>
+      <Button className={classNames(tab === "clients" && "active")} type="button" aria-current={tab === "clients" ? "page" : undefined} onClick={() => setTab("clients")}>{m.tunnel.clients}</Button>
+      <Button className={classNames(tab === "connection" && "active")} type="button" aria-current={tab === "connection" ? "page" : undefined} onClick={() => setTab("connection")}>{m.ui.connection}</Button>
+      <Button className={classNames(tab === "protocol" && "active")} type="button" aria-current={tab === "protocol" ? "page" : undefined} onClick={() => setTab("protocol")}>{m.ui.protocolParameters}</Button>
+    </nav>
+    <details className="tunnel-facts" open={!compact || factsOpen} onToggle={(event) => { if (compact) setFactsOpen(event.currentTarget.open); }}><summary>{m.ui.connectionSummary}<Icon name="chevron" /></summary><div className="facts">
+      <Fact label={m.tunnel.protocol} value={profileTitle(tunnel.profile)} />
+      <Fact label={m.forms.listenPort} value={String(tunnel.listen_port)} />
+      <Fact label={m.tunnel.subnet} value={tunnel.subnet} />
+      <Fact label="MTU" value={tunnel.mtu > 0 ? String(tunnel.mtu) : m.forms.auto} />
+      <Fact label={m.tunnel.dns} value={tunnel.dns} />
+      <Fact label={m.ui.internet} value={tunnel.egress_mode === "warp" ? "WARP → Internet" : m.ui.directEgress} />
+    </div></details>
+    <div className="badges">
+      {tunnel.status?.firewall?.label && <Badge tone={toneFromLevel(tunnel.status.firewall.level)} title={tunnel.status.firewall.message}>{m.ui.firewallLabels[tunnel.status.firewall.label as keyof typeof m.ui.firewallLabels] || m.ui.firewallLabels["firewall unknown"]}</Badge>}
+      {Number(tunnel.status?.stale_clients) > 0 && <Badge tone="warn">{m.tunnel.staleConfig(tunnel.status.stale_clients)}</Badge>}
+      {isExperimentalProfile(tunnel.profile) && <Badge tone="warn">{m.common.experimental}</Badge>}
+    </div>
+    <div className="tunnel-content">
+      {tab === "connection" ? <>{props.renderSettings()}<div className="form-actions"><Button className="button danger" type="button" onClick={props.onDelete}>{m.common.delete}</Button></div></> : tab === "protocol" ? props.renderProtocol() : <section className="clients">
+        <div className="clients-toolbar"><div><h3>{m.tunnel.clients}</h3><span>{m.tunnel.clientTotal(tunnel.clients.length)}</span></div><Button className="button primary" type="button" onClick={props.onCreateClient}><Icon name="plus" />{m.common.createClient}</Button></div>
+        {(tunnel.clients.length > 4 || query !== "") && <input className="client-search" type="search" aria-label={m.ui.searchClients} placeholder={m.ui.searchClients} value={query} onInput={(event) => setQuery(event.currentTarget.value)} />}
+        {tunnel.clients.length === 0 ? <div className="empty compact">{m.tunnel.createFirstClient}</div> : <div className="client-table">
+          <ClientTableHead />
+          {clients.map((client) => <ClientRow key={client.id} client={client} onConfig={() => props.onClientConfig(client)} onSettings={() => props.onClientSettings(client)} onToggle={() => props.onClientToggle(client)} onDelete={() => props.onClientDelete(client)} />)}
+          {!clients.length && <p className="empty compact">{m.ui.noMatches}</p>}
+        </div>}
+      </section>}
+    </div>
+  </article>;
+}
+
+function ClientTableHead({ withTunnel = false }: { withTunnel?: boolean }) {
+  const { m } = useI18n();
+  return <div className={classNames("client-table-head", withTunnel && "with-tunnel")} aria-hidden="true"><span>{m.ui.device}</span>{withTunnel && <span>{m.dashboard.tunnels}</span>}<span>{m.ui.status}</span><span>{m.tunnel.received}</span><span>{m.tunnel.sent}</span><span>{m.ui.lastActivity}</span><span>{m.ui.actions}</span></div>;
+}
+
+export function ClientRow({ client, tunnelName, onConfig, onSettings, onToggle, onDelete }: { client: Client; tunnelName?: string; onConfig: () => void; onSettings: () => void; onToggle: () => void; onDelete: () => void }) {
+  const { m, locale } = useI18n();
+  const [expanded, setExpanded] = useState(false);
+  const lastSeen = client.runtime?.last_seen_at || client.last_seen_at;
+  const online = client.enabled && !client.expired && activeLabel(lastSeen) === "active now";
+  const visualState = online ? "online" : client.enabled && !client.expired ? "enabled" : "disabled";
+  const visualStatus = client.expired ? m.status.expired : online ? m.status.activeNow : client.enabled ? m.common.enabled : m.common.disabled;
+  const enableBlocked = !client.enabled && Boolean(client.traffic?.exceeded);
+  return <div className={classNames("client-row", `client-status-${visualState}`, tunnelName && "with-tunnel", expanded && "expanded")}>
+    <div className="client-summary">
+      <div className="client-identity"><Icon name="clients" /><div><strong className="client-name">{client.name}</strong><span className="mono">{client.address}</span></div></div>
+      {tunnelName && <span className="client-tunnel-name" title={tunnelName}><span className="mobile-label">{m.dashboard.tunnels}: </span>{tunnelName}</span>}
+      <div className="client-status-cell"><Badge tone={client.expired ? "warn" : online ? "ok" : "neutral"}>{visualStatus}</Badge>{client.traffic?.exceeded && <Badge tone="bad">{m.status.limitExceeded}</Badge>}{client.needs_new_config && <Badge tone="warn">{m.common.stale}</Badge>}</div>
+      <span className="client-counter rx"><span className="sr-only">{m.tunnel.received}: </span><span className="mobile-label" aria-hidden="true">{m.tunnel.received} </span>{client.runtime?.present ? formatBytes(client.runtime.rx_bytes) : "—"}</span>
+      <span className="client-counter tx"><span className="sr-only">{m.tunnel.sent}: </span><span className="mobile-label" aria-hidden="true">{m.tunnel.sent} </span>{client.runtime?.present ? formatBytes(client.runtime.tx_bytes) : "—"}</span>
+      <span className="client-lastseen"><span className="sr-only">{m.ui.lastActivity}: </span>{relativeTime(lastSeen, m.time, locale)}</span>
+      <div className="client-actions"><Button className="button" type="button" aria-expanded={expanded} aria-controls={`export-${client.id}`} onClick={() => setExpanded(!expanded)}><Icon name="settings" />{m.ui.clientActions}<span className={classNames("config-chevron", expanded && "expanded")}><Icon name="chevron" /></span></Button></div>
+    </div>
+    {client.expires_at && <p className="client-detail">{m.tunnel.expires} {dateOnly(client.expires_at, locale)}</p>}
+    {client.traffic?.enabled && (expanded || Boolean(client.traffic.limit_bytes)) && <p className="client-detail">{m.tunnel.totalTraffic} {formatBytes(client.traffic.rx_total + client.traffic.tx_total)}{client.traffic.limit_bytes ? <> · {client.traffic.limit_period === "rolling_30d" ? m.forms.trafficLimitRolling30Days : m.forms.trafficLimitLifetime}: {formatBytes(client.traffic.limit_usage_bytes)} / {formatBytes(client.traffic.limit_bytes)}</> : null}</p>}
+    {client.traffic?.exceeded && <p className="client-detail note">{client.expired ? m.ui.expiredQuotaHelp : client.traffic.limit_period === "rolling_30d" ? m.forms.trafficLimitRolling30DaysExceededHelp : m.forms.trafficLimitExceededHelp}</p>}
+    {client.notes && <p className="client-detail note">{client.notes}</p>}
+    {expanded && <div className="client-expansion" id={`export-${client.id}`}>
+      <div className="actions"><Button className="button" type="button" onClick={onConfig}><Icon name="qr" />{m.ui.connectClient}</Button><Button className="button" type="button" onClick={onSettings}>{m.common.edit}</Button><Button className="button" type="button" disabled={enableBlocked} title={enableBlocked ? m.forms.trafficLimitEnableBlocked : undefined} onClick={onToggle}>{client.enabled ? m.common.disable : m.common.enable}</Button><Button className="button danger" type="button" onClick={onDelete}>{m.common.delete}</Button></div>
+    </div>}
+  </div>;
+}
+
+function Fact({ label, value, extra }: { label: string; value: string; extra?: string }) {
+  return <div className="fact"><span>{label}</span><strong className="mono">{value}</strong>{extra && <em>{extra}</em>}</div>;
+}

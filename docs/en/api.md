@@ -11,6 +11,10 @@ the signed, HttpOnly browser session cookie issued by `POST /api/login`. Keep it
 behind the normal AWG-Forge access controls. Do not expose it to untrusted
 origins or attempt to automate it with copied browser cookies.
 
+`POST /api/login` accepts `password` and an optional `username`. If the request
+omits `username`, the server uses `admin`. If `WEBUI_USERNAME` specifies a
+different name, callers must supply it in the request.
+
 ## Mutation safety
 
 The bundled UI sends an `Idempotency-Key` header for each documented

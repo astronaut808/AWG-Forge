@@ -379,9 +379,18 @@ cleanup_orphan_interfaces() {
   done < <(awg_like_interfaces)
 }
 
-main() {
+main() (
   bold "awg-forge uninstall"
   prepare_workdir
+  if ! $DRY_RUN &&
+     { ! command -v flock >/dev/null || ! exec 9<. || ! flock -n 9; }; then
+    fail "could not lock this installation (flock is required); check for another installer or uninstall process"
+    return 1
+  fi
+  if ! $DRY_RUN && [[ -e .awg-forge-upgrade-pending || -L .awg-forge-upgrade-pending ]]; then
+    fail "an interrupted upgrade needs manual recovery; inspect .awg-forge-upgrade-pending for the backup location"
+    return 1
+  fi
   confirm "Stop awg-forge and remove runtime interfaces/firewall rules?" "n" || exit 1
 
   local compose=""
@@ -441,7 +450,7 @@ main() {
     ok "kept local data and .env"
   fi
   ok "uninstall completed"
-}
+)
 
 if [[ "${BASH_SOURCE[0]:-$0}" == "$0" ]]; then
   parse_args "$@"

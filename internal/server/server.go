@@ -75,6 +75,9 @@ func Serve(cfg config.Config, service *app.Service, tlsRuntime webtls.Runtime) e
 }
 
 func ServeContext(ctx context.Context, cfg config.Config, service *app.Service, tlsRuntime webtls.Runtime) error {
+	if err := cfg.ValidateWebUIAuth(); err != nil {
+		return err
+	}
 	secret, err := service.SessionSecret()
 	if err != nil {
 		return err
@@ -365,7 +368,13 @@ func (w *web) loginAPI(rw http.ResponseWriter, r *http.Request) {
 		writeError(rw, http.StatusTooManyRequests, "too many login attempts")
 		return
 	}
-	if subtleCompare(req.Password, w.cfg.Password) {
+	username := config.DefaultWebUIUsername
+	if req.Username != nil {
+		username = *req.Username
+	}
+	usernameMatches := subtleCompare(username, w.cfg.WebUIUsernameOrDefault())
+	passwordMatches := subtleCompare(req.Password, w.cfg.Password)
+	if usernameMatches && passwordMatches {
 		w.setSession(rw, r)
 		w.audit("info", "login.succeeded", "login succeeded", w.loginAuditFields(r), nil)
 		writeJSON(rw, http.StatusOK, map[string]any{"ok": true})

@@ -183,7 +183,6 @@ done
   write_compose_if_missing
   grep -qx '      - ./data:/etc/awg-forge:Z' docker-compose.yml
   grep -qx '      - /lib/modules:/lib/modules:ro' docker-compose.yml
-  upgrade_install_is_managed
   docker() { printf '%s\n' "$*" >>"$test_dir/selinux-docker.log"; }
   initialize_state example.com awg0 51820 eth0 10.8.0.0/24 1.1.1.1 0.0.0.0/0 25 1280 awg_2_0
   grep -q -- '-v .*/data:/etc/awg-forge:Z ' "$test_dir/selinux-docker.log"

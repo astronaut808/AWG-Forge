@@ -13,9 +13,39 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validate-tag:
+    name: Check tag and release notes
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Require the tagged commit on master and matching notes
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "$(git rev-parse "refs/tags/$TAG^{commit}")" = "$(git rev-parse HEAD)"
+          git merge-base --is-ancestor HEAD refs/remotes/origin/master
+          bash scripts/release-notes.sh "$TAG" > release-notes.md
+
+  image:
+    name: Verify and publish the release image
+    needs: validate-tag
+    permissions:
+      contents: read
+      packages: write # Pass publishing permission to the image job in the reusable workflow.
+    uses: ./.github/workflows/docker.yml
+
   publish:
     name: Publish GitHub release
-    runs-on: ubuntu-latest
+    needs: image
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: write # Required only for creating or updating the tagged GitHub release.
@@ -30,12 +60,7 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          awk -v tag="$TAG" '
-            index($0, "## " tag " - ") == 1 { found = 1; next }
-            found && /^## / { exit }
-            found { print }
-          ' CHANGELOG.md > release-notes.md
-          test -s release-notes.md
+          bash scripts/release-notes.sh "$TAG" > release-notes.md
 
       - name: Create or update release
         env:
@@ -46,5 +71,5 @@ jobs:
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes-file release-notes.md
           else
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes-file release-notes.md
+            gh release create "$TAG" --verify-tag --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes-file release-notes.md
           fi

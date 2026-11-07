@@ -5,18 +5,24 @@
 Main workflow:
 
 1. Open the UI through an SSH tunnel or a protected admin endpoint.
-2. Log in.
-3. Use the `RU` / `EN` button in the top bar to switch the panel language when needed. The choice is saved in the browser.
-4. Select an existing tunnel, or click `Create tunnel` to add one.
+2. Log in with username `admin` and your existing password. Set `WEBUI_USERNAME` in `.env` to change the username.
+3. Use the labelled language and theme selectors in the sidebar to switch English/Russian and light/dark appearance. Both choices are saved in the browser.
+4. Open `Tunnels`, select a tunnel from the local list, or click `Create tunnel`.
 5. When creating a tunnel, select its protocol and settings in the dialog.
 6. Create a client inside the selected tunnel.
-7. Open `Config` for the client.
+7. Open `Actions` for the client and click `Connect`.
 8. Choose one of the import methods offered for that profile.
 9. Import the config into a compatible AmneziaWG or AmneziaVPN client.
 
-Dashboard profile filters appear only for profiles with existing tunnels; the creation dialog offers all available profiles.
+The tunnel list supports search and filters for profiles with existing tunnels; the creation dialog offers all available profiles. `Clients` searches across tunnels, `Traffic` opens recorded traffic, and `Overview` provides a real server summary. On narrow screens, the same navigation scrolls horizontally above the content.
+
+The opening `Overview` shows tunnel count, enabled/runtime client status, recorded 30-day traffic and a client preview. Traffic is shown as unavailable or not yet recorded until SQLite has samples; missing runtime counters are displayed as a dash. When creating from `Clients` with all tunnels shown, choose the tunnel explicitly in the form. An active tunnel filter or tunnel page preselects that tunnel, and the selection remains editable. Protocol fields are grouped by purpose. Regeneration preserves port, subnet, DNS and MTU; for AWG 3.x it also rotates the header protection key. Import updated configs after confirming regeneration.
 
 AWG 3.x offers the same four export choices: `.conf`, raw-config AmneziaWG QR, structured AmneziaVPN QR, and `vpn://`. Use AmneziaVPN 5.0.1.5 or newer for AWG 3.1, and keep `.conf` as the fallback when a client-specific import path fails.
+
+On phones, use the compact selector to switch tunnels. A separate control opens search and filters. Connection facts are optional disclosures while warnings stay visible. Connection settings are grouped without hiding expert fields. “Not running” describes runtime, while “Enabled” describes configuration.
+
+Use the `Connect` dialog to choose a QR mode, download a `.conf` file, or copy a `vpn://` link. The import key is fetched only after an explicit copy action. A readable field remains available when clipboard access fails. Failed multipart QR parts can be retried inside the enlarged view. The deletion confirmation shows the client name, tunnel, and IP address. Traffic also distinguishes loading, absent history and failure while preserving the last successful data.
 
 ## UI Actions
 
@@ -24,19 +30,18 @@ Tunnel actions:
 
 - `Create tunnel`: choose a protocol in the dialog and create a new tunnel.
 - `Create client`: create a client inside a specific tunnel.
-- `Config`: choose between `.conf`, AmneziaWG QR, AmneziaVPN QR, and `vpn://` export.
-- `Edit`: rename a client or store admin-only notes without changing VPN config.
-- `Settings`: tunnel settings, including optional per-tunnel `Server host` endpoint override.
-- `Protocol`: protocol params and regenerate.
+- Expand `Actions` to access `Connect`, client `Edit`, enable/disable and deletion. `Connect` opens one dialog for all four import methods. `Edit` manages name, admin-only notes, expiration and optional traffic limits.
+- `Connection`: tunnel settings, including optional per-tunnel `Server host`, DNS, MTU, port, subnet, keepalive, allowed IPs and egress. Each tunnel keeps its own MTU. Tunnel deletion is at the bottom of this pane.
+- `Protocol parameters`: all parameters supplied by the selected profile. Save edits here or use the form’s `Regenerate`. The header shortcut is shown on the other panes, so only one regeneration entry is visible at a time. Regeneration asks for confirmation and makes affected client configurations stale.
 - `Restart`: restart a tunnel.
 - `Delete`: delete a tunnel or client. Deleting a tunnel with a client that connected before requires typing the tunnel name.
 
-Maintenance actions are available through the `Maintenance` button:
+Maintenance actions are available on the `Maintenance` page in the sidebar:
 
 - `Overview`: active tunnels and enabled clients. It also shows manual mode when runtime configuration apply is off.
 - `Doctor`: system and runtime diagnostics grouped by category, with OK/WARN/FAIL status per check. Firewall repair appears here only when Doctor finds a repairable managed-rule issue.
 - `WARP`: register, import, restart, or remove the optional WARP egress configuration.
-- `Backup & restore`: download an encrypted backup and verify an `.afbackup` in dry-run mode. Actual restore remains CLI-only.
+- `Backup and restore`: download an encrypted backup and verify an `.afbackup` in dry-run mode. Actual restore remains CLI-only.
 - `Traffic`: aggregate traffic history when SQLite is enabled.
 - `Audit log`: inspect recent safe audit events. The panel auto-refreshes while the Audit log tab is open and shows newest events first.
 - `Support`: download a support bundle without secrets and view the safe runtime, database, TLS, and version summary.
@@ -45,19 +50,13 @@ Maintenance actions are available through the `Maintenance` button:
 
 Changing tunnel settings or protocol params can make old client configs stale.
 
-After such changes, affected clients show a `stale` badge until a fresh config is exported from `Config`.
+After such changes, affected clients show a `New config needed` badge until a fresh config is exported from `Actions`.
 
 Client rename and notes are metadata-only changes and do not make configs stale.
 
 ## Client Runtime Status
 
-The client list shows two different kinds of status:
-
-- `enabled` / `disabled`: whether the client is allowed in awg-forge config.
-- `active now`, `seen recently`, `offline`, `never seen`: approximate runtime status from `awg show` and persisted `last_seen_at`.
-- `last seen`, `received`, `sent`: latest handshake time and runtime counters from the server side.
-
-AmneziaWG/WireGuard does not keep a permanent TCP-like connection, so `active now` is only an approximate online indicator, not a strict online/offline status. In the dashboard, active means the latest handshake is younger than about 3 minutes. The UI also shows `received` / `sent` counters when runtime exposes them.
+A client row shows `Enabled`, `Disabled`, `Expired`, or `Active now`. An enabled client is shown as active when its latest handshake is no more than two minutes old. The last activity and traffic columns show the latest handshake time and runtime counters when available.
 
 If SQLite is enabled, client rows show total recorded traffic. `Maintenance` -> `Traffic` shows aggregate traffic history for today, 7 days, and 30 days across all clients and tunnels. Values are sampled from runtime counters once per minute; the first sample is treated as a baseline.
 
@@ -82,22 +81,16 @@ When creating or editing a client, you can choose an expiration:
 - `30 days`;
 - custom date and time.
 
-When the expiration passes, the client remains visible in the UI and `state.json`, but becomes `expired` and is no longer rendered into the server config as a peer. This is safer than deletion because name, notes, last seen, and support bundle history are preserved. The UI shows this as `expired` / `not rendered since <date>`.
+When the expiration passes, the client remains visible in the UI and `state.json`, but becomes `expired` and is no longer rendered into the server config as a peer. This is safer than deletion because name, notes, last seen, and support bundle history are preserved. The client row shows `Expired`.
 
 In `serve` mode, awg-forge periodically enforces expired clients and re-renders affected tunnels. Enforcement normally happens within one minute after the actual expiration time.
 
 ## CLI In Docker
 
-After restore, restart the container to reload all restored settings, including TLS and database state. With `APPLY_CONFIG=true`, startup applies enabled tunnels and reconciles WARP. Restarting only a tunnel is not enough. Wait for startup before running the remaining checks.
+For backup, verification, and restore, see [Diagnostics](diagnostics.md#encrypted-backup--restore).
 
 ```bash
 docker exec awg-forge awg-forge doctor
-docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge backup /tmp/awg-forge.afbackup
-docker cp awg-forge:/tmp/awg-forge.afbackup ./awg-forge-backup-YYYYMMDD-HHMMSS.afbackup
-docker cp ./<backup-file>.afbackup awg-forge:/tmp/backup.afbackup
-docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore verify /tmp/backup.afbackup
-docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore /tmp/backup.afbackup
-docker restart awg-forge
 docker exec awg-forge awg-forge firewall repair
 docker exec awg-forge awg-forge firewall check
 docker exec awg-forge awg-forge support-bundle
@@ -106,10 +99,10 @@ docker exec awg-forge awg-forge logs
 docker exec awg-forge awg-forge logs --tail 200 --level error
 docker exec awg-forge awg-forge client add phone
 docker exec awg-forge awg-forge client add laptop awg15
-docker exec awg-forge awg-forge client config <client-id>
-docker exec awg-forge awg-forge client disable <client-id>
-docker exec awg-forge awg-forge client enable <client-id>
-docker exec awg-forge awg-forge client remove <client-id>
+docker exec awg-forge awg-forge client config "${CLIENT_ID:?Set CLIENT_ID first}"
+docker exec awg-forge awg-forge client disable "${CLIENT_ID:?Set CLIENT_ID first}"
+docker exec awg-forge awg-forge client enable "${CLIENT_ID:?Set CLIENT_ID first}"
+docker exec awg-forge awg-forge client remove "${CLIENT_ID:?Set CLIENT_ID first}"
 docker exec awg-forge awg-forge tunnel create awg_1_5 awg15 51825 10.15.0.0/24
 ```
 
@@ -120,17 +113,12 @@ awg-forge init --server-host vpn.example.com --external-interface eth0 --profile
 awg-forge serve
 awg-forge render
 awg-forge doctor
-BACKUP_PASSWORD='long-random-backup-password' awg-forge backup ./awg-forge.afbackup
-BACKUP_PASSWORD='long-random-backup-password' awg-forge restore verify ./awg-forge.afbackup
-BACKUP_PASSWORD='long-random-backup-password' awg-forge restore ./awg-forge.afbackup
 awg-forge firewall check
 awg-forge firewall repair
 awg-forge support-bundle
 awg-forge updates
 awg-forge logs
 ```
-
-After a local restore, restart the running awg-forge process to reload restored settings.
 
 ## Client Config Import
 
@@ -140,7 +128,7 @@ The `AmneziaVPN` option shows a QR code built for AmneziaVPN import. The payload
 
 The `AmneziaWG` option shows a raw full `.conf` QR. It is intended for AmneziaWG-compatible clients that scan config QR codes. AmneziaVPN may ignore raw `.conf` QR codes on some platforms.
 
-Use the client `Config` action to choose between:
+Open client `Actions` → `Connect` to choose between:
 
 - `AmneziaVPN`: AmneziaVPN-compatible QR import;
 - `AmneziaWG`: raw full `.conf` QR for AmneziaWG-compatible import;

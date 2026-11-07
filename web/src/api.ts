@@ -72,8 +72,8 @@ async function errorText(res: Response): Promise<string> {
   return (await errorDetails(res)).message;
 }
 
-export function login(password: string): Promise<{ ok: true }> {
-  return request("/api/login", { method: "POST", body: { password } });
+export function login(username: string, password: string): Promise<{ ok: true }> {
+  return request("/api/login", { method: "POST", body: { username, password } });
 }
 
 export function logout(): Promise<{ ok: true }> {
@@ -85,7 +85,7 @@ export function state(): Promise<AppState> {
 }
 
 export function createTunnel(body: { profile: string; name: string; port: number; automatic_port?: boolean; subnet: string; egress_mode: string }) {
-  return request("/api/tunnels", { method: "POST", body, idempotencyKey: newIdempotencyKey() });
+  return request<{ tunnel: { id: string } }>("/api/tunnels", { method: "POST", body, idempotencyKey: newIdempotencyKey() });
 }
 
 export function tunnelSuggestion(profile: string): Promise<{ suggestion: TunnelSuggestion }> {
@@ -210,8 +210,9 @@ export function auditLog(): Promise<{ events: AuditEvent[] }> {
   return request("/api/audit-log?tail=100");
 }
 
-export function trafficSummary(): Promise<TrafficSummary> {
-  return request("/api/traffic-summary");
+export async function trafficSummary(): Promise<TrafficSummary> {
+  const summary = await request<TrafficSummary>("/api/traffic-summary");
+  return { ...summary, rows: summary.rows || [] };
 }
 
 export function registerWarp(): Promise<{ warp: WarpSummary }> {
@@ -240,7 +241,7 @@ export async function backup(password: string): Promise<Response> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ password }),
   });
-  if (!res.ok) throw new APIError(res.status, await errorText(res));
+  if (!res.ok) { const error = await errorDetails(res); throw new APIError(res.status, error.message, error.code); }
   return res;
 }
 
@@ -249,6 +250,6 @@ export async function restoreVerify(file: File, password: string): Promise<{ rep
   form.set("backup", file);
   form.set("password", password);
   const res = await fetch("/api/restore/verify", { method: "POST", body: form });
-  if (!res.ok) throw new APIError(res.status, await errorText(res));
+  if (!res.ok) { const error = await errorDetails(res); throw new APIError(res.status, error.message, error.code); }
   return (await res.json()) as { report: RestoreReport };
 }

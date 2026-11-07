@@ -6,7 +6,8 @@ The main example is [.env.example](../../.env.example).
 
 - `WEBUI_HOST`: Web UI bind address. Defaults to `127.0.0.1`.
 - `WEBUI_PORT`: Web UI port. Defaults to `51821`.
-- `PASSWORD`: Web UI password. Required for public binds and recommended always.
+- `WEBUI_USERNAME`: Web UI administrator username. Defaults to `admin`.
+- `PASSWORD`: Web UI administrator password. Required for every bind except a literal loopback IP with trusted proxy headers disabled. Hostnames, including `localhost`, require a password. Changing `WEBUI_USERNAME` preserves the existing password.
 - `SESSION_COOKIE_SECURE`: Secure cookie policy for UI sessions. Values: `auto`, `true`, `false`. Defaults to `auto`.
 - `WEBUI_TRUST_PROXY_HEADERS`: permits trusted `X-Forwarded-Proto` and `X-Forwarded-For` handling. Defaults to `false`.
 - `WEBUI_TRUSTED_PROXY_CIDRS`: comma-separated CIDRs allowed to supply forwarded headers. Required when `WEBUI_TRUST_PROXY_HEADERS=true`.
@@ -102,10 +103,11 @@ The requirements are the same as domain HTTP-01: a non-loopback `WEBUI_HOST`, `P
 
 ```bash
 cd /opt/awg-forge
+: "${PUBLIC_IP:?Set PUBLIC_IP first}"
 # Set WEBUI_HOST=0.0.0.0 for IPv4, or WEBUI_HOST=:: for IPv6 in .env.
 docker compose up -d --force-recreate
 docker exec awg-forge awg-forge tls use acme-ip \
-  --ip <public-ipv4-or-ipv6> --email admin@example.com --accept-tos
+  --ip "${PUBLIC_IP:?Set PUBLIC_IP first}" --email admin@example.com --accept-tos
 docker restart awg-forge
 ```
 

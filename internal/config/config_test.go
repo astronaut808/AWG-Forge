@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,10 +19,29 @@ func TestPublicBindRequiresPasswordButNotSessionSecret(t *testing.T) {
 }
 
 func TestPublicBindWithoutPasswordRejected(t *testing.T) {
-	t.Setenv("WEBUI_HOST", "0.0.0.0")
 	t.Setenv("PASSWORD", "")
-	if _, err := config.FromEnv(); err == nil {
-		t.Fatal("expected PASSWORD requirement")
+	for _, host := range []string{"0.0.0.0", "::", "192.0.2.10", "10.0.0.5", "2001:db8::10", "::ffff:192.0.2.10", "localhost", "panel.example.test"} {
+		t.Run(host, func(t *testing.T) {
+			t.Setenv("WEBUI_HOST", host)
+			if _, err := config.FromEnv(); err == nil || !strings.Contains(err.Error(), "PASSWORD is required") {
+				t.Fatalf("expected PASSWORD requirement, got %v", err)
+			}
+			t.Setenv("PASSWORD", "synthetic-password")
+			if cfg, err := config.FromEnv(); err != nil || cfg.Password != "synthetic-password" {
+				t.Fatalf("could not use configured password: %v", err)
+			}
+		})
+	}
+}
+
+func TestLoopbackBindAllowsEmptyPassword(t *testing.T) {
+	t.Setenv("PASSWORD", "")
+	t.Setenv("WEBUI_TRUST_PROXY_HEADERS", "false")
+	for _, host := range []string{"", "127.0.0.1", "127.1.2.3", "::1", "::ffff:127.0.0.1"} {
+		t.Setenv("WEBUI_HOST", host)
+		if _, err := config.FromEnv(); err != nil {
+			t.Fatalf("loopback host %q: %v", host, err)
+		}
 	}
 }
 
@@ -55,6 +75,7 @@ func TestTrustedProxyValidation(t *testing.T) {
 		}
 	})
 	t.Run("parses trusted proxy CIDRs", func(t *testing.T) {
+		t.Setenv("PASSWORD", "synthetic-password")
 		t.Setenv("WEBUI_TRUST_PROXY_HEADERS", "true")
 		t.Setenv("WEBUI_TRUSTED_PROXY_CIDRS", "127.0.0.1/32, 10.0.0.0/8")
 		cfg, err := config.FromEnv()
@@ -63,6 +84,15 @@ func TestTrustedProxyValidation(t *testing.T) {
 		}
 		if len(cfg.WebUITrustedProxyCIDRs) != 2 {
 			t.Fatalf("trusted proxy CIDRs = %d, want 2", len(cfg.WebUITrustedProxyCIDRs))
+		}
+	})
+	t.Run("requires password on loopback", func(t *testing.T) {
+		t.Setenv("WEBUI_HOST", "127.0.0.1")
+		t.Setenv("PASSWORD", "")
+		t.Setenv("WEBUI_TRUST_PROXY_HEADERS", "true")
+		t.Setenv("WEBUI_TRUSTED_PROXY_CIDRS", "127.0.0.1/32")
+		if _, err := config.FromEnv(); err == nil || !strings.Contains(err.Error(), "PASSWORD is required") {
+			t.Fatalf("expected PASSWORD requirement, got %v", err)
 		}
 	})
 }

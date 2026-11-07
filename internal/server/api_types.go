@@ -11,7 +11,8 @@ type warpImportRequest struct {
 }
 
 type loginRequest struct {
-	Password string `json:"password"`
+	Username *string `json:"username"`
+	Password string  `json:"password"`
 }
 
 type backupRequest struct {

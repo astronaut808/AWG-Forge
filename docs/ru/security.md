@@ -9,13 +9,13 @@ WEBUI_HOST=127.0.0.1
 WEBUI_PORT=51821
 ```
 
-Production-рекомендация: держать UI на loopback и заходить через SSH tunnel:
+Для доступа к панели оставь адрес `127.0.0.1` и подключайся через SSH-туннель.
 
 ```bash
 ssh -L 51821:127.0.0.1:51821 user@server
 ```
 
-Если UI публикуется наружу, пароль обязателен.
+Перед открытием доступа к панели задай надёжный `PASSWORD`. Пустой пароль допустим только при привязке к явному loopback IP, например `127.0.0.1` или `::1`, с выключенными trusted proxy headers. Любой другой адрес привязки, включая имена хостов вроде `localhost`, требует пароль. Логин по умолчанию — `admin`. Чтобы его изменить, задай `WEBUI_USERNAME`.
 
 ## TLS и reverse proxy
 
@@ -25,7 +25,7 @@ ssh -L 51821:127.0.0.1:51821 user@server
 
 ## Sessions
 
-UI sessions истекают через 30 минут.
+Сессия панели действует 30 минут.
 
 `SESSION_SECRET` можно не задавать вручную. Если он отсутствует, awg-forge создаст и сохранит его в `state.json`.
 
@@ -33,11 +33,11 @@ UI sessions истекают через 30 минут.
 
 ## Origin / Referer Checks
 
-State-changing requests проверяют Origin/Referer.
+Сервер проверяет заголовки `Origin` и `Referer` у запросов, которые меняют настройки.
 
-POST без Origin/Referer разрешен только для loopback Host (`127.0.0.1`, `localhost`, `::1`). Это сохраняет localhost/SSH tunnel workflow и не открывает такой же сценарий для публичного Host.
+Запрос без обоих заголовков разрешён при обращении напрямую к панели по локальному адресу (`127.0.0.1`, `localhost` или `::1`).
 
-Opaque origins вроде `null` и browser-extension origins отклоняются для mutating requests.
+Источники вроде `null` и URL расширений браузера отклоняются.
 
 ## Secrets
 
@@ -53,9 +53,7 @@ Opaque origins вроде `null` и browser-extension origins отклоняют
 
 ## File Permissions
 
-Config directory и generated config files должны иметь ограниченные права.
-
-Doctor проверяет права config directory и предупреждает о проблемах.
+Ограничь доступ к каталогу конфигурации и файлам в нём. Doctor проверяет права доступа и предупреждает о проблемах.
 
 ## Runtime Apply Rollback
 

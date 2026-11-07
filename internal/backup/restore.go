@@ -63,7 +63,7 @@ func preRestoreBackupFile(ctx context.Context, cfg config.Config, password strin
 	return restoreFile{Path: path, Data: archive.Data}, true, nil
 }
 
-func restoreFiles(root string, files []restoreFile) error {
+func restoreFiles(root string, files []restoreFile, rename func(string, string) error) (err error) {
 	if err := os.MkdirAll(root, 0700); err != nil {
 		return err
 	}
@@ -71,20 +71,44 @@ func restoreFiles(root string, files []restoreFile) error {
 		return err
 	}
 
-	suffix := time.Now().UTC().Format("20060102-150405")
-	tmp := filepath.Join(root, ".restore-tmp-"+suffix)
-	old := filepath.Join(root, ".restore-old-"+suffix)
-	if err := os.RemoveAll(tmp); err != nil {
+	// Older releases can leave the only copy of a file in a recovery directory.
+	entries, err := os.ReadDir(root)
+	if err != nil {
 		return err
 	}
-	if err := os.RemoveAll(old); err != nil {
-		return err
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".restore-old-") {
+			return fmt.Errorf("recover previous restore data in %s before retrying", entry.Name())
+		}
 	}
+
+	const stagingName = ".restore-pending"
+	staging := filepath.Join(root, stagingName)
+	if err := os.Mkdir(staging, 0700); err != nil {
+		return fmt.Errorf("could not create restore staging directory: %w", err)
+	}
+	preserve := false
+	defer func() {
+		if !preserve {
+			err = errors.Join(err, os.RemoveAll(staging))
+		}
+	}()
+
+	tmp := filepath.Join(staging, "new")
+	old := filepath.Join(staging, "old")
 	if err := os.MkdirAll(tmp, 0700); err != nil {
 		return err
 	}
 	for _, file := range files {
-		dst, err := safeRestorePath(tmp, file.Path)
+		clean, err := cleanArchivePath(file.Path)
+		if err != nil {
+			return err
+		}
+		top, _, _ := strings.Cut(clean, "/")
+		if top == stagingName || strings.HasPrefix(top, ".restore-old-") {
+			return errors.New("archive uses a reserved restore path")
+		}
+		dst, err := safeRestorePath(tmp, clean)
 		if err != nil {
 			return err
 		}
@@ -102,63 +126,58 @@ func restoreFiles(root string, files []restoreFile) error {
 	if err := os.MkdirAll(old, 0700); err != nil {
 		return err
 	}
-	if err := moveRootEntries(root, old, filepath.Base(tmp), filepath.Base(old)); err != nil {
-		return err
-	}
-	if err := moveRootEntries(tmp, root); err != nil {
-		if cleanupErr := removeRootEntries(root, filepath.Base(tmp), filepath.Base(old)); cleanupErr != nil {
-			return errors.Join(err, fmt.Errorf("rollback cleanup failed: %w", cleanupErr))
+	movedOld, moveErr := moveRootEntries(root, old, rename, stagingName)
+	if moveErr != nil {
+		if rollbackErr := undoMoves(old, root, movedOld, rename); rollbackErr != nil {
+			preserve = true
+			return errors.Join(moveErr, fmt.Errorf("rollback failed; previous data retained in %s: %w", old, rollbackErr))
 		}
-		if rollbackErr := moveRootEntries(old, root); rollbackErr != nil {
-			return errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
+		return moveErr
+	}
+	movedNew, moveErr := moveRootEntries(tmp, root, rename, "")
+	if moveErr != nil {
+		if cleanupErr := undoMoves(root, tmp, movedNew, rename); cleanupErr != nil {
+			preserve = true
+			return errors.Join(moveErr, fmt.Errorf("rollback cleanup failed; previous data retained in %s: %w", old, cleanupErr))
 		}
-		return err
-	}
-	if err := os.RemoveAll(tmp); err != nil {
-		return err
-	}
-	_ = os.RemoveAll(old)
-	return nil
-}
-
-func removeRootEntries(root string, skipNames ...string) error {
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return err
-	}
-	skip := map[string]bool{}
-	for _, name := range skipNames {
-		skip[name] = true
-	}
-	for _, entry := range entries {
-		name := entry.Name()
-		if skip[name] {
-			continue
+		if rollbackErr := undoMoves(old, root, movedOld, rename); rollbackErr != nil {
+			preserve = true
+			return errors.Join(moveErr, fmt.Errorf("rollback failed; previous data retained in %s: %w", old, rollbackErr))
 		}
-		if err := os.RemoveAll(filepath.Join(root, name)); err != nil {
-			return err
-		}
+		return moveErr
 	}
 	return nil
 }
 
-func moveRootEntries(src, dst string, skipNames ...string) error {
+func undoMoves(src, dst string, moved []string, rename func(string, string) error) error {
+	var rollbackErr error
+	for i := len(moved) - 1; i >= 0; i-- {
+		name := moved[i]
+		target := filepath.Join(dst, name)
+		if _, err := os.Lstat(target); !errors.Is(err, os.ErrNotExist) {
+			rollbackErr = errors.Join(rollbackErr, fmt.Errorf("could not safely restore %s", target))
+		} else if err := rename(filepath.Join(src, name), target); err != nil {
+			rollbackErr = errors.Join(rollbackErr, err)
+		}
+	}
+	return rollbackErr
+}
+
+func moveRootEntries(src, dst string, rename func(string, string) error, skip string) ([]string, error) {
 	entries, err := os.ReadDir(src)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	skip := map[string]bool{}
-	for _, name := range skipNames {
-		skip[name] = true
-	}
+	moved := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		name := entry.Name()
-		if skip[name] {
+		if name == skip {
 			continue
 		}
-		if err := os.Rename(filepath.Join(src, name), filepath.Join(dst, name)); err != nil {
-			return err
+		if err := rename(filepath.Join(src, name), filepath.Join(dst, name)); err != nil {
+			return moved, err
 		}
+		moved = append(moved, name)
 	}
-	return nil
+	return moved, nil
 }

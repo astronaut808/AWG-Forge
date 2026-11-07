@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+Target candidate version is `0.20.0`. The browser API contract remains labelled `0.20.0-unreleased` until release preparation is approved.
+
+### Added
+
+- Allow `IMAGE` to select a version tag or digest for a managed upgrade while preserving the configured Compose image.
+- Add a configurable Web UI username via `WEBUI_USERNAME`. Existing installations keep their password and default to `admin`. Password-only browser API requests remain compatible with the default username.
+
+### Changed
+
+- Redesign the Web UI with a server overview, dedicated tunnel, client, traffic, and maintenance views, and responsive layouts in both themes and languages.
+- Let operators choose the tunnel when creating a client and open `.conf`, both QR formats, and `vpn://` from one Connect dialog.
+- Shorten the English and Russian READMEs and link to the detailed installation, upgrade, and uninstall guides.
+- Refresh Go to 1.27.3, SQLite, Go modules, frontend packages, CI tools, and pinned GitHub Actions. Build runtime images on Debian 13 (trixie).
+- Track npm and Docker updates alongside Go and Actions in Dependabot.
+
+### Fixed
+
+- Return entries already moved during a failed restore staging operation. Keep recovery data and block retries if rollback fails.
+- Validate the running container, effective Compose service, image defaults, and host mount layout before managed upgrades. Serialize installation mutations, pin the inspected target image, require stable HTTP/HTTPS readiness and the migrated SQLite schema, and retain recovery information on failed rollback.
+- Abort the upgrade and restart the previous container when the backup fails. Stage rollback data before replacing the working copy, and scope container recovery to the AWG-Forge service.
+- Remove duplicate controls for protocol regeneration, traffic retry, and creating the first tunnel. Preserve keyboard focus and QR retry in nested dialogs.
+- Preserve the browser host in the Vite proxy for authenticated requests and allow a separate local backend port.
+
+### Security
+
+- Refresh APT and its existing library in the runtime image for Debian's CVE-2026-109518 fix.
+- Require `PASSWORD` on every Web UI bind except a literal loopback IP with trusted proxy headers disabled, including explicit IPv4/IPv6 addresses and hostnames.
+- Gate image publication on smoke tests, encrypted traffic checks for all profiles, and blocking OS/library Trivy scans of the transferred build. Publish the GitHub Release after the image succeeds, and require the tagged commit to be reachable from `master`.
+- Include npm development dependencies in the blocking Trivy checks and scan current tracked/nonignored untracked source for secrets in addition to Git history.
+- Remove the obsolete adm-zip override and resolve patched transitive frontend tooling dependencies.
+- Apply one reproducible dependency-only patch to the pinned Linux AmneziaWG daemon in both Docker and vulnerability checks, with an import guard for unshipped SDK packages.
+- Verify actual encrypted traffic and restart for all four profiles in disposable Docker network namespaces.
+
 ## v0.19.1 - 2026-10-09
 
 ### Added

@@ -9,16 +9,26 @@
     "quality:aislop": "aislop ci"
   },
   "devDependencies": {
-    "@playwright/test": "1.62.1",
-    "@preact/preset-vite": "^2.10.2",
+    "@mantine/core": "9.7.4",
+    "@mantine/hooks": "9.7.4",
+    "@playwright/test": "1.64.1",
+    "@tabler/icons-react": "3.50.0",
+    "@types/node": "26.6.6",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.2.1",
+    "aislop": "0.20.0",
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
-    "aislop": "^0.14.0",
-    "preact": "^10.26.9",
-    "typescript": "^5.8.3",
-    "vite": "^6.3.5"
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "typescript": "7.0.2",
+    "vite": "8.3.5"
   },
-  "overrides": {
-    "adm-zip": "0.6.0"
-  }
+  "engines": {
+    "node": ">=26.13.0 <27",
+    "npm": ">=11.20.0 <13"
+  },
+  "type": "module",
+  "packageManager": "npm@12.2.1"
 }

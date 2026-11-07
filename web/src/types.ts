@@ -204,13 +204,12 @@ export type AuditEvent = {
 
 export type RestoreReport = {
   format: string;
-  schema: number;
+  schema_version: number;
   created_at: string;
   build: Record<string, string>;
-  files: number;
-  total_bytes: number;
+  file_count: number;
+  total_size: number;
   tunnels: Array<{
-    id: string;
     name: string;
     profile: string;
     interface: string;
