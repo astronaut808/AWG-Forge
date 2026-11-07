@@ -45,7 +45,7 @@ FROM debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1de
 ARG AWG_FORGE_VERSION=dev
 ARG AWG_FORGE_COMMIT=unknown
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    apt bash ca-certificates dumb-init iproute2 iptables nftables procps openresolv perl-base \
+    apt bash ca-certificates dumb-init iproute2 iptables nftables procps openresolv perl-base zlib1g \
   && rm -rf /var/lib/apt/lists/*
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]

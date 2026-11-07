@@ -27,6 +27,7 @@ Target candidate version is `0.20.0`. The browser API contract remains labelled 
 
 ### Security
 
+- Refresh the runtime image's existing zlib package to include available Debian security fixes.
 - Refresh APT and its existing library in the runtime image for Debian's CVE-2026-109518 fix.
 - Require `PASSWORD` on every Web UI bind except a literal loopback IP with trusted proxy headers disabled, including explicit IPv4/IPv6 addresses and hostnames.
 - Gate image publication on smoke tests, encrypted traffic checks for all profiles, and blocking OS/library Trivy scans of the transferred build. Publish the GitHub Release after the image succeeds, and require the tagged commit to be reachable from `master`.
