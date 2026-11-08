@@ -19,6 +19,9 @@ Target candidate version is `0.20.0`. The browser API contract remains labelled 
 
 ### Fixed
 
+- Group browser appearance preferences in one accessible dialog, keep navigation height stable, and prevent responsive client data and tables from overflowing. Align native filters across browsers and restore each section's scroll position.
+- Restore focus to the appearance dialog's trigger after dismissal in Safari.
+
 - Preserve opened Web UI sections and loaded traffic during sidebar navigation; pause hidden subscriptions and keep browser history working without document navigation.
 
 - Return entries already moved during a failed restore staging operation. Keep recovery data and block retries if rollback fails.

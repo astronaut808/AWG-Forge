@@ -2,6 +2,7 @@ export type Locale = "en" | "ru";
 
 const en = {
   ui: {
+    appearance: "Appearance", interfaceSettings: "Interface settings", interfaceSettingsHelp: "Theme and language are saved in this browser.",
     clientActions: "Actions", noRuntimeData: "without data", runtimeUnknown: "No data", searchAndFilter: "Search and filters", connectionSummary: "Connection details", clearTunnelFilters: "Clear filters",
     addressing: "Tunnel and addressing", routing: "Routing and DNS", clientConnection: "Client connection", inheritEndpoint: "Leave empty to use the server address shown as the placeholder.", keepaliveHelp: "Seconds between keepalive packets. 0 disables persistent keepalive.", mtuHelp: "Auto omits an explicit MTU from the client configuration. Change MTU only when needed for your network.", configChangeHelp: "Connection or protocol changes may require clients to import new configurations. Check the configuration status after saving.", protocolHelp: "These parameters belong to the selected tunnel and protocol version. Header and signature syntax depends on the version; the server validates values when saving.", protocolDocs: "Protocol reference", selectProtocolHelp: "Each tunnel has its own protocol parameters, network and clients. AWG 3.x is experimental.", expiredQuotaHelp: "The traffic limit is exceeded and this client's access has expired. Restore both the traffic allowance and a valid expiration before expecting access.",
     togglePassword: "Show or hide password", clientTunnel: "Tunnel", chooseTunnel: "Choose a tunnel", clientNamePlaceholder: "For example, personal laptop", clientNameShortHint: "Use Latin letters and digits, up to 64 characters.", nameRules: "Name requirements", theme: "Theme", language: "Language",
@@ -263,7 +264,7 @@ const en = {
     auditAutoRefresh: "Audit log updates automatically while this tab is open.",
     noAuditEvents: "No audit events yet.",
     traffic: "Traffic history",
-    trafficText: "SQLite traffic history is collected from runtime counters once per minute.",
+    trafficText: "Received and sent traffic is recorded once per minute.",
     trafficDisabled: "SQLite traffic history is disabled. Enable DATABASE_MODE=sqlite and run db migrate.",
     refreshTraffic: "Refresh traffic",
     noTrafficData: "No traffic history yet.",
@@ -338,6 +339,7 @@ export type Messages = typeof en;
 
 const ru: Messages = {
   ui: {
+    appearance: "Интерфейс", interfaceSettings: "Настройки интерфейса", interfaceSettingsHelp: "Тема и язык сохраняются в этом браузере.",
     clientActions: "Действия", noRuntimeData: "без данных", runtimeUnknown: "Нет данных", searchAndFilter: "Поиск и фильтры", connectionSummary: "Параметры подключения", clearTunnelFilters: "Сбросить фильтры",
     addressing: "Туннель и адресация", routing: "Маршрутизация и DNS", clientConnection: "Подключение клиентов", inheritEndpoint: "Пустое значение использует адрес сервера, показанный в подсказке поля.", keepaliveHelp: "Интервал keepalive в секундах. 0 отключает постоянную отправку keepalive.", mtuHelp: "Авто не задаёт MTU явно в конфигурации клиента. Меняйте MTU, только если этого требует ваша сеть.", configChangeHelp: "После изменения подключения или протокола клиентам могут потребоваться новые конфигурации. Проверьте их статус после сохранения.", protocolHelp: "Параметры относятся к выбранному туннелю и версии протокола. Формат заголовков и сигнатур зависит от версии; при сохранении сервер проверяет значения.", protocolDocs: "Справочник протоколов", selectProtocolHelp: "У каждого туннеля свои параметры протокола, сеть и клиенты. AWG 3.x — экспериментальная версия.", expiredQuotaHelp: "Лимит трафика исчерпан и срок доступа клиента истёк. Для доступа нужны и доступная квота, и действующий срок.",
     togglePassword: "Показать или скрыть пароль", clientTunnel: "Туннель", chooseTunnel: "Выберите туннель", clientNamePlaceholder: "Например, home-laptop", clientNameShortHint: "Латинские буквы и цифры, до 64 символов.", nameRules: "Требования к имени", theme: "Тема", language: "Язык",
@@ -599,7 +601,7 @@ const ru: Messages = {
     auditAutoRefresh: "Журнал аудита обновляется автоматически, пока открыта эта вкладка.",
     noAuditEvents: "Событий аудита пока нет.",
     traffic: "История трафика",
-    trafficText: "SQLite-история трафика собирается из runtime counters раз в минуту.",
+    trafficText: "История полученного и отправленного трафика обновляется раз в минуту.",
     trafficDisabled: "SQLite-история трафика отключена. Включи DATABASE_MODE=sqlite и выполни db migrate.",
     refreshTraffic: "Обновить трафик",
     noTrafficData: "Истории трафика пока нет.",

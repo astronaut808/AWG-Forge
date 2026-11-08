@@ -8,7 +8,7 @@ Main workflow:
 
 1. Open the UI through an SSH tunnel or a protected admin endpoint.
 2. Log in with username `admin` and your existing password. Set `WEBUI_USERNAME` in `.env` to change the username.
-3. Use the labelled language and theme selectors in the sidebar to switch English/Russian and light/dark appearance. Both choices are saved in the browser.
+3. Open `Appearance` in the sidebar (the sun/moon button on narrow screens) to choose English/Russian and a light/dark theme. Both choices are saved in the browser. The same dialog provides documentation and project links.
 4. Open `Tunnels`, select a tunnel from the local list, or click `Create tunnel`.
 5. When creating a tunnel, select its protocol and settings in the dialog.
 6. Create a client inside the selected tunnel.

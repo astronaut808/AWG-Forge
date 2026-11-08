@@ -1,4 +1,5 @@
 import { Button } from "./ui";
+import { NativeSelect } from "@mantine/core";
 import { useMediaQuery } from "@mantine/hooks";
 import * as api from "./api";
 import { useI18n } from "./context";
@@ -9,10 +10,10 @@ import { ForgeMark, Icon } from "./icons";
 import type { IconName } from "./icons";
 import { MaintenanceCenter, TrafficPanel } from "./maintenance";
 import { navigate, navigationEvent } from "./navigation";
-import { Badge, Empty } from "./shared";
+import { Badge, Dialog, Empty } from "./shared";
 import type { AppState, Client, Profile, TrafficSummary, Tunnel } from "./types";
 import { activeLabel, classNames, dateOnly, formatBytes, isExperimentalProfile, profileTitle, relativeTime } from "./utils";
-import { Activity, Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { Activity, Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 type ShellProps = {
@@ -42,10 +43,23 @@ export function Shell(props: ShellProps) {
     return { section, visited: [section] };
   });
   const { section, visited } = view;
+  const activeSection = useRef(section);
+  const sectionScroll = useRef(new Map<string, number>());
   const [tunnelNavigation, setTunnelNavigation] = useState(0);
+  const [preferencesOpen, setPreferencesOpen] = useState(false);
+  const preferencesTrigger = useRef<HTMLButtonElement | null>(null);
+  useLayoutEffect(() => {
+    globalThis.scrollTo({ top: sectionScroll.current.get(section) || 0, behavior: "instant" });
+  }, [section]);
   useEffect(() => {
+    const previousRestoration = globalThis.history.scrollRestoration;
+    globalThis.history.scrollRestoration = "manual";
     const onHash = () => {
       const next = currentSection();
+      if (next !== activeSection.current) {
+        sectionScroll.current.set(activeSection.current, globalThis.scrollY);
+        activeSection.current = next;
+      }
       setView((current) => current.section === next ? current : {
         section: next, visited: current.visited.includes(next) ? current.visited : [...current.visited, next],
       });
@@ -54,6 +68,7 @@ export function Shell(props: ShellProps) {
     globalThis.addEventListener("popstate", onHash);
     globalThis.addEventListener(navigationEvent, onHash);
     return () => {
+      globalThis.history.scrollRestoration = previousRestoration;
       globalThis.removeEventListener("hashchange", onHash);
       globalThis.removeEventListener("popstate", onHash);
       globalThis.removeEventListener(navigationEvent, onHash);
@@ -71,16 +86,16 @@ export function Shell(props: ShellProps) {
     props.resetTunnelFilter();
     // An explicit overview selection opens its target without a stale local search.
     setTunnelNavigation((value) => value + 1);
+    sectionScroll.current.set("tunnels", 0);
     navigate("tunnels");
   }
   return <main className="app-shell">
     <aside className="sidebar">
-      <div className="sidebar-top"><Brand /><div className="server-scope"><Icon name="server" /><div><strong>{state.server_host}</strong><span>{m.ui.server}</span></div></div></div>
+      <div className="sidebar-top"><Brand /><div className="server-scope"><Icon name="server" /><div><strong title={state.server_host}>{state.server_host}</strong><span>{m.ui.server}</span></div></div></div>
       <nav className="main-nav" aria-label={m.aria.globalActions}>{navigation.map((item) => <Button key={item.id} type="button" className={classNames(section === item.id && "active")} aria-current={section === item.id ? "page" : undefined} onClick={() => navigate(item.id)}><Icon name={item.icon} />{item.label}</Button>)}</nav>
       <div className="sidebar-bottom">
-        <label className="sidebar-preference"><Icon name={theme === "dark" ? "moon" : "sun"} /><span>{m.ui.theme}</span><select aria-label={m.aria.toggleTheme} value={theme} onChange={(event) => setTheme(event.currentTarget.value)}><option value="light">{m.ui.lightTheme}</option><option value="dark">{m.ui.darkTheme}</option></select></label>
-        <label className="sidebar-preference"><Icon name="language" /><span>{m.ui.language}</span><select aria-label={m.aria.toggleLanguage} value={locale} onChange={(event) => setLocale(event.currentTarget.value as Locale)}><option value="ru">Русский</option><option value="en">English</option></select></label>
-        <Button className="sidebar-setting" type="button" onClick={logout}><Icon name="logout" />{m.common.logOut}</Button>
+        <Button className="sidebar-setting" type="button" aria-label={m.ui.interfaceSettings} title={m.ui.interfaceSettings} onClick={(event) => { preferencesTrigger.current = event.currentTarget; setPreferencesOpen(true); }}><Icon name={theme === "dark" ? "moon" : "sun"} /><span>{m.ui.appearance}</span></Button>
+        <Button className="sidebar-setting" type="button" aria-label={m.common.logOut} title={m.common.logOut} onClick={logout}><Icon name="logout" /><span>{m.common.logOut}</span></Button>
         <FooterLinks />
       </div>
     </aside>
@@ -92,6 +107,15 @@ export function Shell(props: ShellProps) {
         </>}
       </Activity>)}
       {props.overlays}
+      {preferencesOpen && <Dialog title={m.ui.interfaceSettings} returnFocusTo={preferencesTrigger.current} onClose={() => setPreferencesOpen(false)}>
+        <div className="interface-settings form single">
+          <p className="note">{m.ui.interfaceSettingsHelp}</p>
+          <NativeSelect className="form-control" label={m.ui.theme} aria-label={m.aria.toggleTheme} value={theme} onChange={(event) => setTheme(event.currentTarget.value)}><option value="light">{m.ui.lightTheme}</option><option value="dark">{m.ui.darkTheme}</option></NativeSelect>
+          <NativeSelect className="form-control" label={m.ui.language} aria-label={m.aria.toggleLanguage} value={locale} onChange={(event) => setLocale(event.currentTarget.value as Locale)}><option value="ru">Русский</option><option value="en">English</option></NativeSelect>
+          <div className="interface-links"><FooterLinks /></div>
+          <div className="form-actions"><Button className="button" type="button" onClick={() => setPreferencesOpen(false)}>{m.common.close}</Button></div>
+        </div>
+      </Dialog>}
     </div>
   </main>;
 }
@@ -118,11 +142,11 @@ function Overview({ state, openTunnel, navigate, renderClient, onCreateClient }:
   }, []);
   const copy = locale === "ru" ? {
     allTunnels: "Все туннели", allClients: "Все клиенты", recorded: "Записанный трафик", period: "Сумма за период",
-    traffic30d: "Трафик за 30 дней", trafficPair: "Получено и отправлено", history: "История SQLite",
+    traffic30d: "Трафик за 30 дней", trafficPair: "Получено и отправлено", history: "История трафика",
     running: "работают", stopped: "не работают", active: "активны сейчас", name: "Название", egress: "Выход",
   } : {
     allTunnels: "All tunnels", allClients: "All clients", recorded: "Recorded traffic", period: "Total per period",
-    traffic30d: "Traffic in 30 days", trafficPair: "Received and sent", history: "SQLite history",
+    traffic30d: "Traffic in 30 days", trafficPair: "Received and sent", history: "Traffic history",
     running: "up", stopped: "down", active: "active now", name: "Name", egress: "Egress",
   };
   const loadTraffic = useCallback(async () => {
@@ -182,7 +206,7 @@ export function AllClients({ state, renderClient, onCreateClient, onCreateTunnel
   const clientTunnel = state.tunnels.find((tunnel) => tunnel.id === effectiveFilter);
   return <section className="clients all-clients">
     <div className="clients-toolbar"><span>{m.tunnel.clientTotal(clients.length)}</span>{onCreateClient && <Button className="button primary" type="button" disabled={!state.tunnels.length} onClick={() => onCreateClient(clientTunnel)}><Icon name="plus" />{m.common.createClient}</Button>}</div>
-    <div className="client-filters"><input className="client-search" type="search" aria-label={m.ui.searchClients} placeholder={m.ui.searchClients} value={query} onInput={(event) => setQuery(event.currentTarget.value)} /><select aria-label={m.aria.tunnelFilters} value={effectiveFilter} onChange={(event) => setTunnelFilter(event.currentTarget.value)}><option value="all">{locale === "ru" ? "Все туннели" : "All tunnels"}</option>{state.tunnels.map((tunnel) => <option key={tunnel.id} value={tunnel.id}>{tunnel.name}</option>)}</select></div>
+    <div className="client-filters"><input className="client-search" type="search" aria-label={m.ui.searchClients} placeholder={m.ui.searchClients} value={query} onInput={(event) => setQuery(event.currentTarget.value)} /><NativeSelect className="form-control toolbar-select" aria-label={m.aria.tunnelFilters} value={effectiveFilter} onChange={(event) => setTunnelFilter(event.currentTarget.value)}><option value="all">{locale === "ru" ? "Все туннели" : "All tunnels"}</option>{state.tunnels.map((tunnel) => <option key={tunnel.id} value={tunnel.id}>{tunnel.name}</option>)}</NativeSelect></div>
     {clients.length ? <div className="client-table has-tunnel"><ClientTableHead withTunnel />{clients.map(({ client, tunnel }) => renderClient(client, tunnel))}</div> : <Empty title={!state.tunnels.length ? m.dashboard.noTunnelsYet : query ? m.ui.noMatches : m.tunnel.noClientsYet} text={query ? m.ui.searchClients : state.tunnels.length ? m.tunnel.createFirstClient : m.dashboard.createFirstTunnel} action={!state.tunnels.length ? <Button className="button primary" onClick={onCreateTunnel}>{m.common.createTunnel}</Button> : undefined} />}
   </section>;
 }
@@ -242,10 +266,10 @@ export function TunnelFirstDashboard({ profiles, tunnels, filter, setFilter, onC
   return <>
     <div className="page-heading"><div><h1>{m.dashboard.tunnels}</h1><span>{m.dashboard.tunnelCount(tunnels.length)}</span></div>{tunnels.length > 0 && <Button className="button primary" type="button" disabled={!profiles.some((profile) => profile.available)} onClick={() => onCreateTunnel()}><Icon name="plus" />{m.common.createTunnel}</Button>}</div>
     <section className="tunnel-workspace">
-      {compact && <div className="tunnel-mobile-picker"><label htmlFor="mobile-tunnel">{m.ui.selectedTunnel}</label><div><select id="mobile-tunnel" value={selected?.id || ""} onChange={(event) => select(event.currentTarget.value)}>{!selected && <option value="">{m.ui.chooseTunnel}</option>}{visible.map((tunnel) => <option key={tunnel.id} value={tunnel.id}>{tunnel.name} · {profileTitle(tunnel.profile)}</option>)}</select><Button className="button tunnel-tool-toggle" aria-label={m.ui.searchAndFilter} title={m.ui.searchAndFilter} aria-expanded={showTools} aria-controls="tunnel-tools" onClick={() => setShowTools(!showTools)}><Icon name="search" /></Button></div>{(effectiveFilter !== "all" || query) && <div className="tunnel-filter-state"><span className="help">{effectiveFilter !== "all" ? profileTitle(effectiveFilter) : ""}{query ? ` · ${query}` : ""}</span><Button className="button text" onClick={() => { setFilter("all"); setQuery(""); }}>{m.ui.clearTunnelFilters}</Button></div>}</div>}
+      {compact && <div className="tunnel-mobile-picker"><label htmlFor="mobile-tunnel">{m.ui.selectedTunnel}</label><div><NativeSelect className="form-control" id="mobile-tunnel" value={selected?.id || ""} onChange={(event) => select(event.currentTarget.value)}>{!selected && <option value="">{m.ui.chooseTunnel}</option>}{visible.map((tunnel) => <option key={tunnel.id} value={tunnel.id}>{tunnel.name} · {profileTitle(tunnel.profile)}</option>)}</NativeSelect><Button className="button tunnel-tool-toggle" aria-label={m.ui.searchAndFilter} title={m.ui.searchAndFilter} aria-expanded={showTools} aria-controls="tunnel-tools" onClick={() => setShowTools(!showTools)}><Icon name="search" /></Button></div>{(effectiveFilter !== "all" || query) && <div className="tunnel-filter-state"><span className="help">{effectiveFilter !== "all" ? profileTitle(effectiveFilter) : ""}{query ? ` · ${query}` : ""}</span><Button className="button text" onClick={() => { setFilter("all"); setQuery(""); }}>{m.ui.clearTunnelFilters}</Button></div>}</div>}
       {(!compact || showTools) && <aside className="tunnel-nav" id="tunnel-tools" aria-label={m.dashboard.tunnels}>
         <div className="tunnel-nav-toolbar"><input type="search" aria-label={m.ui.searchTunnels} placeholder={m.ui.searchTunnels} value={query} onInput={(event) => setQuery(event.currentTarget.value)} />
-          {availableFilters.length > 1 && <select aria-label={m.aria.tunnelFilters} value={effectiveFilter} onChange={(event) => setFilter(event.currentTarget.value)}><option value="all">{m.common.all}</option>{availableFilters.map((profile) => <option key={profile.id} value={profile.id}>{profileTitle(profile.id)}</option>)}</select>}
+          {availableFilters.length > 1 && <NativeSelect className="form-control toolbar-select" aria-label={m.aria.tunnelFilters} value={effectiveFilter} onChange={(event) => setFilter(event.currentTarget.value)}><option value="all">{m.common.all}</option>{availableFilters.map((profile) => <option key={profile.id} value={profile.id}>{profileTitle(profile.id)}</option>)}</NativeSelect>}
         </div>
         {visible.map((tunnel) => <Button key={tunnel.id} className={classNames("tunnel-choice", tunnel.id === selected?.id && "active")} type="button" aria-current={tunnel.id === selected?.id ? "true" : undefined} onClick={() => select(tunnel.id)}><span className="tunnel-choice-head"><span className={classNames("status-dot", tunnel.status?.up ? "up" : "down")} /><strong>{tunnel.name}</strong><Icon name="chevron" /></span><span className="tunnel-choice-meta">{profileTitle(tunnel.profile)} · {tunnel.listen_port}</span></Button>)}
       </aside>}
@@ -320,13 +344,13 @@ export function ClientRow({ client, tunnelName, onConfig, onSettings, onToggle, 
   const enableBlocked = !client.enabled && Boolean(client.traffic?.exceeded);
   return <div className={classNames("client-row", `client-status-${visualState}`, tunnelName && "with-tunnel", expanded && "expanded")}>
     <div className="client-summary">
-      <div className="client-identity"><Icon name="clients" /><div><strong className="client-name">{client.name}</strong><span className="mono">{client.address}</span></div></div>
+      <div className="client-identity"><Icon name="clients" /><div><strong className="client-name" title={client.name}>{client.name}</strong><span className="mono">{client.address}</span></div></div>
       {tunnelName && <span className="client-tunnel-name" title={tunnelName}><span className="mobile-label">{m.dashboard.tunnels}: </span>{tunnelName}</span>}
       <div className="client-status-cell"><Badge tone={client.expired ? "warn" : online ? "ok" : "neutral"}>{visualStatus}</Badge>{client.traffic?.exceeded && <Badge tone="bad">{m.status.limitExceeded}</Badge>}{client.needs_new_config && <Badge tone="warn">{m.common.stale}</Badge>}</div>
-      <span className="client-counter rx"><span className="sr-only">{m.tunnel.received}: </span><span className="mobile-label" aria-hidden="true">{m.tunnel.received} </span>{client.runtime?.present ? formatBytes(client.runtime.rx_bytes) : "—"}</span>
-      <span className="client-counter tx"><span className="sr-only">{m.tunnel.sent}: </span><span className="mobile-label" aria-hidden="true">{m.tunnel.sent} </span>{client.runtime?.present ? formatBytes(client.runtime.tx_bytes) : "—"}</span>
+      <span className="client-counter rx"><span className="sr-only">{m.tunnel.received}: </span><span className="mobile-label" aria-hidden="true">{m.tunnel.received} </span><span className="counter-value">{client.runtime?.present ? formatBytes(client.runtime.rx_bytes) : "—"}</span></span>
+      <span className="client-counter tx"><span className="sr-only">{m.tunnel.sent}: </span><span className="mobile-label" aria-hidden="true">{m.tunnel.sent} </span><span className="counter-value">{client.runtime?.present ? formatBytes(client.runtime.tx_bytes) : "—"}</span></span>
       <span className="client-lastseen"><span className="sr-only">{m.ui.lastActivity}: </span>{relativeTime(lastSeen, m.time, locale)}</span>
-      <div className="client-actions"><Button className="button" type="button" aria-expanded={expanded} aria-controls={`export-${client.id}`} onClick={() => setExpanded(!expanded)}><Icon name="settings" />{m.ui.clientActions}<span className={classNames("config-chevron", expanded && "expanded")}><Icon name="chevron" /></span></Button></div>
+      <div className="client-actions"><Button className="button" type="button" aria-label={m.ui.clientActions} title={m.ui.clientActions} aria-expanded={expanded} aria-controls={`export-${client.id}`} onClick={() => setExpanded(!expanded)}><Icon name="settings" /><span className="client-action-label">{m.ui.clientActions}</span><span className={classNames("config-chevron", expanded && "expanded")}><Icon name="chevron" /></span></Button></div>
     </div>
     {client.expires_at && <p className="client-detail">{m.tunnel.expires} {dateOnly(client.expires_at, locale)}</p>}
     {client.traffic?.enabled && (expanded || Boolean(client.traffic.limit_bytes)) && <p className="client-detail">{m.tunnel.totalTraffic} {formatBytes(client.traffic.rx_total + client.traffic.tx_total)}{client.traffic.limit_bytes ? <> · {client.traffic.limit_period === "rolling_30d" ? m.forms.trafficLimitRolling30Days : m.forms.trafficLimitLifetime}: {formatBytes(client.traffic.limit_usage_bytes)} / {formatBytes(client.traffic.limit_bytes)}</> : null}</p>}

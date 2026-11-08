@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test as base, type APIRequestContext, type Locator, type Page } from "@playwright/test";
 import { messages, type Messages } from "../src/i18n";
+import type { AppState, Client } from "../src/types";
 
 type Session = Awaited<ReturnType<APIRequestContext["storageState"]>>;
 
@@ -58,13 +59,7 @@ async function login(page: Page, m: Messages) {
   await page.getByLabel(m.login.password, { exact: true }).fill("browser-test-only");
   await page.getByRole("button", { name: m.login.logIn, exact: true }).click();
   await expect(page.getByRole("button", { name: m.common.logOut, exact: true })).toBeVisible();
-  const preferences = await page.locator(".sidebar-preference").evaluateAll((rows) => rows.map((row) => {
-    const label = row.querySelector("span")!, select = row.querySelector("select")!;
-    const a = label.getBoundingClientRect(), b = select.getBoundingClientRect();
-    const range = document.createRange(); range.selectNodeContents(label);
-    return { clipped: range.getBoundingClientRect().width > a.width + 1, overlap: a.right > b.left + 1 && a.bottom > b.top + 1 };
-  }));
-  expect(preferences).toEqual([{ clipped: false, overlap: false }, { clipped: false, overlap: false }]);
+  await expect(page.getByRole("button", { name: m.ui.interfaceSettings, exact: true })).toBeVisible();
 }
 
 async function openDashboard(page: Page, m: Messages, session: Session) {
@@ -188,6 +183,105 @@ async function expectDecodedImage(image: Locator) {
   await expect(image).toBeVisible();
   await expect.poll(() => image.evaluate((element: HTMLImageElement) => element.complete && element.naturalWidth > 0)).toBe(true);
 }
+
+test("responsive sections and dialogs contain long labels without page overflow", async ({ page, m, session }, testInfo) => {
+  test.setTimeout(60_000);
+  await page.context().addCookies(session.cookies);
+  const fixture = await (await page.request.get("/api/state")).json() as AppState;
+  fixture.server_host = "vpn-administration-long-hostname.example.test";
+  const tunnel = fixture.tunnels[0];
+  tunnel.name = "office-eu-west";
+  const client: Client = {
+    id: "layout-client", tunnel_id: tunnel.id, name: "Personal-workstation-with-a-long-name-for-layout-verification", notes: "Disposable layout fixture", enabled: true, active: false, expired: false,
+    address: "10.20.0.2", revision: 1, needs_new_config: true, ever_connected: true,
+    last_seen_at: "2026-11-01T12:00:00Z", expires_at: "2027-12-01T12:00:00Z", created_at: "2026-11-01T12:00:00Z", updated_at: "2026-11-01T12:00:00Z",
+    runtime: { present: true, latest_handshake: 0, last_seen_at: "2026-11-01T12:00:00Z", rx_bytes: 123456789123, tx_bytes: 987654321987 },
+    traffic: { enabled: true, rx_total: 123456789123, tx_total: 987654321987, limit_bytes: 2000000000000, limit_period: "rolling_30d", limit_usage_bytes: 1111111111110, exceeded: false },
+  };
+  tunnel.clients = [client, { ...client, id: "layout-client-2", name: "Phone", address: "10.20.0.3", needs_new_config: false }];
+  await page.route("**/api/state", (route) => route.fulfill({ json: fixture }));
+  await page.route("**/api/events", (route) => route.fulfill({ status: 204 }));
+  await page.route("**/api/traffic-summary", (route) => route.fulfill({ json: { enabled: true, rows: [{ tunnel_id: tunnel.id, client_id: client.id, rx_total: 123456789123, tx_total: 987654321987, rx_today: 123456789, tx_today: 234567890, rx_7d: 1234567890, tx_7d: 2345678901, rx_30d: 12345678912, tx_30d: 23456789012, limit_bytes: 2000000000000 }] } }));
+  await page.goto("/");
+  await expect(page.locator(".app-shell")).toBeVisible();
+  const widths = testInfo.project.name.startsWith("desktop") ? [1440, 1024, 768] : [390, 320];
+  const defects: string[] = [];
+  const evidenceDirectory = process.env.AWG_UI_EVIDENCE_DIR;
+  if (evidenceDirectory) mkdirSync(evidenceDirectory, { recursive: true, mode: 0o700 });
+  const capture = async (name: string, width: number) => {
+    const overflow = await page.evaluate(() => ({ viewport: innerWidth, page: document.documentElement.scrollWidth }));
+    if (overflow.page > overflow.viewport + 1) defects.push(`${width}/${name}: page width ${overflow.page} exceeds ${overflow.viewport}`);
+    if (evidenceDirectory) await page.screenshot({ path: join(evidenceDirectory, `${testInfo.project.name}-${width}-${name}.png`), fullPage: true, animations: "disabled" });
+  };
+  for (const width of widths) {
+    await page.setViewportSize({ width, height: 900 });
+    const headerHeights: number[] = [];
+    for (const [id, label] of [["overview", m.ui.overview], ["tunnels", m.dashboard.tunnels], ["clients", m.tunnel.clients], ["traffic", m.maintenance.tabs.traffic], ["maintenance", m.common.maintenance]]) {
+      await page.locator(".main-nav").getByRole("button", { name: label, exact: true }).click();
+      if (id === "maintenance") await page.locator(".subtabs").getByRole("button", { name: m.maintenance.tabs.overview, exact: true }).click();
+      headerHeights.push(await page.locator(".sidebar").evaluate((element) => element.getBoundingClientRect().height));
+      if (width <= 540 && (id === "overview" || id === "clients" || id === "tunnels")) {
+        const rows = await page.locator(".client-row:visible").evaluateAll((elements) => elements.map((element) => {
+          const rx = element.querySelector(".rx")!.getBoundingClientRect(), tx = element.querySelector(".tx")!.getBoundingClientRect();
+          const name = element.querySelector(".client-identity")!.getBoundingClientRect();
+          return { overlap: rx.left < tx.right && tx.left < rx.right && rx.top < tx.bottom && tx.top < rx.bottom, nameWidth: name.width };
+        }));
+        if (rows.some((row) => row.overlap || row.nameWidth < 100)) defects.push(`${width}/${id}: client identity or counters overlap`);
+      }
+      await capture(id, width);
+    }
+    if (Math.max(...headerHeights) - Math.min(...headerHeights) > 1) defects.push(`${width}: sidebar height changes across sections`);
+    await page.locator(".main-nav").getByRole("button", { name: m.dashboard.tunnels, exact: true }).click();
+    const table = page.locator(".tunnel-card .client-table");
+    if (width > 540) {
+      await table.evaluate((element) => { element.scrollLeft = element.scrollWidth; });
+      const withinTable = await table.getByRole("button", { name: m.ui.clientActions, exact: true }).first().evaluate((element) => {
+        const bounds = element.closest(".client-table")!.getBoundingClientRect(), button = element.getBoundingClientRect();
+        return button.left >= bounds.left && button.right <= bounds.right;
+      });
+      if (!withinTable) defects.push(`${width}: client actions cannot be reached by table scrolling`);
+      await table.evaluate((element) => { element.scrollLeft = 0; });
+    }
+    await page.locator(".tunnel-tabs").getByRole("button", { name: m.ui.connection, exact: true }).click();
+    await capture("connection", width);
+    await page.locator(".tunnel-tabs").getByRole("button", { name: m.tunnel.clients, exact: true }).click();
+    await page.getByRole("button", { name: m.common.createTunnel, exact: true }).click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await capture("create-tunnel", width);
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).not.toBeVisible();
+    const preferences = page.getByRole("button", { name: m.ui.interfaceSettings, exact: true });
+    await preferences.click();
+    await expect(page.getByRole("dialog").getByRole("combobox", { name: m.aria.toggleTheme, exact: true })).toBeVisible();
+    await capture("interface-settings", width);
+    await page.keyboard.press("Escape");
+    await expect(preferences).toBeFocused();
+    await page.locator(".main-nav").getByRole("button", { name: m.tunnel.clients, exact: true }).click();
+    const firstClient = page.locator(".all-clients .client-row").first();
+    const actions = firstClient.getByRole("button", { name: m.ui.clientActions, exact: true });
+    if (await actions.getAttribute("aria-expanded") === "false") await actions.click();
+    await firstClient.getByRole("button", { name: m.common.edit, exact: true }).click();
+    await capture("client-settings", width);
+    await page.keyboard.press("Escape");
+    await page.locator(".main-nav").getByRole("button", { name: m.common.maintenance, exact: true }).click();
+    await page.locator(".subtabs").getByRole("button", { name: m.maintenance.tabs.backup, exact: true }).click();
+    await capture("backup", width);
+  }
+  if (testInfo.project.name.startsWith("desktop")) {
+    await page.setViewportSize({ width: 1440, height: 600 });
+    const nav = page.locator(".main-nav");
+    await nav.getByRole("button", { name: m.tunnel.clients, exact: true }).click();
+    await page.evaluate(() => scrollTo(0, 0));
+    await nav.getByRole("button", { name: m.dashboard.tunnels, exact: true }).click();
+    await page.evaluate(() => scrollTo(0, 120));
+    await expect.poll(() => page.evaluate(() => scrollY)).toBe(120);
+    await nav.getByRole("button", { name: m.tunnel.clients, exact: true }).click();
+    await expect.poll(() => page.evaluate(() => scrollY)).toBe(0);
+    await nav.getByRole("button", { name: m.dashboard.tunnels, exact: true }).click();
+    await expect.poll(() => page.evaluate(() => scrollY)).toBe(120);
+  }
+  expect(defects).toEqual([]);
+});
 
 test("section navigation keeps the authenticated shell without a loading flash", async ({ page, m, session }) => {
   await openDashboard(page, m, session);
@@ -317,10 +411,13 @@ test("authentication, maintenance, saved preferences and logout", async ({ page,
   await expect(page.getByRole("heading", { name: m.maintenance.traffic, exact: true })).toBeVisible();
 
   await expect(page.locator("html")).toHaveAttribute("data-theme", colorScheme || "light");
+  await page.getByRole("button", { name: m.ui.interfaceSettings, exact: true }).click();
   await page.getByRole("combobox", { name: m.aria.toggleTheme, exact: true }).selectOption(colorScheme === "dark" ? "light" : "dark");
   await page.getByRole("combobox", { name: m.aria.toggleLanguage, exact: true }).selectOption(m === messages.en ? "ru" : "en");
   const switched = m === messages.en ? messages.ru : messages.en;
   await expect(page.locator("html")).toHaveAttribute("lang", m === messages.en ? "ru" : "en");
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("button", { name: switched.ui.interfaceSettings, exact: true })).toBeFocused();
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("lang", m === messages.en ? "ru" : "en");
   await expect(page.locator("html")).toHaveAttribute("data-theme", colorScheme === "dark" ? "light" : "dark");
