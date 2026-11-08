@@ -1,5 +1,4 @@
-import { Button } from "./ui";
-import { NativeSelect } from "@mantine/core";
+import { Button, ChoiceGroup, SelectField } from "./ui";
 import { useMediaQuery } from "@mantine/hooks";
 import * as api from "./api";
 import { useI18n } from "./context";
@@ -107,13 +106,12 @@ export function Shell(props: ShellProps) {
         </>}
       </Activity>)}
       {props.overlays}
-      {preferencesOpen && <Dialog title={m.ui.interfaceSettings} returnFocusTo={preferencesTrigger.current} onClose={() => setPreferencesOpen(false)}>
-        <div className="interface-settings form single">
+      {preferencesOpen && <Dialog title={m.ui.interfaceSettings} size="30rem" returnFocusTo={preferencesTrigger.current} onClose={() => setPreferencesOpen(false)}>
+        <div className="interface-settings">
           <p className="note">{m.ui.interfaceSettingsHelp}</p>
-          <NativeSelect className="form-control" label={m.ui.theme} aria-label={m.aria.toggleTheme} value={theme} onChange={(event) => setTheme(event.currentTarget.value)}><option value="light">{m.ui.lightTheme}</option><option value="dark">{m.ui.darkTheme}</option></NativeSelect>
-          <NativeSelect className="form-control" label={m.ui.language} aria-label={m.aria.toggleLanguage} value={locale} onChange={(event) => setLocale(event.currentTarget.value as Locale)}><option value="ru">Русский</option><option value="en">English</option></NativeSelect>
-          <div className="interface-links"><FooterLinks /></div>
-          <div className="form-actions"><Button className="button" type="button" onClick={() => setPreferencesOpen(false)}>{m.common.close}</Button></div>
+          <ChoiceGroup label={m.ui.theme} value={theme} onChange={setTheme} options={[{ value: "light", label: <><Icon name="sun" />{m.ui.lightTheme}</> }, { value: "dark", label: <><Icon name="moon" />{m.ui.darkTheme}</> }]} />
+          <ChoiceGroup label={m.ui.language} value={locale} onChange={(value) => setLocale(value as Locale)} options={[{ value: "ru", label: "Русский" }, { value: "en", label: "English" }]} />
+          <div className="interface-footer"><FooterLinks showProjectLabel /><Button className="button" type="button" onClick={() => setPreferencesOpen(false)}>{m.common.close}</Button></div>
         </div>
       </Dialog>}
     </div>
@@ -206,7 +204,7 @@ export function AllClients({ state, renderClient, onCreateClient, onCreateTunnel
   const clientTunnel = state.tunnels.find((tunnel) => tunnel.id === effectiveFilter);
   return <section className="clients all-clients">
     <div className="clients-toolbar"><span>{m.tunnel.clientTotal(clients.length)}</span>{onCreateClient && <Button className="button primary" type="button" disabled={!state.tunnels.length} onClick={() => onCreateClient(clientTunnel)}><Icon name="plus" />{m.common.createClient}</Button>}</div>
-    <div className="client-filters"><input className="client-search" type="search" aria-label={m.ui.searchClients} placeholder={m.ui.searchClients} value={query} onInput={(event) => setQuery(event.currentTarget.value)} /><NativeSelect className="form-control toolbar-select" aria-label={m.aria.tunnelFilters} value={effectiveFilter} onChange={(event) => setTunnelFilter(event.currentTarget.value)}><option value="all">{locale === "ru" ? "Все туннели" : "All tunnels"}</option>{state.tunnels.map((tunnel) => <option key={tunnel.id} value={tunnel.id}>{tunnel.name}</option>)}</NativeSelect></div>
+    <div className="client-filters"><input className="client-search" type="search" aria-label={m.ui.searchClients} placeholder={m.ui.searchClients} value={query} onInput={(event) => setQuery(event.currentTarget.value)} /><SelectField className="toolbar-select" aria-label={m.aria.tunnelFilters} value={effectiveFilter} onChange={(value) => setTunnelFilter(value!)} data={[{ value: "all", label: locale === "ru" ? "Все туннели" : "All tunnels" }, ...state.tunnels.map((tunnel) => ({ value: tunnel.id, label: tunnel.name }))]} /></div>
     {clients.length ? <div className="client-table has-tunnel"><ClientTableHead withTunnel />{clients.map(({ client, tunnel }) => renderClient(client, tunnel))}</div> : <Empty title={!state.tunnels.length ? m.dashboard.noTunnelsYet : query ? m.ui.noMatches : m.tunnel.noClientsYet} text={query ? m.ui.searchClients : state.tunnels.length ? m.tunnel.createFirstClient : m.dashboard.createFirstTunnel} action={!state.tunnels.length ? <Button className="button primary" onClick={onCreateTunnel}>{m.common.createTunnel}</Button> : undefined} />}
   </section>;
 }
@@ -215,7 +213,7 @@ export function Brand({ subtitle }: { subtitle?: ReactNode }) {
   return <div className="brand"><span className="brand-mark"><ForgeMark /></span><div><strong>AWG-Forge</strong>{subtitle && <p>{subtitle}</p>}</div></div>;
 }
 
-export function FooterLinks({ version, extra }: { version?: string; extra?: ReactNode }) {
+export function FooterLinks({ version, extra, showProjectLabel = false }: { version?: string; extra?: ReactNode; showProjectLabel?: boolean }) {
   const { locale, m } = useI18n();
   const label = version ? versionLabel(version) : "";
   const docsPath = locale === "ru" ? "ru" : "en";
@@ -225,6 +223,7 @@ export function FooterLinks({ version, extra }: { version?: string; extra?: Reac
         <svg aria-hidden="true" viewBox="0 0 24 24">
           <path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.69c-2.78.6-3.37-1.18-3.37-1.18-.45-1.15-1.11-1.46-1.11-1.46-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.89 1.52 2.34 1.08 2.91.82.09-.65.35-1.08.63-1.33-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02A9.57 9.57 0 0 1 12 7.01c.85 0 1.71.11 2.51.34 1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.69-4.57 4.94.36.31.68.92.68 1.86v2.56c0 .27.18.58.69.48A10 10 0 0 0 12 2Z" />
         </svg>
+        {showProjectLabel && <span>GitHub</span>}
       </a>
       <a className="footer-link" href={`https://github.com/astronaut808/awg-forge/tree/master/docs/${docsPath}`} target="_blank" rel="noreferrer">{m.common.docs}</a>
       {version && <span className="footer-version" title="awg-forge version">{label}</span>}
@@ -266,10 +265,10 @@ export function TunnelFirstDashboard({ profiles, tunnels, filter, setFilter, onC
   return <>
     <div className="page-heading"><div><h1>{m.dashboard.tunnels}</h1><span>{m.dashboard.tunnelCount(tunnels.length)}</span></div>{tunnels.length > 0 && <Button className="button primary" type="button" disabled={!profiles.some((profile) => profile.available)} onClick={() => onCreateTunnel()}><Icon name="plus" />{m.common.createTunnel}</Button>}</div>
     <section className="tunnel-workspace">
-      {compact && <div className="tunnel-mobile-picker"><label htmlFor="mobile-tunnel">{m.ui.selectedTunnel}</label><div><NativeSelect className="form-control" id="mobile-tunnel" value={selected?.id || ""} onChange={(event) => select(event.currentTarget.value)}>{!selected && <option value="">{m.ui.chooseTunnel}</option>}{visible.map((tunnel) => <option key={tunnel.id} value={tunnel.id}>{tunnel.name} · {profileTitle(tunnel.profile)}</option>)}</NativeSelect><Button className="button tunnel-tool-toggle" aria-label={m.ui.searchAndFilter} title={m.ui.searchAndFilter} aria-expanded={showTools} aria-controls="tunnel-tools" onClick={() => setShowTools(!showTools)}><Icon name="search" /></Button></div>{(effectiveFilter !== "all" || query) && <div className="tunnel-filter-state"><span className="help">{effectiveFilter !== "all" ? profileTitle(effectiveFilter) : ""}{query ? ` · ${query}` : ""}</span><Button className="button text" onClick={() => { setFilter("all"); setQuery(""); }}>{m.ui.clearTunnelFilters}</Button></div>}</div>}
+      {compact && <div className="tunnel-mobile-picker"><label htmlFor="mobile-tunnel">{m.ui.selectedTunnel}</label><div><SelectField id="mobile-tunnel" value={selected?.id || ""} onChange={(value) => select(value!)} data={[...(!selected ? [{ value: "", label: m.ui.chooseTunnel }] : []), ...visible.map((tunnel) => ({ value: tunnel.id, label: `${tunnel.name} · ${profileTitle(tunnel.profile)}` }))]} /><Button className="button tunnel-tool-toggle" aria-label={m.ui.searchAndFilter} title={m.ui.searchAndFilter} aria-expanded={showTools} aria-controls="tunnel-tools" onClick={() => setShowTools(!showTools)}><Icon name="search" /></Button></div>{(effectiveFilter !== "all" || query) && <div className="tunnel-filter-state"><span className="help">{effectiveFilter !== "all" ? profileTitle(effectiveFilter) : ""}{query ? ` · ${query}` : ""}</span><Button className="button text" onClick={() => { setFilter("all"); setQuery(""); }}>{m.ui.clearTunnelFilters}</Button></div>}</div>}
       {(!compact || showTools) && <aside className="tunnel-nav" id="tunnel-tools" aria-label={m.dashboard.tunnels}>
         <div className="tunnel-nav-toolbar"><input type="search" aria-label={m.ui.searchTunnels} placeholder={m.ui.searchTunnels} value={query} onInput={(event) => setQuery(event.currentTarget.value)} />
-          {availableFilters.length > 1 && <NativeSelect className="form-control toolbar-select" aria-label={m.aria.tunnelFilters} value={effectiveFilter} onChange={(event) => setFilter(event.currentTarget.value)}><option value="all">{m.common.all}</option>{availableFilters.map((profile) => <option key={profile.id} value={profile.id}>{profileTitle(profile.id)}</option>)}</NativeSelect>}
+          {availableFilters.length > 1 && <SelectField className="toolbar-select" aria-label={m.aria.tunnelFilters} value={effectiveFilter} onChange={(value) => setFilter(value!)} data={[{ value: "all", label: m.common.all }, ...availableFilters.map((profile) => ({ value: profile.id, label: profileTitle(profile.id) }))]} />}
         </div>
         {visible.map((tunnel) => <Button key={tunnel.id} className={classNames("tunnel-choice", tunnel.id === selected?.id && "active")} type="button" aria-current={tunnel.id === selected?.id ? "true" : undefined} onClick={() => select(tunnel.id)}><span className="tunnel-choice-head"><span className={classNames("status-dot", tunnel.status?.up ? "up" : "down")} /><strong>{tunnel.name}</strong><Icon name="chevron" /></span><span className="tunnel-choice-meta">{profileTitle(tunnel.profile)} · {tunnel.listen_port}</span></Button>)}
       </aside>}

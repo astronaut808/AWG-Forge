@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { expect, test as base, type APIRequestContext, type Locator, type Page } from "@playwright/test";
 import { messages, type Messages } from "../src/i18n";
 import type { AppState, Client } from "../src/types";
+import { profileTitle } from "../src/utils";
 
 type Session = Awaited<ReturnType<APIRequestContext["storageState"]>>;
 
@@ -69,13 +70,18 @@ async function openDashboard(page: Page, m: Messages, session: Session) {
   await expectActionLabels(page);
 }
 
+async function chooseOption(control: Locator, value: string) {
+  await control.click();
+  await control.page().locator(`[role="option"][value=${JSON.stringify(value)}]:visible`).click();
+  await expect(control).toHaveAttribute("aria-expanded", "false");
+}
+
 async function selectTunnel(page: Page, m: Messages, name: string) {
   const picker = page.getByRole("combobox", { name: m.ui.selectedTunnel, exact: true });
   if (page.viewportSize()!.width <= 760) {
     await expect(picker).toBeVisible();
-    const id = await picker.locator("option").evaluateAll((options, target) => (options.find((option) => option.textContent?.startsWith(`${target} ·`)) as HTMLOptionElement | undefined)?.value, name);
-    expect(Boolean(id)).toBe(true);
-    await picker.selectOption(id!);
+    await picker.click();
+    await page.getByRole("option").filter({ hasText: `${name} ·` }).click();
   } else {
     await page.locator(".tunnel-choice").filter({ hasText: name }).click();
   }
@@ -95,7 +101,7 @@ async function createTunnel(page: Page, m: Messages, profile: string) {
   await page.getByRole("button", { name: m.common.createTunnel, exact: true }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByRole("heading", { name: m.forms.createTunnelTitle, exact: true })).toHaveCount(1);
-  await dialog.getByLabel(m.forms.protocol, { exact: true }).selectOption(profile);
+  await chooseOption(dialog.getByLabel(m.forms.protocol, { exact: true }), profile);
   const response = await suggestion;
   expect(response.status()).toBe(200);
   const defaults = await response.json();
@@ -110,9 +116,9 @@ async function createTunnel(page: Page, m: Messages, profile: string) {
       }
     };
     await expectAlignedFields();
-    await dialog.getByLabel(m.forms.portSelection, { exact: true }).selectOption("manual");
+    await chooseOption(dialog.getByLabel(m.forms.portSelection, { exact: true }), "manual");
     await expectAlignedFields();
-    await dialog.getByLabel(m.forms.portSelection, { exact: true }).selectOption("automatic");
+    await chooseOption(dialog.getByLabel(m.forms.portSelection, { exact: true }), "automatic");
   }
   await dialog.getByLabel(m.forms.nameInterface, { exact: true }).fill(name);
   await dialog.getByRole("button", { name: m.common.createTunnel, exact: true }).click();
@@ -211,7 +217,7 @@ test("responsive sections and dialogs contain long labels without page overflow"
   const capture = async (name: string, width: number) => {
     const overflow = await page.evaluate(() => ({ viewport: innerWidth, page: document.documentElement.scrollWidth }));
     if (overflow.page > overflow.viewport + 1) defects.push(`${width}/${name}: page width ${overflow.page} exceeds ${overflow.viewport}`);
-    if (evidenceDirectory) await page.screenshot({ path: join(evidenceDirectory, `${testInfo.project.name}-${width}-${name}.png`), fullPage: true, animations: "disabled" });
+    if (evidenceDirectory) await page.screenshot({ path: join(evidenceDirectory, `${testInfo.project.name}-${width}-${name}.png`), fullPage: !await page.getByRole("dialog").isVisible(), animations: "disabled" });
   };
   for (const width of widths) {
     await page.setViewportSize({ width, height: 900 });
@@ -248,11 +254,30 @@ test("responsive sections and dialogs contain long labels without page overflow"
     await page.getByRole("button", { name: m.common.createTunnel, exact: true }).click();
     await expect(page.getByRole("dialog")).toBeVisible();
     await capture("create-tunnel", width);
+    const protocol = page.getByRole("dialog").getByRole("combobox", { name: m.forms.protocol, exact: true });
+    await protocol.click();
+    const menu = page.locator(".select-menu:visible");
+    await expect(menu).toBeVisible();
+    const bounds = await menu.boundingBox(), trigger = await protocol.boundingBox();
+    if (!bounds || !trigger || Math.abs(bounds.x - trigger.x) > 1 || Math.abs(bounds.width - trigger.width) > 1 || bounds.x < 0 || bounds.x + bounds.width > width + 1 || bounds.y < 0 || bounds.y + bounds.height > 901) defects.push(`${width}: select menu detaches from its field or viewport`);
+    await capture("protocol-open", width);
+    await page.keyboard.press("Escape");
+    await expect(menu).not.toBeVisible();
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await expect(protocol).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(page.getByRole("dialog")).not.toBeVisible();
+    await expect(page.getByRole("button", { name: m.common.createTunnel, exact: true })).toBeFocused();
     const preferences = page.getByRole("button", { name: m.ui.interfaceSettings, exact: true });
     await preferences.click();
-    await expect(page.getByRole("dialog").getByRole("combobox", { name: m.aria.toggleTheme, exact: true })).toBeVisible();
+    await expect(page.getByRole("dialog").getByRole("group", { name: m.ui.theme, exact: true })).toBeVisible();
+    const settings = page.getByRole("dialog");
+    const inset = await settings.evaluate((dialog) => {
+      const body = dialog.querySelector(".dialog-body")!.getBoundingClientRect();
+      const fields = dialog.querySelector(".interface-settings")!.getBoundingClientRect();
+      return Math.abs((fields.left - body.left) - (body.right - fields.right));
+    });
+    if (inset > 1) defects.push(`${width}: settings has unequal horizontal insets`);
     await capture("interface-settings", width);
     await page.keyboard.press("Escape");
     await expect(preferences).toBeFocused();
@@ -262,6 +287,15 @@ test("responsive sections and dialogs contain long labels without page overflow"
     if (await actions.getAttribute("aria-expanded") === "false") await actions.click();
     await firstClient.getByRole("button", { name: m.common.edit, exact: true }).click();
     await capture("client-settings", width);
+    const expiration = page.getByRole("dialog").getByRole("combobox", { name: m.forms.expiration, exact: true });
+    await expiration.click();
+    const expirationMenu = page.locator(".select-menu:visible");
+    await expect(expirationMenu).toBeVisible();
+    const expirationBounds = await expirationMenu.boundingBox();
+    if (!expirationBounds || expirationBounds.y < 0 || expirationBounds.y + expirationBounds.height > 901) defects.push(`${width}: expiration menu escapes viewport`);
+    await capture("expiration-open", width);
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toBeVisible();
     await page.keyboard.press("Escape");
     await page.locator(".main-nav").getByRole("button", { name: m.common.maintenance, exact: true }).click();
     await page.locator(".subtabs").getByRole("button", { name: m.maintenance.tabs.backup, exact: true }).click();
@@ -281,6 +315,37 @@ test("responsive sections and dialogs contain long labels without page overflow"
     await expect.poll(() => page.evaluate(() => scrollY)).toBe(120);
   }
   expect(defects).toEqual([]);
+});
+
+test("long dropdown lists stay usable and preferences support keyboard selection", async ({ page, m, session }) => {
+  await page.context().addCookies(session.cookies);
+  const fixture = await (await page.request.get("/api/state")).json() as AppState;
+  const extra = Array.from({ length: 24 }, (_, i) => ({ ...fixture.tunnels[0], id: `long-${i}`, name: `Office-workstation-private-network-with-long-name-${i}`, clients: [] }));
+  fixture.tunnels.push(...extra);
+  await page.route("**/api/state", (route) => route.fulfill({ json: fixture }));
+  await page.route("**/api/events", (route) => route.fulfill({ status: 204 }));
+  await page.setViewportSize({ width: 320, height: 640 });
+  await page.goto("/#/tunnels");
+  const picker = page.getByRole("combobox", { name: m.ui.selectedTunnel, exact: true });
+  await picker.click();
+  const menu = page.locator(".select-menu:visible");
+  const bounds = (await menu.boundingBox())!;
+  expect(bounds.x).toBeGreaterThanOrEqual(0);
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(321);
+  expect(bounds.y + bounds.height).toBeLessThanOrEqual(641);
+  expect(await menu.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+  await page.getByRole("option", { name: extra.at(-1)!.name + " · " + profileTitle(extra.at(-1)!.profile), exact: true }).click();
+  await expect(picker).toHaveValue(extra.at(-1)!.name + " · " + profileTitle(extra.at(-1)!.profile));
+  await page.getByRole("button", { name: m.ui.interfaceSettings, exact: true }).click();
+  const group = page.getByRole("group", { name: m.ui.theme, exact: true });
+  const light = group.getByRole("radio", { name: m.ui.lightTheme, exact: true });
+  await light.check();
+  await light.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(group.getByRole("radio", { name: m.ui.darkTheme, exact: true })).toBeChecked();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("button", { name: m.ui.interfaceSettings, exact: true })).toBeFocused();
 });
 
 test("section navigation keeps the authenticated shell without a loading flash", async ({ page, m, session }) => {
@@ -412,8 +477,8 @@ test("authentication, maintenance, saved preferences and logout", async ({ page,
 
   await expect(page.locator("html")).toHaveAttribute("data-theme", colorScheme || "light");
   await page.getByRole("button", { name: m.ui.interfaceSettings, exact: true }).click();
-  await page.getByRole("combobox", { name: m.aria.toggleTheme, exact: true }).selectOption(colorScheme === "dark" ? "light" : "dark");
-  await page.getByRole("combobox", { name: m.aria.toggleLanguage, exact: true }).selectOption(m === messages.en ? "ru" : "en");
+  await page.getByRole("group", { name: m.ui.theme, exact: true }).getByRole("radio", { name: colorScheme === "dark" ? m.ui.lightTheme : m.ui.darkTheme, exact: true }).check();
+  await page.getByRole("group", { name: m.ui.language, exact: true }).getByRole("radio", { name: m === messages.en ? "Русский" : "English", exact: true }).check();
   const switched = m === messages.en ? messages.ru : messages.en;
   await expect(page.locator("html")).toHaveAttribute("lang", m === messages.en ? "ru" : "en");
   await page.keyboard.press("Escape");
@@ -491,7 +556,7 @@ test("AWG3 forms preserve input on error and support client and tunnel edits", a
   })).toBe(true);
   await expectContained(page, tunnel);
   await port.fill(originalPort);
-  await tunnel.getByLabel("MTU", { exact: true }).selectOption("custom");
+  await chooseOption(tunnel.getByLabel("MTU", { exact: true }), "custom");
   await tunnel.getByLabel(m.forms.customMTU, { exact: true }).fill("1360");
   await tunnel.getByLabel(m.common.enabled, { exact: true }).uncheck();
   await tunnel.getByRole("button", { name: m.common.save, exact: true }).click();
@@ -533,6 +598,7 @@ test("AWG3 forms preserve input on error and support client and tunnel edits", a
   const rowOffsets = await tunnel.locator(".protocol-fields").evaluateAll((groups) => groups.flatMap((group) => {
     const rows = new Map<number, number[]>();
     for (const wrapper of Array.from(group.children)) {
+      if (wrapper instanceof HTMLInputElement && wrapper.type === "hidden") continue;
       const top = Math.round(wrapper.getBoundingClientRect().top);
       const input = wrapper.querySelector(".mantine-Input-input")!;
       rows.set(top, [...(rows.get(top) || []), input.getBoundingClientRect().top]);
@@ -656,11 +722,11 @@ test("navigation, client search, quota editing and unified connection preserve t
   const target = tunnel.locator(".client-row").filter({ hasText: "Search target" });
   await target.getByRole("button", { name: m.common.edit, exact: true }).click();
   const dialog = page.locator('[role="dialog"].dialog');
-  await dialog.getByLabel(m.forms.trafficLimit, { exact: true }).selectOption("limit");
+  await chooseOption(dialog.getByLabel(m.forms.trafficLimit, { exact: true }), "limit");
   await dialog.getByLabel(m.forms.trafficLimitValue, { exact: true }).fill("2");
-  await dialog.getByLabel(m.forms.trafficLimitUnit, { exact: true }).selectOption("gib");
-  await dialog.getByLabel(m.forms.trafficLimitPeriod, { exact: true }).selectOption("rolling_30d");
-  await dialog.getByLabel(m.forms.expiration, { exact: true }).selectOption("7d");
+  await chooseOption(dialog.getByLabel(m.forms.trafficLimitUnit, { exact: true }), "gib");
+  await chooseOption(dialog.getByLabel(m.forms.trafficLimitPeriod, { exact: true }), "rolling_30d");
+  await chooseOption(dialog.getByLabel(m.forms.expiration, { exact: true }), "7d");
   await dialog.getByRole("button", { name: m.common.save, exact: true }).click();
   await expect(dialog).not.toBeVisible();
   await expect(target).toContainText("2.00 GiB");
@@ -692,7 +758,7 @@ test("navigation, client search, quota editing and unified connection preserve t
   const other = await createTunnel(page, m, "awg_3");
   const otherName = await other.getByRole("heading", { level: 2 }).innerText();
   await openTunnelTools(page, m);
-  await page.getByLabel(m.aria.tunnelFilters, { exact: true }).selectOption("awg_2_0");
+  await chooseOption(page.getByRole("combobox", { name: m.aria.tunnelFilters, exact: true }), "awg_2_0");
   await page.locator(".main-nav").getByRole("button", { name: m.ui.overview, exact: true }).click();
   await page.locator(".overview-card").filter({ hasText: otherName }).click();
   await expect(page.getByRole("article").getByRole("heading", { name: otherName, exact: true })).toBeVisible();
@@ -736,34 +802,34 @@ test("global client creation requires a choice and preserves editable tunnel con
   await dialog.getByRole("button", { name: m.common.createClient, exact: true }).click();
   await expect(picker).toBeFocused();
   expect(requests).toBe(0);
-  await picker.selectOption(firstID);
-  await dialog.getByLabel(m.forms.expiration, { exact: true }).selectOption("7d");
+  await chooseOption(picker, firstID);
+  await chooseOption(dialog.getByLabel(m.forms.expiration, { exact: true }), "7d");
   await page.route("**/api/clients", (route) => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "request failed" }) }), { times: 1 });
   await dialog.getByRole("button", { name: m.common.createClient, exact: true }).click();
   await expect(dialog.getByRole("alert")).toBeVisible();
-  await picker.selectOption(secondID);
+  await chooseOption(picker, secondID);
   await expect(dialog.getByLabel(m.forms.clientName, { exact: true })).toHaveValue("Chosen tunnel client");
-  await expect(dialog.getByLabel(m.forms.expiration, { exact: true })).toHaveValue("7d");
+  await expect(dialog.getByLabel(m.forms.expiration, { exact: true })).toHaveValue(m.forms.sevenDays);
   await dialog.getByRole("button", { name: m.common.createClient, exact: true }).click();
   await expect(dialog).not.toBeVisible();
   const after = await (await page.request.get("/api/state")).json();
   expect(after.tunnels.find((item: { id: string }) => item.id === secondID).clients.some((client: { name: string }) => client.name === "Chosen tunnel client")).toBe(true);
   expect(after.tunnels.find((item: { id: string }) => item.id === firstID).clients.some((client: { name: string }) => client.name === "Chosen tunnel client")).toBe(false);
   // A deliberate filter is a default, never a locked destination.
-  await page.getByRole("combobox", { name: m.aria.tunnelFilters, exact: true }).selectOption(firstID);
+  await chooseOption(page.getByRole("combobox", { name: m.aria.tunnelFilters, exact: true }), firstID);
   await page.locator(".all-clients").getByRole("button", { name: m.common.createClient, exact: true }).click();
-  await expect(picker).toHaveValue(firstID);
-  await picker.selectOption(secondID);
+  await expect(picker).toHaveValue(firstName);
+  await chooseOption(picker, secondID);
   await dialog.getByLabel(m.forms.clientName, { exact: true }).fill("Moved from filtered context");
   await dialog.getByRole("button", { name: m.common.createClient, exact: true }).click();
   await expect(dialog).not.toBeVisible();
-  await expect(page.getByRole("combobox", { name: m.aria.tunnelFilters, exact: true })).toHaveValue(secondID);
+  await expect(page.getByRole("combobox", { name: m.aria.tunnelFilters, exact: true })).toHaveValue(secondName);
   await expect(page.locator(".all-clients .client-row").filter({ hasText: "Moved from filtered context" })).toBeVisible();
   await page.locator(".main-nav").getByRole("button", { name: m.dashboard.tunnels, exact: true }).click();
   await selectTunnel(page, m, firstName);
   await page.getByRole("article").getByRole("button", { name: m.common.createClient, exact: true }).click();
-  await expect(picker).toHaveValue(firstID);
-  await picker.selectOption(secondID);
+  await expect(picker).toHaveValue(firstName);
+  await chooseOption(picker, secondID);
   await page.keyboard.press("Escape");
   await deleteTunnel(page, page.getByRole("article"), m);
   await selectTunnel(page, m, secondName);
@@ -843,7 +909,7 @@ test("review regressions preserve runtime meaning, compact selection and readabl
   const picker = page.getByRole("combobox", { name: m.ui.selectedTunnel, exact: true });
   await expect(picker).toBeVisible();
   await expect(page.locator(".tunnel-nav")).toHaveCount(0);
-  await picker.selectOption(primaryID);
+  await chooseOption(picker, primaryID);
   await expect(page.locator(".tunnel-facts")).not.toHaveAttribute("open", "");
   expect((await page.locator(".tunnel-title").boundingBox())!.y).toBeLessThan(744);
   await page.locator(".tunnel-facts>summary").click();

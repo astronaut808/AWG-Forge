@@ -1,4 +1,4 @@
-import { Button } from "./ui";
+import { Button, PopupLayerContext } from "./ui";
 import { useI18n } from "./context";
 import { actionErrorMessage } from "./errors";
 import { classNames } from "./utils";
@@ -35,13 +35,15 @@ export function Form({ title, subtitle, submit, secondary, onSubmit, children }:
   }}>{children}{error && <p className="form-error full" role="alert" aria-live="assertive">{error}</p>}<div className="form-actions full">{secondary}{close && <Button className="button" type="button" onClick={close}>{m.common.close}</Button>}<Button className="button primary" disabled={busy} type="submit"><ButtonContent busy={busy}>{submit}</ButtonContent></Button></div></form></PanelTitle>;
 }
 
-export function Dialog({ title, onClose, children, wide = false, closeLabel, returnFocusTo }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean; closeLabel?: string; returnFocusTo?: HTMLElement | null }) {
+export function Dialog({ title, onClose, children, wide = false, size, closeLabel, returnFocusTo }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean; size?: string; closeLabel?: string; returnFocusTo?: HTMLElement | null }) {
   const { m } = useI18n();
+  const [popupLayer, setPopupLayer] = useState<HTMLElement | null>(null);
   const previousFocus = useRef(returnFocusTo ?? document.activeElement);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
   const attachDialog = useCallback((root: HTMLDivElement | null) => {
     if (!root) return;
+    setPopupLayer(root);
     dialogRoots.push(root);
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing || dialogRoots.at(-1) !== root) return;
@@ -80,10 +82,10 @@ export function Dialog({ title, onClose, children, wide = false, closeLabel, ret
       });
     };
   }, []);
-  return <Modal ref={attachDialog} opened onClose={onClose} title={title} centered size={wide ? "72rem" : "44rem"}
+  return <Modal ref={attachDialog} opened onClose={onClose} title={title} centered size={size || (wide ? "72rem" : "44rem")}
     closeButtonProps={{ "aria-label": closeLabel || m.common.close }} closeOnClickOutside={false} closeOnEscape={false} trapFocus={false} returnFocus={false} removeScrollProps={{ removeScrollBar: false }}
     classNames={{ content: classNames("dialog", wide && "dialog-wide"), header: "dialog-header", body: "dialog-body", close: "dialog-close" }}>
-    <DialogContext.Provider value={onClose}>{children}</DialogContext.Provider>
+    <PopupLayerContext.Provider value={popupLayer}><DialogContext.Provider value={onClose}>{children}</DialogContext.Provider></PopupLayerContext.Provider>
   </Modal>;
 }
 

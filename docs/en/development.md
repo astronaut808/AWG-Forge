@@ -21,6 +21,12 @@ uninstall scripts separately.
 Edit the frontend in `web/` and regenerate the assets embedded in the Go binary
 with `npm run ui:build`.
 
+Use the shared controls in `web/src/ui.tsx`: `SelectField` provides themed menus
+anchored to their fields; `ChoiceGroup` exposes small sets of preference options.
+Menus inside a dialog are portalled to that dialog's root, outside its scrolling
+body. Preserve form field names, keyboard selection, focus return, and Escape
+dismissal of one layer at a time. Keep the existing CSP unchanged.
+
 ## Run the UI locally
 
 ```bash

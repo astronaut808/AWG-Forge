@@ -19,6 +19,8 @@ Target candidate version is `0.20.0`. The browser API contract remains labelled 
 
 ### Fixed
 
+- Replace OS-dependent select menus with consistently anchored, themed lists across forms and filters. Use visible theme/language choices in a compact settings dialog, correct shared dialog alignment, and preserve nested menu dismissal.
+
 - Group browser appearance preferences in one accessible dialog, keep navigation height stable, and prevent responsive client data and tables from overflowing. Align native filters across browsers and restore each section's scroll position.
 - Restore focus to the appearance dialog's trigger after dismissal in Safari.
 

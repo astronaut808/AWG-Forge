@@ -17,7 +17,7 @@ export const spectraTheme = createTheme({
     FileInput: { defaultProps: { size: "md" } },
     PasswordInput: { defaultProps: { size: "md" } },
     TextInput: { defaultProps: { size: "md", inputWrapperOrder: ["label", "input", "description", "error"] } },
-    NativeSelect: { defaultProps: { size: "md", inputWrapperOrder: ["label", "input", "description", "error"] } },
+    Select: { defaultProps: { size: "md", inputWrapperOrder: ["label", "input", "description", "error"] } },
     Textarea: { defaultProps: { size: "md" } },
   },
 });

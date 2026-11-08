@@ -300,7 +300,20 @@ a {
 }
 .sidebar-setting { justify-content:flex-start; }
 .sidebar-bottom>.app-footer { margin-top:8px; padding-top:12px; border-top:1px solid var(--border); font-size:12px; }
-.interface-links { border-top:1px solid var(--border); }
+.interface-settings { display:grid; gap:24px; }
+.interface-settings>.note { margin:0; color:var(--muted); font-size:13px; line-height:1.5; }
+.interface-footer { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:16px; border-top:1px solid var(--border); padding-top:20px; }
+.interface-footer .app-footer { margin:0; padding:0; gap:16px; font-size:13px; }
+.interface-footer .footer-link.icon { width:auto; gap:6px; }
+.choice-group { min-width:0; margin:0; padding:0; border:0; }
+.choice-group legend { margin-bottom:8px; padding:0; color:var(--text); font-size:14px; font-weight:600; }
+.choice-options { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:4px; padding:4px; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--subtle); }
+.choice-option { position:relative; min-width:0; cursor:pointer; }
+.choice-option>input { position:absolute; width:1px; height:1px; opacity:0; }
+.choice-option>span { display:flex; align-items:center; justify-content:center; gap:8px; min-height:40px; padding:8px; border-radius:5px; color:var(--muted); font-size:14px; font-weight:550; }
+.choice-option>input:checked+span { color:var(--accent-strong); background:var(--accent-soft); }
+.choice-option>input:focus-visible+span { outline:2px solid var(--accent); outline-offset:2px; }
+@media(hover:hover) { .choice-option:hover>input:not(:checked)+span { color:var(--text); background:var(--hover); } }
 .client-tunnel-context,.field-help {
   margin-top:-8px;
   color:var(--muted);
@@ -460,7 +473,7 @@ a {
   background:#aeb4ca
 }
 /* inputs: scoped for Mantine and native legacy forms */
-.form-control .mantine-Input-input,.form-control .mantine-Select-input,.form-control .mantine-Textarea-input,.form-control .mantine-NativeSelect-input,.form-control .mantine-DateTimePicker-input,.form :where(input:not([type=radio]):not([type=checkbox]):not(.mantine-PasswordInput-innerInput),select,textarea) {
+.form-control .mantine-Input-input,.form-control .mantine-Select-input,.form-control .mantine-Textarea-input,.form-control .mantine-DateTimePicker-input,.form :where(input:not([type=radio]):not([type=checkbox]):not(.mantine-PasswordInput-innerInput),textarea) {
   width:100%;
   min-height:var(--control);
   color:var(--text);
@@ -469,7 +482,7 @@ a {
   background:var(--surface);
   box-shadow:none;
 }
-.form :where(input:not([type=radio]):not([type=checkbox]):not(.mantine-PasswordInput-innerInput),select) {
+.form :where(input:not([type=radio]):not([type=checkbox]):not(.mantine-PasswordInput-innerInput)) {
   padding:0 11px
 }
 .form textarea {
@@ -481,9 +494,9 @@ a {
   color:var(--faint);
   opacity:1;
 }
-.form-control .mantine-Input-input:focus-within,.form-control .mantine-Input-input:focus,.form-control .mantine-Select-input:focus,.form-control .mantine-Textarea-input:focus,.form-control .mantine-NativeSelect-input:focus,.form :where(input,select,textarea):focus {
+.form-control .mantine-Input-input:focus-within,.form-control .mantine-Input-input:focus,.form-control .mantine-Select-input:focus,.form-control .mantine-Textarea-input:focus,.form :where(input,textarea):focus {
   border-color:var(--accent);
-  box-shadow:0 0 0 3px var(--focus);
+  box-shadow:none;
   outline:0;
 }
 .form-control .mantine-Input-input:focus-visible,.form :where(input,select,textarea,button):focus-visible {
@@ -1015,6 +1028,7 @@ middle panels span 2 + 1 columns. */
 .form.single {
   max-width:620px
 }
+.dialog .form.single { max-width:none; }
 .form .mantine-InputWrapper-label {
   display:block;
 }
@@ -1454,7 +1468,7 @@ middle panels span 2 + 1 columns. */
   background:rgb(27 27 39 / 48%);
 }
 .dialog,.mantine-Modal-content.dialog {
-  width:min(620px,100%);
+  width:100%;
   max-height:calc(100dvh - 44px);
   padding:24px;
   overflow:auto;
@@ -1463,9 +1477,6 @@ middle panels span 2 + 1 columns. */
   border-radius:14px;
   background:var(--surface);
   box-shadow:var(--shadow);
-}
-.dialog-wide,.mantine-Modal-content.dialog-wide {
-  width:min(850px,100%)
 }
 .mantine-Modal-body.dialog-body {
   padding:0 24px 24px
@@ -1633,18 +1644,18 @@ middle panels span 2 + 1 columns. */
   min-width:0;
   width:auto;
 }
-.client-filters select {
-  max-width:100%;
-  min-width:150px;
-  min-height:38px;
-  padding:0 30px 0 11px;
-  color:var(--text);
-  border:1px solid var(--strong);
-  border-radius:var(--radius-sm);
-  background:var(--surface);
-}
 .client-filters>.toolbar-select { flex:0 1 190px; }
-.toolbar-select .mantine-NativeSelect-input { height:38px; min-height:38px; }
+.toolbar-select .mantine-Select-input { height:38px; min-height:38px; }
+.form-control .mantine-Select-input { padding-inline:11px 36px; text-overflow:ellipsis; cursor:pointer; }
+.form-control .mantine-Select-section { color:var(--muted); }
+.form-control .mantine-Select-input:disabled { color:var(--faint); background:var(--subtle); cursor:not-allowed; }
+.select-chevron { display:flex; transform:rotate(90deg); }
+.form-control:has([aria-expanded=true]) .select-chevron { transform:rotate(-90deg); }
+.select-menu { max-height:min(260px,calc(100dvh - 24px)); overflow-y:auto; overscroll-behavior:contain; padding:4px; border:1px solid var(--strong); border-radius:var(--radius-sm); color:var(--text); background:var(--surface); box-shadow:var(--shadow); }
+.select-menu .select-option { min-height:38px; padding:9px 10px; border-radius:5px; color:var(--text); font-size:14px; line-height:1.4; white-space:normal; overflow-wrap:anywhere; }
+.select-menu .select-option[data-checked] { color:var(--accent-strong); background:var(--accent-soft); }
+.select-menu .select-option[data-combobox-selected],.select-menu .select-option:hover { background:var(--hover); }
+.select-menu .select-option[data-combobox-disabled] { color:var(--faint); opacity:.6; }
 .mantine-Modal-body.dialog-body { overscroll-behavior:contain; }
 .client-table.has-tunnel .client-table-head,.client-row.with-tunnel .client-summary {
   min-width:900px;
@@ -1886,6 +1897,9 @@ middle panels span 2 + 1 columns. */
   }
 }
 @media(max-width:540px) {
+  .interface-footer { display:grid; grid-template-columns:minmax(0,1fr); justify-content:stretch; }
+  .interface-footer .app-footer { justify-content:space-between; }
+  .interface-footer>.button { width:100%; }
   .sidebar {
     display:grid;
     gap:10px;

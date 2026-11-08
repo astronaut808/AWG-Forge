@@ -1,6 +1,6 @@
-import { Input, NativeSelect, Switch, Textarea, TextInput } from "@mantine/core";
+import { Input, Switch, Textarea, TextInput } from "@mantine/core";
 import { Icon } from "./icons";
-import { Button } from "./ui";
+import { Button, SelectField } from "./ui";
 import * as api from "./api";
 import { useI18n } from "./context";
 import { actionErrorMessage } from "./errors";
@@ -82,9 +82,9 @@ export function CreateTunnelForm({ state, profile, runAction }: { state: AppStat
       navigate("tunnels");
     }, { errorMode: "inline" });
   }}>
-    <NativeSelect className="form-control" label={m.forms.protocol} aria-label={m.forms.protocol} description={m.ui.selectProtocolHelp} name="profile" value={selected.id} onInput={(event) => setProfileID((event.currentTarget as HTMLSelectElement).value)}>{profiles.map((item) => <option key={item.id} value={item.id}>{profileTitle(item.id)}{isExperimentalProfile(item.id) ? ` · ${m.common.experimental}` : ""}</option>)}</NativeSelect>
+    <SelectField label={m.forms.protocol} aria-label={m.forms.protocol} description={m.ui.selectProtocolHelp} name="profile" value={selected.id} onChange={(value) => setProfileID(value!)} data={profiles.map((item) => ({ value: item.id, label: `${profileTitle(item.id)}${isExperimentalProfile(item.id) ? ` · ${m.common.experimental}` : ""}` }))} />
     <TextInput className="form-control" label={m.forms.nameInterface} key={`${selected.id}-name`} aria-label={m.forms.nameInterface} name="name" defaultValue={selected.suggested_name || "awg0"} />
-    <NativeSelect className="form-control" label={m.forms.portSelection} aria-label={m.forms.portSelection} value={portMode} onInput={(event) => setPortMode((event.currentTarget as HTMLSelectElement).value as PortSelectionMode)}><option value="automatic">{m.forms.automaticPort}</option><option value="manual">{m.forms.manualPort}</option></NativeSelect>
+    <SelectField label={m.forms.portSelection} aria-label={m.forms.portSelection} value={portMode} onChange={(value) => setPortMode(value! as PortSelectionMode)} data={[{ value: "automatic", label: m.forms.automaticPort }, { value: "manual", label: m.forms.manualPort }]} />
     <Input.Wrapper className="form-control port-field" id="create-tunnel-port" label={m.forms.listenPort}>
       <div className={classNames("port-input-wrap", portMode === "manual" && "manual")}>
       {portMode === "automatic" ? <>
@@ -95,7 +95,7 @@ export function CreateTunnelForm({ state, profile, runAction }: { state: AppStat
       <small id="create-tunnel-port-hint" className={`form-note port-mode-note${suggestionError && portMode === "automatic" ? " field-error" : ""}`} aria-live="polite">{portMode === "automatic" ? (suggestionError || (suggestedRange ? m.forms.automaticPortRange(suggestedRange) : "")) : m.forms.manualPortHint}</small>
     </Input.Wrapper>
     <TextInput className="form-control" label={m.forms.ipv4Subnet} key={`${selected.id}-subnet`} aria-label={m.forms.ipv4Subnet} name="subnet" defaultValue={selected.suggested_subnet || "10.8.0.0/24"} />
-    <NativeSelect className="form-control" label={m.forms.egress} aria-label={m.forms.egress} name="egress_mode" defaultValue="wan"><option value="wan">{m.forms.serverWAN}</option><option value="warp">{m.forms.cloudflareWARP}</option></NativeSelect>
+    <SelectField label={m.forms.egress} aria-label={m.forms.egress} name="egress_mode" defaultValue="wan" data={[{ value: "wan", label: m.forms.serverWAN }, { value: "warp", label: m.forms.cloudflareWARP }]} />
     {!state.warp?.configured && <small className="form-note full">{m.forms.warpAutoRegister}</small>}
   </Form>;
 }
@@ -125,7 +125,7 @@ export function TunnelSettingsForm({ state, tunnel, runAction }: { state: AppSta
       <TextInput className="form-control" label={m.forms.ipv4Subnet} aria-label={m.forms.ipv4Subnet} name="subnet" defaultValue={tunnel.subnet} />
     </div></fieldset>
     <fieldset className="connection-group full"><legend>{m.ui.routing}</legend><div className="form-grid">
-      <NativeSelect className="form-control" label={m.forms.egress} aria-label={m.forms.egress} name="egress_mode" value={egressMode} onInput={(event) => setEgressMode((event.currentTarget as HTMLSelectElement).value)}><option value="wan">{m.forms.serverWAN}</option><option value="warp">{m.forms.cloudflareWARP}</option></NativeSelect>
+      <SelectField label={m.forms.egress} aria-label={m.forms.egress} name="egress_mode" value={egressMode} onChange={(value) => setEgressMode(value!)} data={[{ value: "wan", label: m.forms.serverWAN }, { value: "warp", label: m.forms.cloudflareWARP }]} />
       <TextInput className="form-control" label={m.tunnel.dns} aria-label={m.tunnel.dns} name="dns" defaultValue={tunnel.dns} />
       <TextInput className="form-control full" label={m.forms.allowedIPs} aria-label={m.forms.allowedIPs} name="allowed_ips" defaultValue={tunnel.allowed_ips} />
       {!state.warp?.configured && egressMode === "warp" && <small className="form-note full">{m.forms.warpAutoRegister}</small>}
@@ -156,7 +156,7 @@ export function ProtocolForm({ tunnel, runAction, onRegenerate }: { tunnel: Tunn
     <h3 className="form-section-title">{group.title}</h3>
     <div className={classNames("protocol-fields", group.columns)}>
       {group.params.map((item) => item.key === "RandomTrailers" || item.key === "DisableCookies"
-        ? <NativeSelect key={item.key} label={item.key} name={item.key} defaultValue={item.value || "off"}><option value="off">off</option><option value="on">on</option></NativeSelect>
+        ? <SelectField key={item.key} label={item.key} name={item.key} defaultValue={item.value || "off"} data={[{ value: "off", label: "off" }, { value: "on", label: "on" }]} />
         : /^I\d/.test(item.key)
           ? <Textarea key={item.key} label={item.key} name={item.key} defaultValue={item.value || ""} autosize minRows={2} maxRows={5} />
           : <TextInput key={item.key} className={item.key === "ContentPaddingAddition" ? "full" : undefined} label={item.key} name={item.key} defaultValue={item.value || ""} />)}
@@ -195,10 +195,7 @@ export function CreateClientForm({ tunnels, initialTunnelID, trafficLimitsEnable
     onCreated(target.id);
   }, { errorMode: "inline" })}>
     <div className="stack full">
-      <NativeSelect className="form-control" label={m.ui.clientTunnel} aria-label={m.ui.clientTunnel} name="tunnel_id" required value={selected?.id || ""} onChange={(event) => setTunnelID(event.currentTarget.value)}>
-        <option value="" disabled>{m.ui.chooseTunnel}</option>
-        {tunnels.map((tunnel) => <option key={tunnel.id} value={tunnel.id}>{tunnel.name}</option>)}
-      </NativeSelect>
+      <SelectField label={m.ui.clientTunnel} aria-label={m.ui.clientTunnel} name="tunnel_id" required value={selected?.id || null} searchable nothingFoundMessage={m.ui.noMatches} placeholder={m.ui.chooseTunnel} onChange={(value) => setTunnelID(value!)} data={tunnels.map((tunnel) => ({ value: tunnel.id, label: tunnel.name }))} />
       {selected && <p className="client-tunnel-context">{profileTitle(selected.profile)} · {selected.subnet}</p>}
       <TextInput className="form-control" label={m.forms.clientName} aria-label={m.forms.clientName} name="name" placeholder={m.ui.clientNamePlaceholder} description={m.ui.clientNameShortHint} title={m.ui.clientNameHint} required minLength={1} maxLength={64} pattern={clientNamePattern} />
       <details className="field-help"><summary>{m.ui.nameRules}</summary><p>{m.ui.clientNameHint}</p></details>
@@ -232,21 +229,11 @@ function TrafficLimitField({ limitBytes, limitPeriod = "lifetime", exceeded = fa
   return <div className="traffic-limit-field full">
     <span className="field-title">{m.forms.trafficLimit}</span>
     <div className={classNames("traffic-limit-row", mode === "unlimited" && "compact")}>
-      <NativeSelect className="traffic-limit-mode" aria-label={m.forms.trafficLimit} name="traffic_limit_mode" value={mode} onInput={(event) => setMode((event.currentTarget as HTMLSelectElement).value)}>
-        <option value="unlimited">{m.forms.trafficLimitUnlimited}</option>
-        <option value="limit">{m.forms.trafficLimitLimited}</option>
-      </NativeSelect>
+      <SelectField className="traffic-limit-mode" aria-label={m.forms.trafficLimit} name="traffic_limit_mode" value={mode} onChange={(value) => setMode(value!)} data={[{ value: "unlimited", label: m.forms.trafficLimitUnlimited }, { value: "limit", label: m.forms.trafficLimitLimited }]} />
       {mode === "limit" && <>
         <TextInput className="traffic-limit-value" aria-label={m.forms.trafficLimitValue} name="traffic_limit_value" type="number" min="0.001" step="0.001" inputMode="decimal" defaultValue={initial.value} />
-        <NativeSelect className="traffic-limit-unit" aria-label={m.forms.trafficLimitUnit} name="traffic_limit_unit" defaultValue={initial.unit}>
-          <option value="mib">MiB</option>
-          <option value="gib">GiB</option>
-          <option value="tib">TiB</option>
-        </NativeSelect>
-        <NativeSelect className="traffic-limit-period" aria-label={m.forms.trafficLimitPeriod} name="traffic_limit_period" value={period} onInput={(event) => setPeriod((event.currentTarget as HTMLSelectElement).value as TrafficLimitPeriod)}>
-          <option value="lifetime">{m.forms.trafficLimitLifetime}</option>
-          <option value="rolling_30d">{m.forms.trafficLimitRolling30Days}</option>
-        </NativeSelect>
+        <SelectField className="traffic-limit-unit" aria-label={m.forms.trafficLimitUnit} name="traffic_limit_unit" defaultValue={initial.unit} data={["mib", "gib", "tib"].map((value) => ({ value, label: value === "mib" ? "MiB" : value === "gib" ? "GiB" : "TiB" }))} />
+        <SelectField className="traffic-limit-period" aria-label={m.forms.trafficLimitPeriod} name="traffic_limit_period" value={period} onChange={(value) => setPeriod(value! as TrafficLimitPeriod)} data={[{ value: "lifetime", label: m.forms.trafficLimitLifetime }, { value: "rolling_30d", label: m.forms.trafficLimitRolling30Days }]} />
       </>}
     </div>
     <span className="help">{exceeded ? period === "rolling_30d" ? m.forms.trafficLimitRolling30DaysExceededHelp : m.forms.trafficLimitExceededHelp : period === "rolling_30d" && mode === "limit" ? m.forms.trafficLimitRolling30DaysHelp : m.forms.trafficLimitHelp}</span>
@@ -259,12 +246,7 @@ function MTUField({ value }: { value: number }) {
   const preset = normalized === 0 || normalized === 1280 || normalized === 1420 ? String(normalized) : "custom";
   const [mode, setMode] = useState(preset);
   return <>
-    <NativeSelect className="form-control" label="MTU" aria-label="MTU" description={m.ui.mtuHelp} name="mtu_mode" value={mode} onInput={(event) => setMode((event.currentTarget as HTMLSelectElement).value)}>
-      <option value="0">{m.forms.auto}</option>
-      <option value="1280">1280</option>
-      <option value="1420">1420</option>
-      <option value="custom">{m.common.custom}</option>
-    </NativeSelect>
+    <SelectField label="MTU" aria-label="MTU" description={m.ui.mtuHelp} name="mtu_mode" value={mode} onChange={(value) => setMode(value!)} data={[{ value: "0", label: m.forms.auto }, { value: "1280", label: "1280" }, { value: "1420", label: "1420" }, { value: "custom", label: m.common.custom }]} />
     {mode === "custom" && <TextInput className="form-control" label={m.forms.customMTU} aria-label={m.forms.customMTU} name="mtu_custom" inputMode="numeric" defaultValue={normalized || 1280} />}
   </>;
 }
@@ -273,15 +255,7 @@ function ExpirationField({ current, keepCurrent = false }: { current?: string; k
   const { m, locale } = useI18n();
   const [mode, setMode] = useState(keepCurrent ? "keep" : "");
   return <>
-    <NativeSelect className="form-control" label={m.forms.expiration} aria-label={m.forms.expiration} name="expires_mode" value={mode} onInput={(event) => setMode((event.currentTarget as HTMLSelectElement).value)}>
-      {keepCurrent && <option value="keep">{current ? m.forms.keepCurrentValue(dateOnly(current, locale)) : m.forms.keepCurrent}</option>}
-      <option value="">{m.forms.neverExpires}</option>
-      <option value="1h">{m.forms.oneHour}</option>
-      <option value="1d">{m.forms.oneDay}</option>
-      <option value="7d">{m.forms.sevenDays}</option>
-      <option value="30d">{m.forms.thirtyDays}</option>
-      <option value="custom">{m.forms.customDate}</option>
-    </NativeSelect>
+    <SelectField label={m.forms.expiration} aria-label={m.forms.expiration} name="expires_mode" value={mode} onChange={(value) => setMode(value!)} data={[...(keepCurrent ? [{ value: "keep", label: current ? m.forms.keepCurrentValue(dateOnly(current, locale)) : m.forms.keepCurrent }] : []), { value: "", label: m.forms.neverExpires }, { value: "1h", label: m.forms.oneHour }, { value: "1d", label: m.forms.oneDay }, { value: "7d", label: m.forms.sevenDays }, { value: "30d", label: m.forms.thirtyDays }, { value: "custom", label: m.forms.customDate }]} />
     {mode === "custom" && <TextInput className="form-control" label={m.forms.customExpiration} aria-label={m.forms.customExpiration} name="expires_custom" type="datetime-local" min={dateTimeLocalValue()} defaultValue={dateTimeLocalValue(current || expirationValue("1d"))} />}
   </>;
 }
