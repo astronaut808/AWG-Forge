@@ -19,6 +19,8 @@ Target candidate version is `0.20.0`. The browser API contract remains labelled 
 
 ### Fixed
 
+- Preserve opened Web UI sections and loaded traffic during sidebar navigation; pause hidden subscriptions and keep browser history working without document navigation.
+
 - Return entries already moved during a failed restore staging operation. Keep recovery data and block retries if rollback fails.
 - Validate the running container, effective Compose service, image defaults, and host mount layout before managed upgrades. Serialize installation mutations, pin the inspected target image, require stable HTTP/HTTPS readiness and the migrated SQLite schema, and retain recovery information on failed rollback.
 - Abort the upgrade and restart the previous container when the backup fails. Stage rollback data before replacing the working copy, and scope container recovery to the AWG-Forge service.

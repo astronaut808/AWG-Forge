@@ -5,6 +5,7 @@ import * as api from "./api";
 import { useI18n } from "./context";
 import { actionErrorMessage } from "./errors";
 import { expirationFromForm, field, mtuValue, trafficLimitFromForm, trafficLimitInitial } from "./form-values";
+import { navigate } from "./navigation";
 import { ButtonContent, Form, PanelTitle } from "./shared";
 import type { AppState, Client, Profile, Tunnel } from "./types";
 import type { PortSelectionMode, RunAction, TrafficLimitPeriod } from "./ui-types";
@@ -78,7 +79,7 @@ export function CreateTunnelForm({ state, profile, runAction }: { state: AppStat
       if (!port) throw new Error(m.forms.portSuggestionFailed);
       const result = await api.createTunnel({ profile: field(form, "profile"), name: field(form, "name"), port, automatic_port: portMode === "automatic", subnet: field(form, "subnet"), egress_mode: field(form, "egress_mode") });
       localStorage.setItem("awg-forge.selected-tunnel", result.tunnel.id);
-      globalThis.location.hash = "/tunnels";
+      navigate("tunnels");
     }, { errorMode: "inline" });
   }}>
     <NativeSelect className="form-control" label={m.forms.protocol} aria-label={m.forms.protocol} description={m.ui.selectProtocolHelp} name="profile" value={selected.id} onInput={(event) => setProfileID((event.currentTarget as HTMLSelectElement).value)}>{profiles.map((item) => <option key={item.id} value={item.id}>{profileTitle(item.id)}{isExperimentalProfile(item.id) ? ` · ${m.common.experimental}` : ""}</option>)}</NativeSelect>

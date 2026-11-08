@@ -2,6 +2,8 @@
 
 ## Web UI
 
+Sidebar navigation switches sections without reloading the document. Opened sections retain their search, selected view and loaded data until logout or a page reload; returning to traffic refreshes its data in the background. Hidden sections pause their subscriptions and polling. Browser Back and Forward remain available.
+
 Main workflow:
 
 1. Open the UI through an SSH tunnel or a protected admin endpoint.

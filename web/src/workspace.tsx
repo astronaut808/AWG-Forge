@@ -8,10 +8,11 @@ import type { Locale } from "./i18n";
 import { ForgeMark, Icon } from "./icons";
 import type { IconName } from "./icons";
 import { MaintenanceCenter, TrafficPanel } from "./maintenance";
+import { navigate, navigationEvent } from "./navigation";
 import { Badge, Empty } from "./shared";
 import type { AppState, Client, Profile, TrafficSummary, Tunnel } from "./types";
 import { activeLabel, classNames, dateOnly, formatBytes, isExperimentalProfile, profileTitle, relativeTime } from "./utils";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Activity, Fragment, useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 type ShellProps = {
@@ -36,11 +37,27 @@ type ShellProps = {
 export function Shell(props: ShellProps) {
   const { state, theme, setTheme, locale, setLocale, logout, children } = props;
   const { m } = useI18n();
-  const [section, setSection] = useState(() => currentSection());
+  const [view, setView] = useState(() => {
+    const section = currentSection();
+    return { section, visited: [section] };
+  });
+  const { section, visited } = view;
+  const [tunnelNavigation, setTunnelNavigation] = useState(0);
   useEffect(() => {
-    const onHash = () => setSection(currentSection());
+    const onHash = () => {
+      const next = currentSection();
+      setView((current) => current.section === next ? current : {
+        section: next, visited: current.visited.includes(next) ? current.visited : [...current.visited, next],
+      });
+    };
     globalThis.addEventListener("hashchange", onHash);
-    return () => globalThis.removeEventListener("hashchange", onHash);
+    globalThis.addEventListener("popstate", onHash);
+    globalThis.addEventListener(navigationEvent, onHash);
+    return () => {
+      globalThis.removeEventListener("hashchange", onHash);
+      globalThis.removeEventListener("popstate", onHash);
+      globalThis.removeEventListener(navigationEvent, onHash);
+    };
   }, []);
   const navigation: Array<{ id: string; label: string; icon: IconName }> = [
     { id: "overview", label: m.ui.overview, icon: "home" },
@@ -49,10 +66,11 @@ export function Shell(props: ShellProps) {
     { id: "traffic", label: m.maintenance.tabs.traffic, icon: "traffic" },
     { id: "maintenance", label: m.common.maintenance, icon: "settings" },
   ];
-  function navigate(id: string) { globalThis.location.hash = `/${id}`; setSection(id); }
   function openTunnel(tunnel: Tunnel) {
     localStorage.setItem("awg-forge.selected-tunnel", tunnel.id);
     props.resetTunnelFilter();
+    // An explicit overview selection opens its target without a stale local search.
+    setTunnelNavigation((value) => value + 1);
     navigate("tunnels");
   }
   return <main className="app-shell">
@@ -67,11 +85,13 @@ export function Shell(props: ShellProps) {
       </div>
     </aside>
     <div className="workspace-main">
-      {section === "tunnels" ? children : <>
-        <div className="page-heading"><div><h1>{section === "overview" ? (locale === "ru" ? "Обзор сервера" : "Server overview") : navigation.find((item) => item.id === section)?.label}</h1>{section === "overview" && <p className="page-description">{locale === "ru" ? "Туннели, клиенты и трафик" : "Tunnels, clients and traffic"}</p>}</div>{section === "overview" && props.onCreateTunnel && <Button className="button primary" type="button" disabled={!state.profiles.some((profile) => profile.available)} onClick={props.onCreateTunnel}><Icon name="plus" />{m.common.createTunnel}</Button>}</div>
-        <div className="content-page">{section === "overview" ? <Overview state={state} openTunnel={openTunnel} navigate={navigate} renderClient={props.renderClient} onCreateClient={props.onCreateClient} /> : section === "clients" ? props.renderClients?.() : section === "traffic" ? <TrafficView state={state} /> : <MaintenanceCenter embedded state={state} notify={props.notify} reload={props.reload} close={() => navigate("tunnels")} />}</div>
-        {props.overlays}
-      </>}
+      {visited.map((id) => <Activity key={id} mode={section === id ? "visible" : "hidden"}>
+        {id === "tunnels" ? <Fragment key={tunnelNavigation}>{children}</Fragment> : <>
+          <div className="page-heading"><div><h1>{id === "overview" ? (locale === "ru" ? "Обзор сервера" : "Server overview") : navigation.find((item) => item.id === id)?.label}</h1>{id === "overview" && <p className="page-description">{locale === "ru" ? "Туннели, клиенты и трафик" : "Tunnels, clients and traffic"}</p>}</div>{id === "overview" && props.onCreateTunnel && <Button className="button primary" type="button" disabled={!state.profiles.some((profile) => profile.available)} onClick={props.onCreateTunnel}><Icon name="plus" />{m.common.createTunnel}</Button>}</div>
+          <div className="content-page">{id === "overview" ? <Overview state={state} openTunnel={openTunnel} navigate={navigate} renderClient={props.renderClient} onCreateClient={props.onCreateClient} /> : id === "clients" ? props.renderClients?.() : id === "traffic" ? <TrafficView state={state} /> : <MaintenanceCenter embedded state={state} notify={props.notify} reload={props.reload} close={() => navigate("tunnels")} />}</div>
+        </>}
+      </Activity>)}
+      {props.overlays}
     </div>
   </main>;
 }
@@ -89,6 +109,13 @@ function Overview({ state, openTunnel, navigate, renderClient, onCreateClient }:
   const [traffic, setTraffic] = useState<TrafficSummary | null>(null);
   const [trafficError, setTrafficError] = useState("");
   const [loading, setLoading] = useState(true);
+  const hasTraffic = useRef(false);
+  const requestID = useRef(0);
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; requestID.current += 1; };
+  }, []);
   const copy = locale === "ru" ? {
     allTunnels: "Все туннели", allClients: "Все клиенты", recorded: "Записанный трафик", period: "Сумма за период",
     traffic30d: "Трафик за 30 дней", trafficPair: "Получено и отправлено", history: "История SQLite",
@@ -99,11 +126,19 @@ function Overview({ state, openTunnel, navigate, renderClient, onCreateClient }:
     running: "up", stopped: "down", active: "active now", name: "Name", egress: "Egress",
   };
   const loadTraffic = useCallback(async () => {
-    if (!state.database?.enabled) { setLoading(false); setTraffic(null); return; }
-    setLoading(true);
-    try { setTraffic(await api.trafficSummary()); setTrafficError(""); }
-    catch (err) { setTrafficError(errorMessage(err, m.common.requestFailed)); setTraffic(null); }
-    finally { setLoading(false); }
+    if (!state.database?.enabled) { hasTraffic.current = false; setLoading(false); setTraffic(null); setTrafficError(""); return; }
+    const id = ++requestID.current;
+    if (!hasTraffic.current) setLoading(true);
+    try {
+      const next = await api.trafficSummary();
+      if (!mounted.current || id !== requestID.current) return;
+      hasTraffic.current = true;
+      setTraffic(next); setTrafficError("");
+    } catch (err) {
+      if (mounted.current && id === requestID.current) setTrafficError(errorMessage(err, m.common.requestFailed));
+    } finally {
+      if (mounted.current && id === requestID.current) setLoading(false);
+    }
   }, [state.database?.enabled, m.common.requestFailed]);
   useEffect(() => { void loadTraffic(); }, [loadTraffic]);
   const allClients = state.tunnels.flatMap((tunnel) => tunnel.clients.map((client) => ({ client, tunnel })));
@@ -184,11 +219,21 @@ export function TunnelFirstDashboard({ profiles, tunnels, filter, setFilter, onC
   const compact = useMediaQuery("(max-width:760px)", undefined, { getInitialValueInEffect: false });
   const [showTools, setShowTools] = useState(false);
   const previousIDs = useRef(new Set(tunnels.map((tunnel) => tunnel.id)));
+  const resumeSelection = useRef<string | null>(null);
+  useEffect(() => {
+    resumeSelection.current = localStorage.getItem("awg-forge.selected-tunnel");
+  }, []);
   useEffect(() => {
     const added = tunnels.find((tunnel) => !previousIDs.current.has(tunnel.id));
     previousIDs.current = new Set(tunnels.map((tunnel) => tunnel.id));
+    const requested = resumeSelection.current;
+    resumeSelection.current = null;
+    if (requested && tunnels.some((tunnel) => tunnel.id === requested)) {
+      if (requested !== selectedID) { setSelectedID(requested); setQuery(""); }
+      return;
+    }
     if (added) { setSelectedID(added.id); setFilter("all"); setQuery(""); }
-  }, [tunnels, setFilter]);
+  }, [tunnels, setFilter, selectedID]);
   const availableFilters = profiles.filter((profile) => tunnels.some((tunnel) => tunnel.profile === profile.id));
   const effectiveFilter = availableFilters.some((profile) => profile.id === filter) ? filter : "all";
   const visible = tunnels.filter((tunnel) => (effectiveFilter === "all" || tunnel.profile === effectiveFilter) && `${tunnel.name} ${profileTitle(tunnel.profile)} ${tunnel.listen_port}`.toLowerCase().includes(query.toLowerCase()));

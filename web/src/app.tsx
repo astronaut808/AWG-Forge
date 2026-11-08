@@ -11,6 +11,7 @@ import { initialLocale, localeStorageKey, messages } from "./i18n";
 import type { Locale } from "./i18n";
 import { Icon } from "./icons";
 import { MaintenanceCenter } from "./maintenance";
+import { navigate } from "./navigation";
 import { ConfirmAction, Dialog, Empty, Toast } from "./shared";
 import type { AppState, Tunnel } from "./types";
 import type { LoadResult, Modal, RunAction, RunActionOptions } from "./ui-types";
@@ -185,7 +186,7 @@ export function App() {
     {modal && <Dialog title={modalTitle(modal, m)} wide={modal.kind === "protocol" || modal.kind === "client-config"} onClose={() => setModal(null)}><ModalContent onClientCreated={(tunnelID) => {
       if (modal.kind === "create-client" && modal.origin === "global") {
         if (clientTunnelFilter !== "all") setClientTunnelFilter(tunnelID);
-        if (globalThis.location.hash !== "#/clients") globalThis.location.hash = "/clients";
+        navigate("clients");
       }
     }} onRegenerate={requestRegeneration} modal={modal} state={state} notify={notify} close={() => setModal(null)} reload={async () => { await load({ quiet: true }); }} runAction={runAction} /><Toast message={toast} /></Dialog>}
     {confirmation && <ConfirmAction title={confirmation.title} description={confirmation.description} submit={confirmation.submit} danger={confirmation.danger} onClose={() => setConfirmation(null)} onConfirm={confirmation.action} />}
@@ -210,7 +211,6 @@ export function App() {
         onCreateTunnel={(profile) => setModal({ kind: "create-tunnel", profile: profile || active })}
         renderTunnel={renderTunnel}
       />
-      {overlays}
     </Shell>
     </AppProviders>
   );

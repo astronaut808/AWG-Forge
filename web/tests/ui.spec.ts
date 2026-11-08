@@ -189,6 +189,108 @@ async function expectDecodedImage(image: Locator) {
   await expect.poll(() => image.evaluate((element: HTMLImageElement) => element.complete && element.naturalWidth > 0)).toBe(true);
 }
 
+test("section navigation keeps the authenticated shell without a loading flash", async ({ page, m, session }) => {
+  await openDashboard(page, m, session);
+  const shell = await page.locator(".app-shell").elementHandle();
+  const sidebar = await page.locator(".sidebar").elementHandle();
+  let documentRequests = 0;
+  let stateRequests = 0;
+  page.on("request", (request) => {
+    if (request.isNavigationRequest() && request.frame() === page.mainFrame()) documentRequests++;
+    if (new URL(request.url()).pathname === "/api/state") stateRequests++;
+  });
+  await page.evaluate(() => {
+    document.body.dataset.navigationFlash = "false";
+    const observer = new MutationObserver((records) => {
+      if (records.some((record) => Array.from(record.addedNodes).some((node) => node instanceof Element && (node.matches(".login-shell") || node.querySelector(".login-shell"))))) {
+        document.body.dataset.navigationFlash = "true";
+      }
+    });
+    observer.observe(document.getElementById("app")!, { childList: true, subtree: true });
+  });
+  for (const [id, label] of [
+    ["tunnels", m.dashboard.tunnels], ["clients", m.tunnel.clients],
+    ["traffic", m.maintenance.tabs.traffic], ["maintenance", m.common.maintenance],
+    ["overview", m.ui.overview], ["clients", m.tunnel.clients], ["tunnels", m.dashboard.tunnels],
+  ]) {
+    const button = page.locator(".main-nav").getByRole("button", { name: label, exact: true });
+    await button.click();
+    await expect(button).toHaveAttribute("aria-current", "page");
+    await expect(page).toHaveURL(new RegExp(`#/${id}$`));
+    expect(await shell!.evaluate((element) => element.isConnected)).toBe(true);
+    expect(await sidebar!.evaluate((element) => element.isConnected)).toBe(true);
+    await expect(page.locator("body")).toHaveAttribute("data-navigation-flash", "false");
+  }
+  expect(documentRequests).toBe(0);
+  expect(stateRequests).toBe(0);
+  await page.goBack();
+  await expect(page.locator(".main-nav button[aria-current=page]")).toHaveText(m.tunnel.clients);
+  await page.goForward();
+  await expect(page.locator(".main-nav button[aria-current=page]")).toHaveText(m.dashboard.tunnels);
+});
+
+test("returning to a section preserves search and data during a slow refresh", async ({ page, m, session }) => {
+  let slow = false;
+  let releaseRefresh: () => void = () => {};
+  const refresh = new Promise<void>((resolve) => { releaseRefresh = resolve; });
+  await page.route("**/api/traffic-summary", async (route) => {
+    if (slow) await refresh;
+    await route.fulfill({ json: { enabled: true, rows: [] } });
+  });
+  try {
+    await openDashboard(page, m, session);
+    await expect(page.locator(".overview-traffic")).toContainText(m.maintenance.noTrafficData);
+    const overview = await page.locator(".overview").elementHandle();
+    const nav = page.locator(".main-nav");
+    await nav.getByRole("button", { name: m.tunnel.clients, exact: true }).click();
+    const search = page.locator(".all-clients").getByRole("searchbox");
+    await search.fill("Remember this search");
+    const searchElement = await search.elementHandle();
+    await nav.getByRole("button", { name: m.maintenance.tabs.traffic, exact: true }).click();
+    await expect(page.locator(".content-page:visible")).toContainText(m.maintenance.noTrafficData);
+    slow = true;
+    await nav.getByRole("button", { name: m.tunnel.clients, exact: true }).click();
+    await expect(search).toHaveValue("Remember this search");
+    expect(await searchElement!.evaluate((element) => element.isConnected)).toBe(true);
+    await nav.getByRole("button", { name: m.ui.overview, exact: true }).click();
+    expect(await overview!.evaluate((element) => element.isConnected)).toBe(true);
+    await expect(page.locator(".overview-traffic")).toContainText(m.maintenance.noTrafficData);
+    await expect(page.locator(".overview-traffic")).not.toContainText(m.common.loading);
+    await nav.getByRole("button", { name: m.maintenance.tabs.traffic, exact: true }).click();
+    await expect(page.locator(".content-page:visible")).toContainText(m.maintenance.noTrafficData);
+    await expect(page.locator(".content-page:visible")).not.toContainText(/Loading|Загрузка/);
+  } finally {
+    releaseRefresh();
+  }
+});
+
+test("overview tunnel selection wins over a background addition while tunnels are hidden", async ({ page, m, session }) => {
+  await openDashboard(page, m, session);
+  const nav = page.locator(".main-nav");
+  await nav.getByRole("button", { name: m.dashboard.tunnels, exact: true }).click();
+  const originalName = await page.getByRole("article").getByRole("heading", { level: 2 }).innerText();
+  await nav.getByRole("button", { name: m.ui.overview, exact: true }).click();
+  const { suggestion } = await (await page.request.get("/api/tunnels/suggestion?profile=awg_2_0")).json();
+  const backgroundName = `bg-${randomBytes(4).toString("hex")}`;
+  const response = await page.request.post("/api/tunnels", {
+    headers: { Origin: new URL(page.url()).origin },
+    data: { profile: "awg_2_0", name: backgroundName, port: suggestion.port, automatic_port: true, subnet: suggestion.subnet, egress_mode: "wan" },
+  });
+  await expect(response).toBeOK();
+  // Wait for the real SSE update while the tunnel Activity's effects are stopped.
+  await expect(page.locator(".overview-card").filter({ hasText: backgroundName })).toBeVisible();
+  await page.locator(".overview-card").filter({ hasText: originalName }).click();
+  await expect(page.getByRole("article").getByRole("heading", { level: 2 })).toHaveText(originalName);
+  await openTunnelTools(page, m);
+  await page.getByRole("searchbox", { name: m.ui.searchTunnels, exact: true }).fill(backgroundName);
+  await expect(page.getByRole("article").getByRole("heading", { level: 2 })).toHaveText(backgroundName);
+  await nav.getByRole("button", { name: m.ui.overview, exact: true }).click();
+  await page.locator(".overview-card").filter({ hasText: originalName }).click();
+  await expect(page.getByRole("article").getByRole("heading", { level: 2 })).toHaveText(originalName);
+  await selectTunnel(page, m, backgroundName);
+  await deleteTunnel(page, page.getByRole("article"), m);
+});
+
 test("authentication, maintenance, saved preferences and logout", async ({ page, m, colorScheme }) => {
   await page.goto("/");
   await expectLoginAlignment(page);
@@ -202,7 +304,7 @@ test("authentication, maintenance, saved preferences and logout", async ({ page,
   await login(page, m);
 
   await page.getByRole("button", { name: m.common.maintenance, exact: true }).click();
-  const maintenance = page.locator(".content-page");
+  const maintenance = page.locator(".content-page:visible");
   await maintenance.getByRole("button", { name: m.maintenance.tabs.support, exact: true }).click();
   await expect(maintenance.getByRole("button", { name: m.maintenance.downloadSupport, exact: true })).toBeVisible();
   await expect(maintenance.getByRole("region", { name: m.maintenance.tlsStatus, exact: true })).toBeVisible();
@@ -224,6 +326,7 @@ test("authentication, maintenance, saved preferences and logout", async ({ page,
   await expect(page.locator("html")).toHaveAttribute("data-theme", colorScheme === "dark" ? "light" : "dark");
   await page.getByRole("button", { name: switched.common.logOut, exact: true }).click();
   await expect(page.getByLabel(switched.login.password, { exact: true })).toBeVisible();
+  await expect(page.locator(".all-clients, .overview, .app-shell")).toHaveCount(0);
   await expectLoginAlignment(page);
   expect((await page.request.get("/api/state")).status()).toBe(401);
 });
@@ -498,8 +601,8 @@ test("navigation, client search, quota editing and unified connection preserve t
   await expect(page.getByRole("article").getByRole("heading", { name: otherName, exact: true })).toBeVisible();
   await page.locator(".main-nav").getByRole("button", { name: m.tunnel.clients, exact: true }).click();
   await page.getByRole("searchbox", { name: m.ui.searchClients, exact: true }).fill("Work laptop");
-  await expect(page.locator(".client-row")).toHaveCount(1);
-  await expect(page.locator(".client-row")).toContainText("Work laptop");
+  await expect(page.locator(".all-clients .client-row")).toHaveCount(1);
+  await expect(page.locator(".all-clients .client-row")).toContainText("Work laptop");
   await page.locator(".main-nav").getByRole("button", { name: m.dashboard.tunnels, exact: true }).click();
   await deleteTunnel(page, page.getByRole("article"), m);
   await selectTunnel(page, m, tunnelName);
@@ -558,7 +661,7 @@ test("global client creation requires a choice and preserves editable tunnel con
   await dialog.getByRole("button", { name: m.common.createClient, exact: true }).click();
   await expect(dialog).not.toBeVisible();
   await expect(page.getByRole("combobox", { name: m.aria.tunnelFilters, exact: true })).toHaveValue(secondID);
-  await expect(page.locator(".client-row").filter({ hasText: "Moved from filtered context" })).toBeVisible();
+  await expect(page.locator(".all-clients .client-row").filter({ hasText: "Moved from filtered context" })).toBeVisible();
   await page.locator(".main-nav").getByRole("button", { name: m.dashboard.tunnels, exact: true }).click();
   await selectTunnel(page, m, firstName);
   await page.getByRole("article").getByRole("button", { name: m.common.createClient, exact: true }).click();
