@@ -38,6 +38,8 @@ ssh -L 51821:127.0.0.1:51821 user@server
 
 Then open [the panel in your browser](http://127.0.0.1:51821) and enter the password printed by the installer.
 
+The panel supports a separate server display name. It is saved in `state.json` and does not change client connection endpoints.
+
 ## Documentation
 
 - [Manual installation and startup](docs/en/setup.md)

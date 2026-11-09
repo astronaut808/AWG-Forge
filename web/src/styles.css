@@ -243,6 +243,9 @@ a {
 }
 .server-scope {
   min-width:0;
+  width:100%;
+  text-align:left;
+  color:var(--text);
   padding:12px;
   display:grid;
   grid-template-columns:26px minmax(0,1fr) auto;
@@ -252,6 +255,15 @@ a {
   border-radius:var(--radius);
   background:var(--surface);
 }
+.server-scope:hover { border-color:var(--muted); }
+.server-scope > svg:last-child { width:16px; height:16px; color:var(--muted); }
+.server-scope > div { min-width:0; }
+.interface-server { min-width:0; display:grid; gap:8px; padding-top:20px; border-top:1px solid var(--border); }
+.button.server-name-action { min-width:0; width:100%; justify-content:flex-start; }
+.server-name-action .mantine-Button-inner,.server-name-action .mantine-Button-label { min-width:0; width:100%; }
+.server-name-action .mantine-Button-label { gap:8px; }
+.server-name-text { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.server-name-action svg:last-child { margin-left:auto; }
 .server-scope strong,.server-scope span {
   display:block;
   overflow:hidden;

@@ -1,7 +1,7 @@
 import {
   IconHome, IconHierarchy, IconUsers, IconChartBar, IconSettings, IconSun, IconMoon,
   IconLanguage, IconLogout, IconServer, IconChevronRight, IconCirclePlus,
-  IconRefresh, IconPlayerPlay, IconFileText, IconQrcode, IconLink, IconX, IconSearch,
+  IconRefresh, IconPlayerPlay, IconFileText, IconQrcode, IconLink, IconX, IconSearch, IconPencil,
 } from "@tabler/icons-react";
 
 const icons = {
@@ -9,7 +9,7 @@ const icons = {
   settings: IconSettings, sun: IconSun, moon: IconMoon, language: IconLanguage,
   logout: IconLogout, server: IconServer, chevron: IconChevronRight, plus: IconCirclePlus,
   refresh: IconRefresh, play: IconPlayerPlay, file: IconFileText, qr: IconQrcode,
-  link: IconLink, close: IconX, search: IconSearch,
+  link: IconLink, close: IconX, search: IconSearch, edit: IconPencil,
 };
 export type IconName = keyof typeof icons;
 export function Icon({ name }: { name: IconName }) {

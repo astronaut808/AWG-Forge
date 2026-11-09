@@ -19,6 +19,10 @@ type backupRequest struct {
 	Password string `json:"password"`
 }
 
+type updateServerNameRequest struct {
+	Name *string `json:"name"`
+}
+
 type createTunnelRequest struct {
 	Profile    string `json:"profile"`
 	Name       string `json:"name"`

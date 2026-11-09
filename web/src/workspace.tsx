@@ -6,6 +6,7 @@ import { errorMessage, toneFromLevel } from "./errors";
 import { versionLabel } from "./form-values";
 import type { Locale } from "./i18n";
 import { ForgeMark, Icon } from "./icons";
+import { ServerNameForm } from "./forms";
 import type { IconName } from "./icons";
 import { MaintenanceCenter, TrafficPanel } from "./maintenance";
 import { navigate, navigationEvent } from "./navigation";
@@ -47,6 +48,10 @@ export function Shell(props: ShellProps) {
   const [tunnelNavigation, setTunnelNavigation] = useState(0);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
   const preferencesTrigger = useRef<HTMLButtonElement | null>(null);
+  const [serverNameOpen, setServerNameOpen] = useState(false);
+  const serverNameTrigger = useRef<HTMLButtonElement | null>(null);
+  const panelAddress = globalThis.location.host;
+  const editServerName = state.server_name ? m.serverName.edit : m.serverName.add;
   useLayoutEffect(() => {
     globalThis.scrollTo({ top: sectionScroll.current.get(section) || 0, behavior: "instant" });
   }, [section]);
@@ -90,7 +95,7 @@ export function Shell(props: ShellProps) {
   }
   return <main className="app-shell">
     <aside className="sidebar">
-      <div className="sidebar-top"><Brand /><div className="server-scope"><Icon name="server" /><div><strong title={state.server_host}>{state.server_host}</strong><span>{m.ui.server}</span></div></div></div>
+      <div className="sidebar-top"><Brand /><Button className="server-scope" aria-label={editServerName} title={editServerName} onClick={(event) => { serverNameTrigger.current = event.currentTarget; setServerNameOpen(true); }}><Icon name="server" /><div><strong title={state.server_name || m.ui.server}>{state.server_name || m.ui.server}</strong><span title={m.serverName.panelAddress}>{panelAddress}</span></div><Icon name="edit" /></Button></div>
       <nav className="main-nav" aria-label={m.aria.globalActions}>{navigation.map((item) => <Button key={item.id} type="button" className={classNames(section === item.id && "active")} aria-current={section === item.id ? "page" : undefined} onClick={() => navigate(item.id)}><Icon name={item.icon} />{item.label}</Button>)}</nav>
       <div className="sidebar-bottom">
         <Button className="sidebar-setting" type="button" aria-label={m.ui.interfaceSettings} title={m.ui.interfaceSettings} onClick={(event) => { preferencesTrigger.current = event.currentTarget; setPreferencesOpen(true); }}><Icon name={theme === "dark" ? "moon" : "sun"} /><span>{m.ui.appearance}</span></Button>
@@ -111,9 +116,11 @@ export function Shell(props: ShellProps) {
           <p className="note">{m.ui.interfaceSettingsHelp}</p>
           <ChoiceGroup label={m.ui.theme} value={theme} onChange={setTheme} options={[{ value: "light", label: <><Icon name="sun" />{m.ui.lightTheme}</> }, { value: "dark", label: <><Icon name="moon" />{m.ui.darkTheme}</> }]} />
           <ChoiceGroup label={m.ui.language} value={locale} onChange={(value) => setLocale(value as Locale)} options={[{ value: "ru", label: "Русский" }, { value: "en", label: "English" }]} />
+          <div className="interface-server"><span className="field-title">{m.serverName.title}</span><Button className="button server-name-action" onClick={() => { serverNameTrigger.current = preferencesTrigger.current; setPreferencesOpen(false); setServerNameOpen(true); }}><Icon name="server" /><span className="server-name-text">{state.server_name || m.serverName.add}</span><Icon name="edit" /></Button><p className="help">{m.serverName.storage}</p></div>
           <div className="interface-footer"><FooterLinks showProjectLabel /><Button className="button" type="button" onClick={() => setPreferencesOpen(false)}>{m.common.close}</Button></div>
         </div>
       </Dialog>}
+      {serverNameOpen && <Dialog title={m.serverName.title} size="30rem" returnFocusTo={serverNameTrigger.current} onClose={() => setServerNameOpen(false)}><ServerNameForm state={state} save={async (name) => { await api.updateServerName(name); await props.reload(); setServerNameOpen(false); props.notify(m.serverName.saved); }} /></Dialog>}
     </div>
   </main>;
 }

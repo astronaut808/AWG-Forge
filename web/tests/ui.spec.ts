@@ -76,6 +76,50 @@ async function chooseOption(control: Locator, value: string) {
   await expect(control).toHaveAttribute("aria-expanded", "false");
 }
 
+async function openServerName(page: Page, m: Messages) {
+  const identity = page.locator(".server-scope");
+  if (await identity.isVisible()) {
+    await identity.click();
+  } else {
+    await page.getByRole("button", { name: m.ui.interfaceSettings, exact: true }).click();
+    await page.locator(".server-name-action").click();
+  }
+  await expect(page.getByRole("dialog", { name: m.serverName.title, exact: true })).toBeVisible();
+}
+
+test("server identity can be named, renamed and cleared without changing tunnel configuration", async ({ page, m, session }) => {
+  await openDashboard(page, m, session);
+  const before = await (await page.request.get("/api/state")).json() as AppState;
+  try {
+    for (const name of ["Moscow02", "Office7", ""]) {
+      await openServerName(page, m);
+      const dialog = page.getByRole("dialog");
+      await dialog.getByLabel(m.serverName.name, { exact: true }).fill(name);
+      await dialog.getByRole("button", { name: m.common.save, exact: true }).click();
+      await expect(dialog).not.toBeVisible();
+      await expect(page.locator(".server-scope strong")).toHaveText(name || m.ui.server);
+      await expect(page.locator(".server-scope span")).toHaveText(new URL(page.url()).host);
+      await page.reload();
+      await openServerName(page, m);
+      await expect(page.getByLabel(m.serverName.name, { exact: true })).toHaveValue(name);
+      await page.keyboard.press("Escape");
+      const after = await (await page.request.get("/api/state")).json() as AppState;
+      expect(after.server_host).toBe(before.server_host);
+      expect(after.tunnels).toEqual(before.tunnels);
+    }
+    await openServerName(page, m);
+    const input = page.getByLabel(m.serverName.name, { exact: true });
+    await input.fill("invalid-name");
+    await page.getByRole("dialog").getByRole("button", { name: m.common.save, exact: true }).click();
+    await expect(input).toBeFocused();
+    expect(await input.evaluate((element: HTMLInputElement) => element.validity.patternMismatch)).toBe(true);
+    await page.keyboard.press("Escape");
+  } finally {
+    const response = await page.request.patch("/api/server-name", { headers: { Origin: new URL(page.url()).origin }, data: { name: before.server_name || "" } });
+    expect(response.ok()).toBe(true);
+  }
+});
+
 async function selectTunnel(page: Page, m: Messages, name: string) {
   const picker = page.getByRole("combobox", { name: m.ui.selectedTunnel, exact: true });
   if (page.viewportSize()!.width <= 760) {
@@ -195,6 +239,7 @@ test("responsive sections and dialogs contain long labels without page overflow"
   await page.context().addCookies(session.cookies);
   const fixture = await (await page.request.get("/api/state")).json() as AppState;
   fixture.server_host = "vpn-administration-long-hostname.example.test";
+  fixture.server_name = "AdministrationServer123456789012";
   const tunnel = fixture.tunnels[0];
   tunnel.name = "office-eu-west";
   const client: Client = {
@@ -278,9 +323,14 @@ test("responsive sections and dialogs contain long labels without page overflow"
       return Math.abs((fields.left - body.left) - (body.right - fields.right));
     });
     if (inset > 1) defects.push(`${width}: settings has unequal horizontal insets`);
+    const settingsOverflow = await settings.locator(".interface-settings").evaluate((element) => element.scrollWidth > element.clientWidth + 1);
+    if (settingsOverflow) defects.push(`${width}: interface settings contents are clipped`);
     await capture("interface-settings", width);
     await page.keyboard.press("Escape");
     await expect(preferences).toBeFocused();
+    await openServerName(page, m);
+    await capture("server-name", width);
+    await page.keyboard.press("Escape");
     await page.locator(".main-nav").getByRole("button", { name: m.tunnel.clients, exact: true }).click();
     const firstClient = page.locator(".all-clients .client-row").first();
     const actions = firstClient.getByRole("button", { name: m.ui.clientActions, exact: true });

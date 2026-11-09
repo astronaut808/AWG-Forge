@@ -24,6 +24,22 @@ import (
 
 const testPassword = "correct horse battery staple"
 
+func TestValidateStateSanityRejectsInvalidServerNames(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		state config.State
+	}{
+		{name: "server name", state: config.State{ServerName: "invalid-name"}},
+		{name: "environment marker", state: config.State{ServerNameEnv: "invalid-name"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := validateStateSanity(tc.state); err == nil || !strings.Contains(err.Error(), "backup server name is invalid") {
+				t.Fatalf("validateStateSanity() error = %v", err)
+			}
+		})
+	}
+}
+
 func TestBackupRestoreRoundTripEncrypted(t *testing.T) {
 	cfg := testConfig(t)
 	svc := app.New(cfg)

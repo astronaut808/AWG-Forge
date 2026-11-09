@@ -348,6 +348,11 @@ func loadAndValidate(password, archivePath string) (validatedBackup, error) {
 }
 
 func validateStateSanity(state config.State) error {
+	for _, name := range []string{state.ServerName, state.ServerNameEnv} {
+		if err := config.ValidateServerName(name); err != nil {
+			return fmt.Errorf("backup server name is invalid: %w", err)
+		}
+	}
 	if state.Warp.Configured() {
 		if err := warp.Validate(state.Warp); err != nil {
 			return fmt.Errorf("backup validation failed: WARP config is invalid: %w", err)

@@ -14,6 +14,13 @@ import { useEffect, useRef, useState } from "react";
 
 const clientNamePattern = "[A-Za-z0-9](?:[A-Za-z0-9 ._\\-]{0,62}[A-Za-z0-9])?";
 
+export function ServerNameForm({ state, save }: { state: AppState; save: (name: string) => Promise<void> }) {
+  const { m } = useI18n();
+  return <Form title={m.serverName.title} subtitle={m.serverName.subtitle} submit={m.common.save} onSubmit={(form) => save(field(form, "name"))}>
+    <TextInput className="form-control full" label={m.serverName.name} name="name" defaultValue={state.server_name || ""} pattern="[A-Za-z0-9]*" maxLength={32} description={m.serverName.hint} autoComplete="off" data-autofocus />
+  </Form>;
+}
+
 export function DeleteTunnelConfirmation({ tunnel, close, runAction }: { tunnel: Tunnel; close: () => void; runAction: RunAction }) {
   const { m } = useI18n();
   const [confirmation, setConfirmation] = useState("");

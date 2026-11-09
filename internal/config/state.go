@@ -5,6 +5,8 @@ import "time"
 type State struct {
 	SchemaVersion     int       `json:"schema_version"`
 	SessionSecret     string    `json:"session_secret"`
+	ServerName        string    `json:"server_name,omitempty"`
+	ServerNameEnv     string    `json:"server_name_env,omitempty"`
 	ServerHost        string    `json:"server_host"`
 	ExternalInterface string    `json:"external_interface"`
 	Warp              Warp      `json:"warp,omitempty"`

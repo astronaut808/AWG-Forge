@@ -57,6 +57,16 @@ fi
 
 printf 'OK   runtime env is split from explicit state init\n'
 
+if ! grep -qx 'SERVER_NAME=' "$ENV_FILE"; then
+  printf 'FAIL fresh install does not include optional server name\n' >&2
+  exit 1
+fi
+if ! validate_server_name "" || ! validate_server_name Moscow02 || validate_server_name moscow-02 || validate_server_name Москва || validate_server_name "$(printf 'a%.0s' {1..33})"; then
+  printf 'FAIL installer server name validation\n' >&2
+  exit 1
+fi
+printf 'OK   optional server name validation\n'
+
 if ! grep -qx 'DATABASE_MODE=sqlite' "$ENV_FILE"; then
   printf 'FAIL fresh install does not enable SQLite by default\n' >&2
   exit 1
@@ -205,6 +215,7 @@ WEBUI_HOST=127.0.0.1
 WEBUI_PORT=51821
 PASSWORD=existing-password
 WEBUI_USERNAME=operator
+SERVER_NAME=ExistingName
 SESSION_SECRET=existing-secret
 EXTERNAL_INTERFACE=eth0
 DATABASE_MODE=sqlite
@@ -228,6 +239,11 @@ if ! grep -qx 'WEBUI_USERNAME=operator' "$ENV_FILE" || ! grep -qx 'PASSWORD=exis
 fi
 
 printf 'OK   reconfigure preserves operational settings\n'
+
+if ! grep -qx 'SERVER_NAME=ExistingName' "$ENV_FILE"; then
+  printf 'FAIL reconfigure changed existing server name\n' >&2
+  exit 1
+fi
 
 if grep -Eq '^[[:space:]]*(TUNNEL_NAME|LISTEN_PORT|IPV4_SUBNET|DNS|ALLOWED_IPS|PERSISTENT_KEEPALIVE|MTU|PROTOCOL_PROFILE)=' "$repo_root/Dockerfile"; then
   printf 'FAIL Docker image ENV contains tunnel init variables\n' >&2

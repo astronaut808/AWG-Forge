@@ -127,3 +127,25 @@ func TestDatabaseModeValidation(t *testing.T) {
 		t.Fatal("expected DATABASE_MODE validation error")
 	}
 }
+
+func TestServerNameFromEnv(t *testing.T) {
+	t.Setenv("SERVER_NAME", "Moscow02")
+	cfg, err := config.FromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := cfg.ServerName, "Moscow02"; got != want {
+		t.Fatalf("ServerName = %q, want %q", got, want)
+	}
+}
+
+func TestServerNameValidation(t *testing.T) {
+	for _, name := range []string{"with-dash", "with space", "имя", "server_name", strings.Repeat("a", 33)} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("SERVER_NAME", name)
+			if _, err := config.FromEnv(); err == nil {
+				t.Fatalf("expected invalid SERVER_NAME %q", name)
+			}
+		})
+	}
+}

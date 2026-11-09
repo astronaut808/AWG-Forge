@@ -6,6 +6,7 @@ The main example is [.env.example](../../.env.example).
 
 - `WEBUI_HOST`: Web UI bind address. Defaults to `127.0.0.1`.
 - `WEBUI_PORT`: Web UI port. Defaults to `51821`.
+- `SERVER_NAME`: optional ASCII alphanumeric name (up to 32 characters) shown in the panel header. It is not used in VPN client configs. The initial `.env` value seeds the saved name; later nonempty `.env` changes override it on restart, while UI edits stay in `state.json`.
 - `WEBUI_USERNAME`: Web UI administrator username. Defaults to `admin`.
 - `PASSWORD`: Web UI administrator password. Required for every bind except a literal loopback IP with trusted proxy headers disabled. Hostnames, including `localhost`, require a password. Changing `WEBUI_USERNAME` preserves the existing password.
 - `SESSION_COOKIE_SECURE`: Secure cookie policy for UI sessions. Values: `auto`, `true`, `false`. Defaults to `auto`.
@@ -33,6 +34,8 @@ The main example is [.env.example](../../.env.example).
 New installs keep runtime settings in `.env` and tunnel settings in `state.json`.
 
 During a fresh install, `install.sh` runs a one-shot `awg-forge init` container before starting the service. That command creates `data/state.json` with the selected first tunnel. After that, `docker compose up -d` starts from ready state, and tunnel settings are managed from the Web UI/API and persisted in `state.json`.
+
+The installer also offers an optional server name. It is stored in `state.json` and can later be changed or removed by clicking the server card in the sidebar or opening Interface settings on a narrow screen. Manual initialization can use `--server-name MyServer`, and deployment configuration can provide `SERVER_NAME=MyServer`. AWG-Forge remembers the last startup value: a later nonempty external change to `SERVER_NAME` is applied, while an unchanged old value does not overwrite a newer UI edit after restart. An empty startup value preserves the saved name; clear it in the UI to remove it. UI edits update the persisted panel name without changing the startup environment or the host `.env` file. Renaming does not change tunnel endpoints or client configuration revisions.
 
 The installer asks for the protocol profile before tunnel defaults, so profile-specific defaults stay aligned. Pressing Enter on the profile question selects AWG 2.0. The installer selects a free UDP port from `30000-49999` by default; the profile ports below remain the defaults for manual selection:
 
