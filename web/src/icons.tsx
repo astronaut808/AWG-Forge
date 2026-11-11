@@ -17,5 +17,5 @@ export function Icon({ name }: { name: IconName }) {
   return <Component className="ui-icon" size={20} stroke={1.7} aria-hidden="true" />;
 }
 export function ForgeMark() {
-  return <svg width="38" height="38" viewBox="0 0 40 40" aria-hidden="true" fill="currentColor"><path d="M20 1 0 36h9L24 9Z" /><path opacity=".8" d="m26 12-9 5 10 19h13Z" /><path opacity=".65" d="m16 23-7 13h14Z" /></svg>;
+  return <img src={`${import.meta.env.BASE_URL}forge-mark.svg`} width="42" height="42" alt="" />;
 }

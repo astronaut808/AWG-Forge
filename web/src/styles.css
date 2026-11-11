@@ -221,9 +221,8 @@ a {
   flex:0 0 44px;
   display:grid;
   place-items:center;
-  color:var(--accent);
 }
-.brand-mark svg {
+.brand-mark img {
   width:42px;
   height:42px;
 }
@@ -1959,7 +1958,7 @@ middle panels span 2 + 1 columns. */
     height:35px;
     flex-basis:35px;
   }
-  .brand-mark svg {
+  .brand-mark img {
     width:34px;
     height:34px;
   }

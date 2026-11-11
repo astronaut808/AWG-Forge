@@ -218,7 +218,7 @@ export function App() {
 
 function Login({ onLogin, theme, setTheme, locale, setLocale }: { onLogin: () => Promise<LoadResult>; notify: (message: string) => void; theme: string; setTheme: (theme: string) => void; locale: Locale; setLocale: (locale: Locale) => void }) {
   const { m } = useI18n();
-  const [username, setUsername] = useState("admin");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -247,11 +247,10 @@ function Login({ onLogin, theme, setTheme, locale, setLocale }: { onLogin: () =>
               }
             }}
           >
-            <TextInput className="form-control" label={m.ui.username} aria-label={m.ui.username} name="username" autoComplete="username" required value={username} onChange={(event) => setUsername(event.currentTarget.value)} />
+            <TextInput className="form-control" label={m.ui.username} aria-label={m.ui.username} name="username" autoComplete="username" autoCapitalize="none" spellCheck={false} required value={username} onChange={(event) => setUsername(event.currentTarget.value)} />
             <PasswordInput visibilityToggleButtonProps={{ "aria-label": m.ui.togglePassword }} className="form-control" label={m.login.password} aria-label={m.login.password} required autoComplete="current-password" value={password} onChange={(event) => setPassword(event.currentTarget.value)} />
             <Button className="button primary wide" disabled={busy} type="submit">{busy ? m.login.loggingIn : m.login.logIn}</Button>
             {error && <p className="form-error" role="alert">{error}</p>}
-            <p className="help">{m.ui.loginUpgrade}</p>
             {secureCookieRejected && (
               <div className="notice login-notice" role="alert">
                 <p>{m.login.secureCookieRejected}</p>

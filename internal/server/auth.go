@@ -26,15 +26,17 @@ func (w *web) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func (w *web) security(next http.HandlerFunc) http.HandlerFunc {
-	return func(rw http.ResponseWriter, r *http.Request) {
-		w.setSecurityHeaders(rw)
-		next(rw, r)
-	}
+	return w.securityHandler(next).ServeHTTP
 }
 
 func (w *web) securityHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		w.setSecurityHeaders(rw)
+		// A loopback listener alone does not constrain the browser's requested host.
+		if w.cfg.Password == "" && !requestHostIsLoopback(r.Host) {
+			writeError(rw, http.StatusForbidden, "forbidden")
+			return
+		}
 		next.ServeHTTP(rw, r)
 	})
 }

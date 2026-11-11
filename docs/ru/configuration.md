@@ -7,8 +7,8 @@
 - `WEBUI_HOST`: адрес Web UI. По умолчанию `127.0.0.1`.
 - `WEBUI_PORT`: порт Web UI. По умолчанию `51821`.
 - `SERVER_NAME`: необязательное имя сервера до 32 латинских букв или цифр. Оно отображается в панели и не используется в клиентских конфигах VPN. Первое значение из `.env` задаёт имя; последующие непустые изменения `.env` применяются при перезапуске, а правки через панель сохраняются в `state.json`.
-- `WEBUI_USERNAME`: имя администратора Web UI. По умолчанию `admin`.
-- `PASSWORD`: пароль администратора Web UI. Обязателен для любой привязки, кроме явного loopback IP с выключенными trusted proxy headers. Имена хостов, включая `localhost`, требуют пароль. Изменение `WEBUI_USERNAME` сохраняет существующий пароль.
+- `WEBUI_USERNAME`: имя администратора Web UI. По умолчанию `admin`. Поле логина в форме входа изначально пустое и поддерживает автозаполнение менеджером паролей.
+- `PASSWORD`: пароль администратора Web UI. Обязателен для любой привязки, кроме явного loopback IP с выключенными trusted proxy headers. Привязка к имени хоста, включая `localhost`, требует пароль. В режиме без пароля HTTP-запросы принимаются только с host `localhost` или loopback IP; для собственного домена панели нужен пароль. Изменение `WEBUI_USERNAME` сохраняет существующий пароль.
 - `SESSION_COOKIE_SECURE`: режим Secure cookie для UI session. Значения: `auto`, `true`, `false`. По умолчанию `auto`.
 - `WEBUI_TRUST_PROXY_HEADERS`: разрешает обработку trusted `X-Forwarded-Proto` и `X-Forwarded-For`. По умолчанию `false`.
 - `WEBUI_TRUSTED_PROXY_CIDRS`: CIDR через запятую, которым разрешено передавать forwarded headers. Обязателен при `WEBUI_TRUST_PROXY_HEADERS=true`.

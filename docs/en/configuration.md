@@ -7,8 +7,8 @@ The main example is [.env.example](../../.env.example).
 - `WEBUI_HOST`: Web UI bind address. Defaults to `127.0.0.1`.
 - `WEBUI_PORT`: Web UI port. Defaults to `51821`.
 - `SERVER_NAME`: optional ASCII alphanumeric name (up to 32 characters) shown in the panel header. It is not used in VPN client configs. The initial `.env` value seeds the saved name; later nonempty `.env` changes override it on restart, while UI edits stay in `state.json`.
-- `WEBUI_USERNAME`: Web UI administrator username. Defaults to `admin`.
-- `PASSWORD`: Web UI administrator password. Required for every bind except a literal loopback IP with trusted proxy headers disabled. Hostnames, including `localhost`, require a password. Changing `WEBUI_USERNAME` preserves the existing password.
+- `WEBUI_USERNAME`: Web UI administrator username. Defaults to `admin`. The sign-in form starts with an empty username field and supports password-manager autofill.
+- `PASSWORD`: Web UI administrator password. Required for every bind except a literal loopback IP with trusted proxy headers disabled. Bind hostnames, including `localhost`, require a password. In passwordless mode, the HTTP request host must be `localhost` or a loopback IP; custom panel domains require a password. Changing `WEBUI_USERNAME` preserves the existing password.
 - `SESSION_COOKIE_SECURE`: Secure cookie policy for UI sessions. Values: `auto`, `true`, `false`. Defaults to `auto`.
 - `WEBUI_TRUST_PROXY_HEADERS`: permits trusted `X-Forwarded-Proto` and `X-Forwarded-For` handling. Defaults to `false`.
 - `WEBUI_TRUSTED_PROXY_CIDRS`: comma-separated CIDRs allowed to supply forwarded headers. Required when `WEBUI_TRUST_PROXY_HEADERS=true`.

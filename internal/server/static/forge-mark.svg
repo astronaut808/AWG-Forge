@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <defs>
+    <clipPath id="forge-silhouette">
+      <path d="M32 4 60 53 56 60H4l16-7h28L32 25 20 46 4 53Z"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#forge-silhouette)">
+    <path fill="#806ced" d="M0 0h64v64H0Z"/>
+    <path fill="#a595ff" d="m0 59 16-7h31.429l6.857 12H0Z"/>
+    <path fill="#6853d9" d="M0 0h46.286L17.714 50 0 57.75Z"/>
+  </g>
+</svg>

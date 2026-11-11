@@ -105,6 +105,8 @@ sudo docker exec awg-forge awg-forge doctor
 
 The first command checks the service before the upgrade, and the last checks it after startup. Use the installer from the current release so that its compatibility checks and migrations match the release.
 
+After a successful upgrade, the installer shows a sign-in reminder. Use `admin` and your existing password, or use the username configured in `WEBUI_USERNAME`.
+
 By default, the script pulls the image configured for the `awg-forge` service in Docker Compose. Set `IMAGE` to a version tag or digest to select a target for this upgrade, for example `sudo IMAGE=ghcr.io/astronaut808/awg-forge:VERSION AWG_FORGE_HOME=/opt/awg-forge bash ./install.sh upgrade` after replacing `VERSION`. Migration and startup use the inspected image ID. The Compose file keeps its configured image for subsequent Compose commands or upgrades without `IMAGE`.
 
 The installer checks the running container, the resolved target Compose service, and host mount points before stopping the service. It requires a local Docker daemon, Compose with JSON config support, and the host tools `flock`, `findmnt`, `jq`, `timeout`, and `curl`. Installation, reconfiguration, upgrade, and uninstall use one lock per installation directory.

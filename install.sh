@@ -1500,6 +1500,7 @@ upgrade_locked() (
   rm -f -- "$marker" || return 1
   upgrade_doctor
   ok "upgrade completed"
+  muted "If the Web UI asks you to sign in, use admin (or WEBUI_USERNAME if configured) with your existing password."
   if [[ "$database_mode" == "sqlite" ]]; then
     ok "SQLite is enabled and migrated"
   fi

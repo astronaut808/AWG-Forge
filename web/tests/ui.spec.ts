@@ -56,7 +56,8 @@ async function expectActionLabels(page: Page) {
 
 async function login(page: Page, m: Messages) {
   await page.goto("/");
-  await expect(page.getByLabel(m.ui.username, { exact: true })).toHaveValue("admin");
+  await expect(page.getByLabel(m.ui.username, { exact: true })).toHaveValue("");
+  await page.getByLabel(m.ui.username, { exact: true }).fill("admin");
   await page.getByLabel(m.login.password, { exact: true }).fill("browser-test-only");
   await page.getByRole("button", { name: m.login.logIn, exact: true }).click();
   await expect(page.getByRole("button", { name: m.common.logOut, exact: true })).toBeVisible();
@@ -269,6 +270,7 @@ test("responsive sections and dialogs contain long labels without page overflow"
     const headerHeights: number[] = [];
     for (const [id, label] of [["overview", m.ui.overview], ["tunnels", m.dashboard.tunnels], ["clients", m.tunnel.clients], ["traffic", m.maintenance.tabs.traffic], ["maintenance", m.common.maintenance]]) {
       await page.locator(".main-nav").getByRole("button", { name: label, exact: true }).click();
+      if (id === "traffic") await expect(page.getByRole("button", { name: m.maintenance.refreshTraffic, exact: true })).toBeEnabled();
       if (id === "maintenance") await page.locator(".subtabs").getByRole("button", { name: m.maintenance.tabs.overview, exact: true }).click();
       headerHeights.push(await page.locator(".sidebar").evaluate((element) => element.getBoundingClientRect().height));
       if (width <= 540 && (id === "overview" || id === "clients" || id === "tunnels")) {
@@ -504,7 +506,15 @@ test("authentication, maintenance, saved preferences and logout", async ({ page,
   await page.goto("/");
   await expectLoginAlignment(page);
   expect((await page.request.get("/api/state")).status()).toBe(401);
+  const username = page.getByLabel(m.ui.username, { exact: true });
+  await expect(username).toHaveValue("");
+  await expect(username).toHaveAttribute("autocomplete", "username");
+  await expect(page.locator(".login-card .help")).toHaveCount(0);
   await page.getByLabel(m.login.password, { exact: true }).fill("incorrect-test-password");
+  await page.getByRole("button", { name: m.login.logIn, exact: true }).click();
+  await expect(username).toBeFocused();
+  expect(await username.evaluate((element: HTMLInputElement) => element.validity.valueMissing)).toBe(true);
+  await username.fill("admin");
   const rejected = page.waitForResponse((response) => response.url().endsWith("/api/login"));
   await page.getByRole("button", { name: m.login.logIn, exact: true }).click();
   expect((await rejected).status()).toBe(401);
@@ -538,6 +548,7 @@ test("authentication, maintenance, saved preferences and logout", async ({ page,
   await expect(page.locator("html")).toHaveAttribute("data-theme", colorScheme === "dark" ? "light" : "dark");
   await page.getByRole("button", { name: switched.common.logOut, exact: true }).click();
   await expect(page.getByLabel(switched.login.password, { exact: true })).toBeVisible();
+  await expect(page.getByLabel(switched.ui.username, { exact: true })).toHaveValue("");
   await expect(page.locator(".all-clients, .overview, .app-shell")).toHaveCount(0);
   await expectLoginAlignment(page);
   expect((await page.request.get("/api/state")).status()).toBe(401);
