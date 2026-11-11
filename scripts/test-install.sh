@@ -17,6 +17,21 @@ handle_existing_install ""
 
 printf 'OK   clean install continues past existing-install detection\n'
 
+(
+  prompt() { printf '%s' "${profile_choice:-$2}"; }
+
+  profile_choice=""
+  [[ "$(choose_install_profile 2>"$test_dir/profile-menu")" == "awg_2_0" ]]
+  grep -Eq '^4\) AmneziaWG 3\.x \(experimental' "$test_dir/profile-menu"
+  profile_choice=4
+  profile="$(choose_install_profile 2>/dev/null)"
+  [[ "$profile" == "awg_3" ]]
+  [[ "$(profile_default_name "$profile")" == "awg3" ]]
+  [[ "$(profile_default_port "$profile")" == "51840" ]]
+  [[ "$(profile_default_subnet "$profile")" == "10.30.0.0/24" ]]
+  printf 'OK   fresh install offers AWG 3.x and defaults to AWG 2.0\n'
+)
+
 touch "$ENV_FILE"
 if ! existing_install_found; then
   printf 'FAIL existing install was not detected\n' >&2

@@ -685,6 +685,7 @@ profile_from_choice() {
     1|1.0|legacy|awg_legacy_1_0) printf 'awg_legacy_1_0' ;;
     2|1.5|awg_1_5) printf 'awg_1_5' ;;
     3|2.0|awg_2_0) printf 'awg_2_0' ;;
+    4|3.x|awg_3) printf 'awg_3' ;;
     *) return 1 ;;
   esac
 }
@@ -694,13 +695,34 @@ profile_label() {
     awg_legacy_1_0) printf 'AmneziaWG Legacy / 1.0' ;;
     awg_1_5) printf 'AmneziaWG 1.5' ;;
     awg_2_0) printf 'AmneziaWG 2.0' ;;
+    awg_3) printf 'AmneziaWG 3.x (experimental)' ;;
   esac
+}
+
+choose_install_profile() {
+  {
+    printf '\n'
+    bold "Protocol profile"
+    printf '1) AmneziaWG Legacy / 1.0\n'
+    printf '2) AmneziaWG 1.5\n'
+    printf '3) AmneziaWG 2.0\n'
+    printf '4) AmneziaWG 3.x (experimental, requires a compatible image)\n'
+  } >&2
+  local choice
+  while choice="$(prompt "Choose profile" "3")"; do
+    if profile_from_choice "$choice"; then
+      return 0
+    fi
+    warn "Choose 1, 2, 3, or 4" >&2
+  done
+  return 1
 }
 
 profile_default_name() {
   case "$1" in
     awg_1_5) printf 'awg15' ;;
     awg_2_0) printf 'awg20' ;;
+    awg_3) printf 'awg3' ;;
     *) printf 'awg0' ;;
   esac
 }
@@ -709,6 +731,7 @@ profile_default_port() {
   case "$1" in
     awg_1_5) printf '51825' ;;
     awg_2_0) printf '51830' ;;
+    awg_3) printf '51840' ;;
     *) printf '51820' ;;
   esac
 }
@@ -717,6 +740,7 @@ profile_default_subnet() {
   case "$1" in
     awg_1_5) printf '10.15.0.0/24' ;;
     awg_2_0) printf '10.20.0.0/24' ;;
+    awg_3) printf '10.30.0.0/24' ;;
     *) printf '10.8.0.0/24' ;;
   esac
 }
@@ -1664,17 +1688,7 @@ main() (
   local profile="existing state"
   local tunnel_name="" listen_port="" ipv4_subnet="" dns="" allowed_ips="" keepalive="" mtu=""
   if ! $existing_state; then
-    printf '\n'
-    bold "Protocol profile"
-    printf '1) AmneziaWG Legacy / 1.0\n'
-    printf '2) AmneziaWG 1.5\n'
-    printf '3) AmneziaWG 2.0\n'
-    local profile_choice
-    profile_choice="$(prompt "Choose profile" "3")"
-    while ! profile="$(profile_from_choice "$profile_choice")"; do
-      warn "Choose 1, 2, or 3"
-      profile_choice="$(prompt "Choose profile" "3")"
-    done
+    profile="$(choose_install_profile)" || exit 1
 
     printf '\n'
     bold "Tunnel defaults"
@@ -1707,7 +1721,11 @@ main() (
     dns="$(prompt "DNS" "1.1.1.1")"
     allowed_ips="$(prompt "Allowed IPs" "0.0.0.0/0")"
     keepalive="$(prompt "Persistent keepalive" "0")"
-    mtu="$(prompt "MTU, 0 means Auto" "0")"
+    if [[ "$profile" == "awg_3" ]]; then
+      mtu="$(prompt "MTU, 0 uses the 3.x default of 1280" "0")"
+    else
+      mtu="$(prompt "MTU, 0 means Auto" "0")"
+    fi
   fi
 
   printf '\n'
