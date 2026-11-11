@@ -4,7 +4,7 @@
 
 Панель управления AmneziaWG на своём сервере. В одном Docker-образе есть веб-интерфейс, CLI и инструменты для запуска туннелей.
 
-![Главный экран AWG-Forge](docs/assets/awg-forge-dashboard.jpg)
+![Обзор AWG-Forge в тёмной и светлой темах с демоданными](docs/assets/awg-forge-dashboard.jpg)
 
 ## Возможности
 

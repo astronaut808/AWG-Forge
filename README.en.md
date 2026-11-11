@@ -4,7 +4,7 @@
 
 Manage AmneziaWG on your own server. One Docker image includes the web interface, CLI, and tools to run tunnels.
 
-![AWG-Forge dashboard](docs/assets/awg-forge-dashboard.jpg)
+![AWG-Forge dashboard in dark and light themes with demo data](docs/assets/awg-forge-dashboard.jpg)
 
 ## Features
 
