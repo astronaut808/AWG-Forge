@@ -502,6 +502,26 @@ test("overview tunnel selection wins over a background addition while tunnels ar
   await deleteTunnel(page, page.getByRole("article"), m);
 });
 
+test("support shows effective tunnel hosts", async ({ page, m, session }) => {
+  await page.context().addCookies(session.cookies);
+  const state = await (await page.request.get("/api/state")).json() as AppState;
+  const tunnel = { ...state.tunnels[0], server_host: "vpn.example.test" };
+  state.server_host = "default.example.test";
+  state.tunnels = [tunnel, { ...tunnel, id: "other-tunnel" }];
+  await page.route("**/api/state", (route) => route.fulfill({ json: state }));
+  await page.route("**/api/events", (route) => route.fulfill({ status: 204 }));
+
+  const hosts = page.locator(".fact").filter({ has: page.getByText(m.maintenance.tunnelHosts, { exact: true }) }).locator("strong");
+  await page.goto("/#/maintenance");
+  await page.getByRole("button", { name: m.maintenance.tabs.support, exact: true }).click();
+  await expect(hosts).toHaveText("vpn.example.test");
+
+  state.tunnels[1].server_host = "";
+  await page.reload();
+  await page.getByRole("button", { name: m.maintenance.tabs.support, exact: true }).click();
+  await expect(hosts).toHaveText("vpn.example.test, default.example.test");
+});
+
 test("authentication, maintenance, saved preferences and logout", async ({ page, m, colorScheme }) => {
   await page.goto("/");
   await expectLoginAlignment(page);

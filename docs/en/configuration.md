@@ -240,6 +240,8 @@ Each tunnel has a `Server host` field in the Web UI. It defines the host awg-for
 
 On new installs this value is written to `state.json` during the first `awg-forge init`. Changing `SERVER_HOST` in `.env` after state exists does not rewrite existing tunnels.
 
+**Maintenance → Support** lists the hosts used in client configs. A tunnel with an empty host field inherits the host stored in `state.json`.
+
 This is useful when different tunnels are published through different subdomains, for example:
 
 ```text

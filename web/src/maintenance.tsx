@@ -236,6 +236,7 @@ function trafficTotals(rows: TrafficSummaryRow[]) {
 
 function SupportPanel({ state, action, busyAction }: { state: AppState; action: (key: string, label: string, fn: () => Promise<void>) => Promise<void>; busyAction: string }) {
   const { m, locale } = useI18n();
+  const tunnelHosts = new Set(state.tunnels.map((tunnel) => tunnel.server_host?.trim() || state.server_host).filter(Boolean));
   const ports = state.published_udp_ports.length ? state.published_udp_ports.join(", ") : m.maintenance.hostNetworkingDynamic;
   const build = state.build;
 
@@ -246,7 +247,7 @@ function SupportPanel({ state, action, busyAction }: { state: AppState; action: 
     </div>
     <Button className="button primary" disabled={Boolean(busyAction)} type="button" onClick={() => action("support", m.maintenance.supportDownloadStarted, async () => { const res = await fetch("/api/support-bundle"); if (!res.ok) throw new Error(m.maintenance.supportDownloadFailed); await downloadResponse(res, "awg-forge-support.zip"); })}><ButtonContent busy={busyAction === "support"}>{m.maintenance.downloadSupport}</ButtonContent></Button>
     <div className="metric-grid">
-      <Metric title={m.forms.serverHost} value={state.server_host || "-"} />
+      <Metric title={m.maintenance.tunnelHosts} value={[...tunnelHosts].join(", ") || "-"} />
       <Metric title={m.maintenance.applyConfig} value={state.apply_enabled ? m.common.enabled : m.common.manual} />
       <Metric title={m.maintenance.database} value={databaseLabel(state.database)} />
       <Metric title={m.maintenance.tls} value={tlsModeLabel(state.tls, m)} />
