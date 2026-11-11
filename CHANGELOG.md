@@ -14,7 +14,7 @@ Target candidate version is `0.20.0`. The browser API contract remains labelled 
 - Redesign the Web UI with a server overview, dedicated tunnel, client, traffic, and maintenance views, and responsive layouts in both themes and languages.
 - Let operators choose the tunnel when creating a client and open `.conf`, both QR formats, and `vpn://` from one Connect dialog.
 - Shorten the English and Russian READMEs and link to the detailed installation, upgrade, and uninstall guides.
-- Refresh Go to 1.27.3, SQLite, Go modules, frontend packages, CI tools, and pinned GitHub Actions. Build runtime images on Debian 13 (trixie).
+- Refresh Go to 1.27.4, SQLite, Go modules, frontend packages, CI tools, and pinned GitHub Actions. Build runtime images on Debian 13 (trixie).
 - Track npm and Docker updates alongside Go and Actions in Dependabot.
 
 ### Fixed

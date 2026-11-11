@@ -53,7 +53,7 @@ require_line 'docker image save --output verified-image.tar awg-forge:ci$' "$val
 require_line 'docker image load --input verified/verified-image.tar$' "$publish" 'load the tested image'
 require_line 'test .*docker image inspect.* = "\$IMAGE_ID"$' "$publish" 'verify image identity after transfer'
 require_line '^    needs: validate-tag$' "$image" 'image publication requires tag checks'
-require_line '^    uses: ./.github/workflows/docker.yml$' "$image" 'release uses the image validation workflow'
+require_line '^    uses: \./\.github/workflows/docker\.yml([[:space:]]+#.*)?$' "$image" 'release uses the image validation workflow'
 require_line 'git merge-base --is-ancestor HEAD refs/remotes/origin/master$' "$tag_check" 'tag must belong to master'
 require_line '^    needs: image$' "$release" 'GitHub Release follows the image'
 require_line '^  group: docker-' "$(cat "$docker_workflow")" 'reusable workflow has separate concurrency'

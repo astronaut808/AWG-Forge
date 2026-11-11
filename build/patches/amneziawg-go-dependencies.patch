@@ -1,12 +1,12 @@
 diff --git a/go.mod b/go.mod
-index 6493e57..3f12e45 100644
+index 6493e57..3544790 100644
 --- a/go.mod
 +++ b/go.mod
 @@ -1,15 +1,15 @@
  module github.com/amnezia-vpn/amneziawg-go/v3
  
 -go 1.25.0
-+go 1.27.3
++go 1.27.4
  
  require (
  	github.com/goccy/go-yaml v1.17.1

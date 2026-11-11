@@ -40,7 +40,8 @@ jobs:
     permissions:
       contents: read
       packages: write # Pass publishing permission to the image job in the reusable workflow.
-    uses: ./.github/workflows/docker.yml
+    # A job-level relative workflow call uses the caller's commit. actionlint 1.7.12 cannot parse $/ yet.
+    uses: ./.github/workflows/docker.yml # zizmor: ignore[self-repository]
 
   publish:
     name: Publish GitHub release
