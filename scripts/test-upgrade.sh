@@ -57,16 +57,20 @@ curl() {
 docker() {
   printf '%s\n' "$*" >>"$DOCKER_LOG"
   local override="" phase image
-  if [[ "$1" == compose && "${2:-}" == -f ]]; then
+  if [[ "$1" == compose && "${2:-}" == -f && "${3:-}" != - ]]; then
     override="$5"
     shift 5
     set -- compose "$@"
   fi
   case "$1 ${2:-} ${3:-}" in
     "compose version "|"info  ") return 0 ;;
-    "compose config --help")
-      if [[ "$compose_no_interpolate" == true ]]; then
-        printf '      --no-interpolate   Don\047t interpolate environment variables\n'
+    "compose -f -")
+      cat >/dev/null
+      [[ "$compose_no_interpolate" == true ]] || return 1
+      if [[ "$compose_env_file_shape" == missing-metadata ]]; then
+        printf '{"services":{"awg-forge":{}}}\n'
+      else
+        printf '{"services":{"awg-forge":{"env_file":[{"path":"/dev/null"}]}}}\n'
       fi
       ;;
     "context inspect --format") printf 'unix:///var/run/docker.sock\n' ;;
@@ -114,12 +118,12 @@ docker() {
       fi
       printf '%s %s 0 fixture-timestamp\n' "$image" "$phase"
       ;;
-    "compose config --no-interpolate"|"compose config --format")
+    "compose config --no-env-resolution"|"compose config --no-interpolate"|"compose config --format")
       local data_path image_ref=ghcr.io/astronaut808/awg-forge:latest
       [[ -z "$override" ]] || image_ref="$(awk '/image:/{print $2}' "$override")"
       data_path="$(pwd -P)/data"
       [[ "$target_layout" != wrong ]] || data_path="$(pwd -P)/other"
-      fixture_env "$target_config" "$target_db" | jq --arg dir "$(pwd -P)" --arg data "$data_path" --arg extra "$target_mount" --arg option "$3" --arg image "$image_ref" --arg shape "$compose_env_file_shape" '
+      fixture_env "$target_config" "$target_db" | jq --arg dir "$PWD" --arg data "$data_path" --arg extra "$target_mount" --arg option "$3" --arg image "$image_ref" --arg shape "$compose_env_file_shape" '
         ($dir + "/.env") as $env |
         {services: {"awg-forge": ({
           image: $image, container_name: "awg-forge", network_mode: "host",
@@ -128,10 +132,15 @@ docker() {
         } + (if $option == "--no-interpolate" then
           {env_file: (if $shape == "string" then [$env]
             elif $shape == "wrong" then [$env + ".override"]
+            elif $shape == "interpolated" then ["${AWG_ENV_FILE:-.env}"]
             else [{path:$env}] end)} +
           (if $shape == "env-list" then {environment:["LOG_LEVEL=info"]}
             elif $shape == "db-override-list" then {environment:["DATABASE_MODE=off"]}
             else {} end)
+          elif $option == "--no-env-resolution" and $shape == "interpolated" then {env_file:[{path:$env}]}
+          elif $option == "--no-env-resolution" and $shape == "wrong-resolved" then {env_file:[$env + ".override"]}
+          elif $option == "--no-env-resolution" and $shape == "db-dependent" then
+            {env_file: [if .DATABASE_MODE == "sqlite" then $env + ".override" else $env end]}
           else {environment:.} end))}}'
       ;;
     "compose pull awg-forge")
@@ -282,6 +291,44 @@ compose_env_file_shape=string
 upgrade_main
 printf 'OK   upgrade accepts Compose string env_file paths\n'
 
+setup_case compose-interpolated-env-file
+compose_env_file_shape=interpolated
+upgrade_main
+printf 'OK   upgrade accepts a resolved managed env_file path\n'
+
+setup_case compose-wrong-resolved-env-file
+compose_env_file_shape=wrong-resolved
+if upgrade_main >upgrade.log 2>&1; then
+  printf 'FAIL upgrade accepted the raw path after rejecting the resolved env_file\n' >&2
+  exit 1
+fi
+grep -Fq 'cannot be restored safely' upgrade.log
+printf 'OK   upgrade refuses a resolved path outside the managed env_file\n'
+
+setup_case compose-env-file-changes-after-sqlite
+compose_env_file_shape=db-dependent
+confirm_answer=y
+if upgrade_main >upgrade.log 2>&1; then
+  printf 'FAIL upgrade accepted a changed env_file after enabling SQLite\n' >&2
+  exit 1
+fi
+grep -Fq 'could not update SQLite settings with a safe Compose layout' upgrade.log
+assert_contains 'DATABASE_MODE=off' "$ENV_FILE"
+assert_contains "$OLD_IMAGE" .fixture-image
+assert_log_contains 'compose start awg-forge'
+if grep -Eq ' (run --rm|up -d) ' "$DOCKER_LOG"; then
+  printf 'FAIL upgrade used the changed Compose layout\n' >&2
+  exit 1
+fi
+[[ ! -e .awg-forge-upgrade-pending ]]
+printf 'OK   upgrade rolls back when enabling SQLite changes the resolved env_file\n'
+
+setup_case compose-symlink-workdir
+ln -s "$CURRENT_CASE" "$test_dir/linked-installation"
+cd "$test_dir/linked-installation"
+upgrade_compose_layout "$(pwd -P)" "$(pwd -P)/data" docker compose
+printf 'OK   Compose validation uses the physical installation directory\n'
+
 setup_case compose-list-environment
 compose_env_file_shape=env-list
 upgrade_main
@@ -315,12 +362,25 @@ if upgrade_main >upgrade.log 2>&1; then
   printf 'FAIL upgrade accepted unsupported Compose\n' >&2
   exit 1
 fi
-grep -Fq 'requires Docker Compose with config --no-interpolate support' upgrade.log
+grep -Fq 'cannot report env_file in its config model; update Docker Compose' upgrade.log
 if grep -Eq '^compose (pull|stop) ' "$DOCKER_LOG"; then
   printf 'FAIL unsupported Compose changed Docker state\n' >&2
   exit 1
 fi
 printf 'OK   upgrade reports unsupported Compose before pulling or stopping\n'
+
+setup_case compose-missing-env-metadata
+compose_env_file_shape=missing-metadata
+if upgrade_main >upgrade.log 2>&1; then
+  printf 'FAIL upgrade accepted a Compose model without env_file metadata\n' >&2
+  exit 1
+fi
+grep -Fq 'cannot report env_file in its config model; update Docker Compose' upgrade.log
+if grep -Eq '^compose (pull|stop) ' "$DOCKER_LOG"; then
+  printf 'FAIL incomplete Compose model changed Docker state\n' >&2
+  exit 1
+fi
+printf 'OK   upgrade diagnoses Compose versions that silently omit env_file\n'
 
 setup_case explicit-image
 UPGRADE_IMAGE=ghcr.io/astronaut808/awg-forge:rc-fixture

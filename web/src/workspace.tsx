@@ -31,6 +31,7 @@ type ShellProps = {
   renderClient?: (client: Client, tunnel: Tunnel) => ReactNode;
   onCreateTunnel?: () => void;
   onCreateClient?: (tunnel?: Tunnel) => void;
+  onExplicitTunnelSelected?: () => void;
   overlays?: ReactNode;
   children: ReactNode;
 };
@@ -86,6 +87,7 @@ export function Shell(props: ShellProps) {
     { id: "maintenance", label: m.common.maintenance, icon: "settings" },
   ];
   function openTunnel(tunnel: Tunnel) {
+    props.onExplicitTunnelSelected?.();
     localStorage.setItem("awg-forge.selected-tunnel", tunnel.id);
     props.resetTunnelFilter();
     // An explicit overview selection opens its target without a stale local search.
@@ -239,9 +241,9 @@ export function FooterLinks({ version, extra, showProjectLabel = false }: { vers
   );
 }
 
-export function TunnelFirstDashboard({ profiles, tunnels, filter, setFilter, requestedTunnelID, onRequestedTunnelOpened, onCreateTunnel, renderTunnel }: {
+export function TunnelFirstDashboard({ profiles, tunnels, filter, setFilter, requestedTunnelID, onRequestedTunnelOpened, onExplicitTunnelSelected, onCreateTunnel, renderTunnel }: {
   profiles: Profile[]; tunnels: Tunnel[]; filter: string; setFilter: (filter: string) => void;
-  requestedTunnelID: string | null; onRequestedTunnelOpened: () => void;
+  requestedTunnelID: string | null; onRequestedTunnelOpened: () => void; onExplicitTunnelSelected: () => void;
   onCreateTunnel: (profile?: Profile) => void; renderTunnel: (tunnel: Tunnel) => ReactNode;
 }) {
   const { m } = useI18n();
@@ -260,7 +262,7 @@ export function TunnelFirstDashboard({ profiles, tunnels, filter, setFilter, req
   const effectiveFilter = availableFilters.some((profile) => profile.id === filter) ? filter : "all";
   const visible = tunnels.filter((tunnel) => (effectiveFilter === "all" || tunnel.profile === effectiveFilter) && `${tunnel.name} ${profileTitle(tunnel.profile)} ${tunnel.listen_port}`.toLowerCase().includes(query.toLowerCase()));
   const selected = visible.find((tunnel) => tunnel.id === selectedID) || visible[0];
-  function select(id: string) { setSelectedID(id); localStorage.setItem("awg-forge.selected-tunnel", id); setShowTools(false); }
+  function select(id: string) { onExplicitTunnelSelected(); setSelectedID(id); localStorage.setItem("awg-forge.selected-tunnel", id); setShowTools(false); }
   return <>
     <div className="page-heading"><div><h1>{m.dashboard.tunnels}</h1><span>{m.dashboard.tunnelCount(tunnels.length)}</span></div>{tunnels.length > 0 && <Button className="button primary" type="button" disabled={!profiles.some((profile) => profile.available)} onClick={() => onCreateTunnel()}><Icon name="plus" />{m.common.createTunnel}</Button>}</div>
     <section className="tunnel-workspace">

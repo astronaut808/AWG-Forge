@@ -798,7 +798,7 @@ prepare_workdir() {
       target="$INSTALL_DIR_DEFAULT"
     fi
   fi
-  mkdir -p "$target" && cd "$target" || return 1
+  mkdir -p "$target" && cd -P -- "$target" || return 1
   ok "working directory: $target"
 }
 
@@ -1115,19 +1115,33 @@ upgrade_container_layout() {
   upgrade_docker_env inspect "$id" | upgrade_env_layout
 }
 
-upgrade_compose_layout() {
+upgrade_compose_has_env_file() {
+  # Some releases advertise the config flags but omit env_file from their model.
+  printf 'services:\n  awg-forge:\n    image: scratch\n    env_file: /dev/null\n' |
+    "$@" -f - config --no-interpolate --format json awg-forge 2>/dev/null |
+    jq -e '.services["awg-forge"].env_file | type == "array" and length == 1' >/dev/null 2>&1
+}
+
+upgrade_compose_layout() (
   local directory="$1" data_path="$2"
   shift 2
-  # Compose can discard env_file in its resolved JSON. Inspect its path and
-  # explicit environment overrides before interpolating the model.
-  "$@" config --no-interpolate --format json awg-forge 2>/dev/null |
-    jq -e --arg env "$directory/$ENV_FILE" '
+  cd -P -- "$directory" || return 1
+  local metadata env_model='
       .services["awg-forge"] |
+      {env_file, env_keys: ((.environment // {}) |
+        if type == "array" then map(split("=")[0]) else keys end)}
+  '
+  # Use Compose's resolved env_file path when its output retains the metadata.
+  # Earlier versions expose only the model without interpolation.
+  if ! metadata="$("$@" config --no-env-resolution --format json awg-forge 2>/dev/null |
+    jq -ce "$env_model | select(.env_file != null)" 2>/dev/null)"; then
+    metadata="$("$@" config --no-interpolate --format json awg-forge 2>/dev/null |
+      jq -ce "$env_model" 2>/dev/null)" || return 1
+  fi
+  jq -e --arg env "$directory/$ENV_FILE" '
       (.env_file | IN([$env], [{"path": $env}], [{"path": $env, "required": true}])) and
-      ((.environment // {}) |
-        if type == "array" then map(split("=")[0]) else keys end |
-        all(. != "DATABASE_MODE" and (contains("$") | not)))
-    ' >/dev/null 2>&1 || return 1
+      (.env_keys | all(. != "DATABASE_MODE" and (contains("$") | not)))
+    ' <<<"$metadata" >/dev/null 2>&1 || return 1
   "$@" config --format json awg-forge 2>/dev/null |
     jq -e --arg data "$data_path" '
       .services["awg-forge"] | select(
@@ -1142,7 +1156,7 @@ upgrade_compose_layout() {
           (.target == "/lib/modules" and .source == "/lib/modules" and .read_only))))
       ) | .environment // {}
     ' 2>/dev/null | upgrade_env_layout
-}
+)
 
 upgrade_compose_files_match() {
   local actual="$1" directory="$2"
@@ -1386,8 +1400,8 @@ upgrade_locked() (
   fi
   directory="$(pwd -P)" || return 1
   data_path="$(cd "$DATA_DIR" && pwd -P)" || return 1
-  if ! "${base[@]}" config --help 2>/dev/null | grep -F -- '--no-interpolate' >/dev/null; then
-    fail "managed upgrade requires Docker Compose with config --no-interpolate support; update Docker Compose and retry"
+  if ! upgrade_compose_has_env_file "${base[@]}"; then
+    fail "this Docker Compose version cannot report env_file in its config model; update Docker Compose and retry"
     return 1
   fi
   if ! upgrade_host_layout "$directory" "$data_path" ||
@@ -1507,8 +1521,8 @@ upgrade_locked() (
     return 1
   fi
   if $enable_sqlite || $create_missing_sqlite; then
-    if ! enable_sqlite_env; then
-      fail "could not update SQLite settings"
+    if ! enable_sqlite_env || ! upgrade_compose_layout "$directory" "$data_path" "${target[@]}"; then
+      fail "could not update SQLite settings with a safe Compose layout"
       upgrade_rollback "$compose" "$backup_dir" "$previous_image" "$recreated" "$override" && rm -f -- "$marker"
       return 1
     fi

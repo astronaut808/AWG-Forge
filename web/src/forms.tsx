@@ -52,7 +52,7 @@ export function DeleteTunnelConfirmation({ tunnel, close, runAction }: { tunnel:
   </PanelTitle>;
 }
 
-export function CreateTunnelForm({ state, profile, runAction, onCreated }: { state: AppState; profile: Profile; runAction: RunAction; onCreated: (tunnelID: string) => void }) {
+export function CreateTunnelForm({ state, profile, runAction, onCreateStarted }: { state: AppState; profile: Profile; runAction: RunAction; onCreateStarted: () => (tunnelID: string) => boolean }) {
   const { m } = useI18n();
   const profiles = state.profiles.length ? state.profiles : [profile];
   const [profileID, setProfileID] = useState(profile.id);
@@ -82,12 +82,11 @@ export function CreateTunnelForm({ state, profile, runAction, onCreated }: { sta
 
   return <Form title={m.forms.createTunnelTitle} subtitle={m.forms.createTunnelSubtitle} submit={m.common.createTunnel} onSubmit={(form) => {
     const port = portMode === "automatic" ? suggestedPort : Number(field(form, "port"));
+    const onCreated = onCreateStarted();
     return runAction(m.forms.tunnelCreated, async () => {
       if (!port) throw new Error(m.forms.portSuggestionFailed);
       const result = await api.createTunnel({ profile: field(form, "profile"), name: field(form, "name"), port, automatic_port: portMode === "automatic", subnet: field(form, "subnet"), egress_mode: field(form, "egress_mode") });
-      localStorage.setItem("awg-forge.selected-tunnel", result.tunnel.id);
-      onCreated(result.tunnel.id);
-      navigate("tunnels");
+      if (onCreated(result.tunnel.id)) navigate("tunnels");
     }, { errorMode: "inline" });
   }}>
     <SelectField label={m.forms.protocol} aria-label={m.forms.protocol} description={m.ui.selectProtocolHelp} name="profile" value={selected.id} onChange={(value) => setProfileID(value!)} data={profiles.map((item) => ({ value: item.id, label: `${profileTitle(item.id)}${isExperimentalProfile(item.id) ? ` · ${m.common.experimental}` : ""}` }))} />

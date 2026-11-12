@@ -526,6 +526,48 @@ test("background tunnel addition preserves the active settings draft", async ({ 
   await deleteTunnel(page, page.getByRole("article"), m);
 });
 
+test("explicit overview selection cancels a delayed created-tunnel selection", async ({ page, m, session }) => {
+  await page.route("**/api/events", (route) => route.fulfill({ status: 204 }));
+  let waiting = false;
+  let blocked = 0;
+  let release!: () => void;
+  const hold = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/state", async (route) => {
+    if (waiting) { blocked++; await hold; }
+    await route.continue();
+  });
+  await openDashboard(page, m, session);
+  const originalName = await page.locator(".overview-card").first().locator("strong").innerText();
+  const createdName = `delayed-${randomBytes(4).toString("hex")}`;
+  try {
+    await page.getByRole("button", { name: m.common.createTunnel, exact: true }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByLabel(m.forms.nameInterface, { exact: true }).fill(createdName);
+    await expect(dialog.getByLabel(m.forms.listenPort, { exact: true })).not.toHaveValue("");
+    waiting = true;
+    const created = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/tunnels" && response.request().method() === "POST");
+    await dialog.getByRole("button", { name: m.common.createTunnel, exact: true }).click();
+    expect((await created).status()).toBe(201);
+    await expect(dialog).not.toBeVisible();
+    await expect.poll(() => blocked).toBeGreaterThan(0);
+    await page.locator(".main-nav").getByRole("button", { name: m.ui.overview, exact: true }).click();
+    await page.locator(".overview-card").filter({ hasText: originalName }).click();
+    const active = page.locator(".tunnel-card");
+    await active.getByRole("button", { name: m.ui.connection, exact: true }).click();
+    await active.locator('input[name="server_host"]').fill("draft.example");
+    await openTunnelTools(page, m);
+    waiting = false;
+    release();
+    await expect(page.locator(".tunnel-choice").filter({ hasText: createdName })).toBeVisible();
+    await expect(active.locator("h2").first()).toHaveText(originalName);
+    await expect(active.locator('input[name="server_host"]')).toHaveValue("draft.example");
+    await selectTunnel(page, m, createdName);
+    await deleteTunnel(page, page.getByRole("article"), m);
+  } finally {
+    release();
+  }
+});
+
 test("support shows effective tunnel hosts", async ({ page, m, session }) => {
   await page.context().addCookies(session.cookies);
   const state = await (await page.request.get("/api/state")).json() as AppState;
