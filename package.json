@@ -23,7 +23,7 @@
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "typescript": "7.0.2",
-    "vite": "8.3.5"
+    "vite": "8.3.8"
   },
   "engines": {
     "node": ">=26.13.0 <27",
