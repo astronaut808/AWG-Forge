@@ -1448,9 +1448,9 @@ upgrade_locked() (
     fail "an interrupted upgrade needs manual recovery; inspect $marker for the backup location"
     return 1
   fi
-  if ! command -v jq >/dev/null || ! command -v findmnt >/dev/null ||
+  if ! command -v jq >/dev/null || ! command -v findmnt >/dev/null || ! command -v stat >/dev/null ||
      ! command -v timeout >/dev/null || ! command -v curl >/dev/null; then
-    fail "managed upgrade requires jq, findmnt, timeout, and curl"
+    fail "managed upgrade requires jq, findmnt, stat, timeout, and curl"
     return 1
   fi
   if ! docker_endpoint="$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null)" ||
@@ -1570,6 +1570,15 @@ upgrade_locked() (
   printf 'services:\n  awg-forge:\n    image: %s\n' "$target_image" >"$override" || return 1
   if ! upgrade_compose_layout "$directory" "$data_path" "$compose" "${target_files[@]}"; then
     fail "pinned target Compose service cannot be restored safely"
+    return 1
+  fi
+  # Docker's saved bind path can resolve to a different directory than the live mount.
+  # Do not follow a symlink at data itself: cp -a would copy the link.
+  local host_data_identity mounted_data_identity
+  if ! host_data_identity="$(stat -c '%d:%i' -- "$DATA_DIR" 2>/dev/null)" ||
+     ! mounted_data_identity="$(timeout -k 1s 4s docker exec "$container_id" stat -c '%d:%i' -- /etc/awg-forge 2>/dev/null)" ||
+     [[ ! "$host_data_identity" =~ ^[0-9]+:[0-9]+$ || "$host_data_identity" != "$mounted_data_identity" ]]; then
+    fail "could not verify that the running container uses this data directory; check the installation path and bind mount"
     return 1
   fi
   backup_dir="$(mktemp -d "upgrade-backup-$(date -u +%Y%m%d-%H%M%S).XXXXXX")" || return 1

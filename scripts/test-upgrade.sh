@@ -12,6 +12,10 @@ prepare_workdir() { cd "$CURRENT_CASE"; }
 have() { [[ "$1" == "docker" ]]; }
 uname() { printf 'Linux'; }
 timeout() { shift 3; "$@"; }
+stat() {
+  [[ "$*" == "-c %d:%i -- data" && -n "$fixture_host_data_identity" ]] || return 1
+  printf '%s\n' "$fixture_host_data_identity"
+}
 sleep() { SECONDS=$((SECONDS + 2)); }
 
 if ! command -v flock >/dev/null; then
@@ -210,6 +214,11 @@ docker() {
       fi
       return 1
       ;;
+    "exec fixture-container stat")
+      [[ "${4:-} ${5:-} ${6:-} ${7:-}" == "-c %d:%i -- /etc/awg-forge" &&
+         -n "$fixture_mounted_data_identity" ]] || return 1
+      printf '%s\n' "$fixture_mounted_data_identity"
+      ;;
     "exec fixture-container awg-forge")
       [[ "${4:-} ${5:-}" == "db status" ]] || return 1
       printf 'OK   database: %s\nOK   schema: %s\n' "$fixture_database_status" "$fixture_schema"
@@ -276,6 +285,8 @@ EOF
   compose_override=none
   fixture_project=fixture-awg
   fixture_path="$(pwd -P)"
+  fixture_host_data_identity=100:200
+  fixture_mounted_data_identity=100:200
   compose_no_interpolate=true
   compose_env_file_shape=object
   compose_interpolated_path=.env
@@ -378,7 +389,43 @@ fixture_project=linked-installation
 CURRENT_CASE="$fixture_path"
 compose_override=upgrade
 COMPOSE_PROJECT_NAME=other-project upgrade_main
+awk '
+  /^exec fixture-container stat / { checked = NR }
+  /^compose stop awg-forge$/ && !stopped { stopped = NR }
+  END { exit !(checked && stopped && checked < stopped) }
+' "$DOCKER_LOG"
 printf 'OK   upgrade uses the existing project and accepts managed paths through a symlink\n'
+
+for identity_failure in retargeted-symlink device-mismatch host-unavailable container-unavailable; do
+  setup_case "data-identity-$identity_failure"
+  case "$identity_failure" in
+    retargeted-symlink)
+      fixture_path="$test_dir/retargeted-installation"
+      mkdir -p "$test_dir/original-installation/data"
+      ln -s "$test_dir/original-installation" "$fixture_path"
+      ln -sfn "$CURRENT_CASE" "$fixture_path"
+      fixture_project=retargeted-installation
+      CURRENT_CASE="$fixture_path"
+      fixture_mounted_data_identity=100:201
+      ;;
+    device-mismatch) fixture_mounted_data_identity=101:200 ;;
+    host-unavailable) fixture_host_data_identity="" ;;
+    container-unavailable) fixture_mounted_data_identity="" ;;
+  esac
+  if upgrade_main >upgrade.log 2>&1; then
+    printf 'FAIL upgrade accepted unverified data identity (%s)\n' "$identity_failure" >&2
+    exit 1
+  fi
+  grep -Fq 'could not verify that the running container uses this data directory' upgrade.log
+  if grep -Eq '^compose (stop|start) | (run --rm|up -d) ' "$DOCKER_LOG" ||
+     compgen -G 'upgrade-backup-*' >/dev/null || [[ -e .awg-forge-upgrade-pending ]]; then
+    printf 'FAIL unverified data identity changed the installation (%s)\n' "$identity_failure" >&2
+    exit 1
+  fi
+  assert_contains "$OLD_IMAGE" .fixture-image
+  assert_contains 'original' "$DATA_DIR/sentinel"
+  printf 'OK   upgrade aborts before stop and backup on data identity failure (%s)\n' "$identity_failure"
+done
 
 setup_case compose-list-environment
 compose_env_file_shape=env-list
