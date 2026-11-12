@@ -568,6 +568,49 @@ test("explicit overview selection cancels a delayed created-tunnel selection", a
   }
 });
 
+test("delayed tunnel creation does not close a newer client draft", async ({ page, m, session }) => {
+  await page.route("**/api/events", (route) => route.fulfill({ status: 204 }));
+  let committed = false;
+  let release!: () => void;
+  const hold = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/tunnels", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    const response = await route.fetch();
+    committed = response.status() === 201;
+    await hold;
+    await route.fulfill({ response });
+  });
+  await openDashboard(page, m, session);
+  const originalName = await page.locator(".overview-card").first().locator("strong").innerText();
+  const createdName = `delayed-dialog-${randomBytes(4).toString("hex")}`;
+  try {
+    await page.getByRole("button", { name: m.common.createTunnel, exact: true }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByLabel(m.forms.nameInterface, { exact: true }).fill(createdName);
+    await expect(dialog.getByLabel(m.forms.listenPort, { exact: true })).not.toHaveValue("");
+    await dialog.getByRole("button", { name: m.common.createTunnel, exact: true }).click();
+    await expect.poll(() => committed).toBe(true);
+    await page.keyboard.press("Escape");
+    await expect(dialog).not.toBeVisible();
+    await page.locator(".overview-card").filter({ hasText: originalName }).click();
+    const active = page.locator(".tunnel-card");
+    await active.getByRole("button", { name: m.common.createClient, exact: true }).click();
+    const draft = dialog.getByLabel(m.forms.clientName, { exact: true });
+    await draft.fill("delayed dialog draft");
+    const completed = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/tunnels" && response.request().method() === "POST");
+    release();
+    expect((await completed).status()).toBe(201);
+    await expect(page.getByText(m.forms.tunnelCreated, { exact: true })).toBeVisible();
+    await expect(active.locator("h2").first()).toHaveText(originalName);
+    await expect(draft).toHaveValue("delayed dialog draft");
+    await page.keyboard.press("Escape");
+    await selectTunnel(page, m, createdName);
+    await deleteTunnel(page, page.getByRole("article"), m);
+  } finally {
+    release();
+  }
+});
+
 test("support shows effective tunnel hosts", async ({ page, m, session }) => {
   await page.context().addCookies(session.cookies);
   const state = await (await page.request.get("/api/state")).json() as AppState;

@@ -132,16 +132,17 @@ export function App() {
   }
 
   async function runAction(label: string, fn: () => Promise<unknown>, options: RunActionOptions = { reload: true }) {
+    const closeOriginatingModal = () => setModal((current) => current === modal ? null : current);
     try {
       await fn();
-      if (options.close !== false) setModal(null);
+      if (options.close !== false) closeOriginatingModal();
       if (options.reload !== false) await load({ quiet: true });
       notify(label);
     } catch (err) {
       if (options.errorMode === "inline") throw err;
       const message = actionErrorMessage(err, m);
       if (message.includes("apply failed")) {
-        setModal(null);
+        closeOriginatingModal();
         await load({ quiet: true });
       }
       notify(message);

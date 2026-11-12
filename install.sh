@@ -1101,48 +1101,101 @@ upgrade_docker_env() {
     jq -e 'map(capture("^(?<key>[^=]+)=(?<value>.*)$"; "s")) | from_entries' 2>/dev/null
 }
 
+upgrade_same_path() {
+  local actual="$1" expected="$2" parent
+  [[ "$actual" != "$expected" ]] || return 0
+  [[ "$actual" == /* && "${actual##*/}" == "${expected##*/}" ]] || return 1
+  parent="$(cd -P -- "${actual%/*}/" 2>/dev/null && pwd -P)" || return 1
+  [[ "${parent%/}/${actual##*/}" == "$expected" ]]
+}
+
 upgrade_container_layout() {
-  local id="$1" data_path="$2"
-  docker inspect --format '{{json .Mounts}}' "$id" 2>/dev/null |
-    jq -e --arg data "$data_path" '
-      any(.[]; .Destination == "/etc/awg-forge" and .Source == $data and .RW) and
-      all(.[]; .Type == "bind" and ((.Propagation // "") | IN("", "rprivate")) and
+  local id="$1" data_path="$2" source
+  source="$(docker inspect --format '{{json .Mounts}}' "$id" 2>/dev/null |
+    jq -er '
+      select(all(.[]; .Type == "bind" and ((.Propagation // "") | IN("", "rprivate")) and
         (.Destination == "/etc/awg-forge" or
-        (.Destination == "/lib/modules" and .Source == "/lib/modules" and (.RW | not))))
-    ' >/dev/null 2>&1 || return 1
+        (.Destination == "/lib/modules" and .Source == "/lib/modules" and (.RW | not))))) |
+      map(select(.Destination == "/etc/awg-forge")) |
+      select(length == 1 and .[0].RW) | .[0].Source | strings
+    ' 2>/dev/null)" || return 1
+  upgrade_same_path "$source" "$data_path" || return 1
   [[ "$(docker inspect --format '{{.HostConfig.NetworkMode}}:{{len .HostConfig.Tmpfs}}' "$id" 2>/dev/null)" == "host:0" ]] ||
     return 1
   upgrade_docker_env inspect "$id" | upgrade_env_layout
 }
 
-upgrade_compose_has_env_file() {
-  # Some releases advertise the config flags but omit env_file from their model.
-  printf 'services:\n  awg-forge:\n    image: scratch\n    env_file: /dev/null\n' |
+upgrade_compose_can_validate_layout() {
+  local probe=$'services:\n  awg-forge:\n    image: scratch\n    env_file: /dev/null\n'
+  # Both config paths must return usable JSON, regardless of the flags advertised.
+  printf '%s' "$probe" |
     "$@" -f - config --no-interpolate --format json awg-forge 2>/dev/null |
-    jq -e '.services["awg-forge"].env_file | type == "array" and length == 1' >/dev/null 2>&1
+    jq -e '.services["awg-forge"].env_file | type == "array" and length == 1' >/dev/null 2>&1 &&
+    printf '%s' "$probe" |
+      "$@" -f - config --format json awg-forge 2>/dev/null |
+      jq -e '.services["awg-forge"].image == "scratch"' >/dev/null 2>&1
+}
+
+upgrade_compose_path_has_project_context() {
+  local path="$1"
+  shift
+  # Compose flattens include/extends in its service model. Parse the source as
+  # an inert extension to verify where the unexpanded env_file was declared.
+  {
+    printf 'services:\n  awg-forge:\n    image: scratch\nx-awg-source:\n'
+    sed 's/^/  /' "$COMPOSE_FILE"
+  } |
+    "$@" -f - config --no-interpolate --no-path-resolution --format json awg-forge 2>/dev/null |
+    jq -e --arg path "$path" '
+      ."x-awg-source" | select((.include // []) == []) | .services["awg-forge"] |
+      .extends == null and (.env_file |
+        IN($path, [$path], [{path: $path}], [{path: $path, required: true}]))
+    ' >/dev/null 2>&1
 }
 
 upgrade_compose_layout() (
-  local directory="$1" data_path="$2"
-  shift 2
+  local directory="$1" data_path="$2" compose="$3"
+  shift 3
+  local -a cli command
+  read -r -a cli <<<"$compose"
+  command=("${cli[@]}" "$@")
   cd -P -- "$directory" || return 1
-  local metadata env_model='
+  local path env_model='
       .services["awg-forge"] |
       {env_file, env_keys: ((.environment // {}) |
         if type == "array" then map(split("=")[0]) else keys end)}
+  ' env_path='
+      select(.env_keys | all(. != "DATABASE_MODE" and (contains("$") | not))) |
+      .env_file | select(type == "array" and length == 1) | .[0] |
+      if type == "object" then select(. == {path} or . == {path, required: true}) | .path else . end |
+      strings | select(length > 0 and (contains("\n") | not) and (contains("\u0000") | not))
   '
   # Use Compose's resolved env_file path when its output retains the metadata.
   # Earlier versions expose only the model without interpolation.
-  if ! metadata="$("$@" config --no-env-resolution --format json awg-forge 2>/dev/null |
+  local resolved
+  if resolved="$("${command[@]}" config --no-env-resolution --format json awg-forge 2>/dev/null |
     jq -ce "$env_model | select(.env_file != null)" 2>/dev/null)"; then
-    metadata="$("$@" config --no-interpolate --format json awg-forge 2>/dev/null |
-      jq -ce "$env_model" 2>/dev/null)" || return 1
+    path="$(jq -er "$env_path" <<<"$resolved" 2>/dev/null)" || return 1
+  else
+    path="$("${command[@]}" config --no-interpolate --no-path-resolution --format json awg-forge 2>/dev/null |
+      jq -er "$env_model | $env_path" 2>/dev/null)" || return 1
+    if [[ "$path" == *'$'* ]]; then
+      upgrade_compose_path_has_project_context "$path" "${cli[@]}" || return 1
+      # Resolve the original expression before normalizing path components.
+      path="$(jq -n --arg path "$path" '{services: {"awg-forge": {image: "scratch", environment: {AWG_FORGE_ENV_FILE_CHECK: $path}}}}' |
+        "${cli[@]}" -f - config --format json awg-forge 2>/dev/null |
+        jq -er '.services["awg-forge"].environment.AWG_FORGE_ENV_FILE_CHECK | strings |
+          select(length > 0 and (contains("\n") | not) and (contains("\u0000") | not))' 2>/dev/null)" || return 1
+      # Compose expands home paths and cleans parent traversal before resolving symlinks.
+      [[ "$path" != '~'* && "/$path/" != */../* ]] || return 1
+    else
+      path="$("${command[@]}" config --no-interpolate --format json awg-forge 2>/dev/null |
+        jq -er "$env_model | $env_path" 2>/dev/null)" || return 1
+    fi
   fi
-  jq -e --arg env "$directory/$ENV_FILE" '
-      (.env_file | IN([$env], [{"path": $env}], [{"path": $env, "required": true}])) and
-      (.env_keys | all(. != "DATABASE_MODE" and (contains("$") | not)))
-    ' <<<"$metadata" >/dev/null 2>&1 || return 1
-  "$@" config --format json awg-forge 2>/dev/null |
+  [[ "$path" == /* ]] || path="$directory/$path"
+  upgrade_same_path "$path" "$directory/$ENV_FILE" || return 1
+  "${command[@]}" config --format json awg-forge 2>/dev/null |
     jq -e --arg data "$data_path" '
       .services["awg-forge"] | select(
       .container_name == "awg-forge" and .network_mode == "host" and
@@ -1160,15 +1213,22 @@ upgrade_compose_layout() (
 
 upgrade_compose_files_match() {
   local actual="$1" directory="$2"
-  local expected="$directory/$COMPOSE_FILE"
+  local expected="$directory/$COMPOSE_FILE" base_file
   [[ "$actual" != "$expected" ]] || return 0
+  base_file="$expected"
+  if [[ "$actual" != "$expected,"* ]]; then
+    base_file="${actual%%,*}"
+    upgrade_same_path "$base_file" "$expected" || return 1
+  fi
+  [[ "$actual" != "$base_file" ]] || return 0
 
   # Compose retains the deleted image override name in the container label.
-  local override="${actual#"$expected,"}"
+  local override="${actual#"$base_file,"}"
   local name="${override##*/}"
-  [[ "$actual" == "$expected,$directory/$name" &&
+  [[ "$actual" == "$base_file,$override" &&
      "$name" =~ ^\.awg-forge-(rollback|upgrade)\.[[:alnum:]]{6}$ &&
-     ! -e "$override" && ! -L "$override" ]]
+     ! -e "$override" && ! -L "$override" ]] &&
+    upgrade_same_path "$override" "$directory/$name"
 }
 
 upgrade_backup() {
@@ -1379,7 +1439,7 @@ upgrade_main() (
 upgrade_locked() (
   local compose="$1" directory data_path docker_endpoint
   local marker=.awg-forge-upgrade-pending
-  local -a base target
+  local -a base target target_files
   # Use the same managed Compose project for upgrade and rollback.
   local -x COMPOSE_FILE="$COMPOSE_FILE"
   local -x COMPOSE_REMOVE_ORPHANS=false
@@ -1400,25 +1460,36 @@ upgrade_locked() (
   fi
   directory="$(pwd -P)" || return 1
   data_path="$(cd "$DATA_DIR" && pwd -P)" || return 1
-  if ! upgrade_compose_has_env_file "${base[@]}"; then
-    fail "this Docker Compose version cannot report env_file in its config model; update Docker Compose and retry"
+  if ! upgrade_compose_can_validate_layout "${base[@]}"; then
+    fail "this Docker Compose version cannot report the required JSON config and env_file metadata; update Docker Compose and retry"
     return 1
   fi
-  if ! upgrade_host_layout "$directory" "$data_path" ||
-     ! upgrade_compose_layout "$directory" "$data_path" "${base[@]}"; then
+  if ! upgrade_host_layout "$directory" "$data_path"; then
     fail "target Compose service or on-disk layout cannot be restored safely; use a manual upgrade"
     return 1
   fi
-  local container_id compose_id config_files
+  local container_id compose_id config_files project
   if ! container_id="$(docker inspect --format '{{.Id}}' "$APP_NAME" 2>/dev/null)" ||
-     ! compose_id="$( "${base[@]}" ps -aq awg-forge 2>/dev/null)" ||
-     [[ -z "$container_id" || "$container_id" != "$compose_id" ]]; then
+     [[ -z "$container_id" ]] ||
+     ! project="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$container_id" 2>/dev/null)" ||
+     [[ ! "$project" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
     fail "the Compose service does not match container $APP_NAME"
     return 1
   fi
   if ! config_files="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "$container_id" 2>/dev/null)" ||
      ! upgrade_compose_files_match "$config_files" "$directory"; then
     fail "the running container uses a custom Compose configuration; use a manual upgrade"
+    return 1
+  fi
+  # A previous Compose run may have derived its name from a symlink or -p.
+  local -x COMPOSE_PROJECT_NAME="$project"
+  if ! compose_id="$( "${base[@]}" ps -aq awg-forge 2>/dev/null)" ||
+     [[ "$container_id" != "$compose_id" ]]; then
+    fail "the Compose service does not match container $APP_NAME"
+    return 1
+  fi
+  if ! upgrade_compose_layout "$directory" "$data_path" "$compose"; then
+    fail "target Compose service or on-disk layout cannot be restored safely; use a manual upgrade"
     return 1
   fi
   if ! upgrade_container_layout "$container_id" "$data_path"; then
@@ -1476,8 +1547,9 @@ upgrade_locked() (
   override="$(mktemp .awg-forge-upgrade.XXXXXX)" || return 1
   trap 'rm -f -- "$override"' EXIT
   printf 'services:\n  awg-forge:\n    image: %s\n' "$target_ref" >"$override" || return 1
-  target=("${base[@]}" -f "$COMPOSE_FILE" -f "$override")
-  if ! upgrade_compose_layout "$directory" "$data_path" "${target[@]}"; then
+  target_files=(-f "$COMPOSE_FILE" -f "$override")
+  target=("${base[@]}" "${target_files[@]}")
+  if ! upgrade_compose_layout "$directory" "$data_path" "$compose" "${target_files[@]}"; then
     fail "target Compose service cannot be restored safely"
     return 1
   fi
@@ -1496,7 +1568,7 @@ upgrade_locked() (
   fi
   # Pin both the migration and the replacement to the image we inspected.
   printf 'services:\n  awg-forge:\n    image: %s\n' "$target_image" >"$override" || return 1
-  if ! upgrade_compose_layout "$directory" "$data_path" "${target[@]}"; then
+  if ! upgrade_compose_layout "$directory" "$data_path" "$compose" "${target_files[@]}"; then
     fail "pinned target Compose service cannot be restored safely"
     return 1
   fi
@@ -1521,7 +1593,7 @@ upgrade_locked() (
     return 1
   fi
   if $enable_sqlite || $create_missing_sqlite; then
-    if ! enable_sqlite_env || ! upgrade_compose_layout "$directory" "$data_path" "${target[@]}"; then
+    if ! enable_sqlite_env || ! upgrade_compose_layout "$directory" "$data_path" "$compose" "${target_files[@]}"; then
       fail "could not update SQLite settings with a safe Compose layout"
       upgrade_rollback "$compose" "$backup_dir" "$previous_image" "$recreated" "$override" && rm -f -- "$marker"
       return 1

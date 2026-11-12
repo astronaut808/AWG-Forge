@@ -65,9 +65,23 @@ docker() {
   case "$1 ${2:-} ${3:-}" in
     "compose version "|"info  ") return 0 ;;
     "compose -f -")
-      cat >/dev/null
+      local input
+      input="$(cat)"
       [[ "$compose_no_interpolate" == true ]] || return 1
-      if [[ "$compose_env_file_shape" == missing-metadata ]]; then
+      if [[ "$input" == *x-awg-source:* ]]; then
+        jq -n --arg shape "$compose_env_file_shape" \
+          '{ "x-awg-source": ({services: {"awg-forge": {env_file: "${AWG_ENV_FILE:-.env}"}}} +
+            if $shape == "legacy-included" then {include:["another.yml"]} else {} end) }'
+      elif [[ "$input" == *AWG_FORGE_ENV_FILE_CHECK* ]]; then
+        jq -n --arg path "$compose_interpolated_path" \
+          '{services:{"awg-forge":{environment:{AWG_FORGE_ENV_FILE_CHECK:$path}}}}'
+      elif [[ "$5" == --format ]]; then
+        if [[ "$compose_env_file_shape" == resolved-yaml ]]; then
+          printf 'services:\n  awg-forge:\n    image: scratch\n'
+        else
+          printf '{"services":{"awg-forge":{"image":"scratch"}}}\n'
+        fi
+      elif [[ "$compose_env_file_shape" == missing-metadata ]]; then
         printf '{"services":{"awg-forge":{}}}\n'
       else
         printf '{"services":{"awg-forge":{"env_file":[{"path":"/dev/null"}]}}}\n'
@@ -76,16 +90,20 @@ docker() {
     "context inspect --format") printf 'unix:///var/run/docker.sock\n' ;;
     "inspect --format {{.Id}}") printf 'fixture-container\n' ;;
     "inspect --format {{index .Config.Labels"*)
-      printf '%s/docker-compose.yml' "$(pwd -P)"
+      if [[ "$3" == *'"com.docker.compose.project"'* ]]; then
+        printf '%s\n' "$fixture_project"
+        return
+      fi
+      printf '%s/docker-compose.yml' "$fixture_path"
       case "$compose_override" in
-        custom) printf ',%s/docker-compose.override.yml' "$(pwd -P)" ;;
-        rollback) printf ',%s/.awg-forge-rollback.Ab12Cd' "$(pwd -P)" ;;
-        upgrade) printf ',%s/.awg-forge-upgrade.Ab12Cd' "$(pwd -P)" ;;
+        custom) printf ',%s/docker-compose.override.yml' "$fixture_path" ;;
+        rollback) printf ',%s/.awg-forge-rollback.Ab12Cd' "$fixture_path" ;;
+        upgrade) printf ',%s/.awg-forge-upgrade.Ab12Cd' "$fixture_path" ;;
       esac
       printf '\n'
       ;;
     "inspect --format {{json .Mounts}}")
-      jq -n --arg path "$(pwd -P)/data" --arg extra "$existing_mount" '
+      jq -n --arg path "$fixture_path/data" --arg extra "$existing_mount" '
         [{Type:"bind",Source:$path,Destination:"/etc/awg-forge",RW:true}] +
         (if $extra == "" then [] else [{Type:"volume",Destination:$extra,RW:true}] end)'
       ;;
@@ -100,7 +118,10 @@ docker() {
       esac
       ;;
     "image inspect sha256:"*) printf '[]\n' ;;
-    "compose ps -aq") printf '%s\n' "$compose_container" ;;
+    "compose ps -aq")
+      [[ "${COMPOSE_PROJECT_NAME:-}" == "$fixture_project" ]] || return 1
+      printf '%s\n' "$compose_container"
+      ;;
     "inspect --format {{.Image}}") printf '%s\n' "$(<.fixture-image)" ;;
     "inspect --format {{.State.Running}}")
       [[ "$stop_inspect_failure" != true ]] || return 1
@@ -132,7 +153,7 @@ docker() {
         } + (if $option == "--no-interpolate" then
           {env_file: (if $shape == "string" then [$env]
             elif $shape == "wrong" then [$env + ".override"]
-            elif $shape == "interpolated" then ["${AWG_ENV_FILE:-.env}"]
+            elif ($shape | IN("interpolated", "legacy-interpolated", "legacy-included")) then ["${AWG_ENV_FILE:-.env}"]
             else [{path:$env}] end)} +
           (if $shape == "env-list" then {environment:["LOG_LEVEL=info"]}
             elif $shape == "db-override-list" then {environment:["DATABASE_MODE=off"]}
@@ -253,8 +274,11 @@ EOF
   copy_failure=none
   compose_container=fixture-container
   compose_override=none
+  fixture_project=fixture-awg
+  fixture_path="$(pwd -P)"
   compose_no_interpolate=true
   compose_env_file_shape=object
+  compose_interpolated_path=.env
   fixture_database_status=sqlite
 }
 
@@ -296,6 +320,30 @@ compose_env_file_shape=interpolated
 upgrade_main
 printf 'OK   upgrade accepts a resolved managed env_file path\n'
 
+setup_case compose-legacy-interpolated-env-file
+compose_env_file_shape=legacy-interpolated
+upgrade_main
+printf 'OK   upgrade uses Compose interpolation when resolved metadata is unavailable\n'
+
+setup_case compose-legacy-interpolated-wrong-path
+compose_env_file_shape=legacy-interpolated
+compose_interpolated_path=.env.override
+if upgrade_main >upgrade.log 2>&1; then
+  printf 'FAIL upgrade accepted a non-managed env_file resolved by older Compose\n' >&2
+  exit 1
+fi
+grep -Fq 'cannot be restored safely' upgrade.log
+printf 'OK   upgrade rejects a non-managed env_file resolved by older Compose\n'
+
+setup_case compose-legacy-included-env-file
+compose_env_file_shape=legacy-included
+if upgrade_main >upgrade.log 2>&1; then
+  printf 'FAIL upgrade used outer interpolation for an included service\n' >&2
+  exit 1
+fi
+grep -Fq 'cannot be restored safely' upgrade.log
+printf 'OK   upgrade rejects ambiguous interpolation in older Compose include models\n'
+
 setup_case compose-wrong-resolved-env-file
 compose_env_file_shape=wrong-resolved
 if upgrade_main >upgrade.log 2>&1; then
@@ -325,9 +373,12 @@ printf 'OK   upgrade rolls back when enabling SQLite changes the resolved env_fi
 
 setup_case compose-symlink-workdir
 ln -s "$CURRENT_CASE" "$test_dir/linked-installation"
-cd "$test_dir/linked-installation"
-upgrade_compose_layout "$(pwd -P)" "$(pwd -P)/data" docker compose
-printf 'OK   Compose validation uses the physical installation directory\n'
+fixture_path="$test_dir/linked-installation"
+fixture_project=linked-installation
+CURRENT_CASE="$fixture_path"
+compose_override=upgrade
+COMPOSE_PROJECT_NAME=other-project upgrade_main
+printf 'OK   upgrade uses the existing project and accepts managed paths through a symlink\n'
 
 setup_case compose-list-environment
 compose_env_file_shape=env-list
@@ -362,7 +413,7 @@ if upgrade_main >upgrade.log 2>&1; then
   printf 'FAIL upgrade accepted unsupported Compose\n' >&2
   exit 1
 fi
-grep -Fq 'cannot report env_file in its config model; update Docker Compose' upgrade.log
+grep -Fq 'update Docker Compose and retry' upgrade.log
 if grep -Eq '^compose (pull|stop) ' "$DOCKER_LOG"; then
   printf 'FAIL unsupported Compose changed Docker state\n' >&2
   exit 1
@@ -375,12 +426,25 @@ if upgrade_main >upgrade.log 2>&1; then
   printf 'FAIL upgrade accepted a Compose model without env_file metadata\n' >&2
   exit 1
 fi
-grep -Fq 'cannot report env_file in its config model; update Docker Compose' upgrade.log
+grep -Fq 'update Docker Compose and retry' upgrade.log
 if grep -Eq '^compose (pull|stop) ' "$DOCKER_LOG"; then
   printf 'FAIL incomplete Compose model changed Docker state\n' >&2
   exit 1
 fi
 printf 'OK   upgrade diagnoses Compose versions that silently omit env_file\n'
+
+setup_case compose-resolved-model-not-json
+compose_env_file_shape="resolved-yaml"
+if upgrade_main >upgrade.log 2>&1; then
+  printf 'FAIL upgrade accepted Compose that emits YAML for its resolved config\n' >&2
+  exit 1
+fi
+grep -Fq 'update Docker Compose and retry' upgrade.log
+if grep -Eq '^compose (pull|stop) ' "$DOCKER_LOG"; then
+  printf 'FAIL unsupported Compose output changed Docker state\n' >&2
+  exit 1
+fi
+printf 'OK   upgrade diagnoses Compose versions with YAML in resolved config output\n'
 
 setup_case explicit-image
 UPGRADE_IMAGE=ghcr.io/astronaut808/awg-forge:rc-fixture
