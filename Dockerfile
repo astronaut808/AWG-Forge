@@ -28,7 +28,7 @@ COPY scripts/prepare-amneziawg-runtime.sh /tmp/awg-forge/scripts/prepare-amnezia
 RUN bash /tmp/awg-forge/scripts/prepare-amneziawg-runtime.sh /src \
   && GOWORK=off GOFLAGS=-mod=readonly make && cp amneziawg-go /out-amneziawg-go
 
-FROM debian:trixie@sha256:2dc419c6d7fe3dad0a2f9fd469c34cc90b0f9ba642d8fde837fe3d7d34a0e7f1 AS tools-builder
+FROM debian:trixie@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6 AS tools-builder
 RUN apt-get update && apt-get install -y --no-install-recommends git make gcc libc6-dev pkg-config ca-certificates patch && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY build/amneziawg.refs /tmp/amneziawg.refs
@@ -41,7 +41,7 @@ RUN patch -p1 < /tmp/awg-quick-force-userspace.patch \
   && make -C src WITH_WGQUICK=yes WITH_SYSTEMDUNITS=no WITH_BASHCOMPLETION=no \
   && make -C src install WITH_WGQUICK=yes WITH_SYSTEMDUNITS=no WITH_BASHCOMPLETION=no DESTDIR=/out PREFIX=/usr
 
-FROM debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
 ARG AWG_FORGE_VERSION=dev
 ARG AWG_FORGE_COMMIT=unknown
 RUN apt-get update && apt-get install -y --no-install-recommends \
