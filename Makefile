@@ -2,10 +2,11 @@ COMPOSE ?= docker compose
 CONTAINER ?= awg-forge
 IMAGE ?= awg-forge:local
 GITLEAKS_LOG_OPTS ?= HEAD
-GOVULNCHECK_VERSION ?= v1.1.4
+GOVULNCHECK_VERSION ?= v1.9.0
 ACTIONLINT_VERSION ?= v1.7.12
+NPM ?= npm
 
-.PHONY: test test-race test-shell vet build lint-go lint-js lint-shell lint-docker lint-actions lint-actions-security quality ui-build ui-check ui-test api-contract ci vuln-check security security-fast docker-smoke updates updates-local updates-docker update-amneziawg-refs docker-build docker-up docker-down
+.PHONY: test test-race test-shell vet build lint-go lint-js lint-shell lint-docker lint-actions lint-actions-security quality ui-build ui-check ui-test api-contract ci vuln-check security security-fast docker-smoke docker-runtime-smoke updates updates-local updates-docker update-amneziawg-refs docker-build docker-up docker-down
 
 test:
 	go test ./...
@@ -31,7 +32,7 @@ lint-go:
 	golangci-lint run
 
 lint-js:
-	npm run ui:lint
+	$(NPM) run ui:lint
 
 lint-shell:
 	shellcheck --severity=warning install.sh uninstall.sh scripts/*.sh
@@ -46,19 +47,19 @@ lint-actions-security:
 	zizmor --offline --pedantic .
 
 quality:
-	npm run quality:aislop
+	$(NPM) run quality:aislop
 
 ui-check:
-	npm run ui:check
+	$(NPM) run ui:check
 
 ui-build:
-	npm run ui:build
+	$(NPM) run ui:build
 
 ui-test:
-	npm run ui:test
+	$(NPM) run ui:test
 
 api-contract:
-	npm run api:contract
+	$(NPM) run api:contract
 	go test ./internal/server -run '^Test(API(ErrorResponseContract|ContractRegenerateProtocolRejectsMalformedJSON)|Idempotency|OpenAPIContract)'
 
 ci: ui-check ui-test api-contract test test-shell vet build lint-go lint-js quality
@@ -70,17 +71,22 @@ vuln-check:
 security:
 	$(MAKE) vuln-check lint-shell lint-docker lint-actions lint-actions-security
 	gitleaks git --redact --no-banner --log-opts="$(GITLEAKS_LOG_OPTS)" .
-	trivy fs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 .
+	node scripts/check-worktree-secrets.mjs
+	trivy fs --scanners vuln --include-dev-deps --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 .
 	semgrep --config=auto --disable-version-check --error .
 
 security-fast:
 	$(MAKE) vuln-check lint-shell lint-docker lint-actions lint-actions-security
 	gitleaks git --redact --no-banner --log-opts="$(GITLEAKS_LOG_OPTS)" .
-	trivy fs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --quiet .
+	node scripts/check-worktree-secrets.mjs
+	trivy fs --scanners vuln --include-dev-deps --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --quiet .
 	semgrep --config=p/golang --config=p/typescript --disable-version-check --error .
 
 docker-smoke:
 	IMAGE=$(IMAGE) bash scripts/test-docker-image.sh
+
+docker-runtime-smoke:
+	IMAGE=$(IMAGE) node scripts/test-docker-runtime.mjs
 
 updates: updates-local
 

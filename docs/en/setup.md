@@ -14,12 +14,17 @@ sudo ./install.sh
 
 More details: [Quick install](quick-install.md).
 
-Manual setup:
+For a new installation, prepare the environment file and data directory.
 
 ```bash
-cp .env.example .env
-mkdir -p data
+(umask 077; cp -n .env.example .env; mkdir -p data)
+```
+
+Before starting the service, replace the example `PASSWORD` in `.env` with a strong password. Set a randomly generated `SESSION_SECRET` or remove the example value so the service generates one. Keep `.env` readable only by the account managing Compose.
+
+```bash
 docker compose run --rm --no-deps awg-forge init \
+  --server-name MyServer \
   --server-host vpn.example.com \
   --external-interface eth0 \
   --profile awg_2_0 \
@@ -30,7 +35,7 @@ docker compose run --rm --no-deps awg-forge db migrate
 docker compose up -d
 ```
 
-Replace the example host, interface, port, and subnet before running `init`. Also set `EXTERNAL_INTERFACE` in `.env` to the host's WAN interface, matching `--external-interface`; the running service uses `.env` for this setting. The command creates the first persistent tunnel in `data/state.json`; changing legacy tunnel variables in `.env` afterwards does not update it.
+Replace the example name, host, interface, port, and subnet before running `init`; omit `--server-name` if you do not want a name. Also set `EXTERNAL_INTERFACE` in `.env` to the host's WAN interface, matching `--external-interface`; the running service uses `.env` for this setting. The command creates the first persistent tunnel in `data/state.json`; changing legacy tunnel variables in `.env` afterwards does not update it.
 
 By default the Web UI listens on `127.0.0.1:51821`. Access it through an SSH tunnel:
 
@@ -50,10 +55,11 @@ When using `network_mode: host`, do not add `ports:` to `docker-compose.yml`.
 
 Bridge networking can work, but UDP ports must be published before the container starts. Since awg-forge lets you create tunnels in the UI, publish a fixed UDP range and create tunnels only inside that range.
 
+`docker-compose.bridge.yml` uses the same `.env` and `data/` setup described above.
+
 ```bash
-cp .env.example .env
-mkdir -p data
 docker compose -f docker-compose.bridge.yml run --rm --no-deps awg-forge init \
+  --server-name MyServer \
   --server-host vpn.example.com \
   --external-interface eth0 \
   --profile awg_2_0 \

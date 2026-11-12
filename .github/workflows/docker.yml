@@ -5,16 +5,15 @@ on:
     branches:
       - master
       - develop
-    tags:
-      - "v*"
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: docker-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -22,10 +21,13 @@ env:
 
 jobs:
   validate:
-    if: github.event_name == 'pull_request'
-    name: Build linux/amd64 image
-    runs-on: ubuntu-24.04
+    name: Build and verify linux/amd64 image
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
+    outputs:
+      image-id: ${{ steps.identity.outputs.id }}
+      artifact-id: ${{ steps.archive.outputs.artifact-id }}
+      tags: ${{ steps.meta.outputs.tags }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -33,56 +35,11 @@ jobs:
           persist-credentials: false
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
-
-      - name: Build image for validation
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
-        with:
-          context: .
-          platforms: linux/amd64
-          load: true
-          tags: awg-forge:ci
-          build-args: |
-            AWG_FORGE_VERSION=pr-${{ github.event.pull_request.number }}
-            AWG_FORGE_COMMIT=${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Smoke test image
-        run: make docker-smoke IMAGE=awg-forge:ci
-
-      - name: Set up Trivy
-        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
-        with:
-          version: v0.74.0
-          cache: true
-
-      - name: Scan operating system packages
-        run: trivy image --scanners vuln --pkg-types os --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 awg-forge:ci
-
-      - name: Report application dependency findings
-        run: trivy image --scanners vuln --pkg-types library --severity HIGH,CRITICAL --ignore-unfixed --exit-code 0 awg-forge:ci
-
-  publish:
-    if: github.event_name != 'pull_request'
-    name: Publish linux/amd64 image
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    permissions:
-      contents: read
-      packages: write # Required only for publishing the built image to GHCR.
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Docker metadata
         id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
@@ -91,23 +48,108 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=sha
 
+      - name: Build image for validation
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: awg-forge:ci
+          build-args: |
+            AWG_FORGE_VERSION=${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref_name }}
+            AWG_FORGE_COMMIT=${{ github.sha }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Identify the built image
+        id: identity
+        run: echo "id=$(docker image inspect --format '{{.Id}}' awg-forge:ci)" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test image
+        run: make docker-smoke IMAGE=awg-forge:ci
+
+      - name: Set up Node for runtime interoperability test
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.13.0
+          package-manager-cache: false
+
+      - name: Test encrypted traffic and restart for all profiles
+        run: make docker-runtime-smoke IMAGE=awg-forge:ci
+
+      - name: Set up Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.76.1
+          cache: true
+
+      - name: Scan the tested image
+        run: trivy image --scanners vuln --pkg-types os,library --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 awg-forge:ci
+
+      - name: Save the verified image
+        if: github.event_name == 'push'
+        env:
+          IMAGE_ID: ${{ steps.identity.outputs.id }}
+        run: |
+          set -euo pipefail
+          test -n "$IMAGE_ID"
+          test "$(docker image inspect --format '{{.Id}}' awg-forge:ci)" = "$IMAGE_ID"
+          docker image save --output verified-image.tar awg-forge:ci
+
+      - name: Transfer the verified image
+        if: github.event_name == 'push'
+        id: archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          path: verified-image.tar
+          archive: false
+          if-no-files-found: error
+          retention-days: 3
+
+  publish:
+    if: github.event_name == 'push'
+    needs: validate
+    name: Publish linux/amd64 image
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write # Required only for publishing the built image to GHCR.
+    steps:
+      - name: Download verified image
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.validate.outputs.artifact-id }}
+          path: verified
+          merge-multiple: true
+
+      - name: Load and verify image identity
+        env:
+          IMAGE_ID: ${{ needs.validate.outputs.image-id }}
+        run: |
+          set -euo pipefail
+          test -n "$IMAGE_ID"
+          docker image load --input verified/verified-image.tar
+          test "$(docker image inspect --format '{{.Id}}' awg-forge:ci)" = "$IMAGE_ID"
+          test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' awg-forge:ci)" = linux/amd64
+
       - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
-      - name: Build and publish image
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
-        with:
-          context: .
-          platforms: linux/amd64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            AWG_FORGE_VERSION=${{ github.ref_name }}
-            AWG_FORGE_COMMIT=${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Push the verified image
+        env:
+          TAGS: ${{ needs.validate.outputs.tags }}
+          IMAGE_ID: ${{ needs.validate.outputs.image-id }}
+        run: |
+          set -euo pipefail
+          test -n "$TAGS"
+          while IFS= read -r tag; do
+            [[ "$tag" == "${IMAGE_NAME,,}:"* ]]
+            docker image tag "$IMAGE_ID" "$tag"
+            docker image push "$tag"
+          done <<< "$TAGS"

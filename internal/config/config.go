@@ -12,17 +12,20 @@ import (
 )
 
 const (
-	DefaultConfigDir = "/etc/awg-forge"
-	DefaultTunnel    = "awg0"
+	DefaultConfigDir     = "/etc/awg-forge"
+	DefaultTunnel        = "awg0"
+	DefaultWebUIUsername = "admin"
 )
 
 type Config struct {
 	ConfigDir              string
+	ServerName             string
 	TunnelName             string
 	ServerHost             string
 	ListenPort             int
 	WebUIHost              string
 	WebUIPort              int
+	WebUIUsername          string
 	Password               string
 	SessionSecret          string
 	SessionCookieSecure    string
@@ -58,11 +61,13 @@ func FromEnv() (Config, error) {
 	configDir := getenv("CONFIG_DIR", DefaultConfigDir)
 	cfg := Config{
 		ConfigDir:              configDir,
+		ServerName:             strings.TrimSpace(os.Getenv("SERVER_NAME")),
 		TunnelName:             getenv("TUNNEL_NAME", ""),
 		ServerHost:             getenv("SERVER_HOST", "127.0.0.1"),
 		ListenPort:             getenvInt("LISTEN_PORT", 0),
 		WebUIHost:              getenv("WEBUI_HOST", "127.0.0.1"),
 		WebUIPort:              getenvInt("WEBUI_PORT", 51821),
+		WebUIUsername:          getenv("WEBUI_USERNAME", DefaultWebUIUsername),
 		Password:               os.Getenv("PASSWORD"),
 		SessionSecret:          os.Getenv("SESSION_SECRET"),
 		SessionCookieSecure:    getenv("SESSION_COOKIE_SECURE", "auto"),
@@ -92,10 +97,8 @@ func FromEnv() (Config, error) {
 		DatabaseMaxIdleConns:   getenvInt("DATABASE_MAX_IDLE_CONNS", 1),
 		LegacyTunnelEnvVars:    legacyTunnelEnvVars(),
 	}
-	if cfg.WebUIHost == "0.0.0.0" || cfg.WebUIHost == "::" {
-		if cfg.Password == "" {
-			return Config{}, errors.New("PASSWORD is required when WEBUI_HOST is public")
-		}
+	if err := ValidateServerName(cfg.ServerName); err != nil {
+		return Config{}, err
 	}
 	switch cfg.SessionCookieSecure {
 	case "auto", "true", "false":
@@ -108,6 +111,9 @@ func FromEnv() (Config, error) {
 		return Config{}, errors.New("LOG_LEVEL must be debug, info, warn, or error")
 	}
 	if err := configureWebTLS(&cfg); err != nil {
+		return Config{}, err
+	}
+	if err := cfg.ValidateWebUIAuth(); err != nil {
 		return Config{}, err
 	}
 	if cfg.IPv4Subnet != "" {
@@ -138,6 +144,48 @@ func FromEnv() (Config, error) {
 	return cfg, nil
 }
 
+// ValidateWebUIAuth confines passwordless operation to literal loopback binds.
+func (c Config) ValidateWebUIAuth() error {
+	if c.Password != "" {
+		return nil
+	}
+	// A hostname can resolve to a non-loopback address when the listener opens.
+	ip, err := netip.ParseAddr(c.WebUIHost)
+	if err != nil || !ip.Unmap().IsLoopback() {
+		return errors.New("PASSWORD is required unless WEBUI_HOST is a loopback IP address")
+	}
+	if c.WebUITrustProxyHeaders {
+		return errors.New("PASSWORD is required when WEBUI_TRUST_PROXY_HEADERS=true")
+	}
+	return nil
+}
+
+// ValidateServerName accepts an optional short ASCII alphanumeric label.
+// Keeping the character set deliberately small makes the name safe to display
+// consistently in the UI, logs, backups, and shell-managed environments.
+func ValidateServerName(name string) error {
+	if name == "" {
+		return nil
+	}
+	if len(name) > 32 {
+		return errors.New("server name must be at most 32 characters")
+	}
+	for _, r := range name {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') {
+			return errors.New("server name must contain only ASCII letters and numbers")
+		}
+	}
+	return nil
+}
+
+// WebUIUsernameOrDefault keeps existing Config literals compatible with the
+// default administrator account.
+func (c Config) WebUIUsernameOrDefault() string {
+	if c.WebUIUsername == "" {
+		return DefaultWebUIUsername
+	}
+	return c.WebUIUsername
+}
 func configureWebTLS(cfg *Config) error {
 	trustedProxyCIDRs, err := parseTrustedProxyCIDRs(os.Getenv("WEBUI_TRUSTED_PROXY_CIDRS"))
 	if err != nil {

@@ -18,3 +18,21 @@ docs/ru/roadmap.md
 .aislop/history.jsonl
 .aislop/agent/
 .vscode
+
+# Local design work and internal review notes
+/DESIGN.md
+/PRODUCT.md
+/docs/design/
+/docs/architecture/
+/docs/plans/
+/docs/en/dependency-refresh.md
+/docs/ru/dependency-refresh.md
+/.impeccable
+
+# Installer snapshots may contain live configuration and credentials
+upgrade-backup-*/
+reinstall-backup-*/
+.upgrade-restore.*/
+.awg-forge-upgrade.*
+.awg-forge-upgrade-pending
+.awg-forge-rollback.*

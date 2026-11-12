@@ -17,6 +17,21 @@ handle_existing_install ""
 
 printf 'OK   clean install continues past existing-install detection\n'
 
+(
+  prompt() { printf '%s' "${profile_choice:-$2}"; }
+
+  profile_choice=""
+  [[ "$(choose_install_profile 2>"$test_dir/profile-menu")" == "awg_2_0" ]]
+  grep -Eq '^4\) AmneziaWG 3\.x \(experimental' "$test_dir/profile-menu"
+  profile_choice=4
+  profile="$(choose_install_profile 2>/dev/null)"
+  [[ "$profile" == "awg_3" ]]
+  [[ "$(profile_default_name "$profile")" == "awg3" ]]
+  [[ "$(profile_default_port "$profile")" == "51840" ]]
+  [[ "$(profile_default_subnet "$profile")" == "10.30.0.0/24" ]]
+  printf 'OK   fresh install offers AWG 3.x and defaults to AWG 2.0\n'
+)
+
 touch "$ENV_FILE"
 if ! existing_install_found; then
   printf 'FAIL existing install was not detected\n' >&2
@@ -56,6 +71,16 @@ if [[ -e "$DATA_DIR/bootstrap.env" ]]; then
 fi
 
 printf 'OK   runtime env is split from explicit state init\n'
+
+if ! grep -qx 'SERVER_NAME=' "$ENV_FILE"; then
+  printf 'FAIL fresh install does not include optional server name\n' >&2
+  exit 1
+fi
+if ! validate_server_name "" || ! validate_server_name Moscow02 || validate_server_name moscow-02 || validate_server_name Москва || validate_server_name "$(printf 'a%.0s' {1..33})"; then
+  printf 'FAIL installer server name validation\n' >&2
+  exit 1
+fi
+printf 'OK   optional server name validation\n'
 
 if ! grep -qx 'DATABASE_MODE=sqlite' "$ENV_FILE"; then
   printf 'FAIL fresh install does not enable SQLite by default\n' >&2
@@ -204,6 +229,8 @@ cat >"$ENV_FILE" <<'EOF'
 WEBUI_HOST=127.0.0.1
 WEBUI_PORT=51821
 PASSWORD=existing-password
+WEBUI_USERNAME=operator
+SERVER_NAME=ExistingName
 SESSION_SECRET=existing-secret
 EXTERNAL_INTERFACE=eth0
 DATABASE_MODE=sqlite
@@ -221,12 +248,17 @@ if ! grep -qx 'WEBUI_PORT=51900' "$ENV_FILE" || ! grep -qx 'EXTERNAL_INTERFACE=e
   printf 'FAIL reconfigure did not update selected runtime settings\n' >&2
   exit 1
 fi
-if ! grep -qx 'PASSWORD=existing-password' "$ENV_FILE" || ! grep -qx 'SESSION_SECRET=existing-secret' "$ENV_FILE"; then
+if ! grep -qx 'WEBUI_USERNAME=operator' "$ENV_FILE" || ! grep -qx 'PASSWORD=existing-password' "$ENV_FILE" || ! grep -qx 'SESSION_SECRET=existing-secret' "$ENV_FILE"; then
   printf 'FAIL reconfigure changed existing credentials\n' >&2
   exit 1
 fi
 
 printf 'OK   reconfigure preserves operational settings\n'
+
+if ! grep -qx 'SERVER_NAME=ExistingName' "$ENV_FILE"; then
+  printf 'FAIL reconfigure changed existing server name\n' >&2
+  exit 1
+fi
 
 if grep -Eq '^[[:space:]]*(TUNNEL_NAME|LISTEN_PORT|IPV4_SUBNET|DNS|ALLOWED_IPS|PERSISTENT_KEEPALIVE|MTU|PROTOCOL_PROFILE)=' "$repo_root/Dockerfile"; then
   printf 'FAIL Docker image ENV contains tunnel init variables\n' >&2

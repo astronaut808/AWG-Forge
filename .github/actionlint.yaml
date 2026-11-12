@@ -1,0 +1,6 @@
+# actionlint v1.7.12 predates the GA runner label. Keep this one verified label
+# explicit until its built-in runner list catches up; all other label checks remain.
+# https://github.blog/changelog/2026-09-17-ubuntu-26-generally-available-and-latest-migration/
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04

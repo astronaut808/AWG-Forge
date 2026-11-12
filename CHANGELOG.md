@@ -1,6 +1,56 @@
 # Changelog
 
-## Unreleased
+## v0.20.0 - 2026-11-12
+
+### Added
+
+- Allow `IMAGE` to select a version tag or digest for a single managed `install.sh upgrade` while preserving the image configured in Compose.
+- Add a configurable Web UI username via `WEBUI_USERNAME`. Existing installations keep their password and default to `admin`. Password-only browser API requests remain compatible with the default username.
+- Add an optional server display name stored in `state.json` without changing client endpoints. Thanks to [@rblashchuk](https://github.com/rblashchuk) for the original contribution in [#132](https://github.com/astronaut808/AWG-Forge/pull/132).
+- Offer experimental AmneziaWG 3.x when creating the first tunnel with the installer. AmneziaWG 2.0 remains the default.
+
+### Changed
+
+- Redesign the Web UI with a server overview, dedicated tunnel, client, traffic, and maintenance views, and responsive layouts in both themes and languages.
+- Let operators choose the tunnel when creating a client and open `.conf`, both QR formats, and `vpn://` from one Connect dialog.
+- Refresh the project logo and serve the new tab icon as a versioned PNG.
+- Shorten the English and Russian READMEs and link to the detailed installation, upgrade, and uninstall guides.
+- Refresh Go to 1.27.4, SQLite, Go modules, frontend packages, CI tools, and pinned GitHub Actions. Build runtime images on Debian 13 (trixie).
+- Track npm and Docker updates alongside Go and Actions in Dependabot.
+
+### Fixed
+
+- Replace OS-dependent select menus with consistently anchored, themed lists across forms and filters. Use visible theme/language choices in a compact settings dialog, correct shared dialog alignment, and preserve nested menu dismissal.
+
+- Group browser appearance preferences in one accessible dialog, keep navigation height stable, and prevent responsive client data and tables from overflowing. Align native filters across browsers and restore each section's scroll position.
+- Restore focus to the appearance dialog's trigger after dismissal in Safari.
+
+- Preserve opened Web UI sections and loaded traffic during sidebar navigation; pause hidden subscriptions and keep browser history working without document navigation.
+- Preserve the selected tunnel and unsaved client form when a tunnel creation request finishes after the user has moved on.
+- Show the effective endpoints of configured tunnels in Support.
+
+- Return entries already moved during a failed restore staging operation. Report cleanup failures separately after a successful restore.
+- Validate the running container, effective Compose service, image defaults, and host mount layout before managed upgrades. Serialize installation mutations, pin the inspected target image, require stable HTTP/HTTPS readiness and the migrated SQLite schema, and retain recovery information on failed rollback.
+- Preserve the existing Compose project through a stable installation symlink and verify that the live container uses the data directory being backed up. Resolve interpolated `env_file` paths on supported Compose versions and report unsupported versions before stopping the service.
+- Abort the upgrade and restart the previous container when the backup fails. Stage rollback data before replacing the working copy, and scope container recovery to the AWG-Forge service.
+- Record the previous image ID in the upgrade backup for manual recovery if automatic rollback fails.
+- Remove duplicate controls for protocol regeneration, traffic retry, and creating the first tunnel. Preserve keyboard focus and QR retry in nested dialogs.
+- Preserve the browser host in the Vite proxy for authenticated requests and allow a separate local backend port.
+
+### Security
+
+- Refresh the runtime image's existing zlib package to include available Debian security fixes.
+- Refresh APT and its existing library in the runtime image for Debian's CVE-2026-109518 fix.
+- Require `PASSWORD` on every Web UI bind except a literal loopback IP with trusted proxy headers disabled, including explicit IPv4/IPv6 addresses and hostnames.
+- Gate image publication on smoke tests, encrypted traffic checks for all profiles, and blocking OS/library Trivy scans of the transferred build. Publish the GitHub Release after the image succeeds, and require the tagged commit to be reachable from `master`.
+- Include npm development dependencies in the blocking Trivy checks and scan current tracked/nonignored untracked source for secrets in addition to Git history.
+- Remove the obsolete adm-zip override and resolve patched transitive frontend tooling dependencies.
+- Apply one reproducible dependency-only patch to the pinned Linux AmneziaWG daemon in both Docker and vulnerability checks, with an import guard for unshipped SDK packages.
+- Verify actual encrypted traffic and restart for all four profiles in disposable Docker network namespaces.
+
+### Upgrading
+
+Use the [upgrade guide in English](https://github.com/astronaut808/AWG-Forge/blob/v0.20.0/docs/en/quick-install.md#upgrade) or [Russian](https://github.com/astronaut808/AWG-Forge/blob/v0.20.0/docs/ru/quick-install.md#обновление). Update Docker Compose before running the managed upgrade if you are on 2.24.0 or 2.25.0.
 
 ## v0.19.1 - 2026-10-09
 

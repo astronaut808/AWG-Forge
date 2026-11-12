@@ -15,7 +15,7 @@ Production recommendation: keep the UI on loopback and access it through an SSH 
 ssh -L 51821:127.0.0.1:51821 user@server
 ```
 
-If the UI is published publicly, a password is required.
+Set a strong `PASSWORD` before exposing the panel. An empty password is accepted only with a literal loopback IP such as `127.0.0.1` or `::1`, with trusted proxy headers disabled. Every other bind, including hostnames such as `localhost`, requires a password. The default username is `admin`. Set `WEBUI_USERNAME` to change it.
 
 ## TLS and Reverse Proxies
 

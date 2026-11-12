@@ -1,10 +1,14 @@
 import { defineConfig } from "vite";
-import preact from "@preact/preset-vite";
+import react from "@vitejs/plugin-react";
+
+const backend = process.env.AWG_UI_BACKEND || "http://127.0.0.1:51821";
+// Keep Host aligned with the browser Origin for the backend's CSRF check.
+const proxy = { target: backend, changeOrigin: false };
 
 export default defineConfig({
   root: "web",
   base: "/static/",
-  plugins: [preact()],
+  plugins: [react()],
   build: {
     outDir: "../internal/server/static",
     emptyOutDir: true,
@@ -13,8 +17,8 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      "/api": "http://127.0.0.1:51821",
-      "/clients": "http://127.0.0.1:51821",
+      "/api": proxy,
+      "/clients": proxy,
     },
   },
 });

@@ -2,6 +2,7 @@
 
 [`api/openapi.json`](../../api/openapi.json) is the OpenAPI 3.1 contract for the stable control-plane
 requests used by the bundled Web UI. It currently covers authentication, state,
+the optional server name,
 tunnel and client lifecycle operations, traffic limits, and WARP management.
 Download, QR, backup, restore, diagnostics, and support-bundle endpoints remain
 private Web UI details and are intentionally outside this initial contract.
@@ -10,6 +11,10 @@ This is **not** a public remote-management API. It has no CORS support and uses
 the signed, HttpOnly browser session cookie issued by `POST /api/login`. Keep it
 behind the normal AWG-Forge access controls. Do not expose it to untrusted
 origins or attempt to automate it with copied browser cookies.
+
+`POST /api/login` accepts `password` and an optional `username`. If the request
+omits `username`, the server uses `admin`. If `WEBUI_USERNAME` specifies a
+different name, callers must supply it in the request.
 
 ## Mutation safety
 

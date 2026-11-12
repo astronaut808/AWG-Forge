@@ -41,6 +41,14 @@ docker run --rm \
   --listen-port 51820 \
   --ipv4-subnet 10.8.0.0/24
 
+if output=$(docker run --rm --network none \
+  -v "$volume:/etc/awg-forge" -e APPLY_CONFIG=false \
+  -e WEBUI_HOST=192.0.2.10 "$image" 2>&1) ||
+   [[ "$output" != *"PASSWORD is required"* ]]; then
+  echo "docker smoke: passwordless non-loopback configuration was not rejected" >&2
+  exit 1
+fi
+
 docker run -d --name "$container" \
   -p 127.0.0.1::51821 \
   -v "$volume:/etc/awg-forge" \
@@ -57,6 +65,8 @@ if ! wait_for_ui; then
   docker logs "$container" >&2
   exit 1
 fi
+
+test "$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:${port}/api/state")" = 401
 
 curl -fsS \
   -c "$cookie_jar" \
