@@ -220,6 +220,8 @@ In the UI, open `Maintenance` → `Backup and restore` to verify an `.afbackup` 
 
 Before replacing the current config directory, restore keeps an encrypted pre-restore backup in `backups/` inside the restored config directory.
 
+If restore installs the new configuration and then cannot remove the staging directory, it succeeds and prints a warning with the directory path. Check the restored service before removing the remaining files.
+
 If staging fails, restore returns entries already moved to their original locations. A failed rollback leaves the remaining original files in `.restore-pending/old/` and blocks retries. Keep the service stopped and preserve the entire configuration directory before manual recovery. Older `.restore-old-*` recovery directories also block a new restore. Delete recovery directories only after checking the recovered state. Private directories use `0700` and restored files use `0600`.
 
 Restore checks:

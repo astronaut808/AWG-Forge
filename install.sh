@@ -928,7 +928,6 @@ initialize_state() {
   local keepalive="$8"
   local mtu="$9"
   local profile="${10}"
-  local server_name="${11:-}"
 
   ensure_image_available
   local data_dir_abs
@@ -939,7 +938,6 @@ initialize_state() {
     --env-file "$ENV_FILE" \
     -v "$data_dir_abs:/etc/awg-forge$volume_suffix" \
     "$IMAGE" init \
-      --server-name "$server_name" \
       --server-host "$server_host" \
       --external-interface "$external_interface" \
       --profile "$profile" \
@@ -1120,23 +1118,30 @@ upgrade_container_layout() {
 upgrade_compose_layout() {
   local directory="$1" data_path="$2"
   shift 2
-  "$@" config --no-env-resolution --format json awg-forge 2>/dev/null |
-    jq -e --arg env "$directory/$ENV_FILE" --arg data "$data_path" '
+  # Compose can discard env_file in its resolved JSON. Inspect its path and
+  # explicit environment overrides before interpolating the model.
+  "$@" config --no-interpolate --format json awg-forge 2>/dev/null |
+    jq -e --arg env "$directory/$ENV_FILE" '
       .services["awg-forge"] |
+      (.env_file | IN([$env], [{"path": $env}], [{"path": $env, "required": true}])) and
+      ((.environment // {}) |
+        if type == "array" then map(split("=")[0]) else keys end |
+        all(. != "DATABASE_MODE" and (contains("$") | not)))
+    ' >/dev/null 2>&1 || return 1
+  "$@" config --format json awg-forge 2>/dev/null |
+    jq -e --arg data "$data_path" '
+      .services["awg-forge"] | select(
       .container_name == "awg-forge" and .network_mode == "host" and
-      .env_file == [{"path": $env}] and
       .build == null and .entrypoint == null and (.command | IN(null, ["serve"])) and
       ((.volumes_from // []) | length == 0) and ((.tmpfs // []) | length == 0) and
       ((.secrets // []) | length == 0) and ((.configs // []) | length == 0) and
-      ((.environment // {}) | has("DATABASE_MODE") | not) and
       (.volumes |
         any(.[]; .target == "/etc/awg-forge" and .source == $data and (.read_only | not)) and
         all(.[]; .type == "bind" and ((.bind.propagation // "") | IN("", "rprivate")) and
           (.target == "/etc/awg-forge" or
           (.target == "/lib/modules" and .source == "/lib/modules" and .read_only))))
-    ' >/dev/null 2>&1 || return 1
-  "$@" config --format json awg-forge 2>/dev/null |
-    jq -e '.services["awg-forge"].environment // {}' 2>/dev/null | upgrade_env_layout
+      ) | .environment // {}
+    ' 2>/dev/null | upgrade_env_layout
 }
 
 upgrade_compose_files_match() {
@@ -1153,10 +1158,11 @@ upgrade_compose_files_match() {
 }
 
 upgrade_backup() {
-  local backup_dir="$1"
+  local backup_dir="$1" previous_image="$2"
   cp -a "$ENV_FILE" "$backup_dir/$ENV_FILE" || return 1
   chmod 600 "$backup_dir/$ENV_FILE" || return 1
   cp -a "$DATA_DIR" "$backup_dir/$DATA_DIR" || return 1
+  (umask 077; printf '%s\n' "$previous_image" >"$backup_dir/previous-image-id") || return 1
   ok "upgrade backup saved to $backup_dir"
 }
 
@@ -1380,6 +1386,10 @@ upgrade_locked() (
   fi
   directory="$(pwd -P)" || return 1
   data_path="$(cd "$DATA_DIR" && pwd -P)" || return 1
+  if ! "${base[@]}" config --help 2>/dev/null | grep -F -- '--no-interpolate' >/dev/null; then
+    fail "managed upgrade requires Docker Compose with config --no-interpolate support; update Docker Compose and retry"
+    return 1
+  fi
   if ! upgrade_host_layout "$directory" "$data_path" ||
      ! upgrade_compose_layout "$directory" "$data_path" "${base[@]}"; then
     fail "target Compose service or on-disk layout cannot be restored safely; use a manual upgrade"
@@ -1486,7 +1496,7 @@ upgrade_locked() (
     "${base[@]}" start awg-forge || fail "could not restart the previous container"
     return 1
   fi
-  if ! upgrade_backup "$backup_dir"; then
+  if ! upgrade_backup "$backup_dir" "$previous_image"; then
     fail "could not complete the upgrade backup at $backup_dir"
     "${base[@]}" start awg-forge || fail "could not restart the previous container"
     return 1
@@ -1764,6 +1774,9 @@ main() (
   fi
   backup_existing_env
   write_env "$webui_host" "$webui_port" "$password" "$session_secret" "$external_interface" "$INSTALL_ACTION"
+  if ! $existing_state; then
+    set_env_value SERVER_NAME "$server_name"
+  fi
   if [[ "$INSTALL_ACTION" == "fresh" ]]; then
     chmod 600 "$ENV_FILE" || true
   fi
@@ -1781,7 +1794,7 @@ main() (
   if ! $existing_state; then
     printf '\n'
     bold "Initialize state"
-    initialize_state "$server_host" "$tunnel_name" "$listen_port" "$external_interface" "$ipv4_subnet" "$dns" "$allowed_ips" "$keepalive" "$mtu" "$profile" "$server_name"
+    initialize_state "$server_host" "$tunnel_name" "$listen_port" "$external_interface" "$ipv4_subnet" "$dns" "$allowed_ips" "$keepalive" "$mtu" "$profile"
 
     printf '\n'
     bold "Configure Web UI TLS"

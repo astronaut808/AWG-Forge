@@ -218,6 +218,34 @@ func TestRestoreReplacesMountedDirectoryContents(t *testing.T) {
 	}
 }
 
+func TestRestoreSucceedsWhenCommittedCleanupFails(t *testing.T) {
+	root := t.TempDir()
+	statePath := filepath.Join(root, "state.json")
+	if err := os.WriteFile(statePath, []byte("old"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	staging := filepath.Join(root, ".restore-pending")
+	removeAll := func(path string) error {
+		if path != staging {
+			t.Fatalf("unexpected cleanup path %s", path)
+		}
+		return os.ErrPermission
+	}
+	files := []restoreFile{{Path: "state.json", Data: []byte("new")}}
+	if err := restoreFiles(root, files, os.Rename, removeAll); err != nil {
+		t.Fatalf("committed restore returned a cleanup error: %v", err)
+	}
+	for path, want := range map[string]string{
+		statePath: "new",
+		filepath.Join(staging, "old", "state.json"): "old",
+	} {
+		data, err := os.ReadFile(path)
+		if err != nil || string(data) != want {
+			t.Fatalf("read %s: got %q, want %q, error %v", path, data, want, err)
+		}
+	}
+}
+
 func TestRestoreRollsBackPartialStaging(t *testing.T) {
 	injected := errors.New("synthetic rename failure")
 	for _, rollbackFails := range []bool{false, true} {
@@ -241,7 +269,7 @@ func TestRestoreRollsBackPartialStaging(t *testing.T) {
 				return os.Rename(src, dst)
 			}
 			files := []restoreFile{{Path: "state.json", Data: []byte("synthetic new state")}}
-			if err := restoreFiles(root, files, rename); !errors.Is(err, injected) {
+			if err := restoreFiles(root, files, rename, os.RemoveAll); !errors.Is(err, injected) {
 				t.Fatalf("expected staged rename failure, got %v", err)
 			}
 			first := filepath.Join(root, "first")
@@ -249,7 +277,7 @@ func TestRestoreRollsBackPartialStaging(t *testing.T) {
 				first = filepath.Join(old, "first")
 				assertMode(t, staging, 0700)
 				assertMode(t, old, 0700)
-				if err := restoreFiles(root, files, os.Rename); err == nil {
+				if err := restoreFiles(root, files, os.Rename, os.RemoveAll); err == nil {
 					t.Fatal("retry overwrote incomplete recovery")
 				}
 			} else if _, err := os.Stat(staging); !errors.Is(err, os.ErrNotExist) {
@@ -289,13 +317,13 @@ func TestRestoreRollsBackPartialInstall(t *testing.T) {
 				{Path: "a.new", Data: []byte("replacement")},
 				{Path: "state.json", Data: []byte("replacement state")},
 			}
-			if err := restoreFiles(root, files, rename); !errors.Is(err, injected) {
+			if err := restoreFiles(root, files, rename, os.RemoveAll); !errors.Is(err, injected) {
 				t.Fatalf("expected install failure, got %v", err)
 			}
 			previous := root
 			if cleanupFails {
 				previous = filepath.Join(staging, "old")
-				if err := restoreFiles(root, files, os.Rename); err == nil {
+				if err := restoreFiles(root, files, os.Rename, os.RemoveAll); err == nil {
 					t.Fatal("retry overwrote retained previous state")
 				}
 			} else {

@@ -64,6 +64,11 @@ docker() {
   fi
   case "$1 ${2:-} ${3:-}" in
     "compose version "|"info  ") return 0 ;;
+    "compose config --help")
+      if [[ "$compose_no_interpolate" == true ]]; then
+        printf '      --no-interpolate   Don\047t interpolate environment variables\n'
+      fi
+      ;;
     "context inspect --format") printf 'unix:///var/run/docker.sock\n' ;;
     "inspect --format {{.Id}}") printf 'fixture-container\n' ;;
     "inspect --format {{index .Config.Labels"*)
@@ -109,17 +114,25 @@ docker() {
       fi
       printf '%s %s 0 fixture-timestamp\n' "$image" "$phase"
       ;;
-    "compose config --no-env-resolution"|"compose config --format")
+    "compose config --no-interpolate"|"compose config --format")
       local data_path image_ref=ghcr.io/astronaut808/awg-forge:latest
       [[ -z "$override" ]] || image_ref="$(awk '/image:/{print $2}' "$override")"
       data_path="$(pwd -P)/data"
       [[ "$target_layout" != wrong ]] || data_path="$(pwd -P)/other"
-      fixture_env "$target_config" "$target_db" | jq --arg dir "$(pwd -P)" --arg data "$data_path" --arg extra "$target_mount" --arg option "$3" --arg image "$image_ref" '
+      fixture_env "$target_config" "$target_db" | jq --arg dir "$(pwd -P)" --arg data "$data_path" --arg extra "$target_mount" --arg option "$3" --arg image "$image_ref" --arg shape "$compose_env_file_shape" '
+        ($dir + "/.env") as $env |
         {services: {"awg-forge": ({
           image: $image, container_name: "awg-forge", network_mode: "host",
           volumes: ([{type:"bind",source:$data,target:"/etc/awg-forge"}] +
             if $extra == "" then [] else [{type:"volume",target:$extra}] end)
-        } + (if $option == "--no-env-resolution" then {env_file:[{path:($dir + "/.env")}]} else {environment:.} end))}}'
+        } + (if $option == "--no-interpolate" then
+          {env_file: (if $shape == "string" then [$env]
+            elif $shape == "wrong" then [$env + ".override"]
+            else [{path:$env}] end)} +
+          (if $shape == "env-list" then {environment:["LOG_LEVEL=info"]}
+            elif $shape == "db-override-list" then {environment:["DATABASE_MODE=off"]}
+            else {} end)
+          else {environment:.} end))}}'
       ;;
     "compose pull awg-forge")
       printf 'pulled-image %s\n' "$(awk '/image:/{print $2}' "$override")" >>"$DOCKER_LOG"
@@ -231,6 +244,8 @@ EOF
   copy_failure=none
   compose_container=fixture-container
   compose_override=none
+  compose_no_interpolate=true
+  compose_env_file_shape=object
   fixture_database_status=sqlite
 }
 
@@ -261,6 +276,51 @@ if grep -Fq 'run --rm --no-deps --pull never -T awg-forge db migrate' "$DOCKER_L
 fi
 assert_log_contains 'up -d --no-deps --force-recreate --pull never --no-build awg-forge'
 printf 'OK   upgrade keeps SQLite disabled when declined\n'
+
+setup_case compose-string-env-file
+compose_env_file_shape=string
+upgrade_main
+printf 'OK   upgrade accepts Compose string env_file paths\n'
+
+setup_case compose-list-environment
+compose_env_file_shape=env-list
+upgrade_main
+printf 'OK   upgrade accepts Compose environment lists with safe keys\n'
+
+setup_case compose-list-database-override
+compose_env_file_shape=db-override-list
+if upgrade_main >upgrade.log 2>&1; then
+  printf 'FAIL upgrade accepted a DATABASE_MODE override in an environment list\n' >&2
+  exit 1
+fi
+grep -Fq 'cannot be restored safely' upgrade.log
+printf 'OK   upgrade rejects DATABASE_MODE overrides in Compose environment lists\n'
+
+setup_case compose-wrong-env-file
+compose_env_file_shape=wrong
+if upgrade_main >upgrade.log 2>&1; then
+  printf 'FAIL upgrade accepted an unexpected env_file path\n' >&2
+  exit 1
+fi
+grep -Fq 'cannot be restored safely' upgrade.log
+if grep -Eq '^compose (pull|stop) ' "$DOCKER_LOG"; then
+  printf 'FAIL env_file validation failure changed Docker state\n' >&2
+  exit 1
+fi
+printf 'OK   upgrade rejects an unexpected Compose env_file path\n'
+
+setup_case compose-no-interpolate
+compose_no_interpolate=false
+if upgrade_main >upgrade.log 2>&1; then
+  printf 'FAIL upgrade accepted unsupported Compose\n' >&2
+  exit 1
+fi
+grep -Fq 'requires Docker Compose with config --no-interpolate support' upgrade.log
+if grep -Eq '^compose (pull|stop) ' "$DOCKER_LOG"; then
+  printf 'FAIL unsupported Compose changed Docker state\n' >&2
+  exit 1
+fi
+printf 'OK   upgrade reports unsupported Compose before pulling or stopping\n'
 
 setup_case explicit-image
 UPGRADE_IMAGE=ghcr.io/astronaut808/awg-forge:rc-fixture
@@ -611,6 +671,7 @@ if upgrade_main; then
   exit 1
 fi
 backup_dir=$(<.awg-forge-upgrade-pending)
+[[ "$(<"$backup_dir/previous-image-id")" == "$OLD_IMAGE" ]]
 assert_contains 'original' "$backup_dir/data/sentinel"
 assert_contains 'replacement wrote data' "$DATA_DIR/sentinel"
 if upgrade_main; then

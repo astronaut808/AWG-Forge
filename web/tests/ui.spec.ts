@@ -502,6 +502,30 @@ test("overview tunnel selection wins over a background addition while tunnels ar
   await deleteTunnel(page, page.getByRole("article"), m);
 });
 
+test("background tunnel addition preserves the active settings draft", async ({ page, m, session }) => {
+  await openDashboard(page, m, session);
+  await page.locator(".main-nav").getByRole("button", { name: m.dashboard.tunnels, exact: true }).click();
+  const target = page.getByRole("article");
+  const targetName = await target.getByRole("heading", { level: 2 }).innerText();
+  await target.getByRole("button", { name: m.ui.connection, exact: true }).click();
+  const name = target.getByLabel(m.forms.nameInterface, { exact: true });
+  const draft = `${targetName}-draft`;
+  await name.fill(draft);
+  await openTunnelTools(page, m);
+  const { suggestion } = await (await page.request.get("/api/tunnels/suggestion?profile=awg_2_0")).json();
+  const backgroundName = `bg-draft-${randomBytes(4).toString("hex")}`;
+  const response = await page.request.post("/api/tunnels", {
+    headers: { Origin: new URL(page.url()).origin },
+    data: { profile: "awg_2_0", name: backgroundName, port: suggestion.port, automatic_port: true, subnet: suggestion.subnet, egress_mode: "wan" },
+  });
+  await expect(response).toBeOK();
+  await expect(page.locator(".tunnel-choice").filter({ hasText: backgroundName })).toBeVisible();
+  await expect(target.getByRole("heading", { level: 2, name: targetName, exact: true })).toBeVisible();
+  await expect(name).toHaveValue(draft);
+  await selectTunnel(page, m, backgroundName);
+  await deleteTunnel(page, page.getByRole("article"), m);
+});
+
 test("support shows effective tunnel hosts", async ({ page, m, session }) => {
   await page.context().addCookies(session.cookies);
   const state = await (await page.request.get("/api/state")).json() as AppState;

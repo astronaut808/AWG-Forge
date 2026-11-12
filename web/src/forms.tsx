@@ -52,7 +52,7 @@ export function DeleteTunnelConfirmation({ tunnel, close, runAction }: { tunnel:
   </PanelTitle>;
 }
 
-export function CreateTunnelForm({ state, profile, runAction }: { state: AppState; profile: Profile; runAction: RunAction }) {
+export function CreateTunnelForm({ state, profile, runAction, onCreated }: { state: AppState; profile: Profile; runAction: RunAction; onCreated: (tunnelID: string) => void }) {
   const { m } = useI18n();
   const profiles = state.profiles.length ? state.profiles : [profile];
   const [profileID, setProfileID] = useState(profile.id);
@@ -86,6 +86,7 @@ export function CreateTunnelForm({ state, profile, runAction }: { state: AppStat
       if (!port) throw new Error(m.forms.portSuggestionFailed);
       const result = await api.createTunnel({ profile: field(form, "profile"), name: field(form, "name"), port, automatic_port: portMode === "automatic", subnet: field(form, "subnet"), egress_mode: field(form, "egress_mode") });
       localStorage.setItem("awg-forge.selected-tunnel", result.tunnel.id);
+      onCreated(result.tunnel.id);
       navigate("tunnels");
     }, { errorMode: "inline" });
   }}>

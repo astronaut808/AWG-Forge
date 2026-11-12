@@ -32,6 +32,7 @@ export function App() {
   const [locale, setLocale] = useState<Locale>(initialLocale);
   const [clientTunnelFilter, setClientTunnelFilter] = useState("all");
   const [dashboardFilter, setDashboardFilterValue] = useState(localStorage.getItem(dashboardFilterKey) || "all");
+  const [requestedTunnelID, setRequestedTunnelID] = useState<string | null>(null);
   const liveUpdatesEnabled = state !== null;
   const m = messages[locale];
   const messagesRef = useRef(m);
@@ -183,7 +184,7 @@ export function App() {
   );
 
   const overlays = <>
-    {modal && <Dialog title={modalTitle(modal, m)} wide={modal.kind === "protocol" || modal.kind === "client-config"} onClose={() => setModal(null)}><ModalContent onClientCreated={(tunnelID) => {
+    {modal && <Dialog title={modalTitle(modal, m)} wide={modal.kind === "protocol" || modal.kind === "client-config"} onClose={() => setModal(null)}><ModalContent onTunnelCreated={setRequestedTunnelID} onClientCreated={(tunnelID) => {
       if (modal.kind === "create-client" && modal.origin === "global") {
         if (clientTunnelFilter !== "all") setClientTunnelFilter(tunnelID);
         navigate("clients");
@@ -208,6 +209,8 @@ export function App() {
         tunnels={allTunnels}
         filter={dashboardFilter}
         setFilter={setDashboardFilter}
+        requestedTunnelID={requestedTunnelID}
+        onRequestedTunnelOpened={() => setRequestedTunnelID(null)}
         onCreateTunnel={(profile) => setModal({ kind: "create-tunnel", profile: profile || active })}
         renderTunnel={renderTunnel}
       />
@@ -278,9 +281,10 @@ function Login({ onLogin, theme, setTheme, locale, setLocale }: { onLogin: () =>
   );
 }
 
-function ModalContent({ modal, state, notify, close, reload, runAction, onRegenerate, onClientCreated }: {
+function ModalContent({ modal, state, notify, close, reload, runAction, onRegenerate, onTunnelCreated, onClientCreated }: {
   modal: Modal;
   onRegenerate: (tunnel: Tunnel) => void;
+  onTunnelCreated: (tunnelID: string) => void;
   onClientCreated: (tunnelID: string) => void;
   state: AppState;
   notify: (message: string) => void;
@@ -288,7 +292,7 @@ function ModalContent({ modal, state, notify, close, reload, runAction, onRegene
   reload: () => Promise<void>;
   runAction: RunAction;
 }) {
-  if (modal.kind === "create-tunnel") return <CreateTunnelForm state={state} profile={modal.profile} runAction={runAction} />;
+  if (modal.kind === "create-tunnel") return <CreateTunnelForm state={state} profile={modal.profile} runAction={runAction} onCreated={onTunnelCreated} />;
   if (modal.kind === "settings") return <TunnelSettingsForm state={state} tunnel={modal.tunnel} runAction={runAction} />;
   if (modal.kind === "protocol") return <ProtocolForm tunnel={modal.tunnel} runAction={runAction} onRegenerate={() => onRegenerate(modal.tunnel)} />;
   if (modal.kind === "create-client") return <CreateClientForm tunnels={state.tunnels} initialTunnelID={modal.tunnelID} onCreated={onClientCreated} trafficLimitsEnabled={state.database.enabled} runAction={runAction} />;

@@ -135,7 +135,7 @@ func Restore(ctx context.Context, cfg config.Config, password, path string) erro
 	} else if ok {
 		validated.Files = append(validated.Files, preRestore)
 	}
-	return restoreFiles(cfg.ConfigDir, validated.Files, os.Rename)
+	return restoreFiles(cfg.ConfigDir, validated.Files, os.Rename, os.RemoveAll)
 }
 
 func Verify(ctx context.Context, cfg config.Config, password, path string) (VerifyReport, error) {

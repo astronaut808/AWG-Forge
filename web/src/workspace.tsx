@@ -239,8 +239,9 @@ export function FooterLinks({ version, extra, showProjectLabel = false }: { vers
   );
 }
 
-export function TunnelFirstDashboard({ profiles, tunnels, filter, setFilter, onCreateTunnel, renderTunnel }: {
+export function TunnelFirstDashboard({ profiles, tunnels, filter, setFilter, requestedTunnelID, onRequestedTunnelOpened, onCreateTunnel, renderTunnel }: {
   profiles: Profile[]; tunnels: Tunnel[]; filter: string; setFilter: (filter: string) => void;
+  requestedTunnelID: string | null; onRequestedTunnelOpened: () => void;
   onCreateTunnel: (profile?: Profile) => void; renderTunnel: (tunnel: Tunnel) => ReactNode;
 }) {
   const { m } = useI18n();
@@ -248,22 +249,13 @@ export function TunnelFirstDashboard({ profiles, tunnels, filter, setFilter, onC
   const [query, setQuery] = useState("");
   const compact = useMediaQuery("(max-width:760px)", undefined, { getInitialValueInEffect: false });
   const [showTools, setShowTools] = useState(false);
-  const previousIDs = useRef(new Set(tunnels.map((tunnel) => tunnel.id)));
-  const resumeSelection = useRef<string | null>(null);
   useEffect(() => {
-    resumeSelection.current = localStorage.getItem("awg-forge.selected-tunnel");
-  }, []);
-  useEffect(() => {
-    const added = tunnels.find((tunnel) => !previousIDs.current.has(tunnel.id));
-    previousIDs.current = new Set(tunnels.map((tunnel) => tunnel.id));
-    const requested = resumeSelection.current;
-    resumeSelection.current = null;
-    if (requested && tunnels.some((tunnel) => tunnel.id === requested)) {
-      if (requested !== selectedID) { setSelectedID(requested); setQuery(""); }
-      return;
-    }
-    if (added) { setSelectedID(added.id); setFilter("all"); setQuery(""); }
-  }, [tunnels, setFilter, selectedID]);
+    if (!requestedTunnelID || !tunnels.some((tunnel) => tunnel.id === requestedTunnelID)) return;
+    setSelectedID(requestedTunnelID);
+    setFilter("all");
+    setQuery("");
+    onRequestedTunnelOpened();
+  }, [tunnels, setFilter, requestedTunnelID, onRequestedTunnelOpened]);
   const availableFilters = profiles.filter((profile) => tunnels.some((tunnel) => tunnel.profile === profile.id));
   const effectiveFilter = availableFilters.some((profile) => profile.id === filter) ? filter : "all";
   const visible = tunnels.filter((tunnel) => (effectiveFilter === "all" || tunnel.profile === effectiveFilter) && `${tunnel.name} ${profileTitle(tunnel.profile)} ${tunnel.listen_port}`.toLowerCase().includes(query.toLowerCase()));

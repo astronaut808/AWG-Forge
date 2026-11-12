@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path"
 	"path/filepath"
@@ -63,7 +64,7 @@ func preRestoreBackupFile(ctx context.Context, cfg config.Config, password strin
 	return restoreFile{Path: path, Data: archive.Data}, true, nil
 }
 
-func restoreFiles(root string, files []restoreFile, rename func(string, string) error) (err error) {
+func restoreFiles(root string, files []restoreFile, rename func(string, string) error, removeAll func(string) error) (err error) {
 	if err := os.MkdirAll(root, 0700); err != nil {
 		return err
 	}
@@ -87,10 +88,17 @@ func restoreFiles(root string, files []restoreFile, rename func(string, string) 
 	if err := os.Mkdir(staging, 0700); err != nil {
 		return fmt.Errorf("could not create restore staging directory: %w", err)
 	}
-	preserve := false
+	preserve, committed := false, false
 	defer func() {
-		if !preserve {
-			err = errors.Join(err, os.RemoveAll(staging))
+		if preserve {
+			return
+		}
+		if cleanupErr := removeAll(staging); cleanupErr != nil {
+			if committed {
+				slog.Warn("restore completed but could not remove staging directory", "directory", staging, "error", cleanupErr)
+				return
+			}
+			err = errors.Join(err, cleanupErr)
 		}
 	}()
 
@@ -146,6 +154,7 @@ func restoreFiles(root string, files []restoreFile, rename func(string, string) 
 		}
 		return moveErr
 	}
+	committed = true
 	return nil
 }
 
