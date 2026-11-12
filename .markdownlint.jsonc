@@ -1,0 +1,37 @@
+{
+  // Opt in deliberately: tool updates must not silently add style requirements.
+  "default": false,
+
+  // Heading structure; changelog sections may repeat under different releases.
+  "MD001": true,
+  "MD018": true,
+  "MD020": true,
+  "MD022": true,
+  "MD023": true,
+  "MD024": { "siblings_only": true },
+  "MD025": true,
+
+  // Whitespace hygiene; preserve meaningful tabs in Go/Makefile examples.
+  "MD009": true,
+  "MD010": { "code_blocks": false },
+  "MD047": true,
+
+  // Block boundaries, copyable command examples, and code highlighting.
+  "MD014": true,
+  "MD028": true,
+  "MD031": true,
+  "MD032": true,
+  "MD037": true,
+  "MD040": true,
+
+  // Links, local fragments, reference labels, and image accessibility.
+  "MD011": true,
+  "MD042": true,
+  "MD045": true,
+  "MD051": true,
+  "MD052": { "shortcut_syntax": false },
+
+  // Table structure, without enforcing visual alignment or pipe style.
+  "MD056": true,
+  "MD058": true
+}

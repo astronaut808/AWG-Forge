@@ -6,11 +6,22 @@ awg-forge manages VPN configuration and secret material, so reliability and cons
 
 ## Development
 
+Create feature and bug-fix branches from the latest `develop`. When opening a
+pull request, select `develop` as the base (target) branch. GitHub may suggest
+`master` because it is the repository's default branch; change the base before
+submitting. `master` is reserved for releases.
+
 Run the full local check before opening a pull request:
 
 ```bash
 make ci
 ```
+
+For documentation changes, `make lint-markdown` runs the Markdown checks from
+`.markdownlint.jsonc`. It is also included in `make quality` and `make ci`.
+The rules focus on structure, references, and accessibility; line wrapping and
+other presentation preferences are not enforced. See the
+[development guide](docs/en/development.md#markdown-checks) for the rule policy.
 
 Run the Web UI locally without applying runtime tunnel changes:
 
@@ -51,7 +62,13 @@ Before a release:
 
 ```bash
 make ci
+make quality
+make security
 docker build --platform linux/amd64 -t awg-forge:local .
+make docker-smoke
 ```
 
 If runtime behavior changed, verify `doctor`, client creation, config download, tunnel restart, backup/restore, and support bundle redaction.
+
+For concurrency, runtime apply, locking, rollback, or backup/restore changes, also
+run `go test -race ./...`. Report unavailable scanner or runtime checks explicitly.

@@ -126,9 +126,39 @@ test("authentication, maintenance, saved preferences and logout", async ({ page,
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("lang", m === messages.en ? "ru" : "en");
   await expect(page.locator("html")).toHaveAttribute("data-theme", colorScheme === "dark" ? "light" : "dark");
+  const loggedOut = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/logout");
   await page.getByRole("button", { name: switched.common.logOut, exact: true }).click();
   await expect(page.getByLabel(switched.login.password, { exact: true })).toBeVisible();
+  expect((await loggedOut).status()).toBe(200);
+  await expect(page.getByRole("button", { name: switched.login.logIn, exact: true })).toBeEnabled();
   expect((await page.request.get("/api/state")).status()).toBe(401);
+});
+
+test("server name can be set, changed and removed from the header", async ({ page, m, session }) => {
+  await openDashboard(page, m, session);
+  const serverNameButton = page.getByRole("button", { name: m.serverName.add, exact: true });
+  await expect(serverNameButton).toBeVisible();
+  await serverNameButton.click();
+  const dialog = page.getByRole("dialog");
+  const input = dialog.getByLabel(m.serverName.name, { exact: true });
+  await input.fill("Moscow02");
+  await dialog.getByRole("button", { name: m.common.save, exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+
+  const configuredName = page.getByRole("button", { name: m.serverName.edit, exact: true });
+  await expect(configuredName).toHaveText("Moscow02");
+  await page.reload();
+  await expect(configuredName).toHaveText("Moscow02");
+  await configuredName.click();
+  await expect(input).toHaveValue("Moscow02");
+  await input.fill("Office7");
+  await dialog.getByRole("button", { name: m.common.save, exact: true }).click();
+  await expect(configuredName).toHaveText("Office7");
+
+  await configuredName.click();
+  await input.fill("");
+  await dialog.getByRole("button", { name: m.common.save, exact: true }).click();
+  await expect(page.getByRole("button", { name: m.serverName.add, exact: true })).toBeVisible();
 });
 
 test("AWG3 forms preserve input on error and support client and tunnel edits", async ({ page, m, session }) => {

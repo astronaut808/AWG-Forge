@@ -1,25 +1,39 @@
 # Setup
 
+## Before You Start
+
+These manual steps are for a fresh Linux x86_64 installation with Docker Engine,
+the Compose plugin, Git, and `/dev/net/tun` available. Run Docker commands as a user
+with Docker access. For dependency preparation and SELinux volume labels, see
+[Quick install](quick-install.md).
+
+Prepare the working directory and private files:
+
+```bash
+git clone https://github.com/astronaut808/awg-forge.git
+cd awg-forge
+umask 077
+cp .env.example .env
+mkdir -m 700 data
+```
+
+Before continuing, edit `.env`: replace `PASSWORD` and `SESSION_SECRET` with
+independent random values, and set `EXTERNAL_INTERFACE` to the host's WAN
+interface. Keep the file private. The example enables SQLite; the migration step
+below initializes it before startup. See [Configuration](configuration.md) for
+TLS, WARP, and other runtime settings.
+
+Choose one networking mode below: host networking or bridge networking.
+
 ## Host Networking
 
 Host networking is the recommended production mode for awg-forge. In this mode, tunnels created in the UI can use any free UDP ports without changing Docker port mappings.
 
-Interactive quick start:
+After preparing `.env`, initialize the first tunnel and start the service:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o install.sh
-chmod +x install.sh
-sudo ./install.sh
-```
-
-More details: [Quick install](quick-install.md).
-
-Manual setup:
-
-```bash
-cp .env.example .env
-mkdir -p data
 docker compose run --rm --no-deps awg-forge init \
+  --server-name MyServer \
   --server-host vpn.example.com \
   --external-interface eth0 \
   --profile awg_2_0 \
@@ -30,7 +44,7 @@ docker compose run --rm --no-deps awg-forge db migrate
 docker compose up -d
 ```
 
-Replace the example host, interface, port, and subnet before running `init`. Also set `EXTERNAL_INTERFACE` in `.env` to the host's WAN interface, matching `--external-interface`; the running service uses `.env` for this setting. The command creates the first persistent tunnel in `data/state.json`; changing legacy tunnel variables in `.env` afterwards does not update it.
+Replace the example name, host, interface, port, and subnet before running `init`; omit `--server-name` if you do not want a name. Also set `EXTERNAL_INTERFACE` in `.env` to the host's WAN interface, matching `--external-interface`; the running service uses `.env` for this setting. The command creates the first persistent tunnel in `data/state.json`; changing legacy tunnel variables in `.env` afterwards does not update it.
 
 By default the Web UI listens on `127.0.0.1:51821`. Access it through an SSH tunnel:
 
@@ -51,9 +65,8 @@ When using `network_mode: host`, do not add `ports:` to `docker-compose.yml`.
 Bridge networking can work, but UDP ports must be published before the container starts. Since awg-forge lets you create tunnels in the UI, publish a fixed UDP range and create tunnels only inside that range.
 
 ```bash
-cp .env.example .env
-mkdir -p data
 docker compose -f docker-compose.bridge.yml run --rm --no-deps awg-forge init \
+  --server-name MyServer \
   --server-host vpn.example.com \
   --external-interface eth0 \
   --profile awg_2_0 \

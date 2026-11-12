@@ -133,7 +133,7 @@ PASSWORD=...
 
 ## После установки
 
-Открой UI, создай клиента, открой `Config` и используй один из предложенных способов импорта. AWG 3.x поддерживает `.conf`, QR для AmneziaWG, QR для AmneziaVPN и `vpn://`; используй AmneziaVPN 5.0.1.5+ и оставляй `.conf` как fallback. Затем проверь IPv4 egress:
+Открой UI, создай клиента, открой `Config` и используй один из предложенных способов импорта. AWG 3.x поддерживает `.conf`, QR для AmneziaWG, QR для AmneziaVPN и `vpn://`; используй AmneziaVPN 5.0.1.5+ и оставляй `.conf` как fallback. Подключи VPN на клиентском устройстве и проверь IPv4 egress с этого устройства:
 
 ```bash
 curl -4 https://ifconfig.co
@@ -178,3 +178,32 @@ curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/unins
 ```bash
 curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/uninstall.sh | sudo bash -s -- --remove-orphans
 ```
+
+## Явное подключение через installer к controller
+
+Обычная установка остаётся standalone. В Maintenance → Controller после свежего MFA подготовьте точный control endpoint, скачайте и сохраните проверенный зашифрованный backup, затем включите listener. Для внешнего endpoint нужен отдельный флажок согласия. В Add node выберите новую или существующую установку и имя. Перед approve сравните код и имя с терминалом узла; Connected появляется только после authenticated presence этого enrollment. Закрытие flow, logout, смена аккаунта, reject и expiry очищают invitation и завершают polling.
+
+После подключения выберите **Этот сервер** или узел для
+[просмотра состояния](usage.md#просмотр-состояния-узлов). Доступность узла и
+актуальность снимка показаны отдельно от состояния VPN; удалённых действий
+и экспорта клиентских конфигураций в представлении узла нет.
+
+Для этой develop-сборки совместимый installer ещё не опубликован. UI копирует **только публичные аргументы** и сообщает об отсутствии release. Несуществующих release URLs и fallback на `latest` нет. Для локальной проверки используйте скачанный/проверенный script с подтверждённым SHA-256 и явно собранный локальный image ID с совпадающими compiled version/commit. В шаблоне ниже только публичные placeholders; замените их проверенной artifact metadata и значениями из UI:
+
+```bash
+sudo bash ./install.sh join --workdir /opt/awg-node --mode fresh \
+  --image sha256:IMAGE_ID_64_HEX --script-sha256 SCRIPT_SHA256_64_HEX \
+  --artifact-version local-SOURCE_HASH_12_HEX --artifact-commit COMMIT_40_HEX \
+  --controller-url 'https://controller.example:9443' \
+  --ca-pin 'sha256:CA_SPKI_PIN_64_HEX' --invitation-id INVITATION_UUID --name 'node'
+```
+
+Script и локальный image должны поддерживать `installer-onboarding-v1`; несовпадение metadata, старый или отсутствующий локальный image отклоняются до остановки сервиса. Неявного pull нет. Опубликованный immutable GHCR digest допустим только с совпадающей compiled metadata. Получите invitation secret отдельно в authenticated UI и вставьте в скрытый prompt терминала. Не включайте его в команду, exported variables, heredoc или shell substitution. Для автоматизации разрешён явно переданный private pipe/FD на stdin с `--secret-fd 0`; stdin не используется неявно, в том числе при `curl | bash`.
+
+Fresh join требует несуществующий workdir непосредственно внутри существующего каталога. Он создаёт защищённые local login credentials в `.env`, loopback Web UI для break-glass, DB-off и не создаёт туннель либо WARP/ACME setup. Используйте SSH tunnel; пароль смотрите в защищённом локальном `.env`, не копируя его в логи.
+
+Для существующего root-run Compose service замените `--mode fresh` на `--mode existing --maintenance`; при необходимости укажите `--container NAME`. Обязательны точные Compose working-directory/service labels и проверенный image. Старую установку сначала обновите отдельно. Installer останавливает и запускает только этот container ID, использует его mounts/environment, сохраняя Compose, networks, logging, UI/TLS/session policy, history и локальные туннели. Неподдерживаемые container users, явные user namespaces, SELinux process/mount labels и multiline environment отклоняются до stop. Installer join/rebind требует Docker без SELinux labels и отклоняет SELinux-enabled daemon до создания fresh файлов; для установок с приватным volume `:Z` нужен отдельный offline enrollment/recovery workflow с учётом deployment. Не отключайте SELinux и не меняйте labels существующих данных ради обхода этой проверки. Действие прерывает VPN service; исходно остановленный сервис остаётся остановленным без явного `--start-service`.
+
+Для managed node используйте отдельный `rebind` с `--maintenance`, новым invitation и точными локальными `--confirm-node-id`/`--confirm-controller-id`. Он вызывает offline recovery напрямую, без detach-first. Отзыв скопированных прежних credentials на старом controller выполняется отдельно.
+
+Неудачный/прерванный fresh join сохраняет защищённый workdir для offline inspection: ошибка может возникнуть после identity commit. Не повторяйте consumed invitation и не удаляйте pending journal вслепую. До commit существующий сервис возобновляется с прежней identity, если завершение helper доказано. После commit ошибка startup/connectivity остаётся pending; сохраните новую identity и диагностируйте/повторите запуск сервиса. Подключение подтверждается только authenticated presence на controller. После setup недоступность controller не мешает локальному forwarding.

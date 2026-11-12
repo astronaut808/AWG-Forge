@@ -27,6 +27,16 @@ ssh -L 51821:127.0.0.1:51821 user@server
 
 UI sessions истекают через 30 минут.
 
+В режиме контроллера для входа нужны пароль администратора и текущий код TOTP
+или одноразовый код восстановления. Opaque-сессии контроллера хранятся на
+сервере в SQLite. Первая сессия выдаётся при активации; код подтверждения TOTP
+повторно использовать нельзя. Повторная аутентификация меняет cookie сессии и
+открывает пятиминутный интервал recent-auth для замены кодов восстановления.
+Выход отзывает серверную сессию, а восстановление админа под root отзывает все
+сессии. При активации прежние standalone cookie и `PASSWORD` перестают работать
+без перезапуска. Для запуска контроллера нужны существующие SQLite и
+`controller-auth.keys`; при их отсутствии вход не открывается.
+
 `SESSION_SECRET` можно не задавать вручную. Если он отсутствует, awg-forge создаст и сохранит его в `state.json`.
 
 По умолчанию `SESSION_COOKIE_SECURE=auto`: cookie без `Secure` разрешается только для loopback HTTP (`127.0.0.1`, `localhost`, `::1`), а для внешних host используется `Secure`. Для обычного HTTP на внешнем host можно явно указать `SESSION_COOKIE_SECURE=false`, но doctor покажет предупреждение. Такой режим стоит использовать только в доверенной сети или за отдельной защитой.
@@ -46,6 +56,7 @@ Opaque origins вроде `null` и browser-extension origins отклоняют
 - private keys;
 - preshared keys;
 - passwords;
+- секреты TOTP и коды восстановления;
 - session secrets;
 - backup passwords;
 - полные client configs;
@@ -62,3 +73,116 @@ Doctor проверяет права config directory и предупрежда�
 Если mutating operation меняет state/configs, но runtime apply падает, awg-forge откатывает state и rendered configs.
 
 Это защищает от ситуации, когда UI показывает созданного клиента или измененный туннель, хотя runtime-состояние не было успешно применено.
+
+Control TLS контроллера автоматически продлевает серверный сертификат под прежним CA после двух третей срока действия. Ранее включённый контроллер может продлить целый истёкший серверный сертификат до открытия явно включённого listener только при действующем CA, целой identity, доступных registry/auth и завершённом recovery. Отсутствующие или повреждённые данные и истёкший CA требуют локального восстановления. Отключённый или восстановленный из backup контроллер остаётся отключённым; отзывы node-сертификатов и конфигурация туннелей сохраняются. Включение вне loopback отдельно требует явного согласия на точный endpoint и нового проверенного backup.
+
+## Локальное восстановление node
+
+Если controller недоступен или credentials существующего managed node истекли
+либо отозваны, остановите его процесс `serve` и запускайте CLI от Linux root с тем
+же `CONFIG_DIR`. Обе команды требуют текущие `managed_node.node_id` и
+`managed_node.controller_id` из локального `state.json`. Просматривайте только эти
+поля: полный state содержит секреты. Работающий сервер, неверное подтверждение,
+небезопасные права каталогов/файлов, pending restore и пересекающиеся переходы
+identity/desired state блокируют восстановление.
+
+```bash
+awg-forge node detach --confirm-node-id <current-node-uuid> --confirm-controller-id <current-controller-uuid>
+awg-forge node rebind --confirm-node-id <current-node-uuid> --confirm-controller-id <current-controller-uuid> --input-file /protected/invitation.json --name node --timeout 10m
+```
+
+`detach` удаляет привязку и replay metadata и возвращает standalone mode.
+После detach используйте обычный `node enroll` для нового enrollment. `rebind`
+выполняет новое enrollment напрямую, сохраняя прежнюю локальную привязку до
+успешных pinned TLS handshake, сверки comparison code и approval администратора
+controller. Invitation должен быть обычным файлом владельца root с правами
+`0600`, без symlink/hardlink; его секрет нельзя передавать в аргументах команды.
+Invitation может использовать явно включённый внешний control endpoint; pin CA и проверка TLS сохраняются.
+
+Rebind явно сбрасывает локальную node identity: устанавливает новый node ID,
+state epoch и credentials, создаёт новое пространство boot/desired generation
+и receipts. Туннели, клиенты, локальная аутентификация, operational history и
+`ConfigRevision` сохраняются. Прежняя запись controller registry остаётся
+отозванной либо исторической: rebind не возвращает ей authority. Локальное
+удаление не отзывает скопированный сертификат на прежнем controller; при
+необходимости отдельно отзовите там прежний node. Cleanup удаляет только прежнее
+активное поколение credentials и записанный корректный pending renewal;
+посторонние исторические каталоги не удаляются.
+
+До state commit отказ, timeout или отмена сохраняют прежнюю привязку. Приватный
+journal `.node-local-recovery.json` разрешает прерванные staging/cleanup через
+проверку точного старого/нового полного state и никогда не откатывает state.
+После успеха перезапустите `serve`. После сообщения о неопределённом commit
+перезапуск позволяет однозначно сверить journal. Повреждённые evidence,
+изменённый state и небезопасные пути требуют offline inspection и остаются
+заблокированными. Не удаляйте evidence для обхода проверки. Backup/restore
+отклоняют pending recovery; старый node archive не может заменить identity,
+созданную новым rebind.
+
+## Trust и secrets installer enrollment
+
+Secret-free `GET /control/v1/bootstrap` выдаёт только публичный CA certificate. Узел считает его недоверенным, проверяет переданный оператором CA SPKI pin и повторяет получение с обычной TLS 1.3 chain/SAN/time validation до передачи invitation secret. Proxy, redirects, URL confusion и слишком большие responses отклоняются. Enrollment держит тот же exclusive state-directory lock, что и serve, до approval/commit. Защищённый `--input-file` сохранён; альтернативный public metadata interface читает ограниченный secret через private FD или скрытый TTY.
+
+Browser enrollment status требует recent controller authentication, точные approved controller/node/binding данного invitation и живую registry session, authenticated активным certificate текущей CA generation. Certificate issuance и legacy presence без certificate provenance не означают Connected. DTO имеет allowlist, responses — no-store. Invitation secrets и backup receipts хранятся только в памяти flow; browser traces/screenshots/videos с secrets должны быть выключены. После прерывания installer прежние credentials не восстанавливаются поверх потенциально committed identity; перед ручным recovery проверьте journals. См. [installer lifecycle](quick-install.md).
+
+## Безопасность наблюдения за узлами
+
+Узлы отправляют ограниченные снимки с allowlist через существующий исходящий
+TLS/mTLS control-канал. Приём требует актуальной registry authority и совпадения
+сертификата, session, binding/state/boot epochs, generation и snapshot sequence;
+replay и подмена конфигурации при прежней generation отклоняются. Закрытые ключи,
+PSK, session bearer, полные конфиги, QR/import payloads, WARP credentials и raw
+diagnostics исключены. Чтение на контроллере требует входа и возвращает `no-store`;
+представления узлов доступны только для чтения и хранят данные лишь в памяти
+браузера. Смена узла/account/epoch или выход очищают прежний контекст и отклоняют
+его незавершённые ответы. Cold restore контроллера удаляет снимки и отзывает
+архивную authority до повторного включения control. Семантика актуальности и
+лимиты описаны в [просмотре состояния узлов](usage.md#просмотр-состояния-узлов).
+
+## Authority операции refresh
+
+Refresh использует durable очередь контроллера и существующий исходящий mTLS-канал.
+Каждый dequeue/result повторно проверяет текущие certificate, binding, session,
+boot и state epochs. UUID lease отсекает прежнюю доставку; success дополнительно
+требует снимка, атомарно принятого под этим lease с ожидаемой generation. Обычный
+периодический снимок и голословный success такого доказательства не дают. Ожидающий
+poll не удерживает mutation lock или DB transaction: максимум один на узел и восемь
+глобально. Cold restore удаляет операции, отключает control и отзывает старую
+authority. DB-off узел хранит один pending result в памяти: crash может повторить
+безопасное чтение, без обещания exactly-once. Произвольные команды и экспорт
+секретов не доставляются.
+
+## Authority удалённых изменений клиента
+
+Создание и удаление клиента используют ту же durable очередь, исходящий mTLS-канал,
+проверки актуальной authority, lease fencing и двухминутное истечение операции, что
+и другие действия узла. Приём требует точных state epoch, binding epoch, desired
+generation, UUID операции и UUID идемпотентности. Создание также содержит
+назначенный браузером ID из 16 строчных шестнадцатеричных символов и ASCII-имя;
+удаление содержит точные ID туннеля/клиента и `confirmed: true`.
+
+Узел снова проверяет все fences перед изменением `state.json`, применяет и
+откатывает через существующий mutation path, а в результате возвращает только
+точную committed generation и не содержащий секретов identity result.
+`client_unavailable`, `tunnel_unavailable`, `resource_conflict` и
+`address_unavailable` никогда не означают успех. Контроллер и браузер требуют
+свежий projected generation с присутствием точного созданного ID или отсутствием
+удалённого ID до показа завершения. Запросы и operation IDs не сохраняются в
+browser storage; представления узлов не выдают export конфигураций, QR payloads,
+ключи, PSK или import links.
+
+## Одноразовый удалённый экспорт конфигурации клиента
+
+Удалённый экспорт `.conf` доступен только через отдельную capability
+`client.config.export.v1`. И подготовка, и получение требуют same-origin текущую
+сессию контроллера с recent MFA и точную текущую authority узла, state epoch,
+binding epoch, desired generation, revision туннеля и связь клиента. При подготовке
+контроллер возвращает только непрозрачные metadata экспорта; ID — locator, а не
+bearer credential.
+
+Одноразовый секрет хранится не более 60 секунд и заявляется до ожидания ответа
+загрузки. Ответ — аутентифицированное вложение `text/plain` с
+`Cache-Control: no-store`; дубликаты, отменённые, истёкшие, несовпадающие и
+неопределённые загрузки отклоняются. Потерянный ответ требует нового экспорта.
+Память браузера держит ID только пока смонтирован компонент; тело `.conf` —
+временный Blob, который не логируется и не попадает в Web Storage.

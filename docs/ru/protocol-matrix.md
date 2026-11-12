@@ -13,7 +13,7 @@ awg-forge — запускатор и менеджер существующих 
 
 ## Границы экспериментального AWG 3.x
 
-Единый экспериментальный профиль AWG 3.x построен по текущему self-hosted генератору AmneziaVPN и закрепленным release-ревизиям `amneziawg-go` 3.1.20260828 / `amneziawg-tools` 3.1.20260812. Он использует:
+Единый экспериментальный профиль AWG 3.x построен по текущему self-hosted генератору AmneziaVPN и закрепленным ревизиям исходников `amneziawg-go` 3.1.20260828 / `amneziawg-tools` 3.1.20260812; точные commit SHA записаны в `build/amneziawg.refs`. Он использует:
 
 - `Jc`, `Jmin`, `Jmax`, `S1-S4`, `H1-H4`, `I1-I5`;
 - `HeaderProtectionKey`, который генерируется один раз для туннеля и не попадает в публичное состояние и диагностику; аутентифицированный экспорт клиента включает ключ, потому что он необходим клиенту;
@@ -32,7 +32,7 @@ AWG3 принудительно запускается через закрепл
 
 ## AWG 2.0
 
-По официальным материалам AmneziaWG 2.0 требует AmneziaVPN `4.8.12.9` или новее. Переход с 1.0/Legacy на 2.0 не является in-place upgrade: нужны новые guest configs/keys.
+Используй сборку AmneziaVPN с поддержкой AmneziaWG 2.0. Переход с 1.0/Legacy на 2.0 не является in-place upgrade: нужны новые guest configs/keys.
 
 Ключевые отличия 2.0 от 1.5:
 
@@ -132,6 +132,6 @@ AWG 2.0 по умолчанию использует рандомизирова�
 - [Сохранение явно импортированного MTU в AmneziaVPN](https://github.com/amnezia-vpn/amnezia-client/pull/3113)
 - [Отчет о несовпадении server/client MTU в AWG 3.1](https://github.com/amnezia-vpn/amnezia-client/issues/3089)
 - [Логика выбора MTU в закрепленном `awg-quick`](https://github.com/amnezia-vpn/amneziawg-tools/blob/ee0f0a9aa34ff0a0da4b3433b9512781cfe02843/src/wg-quick/linux.bash)
-- [Текущие значения MTU в клиентах Amnezia](https://github.com/amnezia-vpn/amnezia-client/blob/dev/client/core/utils/constants/protocolConstants.h)
+- [MTU defaults клиента Amnezia в development-ветке](https://github.com/amnezia-vpn/amnezia-client/blob/dev/client/core/utils/constants/protocolConstants.h)
 - [RFC 8200, минимальный MTU канала IPv6](https://www.rfc-editor.org/rfc/rfc8200.html#section-5)
 - [RFC 9000, QUIC: A UDP-Based Multiplexed and Secure Transport](https://www.rfc-editor.org/rfc/rfc9000)

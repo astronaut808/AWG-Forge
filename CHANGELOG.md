@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+### Added
+
+- Added the bounded `client.enabled.set` controller operation for a selected
+  enrolled node: exact-intent idempotency, atomic node state/receipt/generation
+  commit, durable reconciliation and EN/RU browser status. It changes only an
+  existing client's enabled state; client create/delete and secret export remain
+  future work, and local checkpoint acceptance does not close the multi-host
+  release gate.
+
+- Added bounded durable `snapshot.refresh` delivery with controller SQLite leases, accepted-snapshot correlation, DB-off node execution and English/Russian selected-node refresh status. Cold restore clears operation authority; remote mutations and secret exports remain future work.
+
+- Added explicit version-checked installer fresh/existing controller join and offline rebind, with private FD/hidden TTY secret input and pinned public-CA bootstrap.
+- Added minimal controller endpoint/backup/consent and Add node UI with manual comparison approval and enrollment-bound authenticated presence confirmation; unpublished builds expose public arguments without inventing release artifacts.
+- Added authenticated controller node inventory and English/Russian read-only node views with a This server/node selector, tunnel/client metadata, traffic counters, handshakes, runtime Doctor summaries and explicit connection/snapshot freshness states.
+- Added bounded outbound TLS/mTLS state snapshots for fresh DB-off and existing nodes, preserving node-local configuration authority and operational history. Remote mutations, command delivery and secret configuration exports remain future work.
+
+- Added managed-node desired-state generation and epoch fencing, bounded idempotent success receipts, and startup recovery for interrupted runtime changes.
+- Added explicit controller activation with mandatory TOTP, opaque sessions, recovery codes and Linux-root offline administrator recovery.
+- Added pinned enrollment with administrator approval, mTLS presence, process-start fencing, automatic node and controller server-certificate renewal, and explicit opt-in control listeners on specific non-loopback addresses. Remote operations remain future work.
+- Added Linux-root offline `node detach` and fresh `node rebind`, preserving local tunnels and configuration while resetting managed identity through approved enrollment.
+
+### Changed
+
+- Centralized protocol profile registration and parameter catalogs; the browser API and Web UI now consume server-provided profile names and experimental status instead of maintaining independent profile tables.
+- Updated the Go toolchain to `1.26.9` and the SQLite driver to `1.60.1` with its required `libc` `1.77.1`; refreshed compatible Go and frontend dependencies.
+- Pinned Node.js `24.21.0` for CI, updated build and security tooling, and added weekly Dependabot updates for npm dependencies and Docker images; all Dependabot version updates now target `develop`.
+
+### Fixed
+
+- Paginate controller node inventory independently of snapshot cache quotas, preserving access to active nodes and revoked registration history beyond 1024 identities.
+- Bound browser logout to 10 seconds and cancel the request before permitting another login, preventing stalled responses from blocking re-entry or clearing a later session cookie.
+- Retry temporary control-registry failures with bounded backoff instead of treating them as terminal presence fencing failures, while continuing to reject expired, revoked and stale authority.
+
+### Security
+
+- Accept only allowlisted, size-limited snapshots under current certificate/session/identity/generation/sequence fences; reject replay and same-generation configuration substitution, clear projections on cold restore, and discard stale browser responses after node/account/epoch changes or logout.
+- Removed vulnerable frontend tooling dependencies and added complete online npm lockfile audits to both security gates, rejecting MODERATE or higher findings even when development dependencies are omitted or offline mode is enabled by the environment; an unavailable audit registry fails the check.
+- Updated the Docker runtime's `perl-base` package to include the available security fix and made image builds pull current base images before scanning operating-system packages.
+- Fence backup restores across managed-node identities: only an exact in-place identity match is preserved automatically; backup transfer to a new or different installation and managed/standalone transitions require explicit local detachment while retaining tunnel configuration without controller authority. Restore now requires the server to be stopped and holds an exclusive state-directory lock for the complete operation.
+- Keep enrolled nodes locally manageable while making the node the sole commit authority: Web UI, CLI, autonomous policy, and future controller transactions are serialized across processes; successful `state.json` tunnel, client, protocol, WARP, automatic repair, and traffic-limit enforcement changes advance `desired_generation`, so the controller can refresh from the node and stale remote operations fail instead of overwriting newer local state.
+- Controller backups include protected identity and a verified SQLite snapshot; cold restore disables control and atomically invalidates archived browser and node authority without erasing registry history. Administrator recovery never restores node access.
+- Identity rotation and local recovery use private atomic journals, exact generation cleanup and fail-closed startup fencing; offline node retirement does not revoke credentials copied to another machine.
+
 ## v0.19.1 - 2026-10-09
 
 ### Added

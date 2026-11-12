@@ -18,6 +18,7 @@ import (
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/redact"
 	"github.com/astronaut808/awg-forge/internal/sqldb"
+	"github.com/astronaut808/awg-forge/internal/storage"
 )
 
 const (
@@ -83,7 +84,7 @@ func New(cfg config.Config) Logger {
 		maxFiles = DefaultMaxFiles
 	}
 	loggers := []Logger{&fileLogger{path: cfg.AuditLogPath, maxSize: maxSize, maxFiles: maxFiles}}
-	if cfg.DatabaseMode == sqldb.ModeSQLite {
+	if cfg.DatabaseMode == sqldb.ModeSQLite && storage.New(cfg.ConfigDir).CheckRestorePending() == nil {
 		loggers = append(loggers, dbLogger{cfg: cfg})
 	}
 	return multiLogger(loggers)

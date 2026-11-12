@@ -1,6 +1,8 @@
 import { createContext, render } from "preact";
 import { useCallback, useContext, useEffect, useRef, useState } from "preact/hooks";
 import * as api from "./api";
+import { FleetWorkspace } from "./fleet";
+import { ControllerOnboarding } from "./controller-onboarding";
 import { initialLocale, localeStorageKey, messages } from "./i18n";
 import type { Locale, Messages } from "./i18n";
 import type {
@@ -26,13 +28,12 @@ import {
   downloadResponse,
   expirationValue,
   formatBytes,
-  isExperimentalProfile,
-  profileTitle,
   relativeTime,
 } from "./utils";
 import "./styles.css";
 
 type Modal =
+  | { kind: "server-name" }
   | { kind: "create-tunnel"; profile: Profile }
   | { kind: "settings"; tunnel: Tunnel }
   | { kind: "protocol"; tunnel: Tunnel }
@@ -42,7 +43,7 @@ type Modal =
   | { kind: "delete-tunnel"; tunnel: Tunnel }
   | { kind: "maintenance" };
 
-type MaintenanceTab = "overview" | "doctor" | "warp" | "backup" | "support" | "logs" | "traffic";
+type MaintenanceTab = "overview" | "doctor" | "warp" | "backup" | "support" | "logs" | "traffic" | "controller";
 type QRImportMode = "amneziavpn" | "amneziawg";
 type ExpandedQR = { mode: QRImportMode; chunk: number };
 type TrafficLimitUnit = "mib" | "gib" | "tib";
@@ -72,8 +73,14 @@ function useI18n() {
 
 function App() {
   const [state, setState] = useState<AppState | null>(null);
+  const [selectedNode, setSelectedNode] = useState("");
+  const [loggingOut, setLoggingOut] = useState(false);
+  const logoutPendingRef = useRef(false);
+  const selectionGenerationRef = useRef(0);
   const [authChecked, setAuthChecked] = useState(false);
+  const [authMode, setAuthMode] = useState<api.AuthMode>("standalone");
   const [modal, setModal] = useState<Modal | null>(null);
+  const [recoveryCodesPending, setRecoveryCodesPending] = useState(false);
   const [toast, setToast] = useState("");
   const [theme, setTheme] = useState(initialTheme);
   const [locale, setLocale] = useState<Locale>(initialLocale);
@@ -82,22 +89,50 @@ function App() {
   const m = messages[locale];
   const messagesRef = useRef(m);
   const authenticatedRef = useRef(false);
+  const authGenerationRef = useRef(0);
+  const controllerActivationPendingRef = useRef(false);
   messagesRef.current = m;
 
+  function clearSession() {
+    authGenerationRef.current += 1;
+    authenticatedRef.current = false;
+    setSelectedNode("");
+    setModal(null);
+    setRecoveryCodesPending(false);
+    setState(null);
+  }
+  async function logoutSession() {
+    logoutPendingRef.current = true; setLoggingOut(true);
+    clearSession();
+    try { await api.logout(); } catch { /* The local context is already cleared. */ }
+    finally { logoutPendingRef.current = false; setLoggingOut(false); }
+  }
+  function selectNode(nodeID: string) {
+    selectionGenerationRef.current += 1;
+    setModal(null);
+    setSelectedNode(nodeID);
+  }
+
+
   const load = useCallback(async (options: { quiet?: boolean } = {}): Promise<LoadResult> => {
+    const generation = authGenerationRef.current;
+    if (logoutPendingRef.current) return "failed";
     try {
+      const auth = await api.authStatus();
+      if (generation !== authGenerationRef.current) return "failed";
+      setAuthMode(auth.mode);
       const next = await api.state();
+      if (generation !== authGenerationRef.current) return "failed";
       authenticatedRef.current = true;
       setState(next);
       setAuthChecked(true);
       return "ok";
     } catch (err) {
+      if (generation !== authGenerationRef.current || controllerActivationPendingRef.current) return "failed";
       setAuthChecked(true);
       if (err instanceof api.APIError && err.status === 401) {
         const wasAuthenticated = authenticatedRef.current;
-        authenticatedRef.current = false;
-        setModal(null);
-        setState(null);
+        clearSession();
         if (wasAuthenticated) notify(messagesRef.current.common.sessionExpired);
         return "unauthorized";
       }
@@ -122,10 +157,38 @@ function App() {
   }, [load]);
 
   useEffect(() => {
+    if (!authChecked || liveUpdatesEnabled) return undefined;
+    let cancelled = false;
+    let timer: ReturnType<typeof globalThis.setTimeout>;
+    const refreshMode = async () => {
+      try {
+        const auth = await api.authStatus();
+        if (!cancelled) setAuthMode(auth.mode);
+      } catch {
+        // Keep the login form available during a temporary status failure.
+      }
+      if (!cancelled) timer = globalThis.setTimeout(refreshMode, authMode === "activating" ? 1000 : 5000);
+    };
+    timer = globalThis.setTimeout(refreshMode, authMode === "activating" ? 1000 : 5000);
+    return () => {
+      cancelled = true;
+      globalThis.clearTimeout(timer);
+    };
+  }, [authChecked, liveUpdatesEnabled, authMode]);
+
+  function setControllerActivationPending(pending: boolean) {
+    setSelectedNode("");
+    controllerActivationPendingRef.current = pending;
+    authGenerationRef.current += 1;
+  }
+
+  useEffect(() => {
     if (!liveUpdatesEnabled) return undefined;
+    const generation = authGenerationRef.current;
     let fallback: ReturnType<typeof globalThis.setInterval> | null = null;
     const events = new EventSource("/api/events");
     events.addEventListener("state", (event) => {
+      if (generation !== authGenerationRef.current || !authenticatedRef.current) return;
       try {
         setState(JSON.parse((event as MessageEvent).data) as AppState);
       } catch {
@@ -134,6 +197,7 @@ function App() {
     });
     events.onerror = () => {
       events.close();
+      if (generation !== authGenerationRef.current || !authenticatedRef.current) return;
       void load({ quiet: true });
       fallback = globalThis.setInterval(() => void load({ quiet: true }), 5000);
     };
@@ -143,7 +207,7 @@ function App() {
       if (fallback) globalThis.clearInterval(fallback);
       globalThis.clearInterval(authCheck);
     };
-  }, [liveUpdatesEnabled, load]);
+  }, [liveUpdatesEnabled, load, authMode]);
 
   const profiles = state?.profiles || [];
   const active = defaultCreateProfile(profiles);
@@ -160,12 +224,17 @@ function App() {
   }
 
   async function runAction(label: string, fn: () => Promise<unknown>, options: RunActionOptions = { reload: true }) {
+    const generation = authGenerationRef.current;
+    const selection = selectionGenerationRef.current;
+    const current = () => generation === authGenerationRef.current && selection === selectionGenerationRef.current && !logoutPendingRef.current;
     try {
       await fn();
+      if (!current()) return;
       if (options.close !== false) setModal(null);
       if (options.reload !== false) await load({ quiet: true });
       notify(label);
     } catch (err) {
+      if (!current()) return;
       if (options.errorMode === "inline") throw err;
       const message = actionErrorMessage(err, m);
       if (message.includes("apply failed")) {
@@ -183,12 +252,12 @@ function App() {
   if (!state) {
     return (
       <I18nContext.Provider value={i18n}>
-        <Login onLogin={() => load()} notify={notify} {...shellProps} />
+        <Login suspended={loggingOut} mode={authMode} onLogin={() => { authGenerationRef.current += 1; setSelectedNode(""); return load(); }} notify={notify} {...shellProps} />
         <Toast message={toast} />
       </I18nContext.Provider>
     );
   }
-  if (!active) return <I18nContext.Provider value={i18n}><Shell state={state} {...shellProps} logout={() => doLogout(setState)} openMaintenance={() => setModal({ kind: "maintenance" })}><Empty title={m.dashboard.noProfiles} text={m.dashboard.noProfilesText} /></Shell></I18nContext.Provider>;
+  if (!active) return <I18nContext.Provider value={i18n}><Shell state={state} {...shellProps} logout={() => void logoutSession()} editServerName={() => setModal({ kind: "server-name" })} openMaintenance={() => setModal({ kind: "maintenance" })}><Empty title={m.dashboard.noProfiles} text={m.dashboard.noProfilesText} /></Shell></I18nContext.Provider>;
 
   const renderTunnel = (tunnel: Tunnel) => (
     <TunnelCard
@@ -220,18 +289,20 @@ function App() {
 
   return (
     <I18nContext.Provider value={i18n}>
-    <Shell state={state} {...shellProps} logout={() => doLogout(setState)} openMaintenance={() => setModal({ kind: "maintenance" })}>
-      <TunnelFirstDashboard
+    <Shell state={state} remote={Boolean(selectedNode)} {...shellProps} logout={() => void logoutSession()} editServerName={() => setModal({ kind: "server-name" })} openMaintenance={() => setModal({ kind: "maintenance" })}>
+      {authMode === "controller" ? <FleetWorkspace key={authGenerationRef.current} selected={selectedNode} select={selectNode} unauthorized={clearSession} m={m}>
+        <TunnelFirstDashboard profiles={profiles} tunnels={allTunnels} filter={dashboardFilter} setFilter={setDashboardFilter} onCreateTunnel={(profile) => setModal({ kind: "create-tunnel", profile: profile || active })} renderTunnel={renderTunnel} />
+      </FleetWorkspace> : <TunnelFirstDashboard
         profiles={profiles}
         tunnels={allTunnels}
         filter={dashboardFilter}
         setFilter={setDashboardFilter}
         onCreateTunnel={(profile) => setModal({ kind: "create-tunnel", profile: profile || active })}
         renderTunnel={renderTunnel}
-      />
-      {modal && (
-        <Dialog onClose={() => setModal(null)}>
-          <ModalContent modal={modal} state={state} notify={notify} close={() => setModal(null)} reload={async () => { await load({ quiet: true }); }} runAction={runAction} />
+      />}
+      {modal && !selectedNode && (
+        <Dialog onClose={() => { if (recoveryCodesPending) notify(m.controller.codesNote); else setModal(null); }}>
+          <ModalContent modal={modal} state={state} notify={notify} close={() => setModal(null)} reload={async () => { await load({ quiet: true }); }} runAction={runAction} recoveryCodesPending={recoveryCodesPending} setRecoveryCodesPending={setRecoveryCodesPending} setControllerActivationPending={setControllerActivationPending} />
           <Toast message={toast} />
         </Dialog>
       )}
@@ -241,9 +312,12 @@ function App() {
   );
 }
 
-function Login({ onLogin, notify, theme, setTheme, locale, setLocale }: { onLogin: () => Promise<LoadResult>; notify: (message: string) => void; theme: string; setTheme: (theme: string) => void; locale: Locale; setLocale: (locale: Locale) => void }) {
+function Login({ suspended, mode, onLogin, notify, theme, setTheme, locale, setLocale }: { suspended: boolean; mode: api.AuthMode; onLogin: () => Promise<LoadResult>; notify: (message: string) => void; theme: string; setTheme: (theme: string) => void; locale: Locale; setLocale: (locale: Locale) => void }) {
   const { m } = useI18n();
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
+  const [recovery, setRecovery] = useState(false);
   const [busy, setBusy] = useState(false);
   const [secureCookieRejected, setSecureCookieRejected] = useState(false);
   const documentationURL = `https://github.com/astronaut808/awg-forge/blob/master/docs/${locale}/configuration.md`;
@@ -256,10 +330,12 @@ function Login({ onLogin, notify, theme, setTheme, locale, setLocale }: { onLogi
             class="form single"
             onSubmit={async (event) => {
               event.preventDefault();
+              if (suspended) return;
               setBusy(true);
               setSecureCookieRejected(false);
               try {
-                await api.login(password);
+                if (mode === "controller") await api.controllerLogin(username, password, code, recovery);
+                else await api.login(password);
                 if (await onLogin() === "unauthorized") setSecureCookieRejected(true);
               } catch (err) {
                 notify(errorMessage(err, m.common.requestFailed));
@@ -268,8 +344,14 @@ function Login({ onLogin, notify, theme, setTheme, locale, setLocale }: { onLogi
               }
             }}
           >
-            <label>{m.login.password}<input aria-label={m.login.password} type="password" autocomplete="current-password" value={password} onInput={(event) => setPassword((event.currentTarget as HTMLInputElement).value)} /></label>
-            <button class="button primary wide" disabled={busy} type="submit">{busy ? m.login.loggingIn : m.login.logIn}</button>
+            {mode === "controller" && <label>{m.controller.username}<input aria-label={m.controller.username} autocomplete="username" value={username} onInput={(event) => setUsername((event.currentTarget as HTMLInputElement).value)} required /></label>}
+            <label>{mode === "controller" ? m.controller.password : m.login.password}<input aria-label={mode === "controller" ? m.controller.password : m.login.password} type="password" autocomplete="current-password" value={password} onInput={(event) => setPassword((event.currentTarget as HTMLInputElement).value)} required={mode === "controller"} /></label>
+            {mode === "controller" && <>
+              <label>{recovery ? m.controller.recoveryCode : m.controller.code}<input aria-label={recovery ? m.controller.recoveryCode : m.controller.code} autocomplete="one-time-code" value={code} onInput={(event) => setCode((event.currentTarget as HTMLInputElement).value)} required /></label>
+              <button class="button" type="button" onClick={() => { setRecovery(!recovery); setCode(""); }}>{recovery ? m.controller.useAuthenticator : m.controller.useRecovery}</button>
+            </>}
+            {mode === "activating" && <p role="status">{m.controller.unavailable}</p>}
+            <button class="button primary wide" disabled={busy || suspended || mode === "activating"} type="submit">{busy ? m.login.loggingIn : m.login.logIn}</button>
             {secureCookieRejected && (
               <div class="notice login-notice" role="alert">
                 <p>{m.login.secureCookieRejected}</p>
@@ -304,21 +386,23 @@ type ShellProps = {
   locale: Locale;
   setLocale: (locale: Locale) => void;
   logout: () => void;
+  editServerName: () => void;
   openMaintenance: () => void;
+  remote?: boolean;
   children: preact.ComponentChildren;
 };
 
 function Shell(props: ShellProps) {
-  const { state, theme, setTheme, locale, setLocale, logout, openMaintenance, children } = props;
+  const { state, theme, setTheme, locale, setLocale, logout, editServerName, openMaintenance, remote, children } = props;
   const { m } = useI18n();
   return (
     <main class="app-shell">
       <header class="topbar panel">
-        <Brand subtitle={<><span class="mono">{state.server_host}</span> · {m.dashboard.tunnelCount(state.tunnels.length)}</>} />
+        <Brand subtitle={remote ? m.fleet.readOnly : <ServerIdentity state={state} onEdit={editServerName} />} />
         <nav class="toolbar" aria-label={m.aria.globalActions}>
           <button class="button icon" type="button" title={m.aria.toggleTheme} aria-label={m.aria.toggleTheme} onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>{theme === "dark" ? "☼" : "☾"}</button>
           <button class="button" type="button" title={m.aria.toggleLanguage} aria-label={m.aria.toggleLanguage} onClick={() => setLocale(locale === "en" ? "ru" : "en")}>{locale === "en" ? "RU" : "EN"}</button>
-          <button class="button" type="button" onClick={openMaintenance}>{m.common.maintenance}</button>
+          {!remote && <button class="button" type="button" onClick={openMaintenance}>{m.common.maintenance}</button>}
           <button class="button" type="button" onClick={logout}>{m.common.logOut}</button>
         </nav>
       </header>
@@ -326,6 +410,15 @@ function Shell(props: ShellProps) {
       <FooterLinks version={state.build?.version || "dev"} />
     </main>
   );
+}
+
+function ServerIdentity({ state, onEdit }: { state: AppState; onEdit: () => void }) {
+  const { m } = useI18n();
+  const address = <><span class="mono">{state.server_host}</span> · {m.dashboard.tunnelCount(state.tunnels.length)}</>;
+  if (state.server_name) {
+    return <span class="server-identity"><button class="server-name-button configured" type="button" title={m.serverName.edit} aria-label={m.serverName.edit} onClick={onEdit}>{state.server_name}</button> · {address}</span>;
+  }
+  return <span class="server-identity">{address} <button class="server-name-button" type="button" title={m.serverName.add} aria-label={m.serverName.add} onClick={onEdit}>+ {m.serverName.name}</button></span>;
 }
 
 function Brand({ subtitle }: { subtitle?: preact.ComponentChildren }) {
@@ -384,7 +477,7 @@ function TunnelFirstDashboard({ profiles, tunnels, filter, setFilter, onCreateTu
           <div class="filter-row" aria-label={m.aria.tunnelFilters}>
             <button className={classNames("filter-pill", effectiveFilter === "all" && "active")} type="button" onClick={() => setFilter("all")}><span class="filter-label">{m.common.all}</span><span class="filter-count">{tunnels.length}</span></button>
             {filterProfiles.map((profile) => (
-              <button key={profile.id} className={classNames("filter-pill", effectiveFilter === profile.id && "active")} type="button" onClick={() => setFilter(profile.id)} title={`${profileTitle(profile.id)} · ${m.dashboard.tunnelCount(countFor(profile.id))}`}>
+              <button key={profile.id} className={classNames("filter-pill", effectiveFilter === profile.id && "active")} type="button" onClick={() => setFilter(profile.id)} title={`${profile.name} · ${m.dashboard.tunnelCount(countFor(profile.id))}`}>
                 <span class="filter-label">{profile.tab}</span><span class="filter-count">{countFor(profile.id)}</span>
               </button>
             ))}
@@ -395,7 +488,7 @@ function TunnelFirstDashboard({ profiles, tunnels, filter, setFilter, onCreateTu
       {visibleTunnels.length === 0 ? (
         <Empty
           title={tunnels.length === 0 ? m.dashboard.noTunnelsYet : m.dashboard.noTunnelsInFilter}
-          text={tunnels.length === 0 ? m.dashboard.createFirstTunnel : filteredProfile ? m.dashboard.createTunnelForProfile(profileTitle(filteredProfile.id)) : m.dashboard.createTunnelForSelected}
+          text={tunnels.length === 0 ? m.dashboard.createFirstTunnel : filteredProfile ? m.dashboard.createTunnelForProfile(filteredProfile.name) : m.dashboard.createTunnelForSelected}
           action={<button class="button primary" type="button" onClick={() => onCreateTunnel(filteredProfile)}>{m.common.createTunnel}</button>}
         />
       ) : (
@@ -406,7 +499,7 @@ function TunnelFirstDashboard({ profiles, tunnels, filter, setFilter, onCreateTu
             return (
               <section class="profile-group" key={profile.id}>
                 <div class="profile-group-head">
-                  <div class="profile-group-title"><h3>{profileTitle(profile.id)}</h3>{isExperimentalProfile(profile.id) && <Badge tone="warn">{m.common.experimental}</Badge>}</div>
+                  <div class="profile-group-title"><h3>{profile.name}</h3>{profile.experimental && <Badge tone="warn">{m.common.experimental}</Badge>}</div>
                   <span>{m.dashboard.tunnelCount(group.length)}</span>
                 </div>
                 <div className={classNames("tunnel-grid", group.length === 1 && "single")}>
@@ -530,24 +623,36 @@ function Fact({ label, value, extra }: { label: string; value: string; extra?: s
   return <div class="fact"><span>{label}</span><strong class="mono">{value}</strong>{extra && <em>{extra}</em>}</div>;
 }
 
-function ModalContent({ modal, state, notify, close, reload, runAction }: {
+function ModalContent({ modal, state, notify, close, reload, runAction, recoveryCodesPending, setRecoveryCodesPending, setControllerActivationPending }: {
   modal: Modal;
   state: AppState;
   notify: (message: string) => void;
   close: () => void;
   reload: () => Promise<void>;
   runAction: RunAction;
+  recoveryCodesPending: boolean;
+  setRecoveryCodesPending: (pending: boolean) => void;
+  setControllerActivationPending: (pending: boolean) => void;
 }) {
+  if (modal.kind === "server-name") return <ServerNameForm state={state} runAction={runAction} />;
   if (modal.kind === "create-tunnel") return <CreateTunnelForm state={state} profile={modal.profile} runAction={runAction} />;
   if (modal.kind === "settings") return <TunnelSettingsForm state={state} tunnel={modal.tunnel} runAction={runAction} />;
-  if (modal.kind === "protocol") return <ProtocolForm tunnel={modal.tunnel} runAction={runAction} />;
-  if (modal.kind === "create-client") return <CreateClientForm tunnel={modal.tunnel} trafficLimitsEnabled={state.database.enabled} runAction={runAction} />;
+  if (modal.kind === "protocol") return <ProtocolForm tunnel={modal.tunnel} profileName={profileDisplayName(state.profiles, modal.tunnel.profile)} runAction={runAction} />;
+  if (modal.kind === "create-client") return <CreateClientForm tunnel={modal.tunnel} profileName={profileDisplayName(state.profiles, modal.tunnel.profile)} trafficLimitsEnabled={state.database.enabled} runAction={runAction} />;
   if (modal.kind === "client-settings") return <ClientSettingsForm client={modal.client} runAction={runAction} />;
   if (modal.kind === "client-config") {
     return <ClientConfigPanel key={modal.client.id} client={modal.client} notify={notify} />;
   }
   if (modal.kind === "delete-tunnel") return <DeleteTunnelConfirmation tunnel={modal.tunnel} close={close} runAction={runAction} />;
-  return <MaintenanceCenter state={state} notify={notify} close={close} reload={reload} />;
+  return <MaintenanceCenter state={state} notify={notify} close={close} reload={reload} recoveryCodesPending={recoveryCodesPending} setRecoveryCodesPending={setRecoveryCodesPending} setControllerActivationPending={setControllerActivationPending} />;
+}
+
+function ServerNameForm({ state, runAction }: { state: AppState; runAction: RunAction }) {
+  const { m } = useI18n();
+  return <Form title={m.serverName.title} subtitle={m.serverName.subtitle} submit={m.common.save} onSubmit={(form) => runAction(m.serverName.saved, () => api.updateServerName(field(form, "name")), { errorMode: "inline" })}>
+    <label>{m.serverName.name}<input aria-label={m.serverName.name} name="name" defaultValue={state.server_name || ""} pattern="[A-Za-z0-9]*" maxLength={32} /></label>
+    <small class="form-note">{m.serverName.hint}</small>
+  </Form>;
 }
 
 function DeleteTunnelConfirmation({ tunnel, close, runAction }: { tunnel: Tunnel; close: () => void; runAction: RunAction }) {
@@ -615,7 +720,7 @@ function CreateTunnelForm({ state, profile, runAction }: { state: AppState; prof
       ? api.createTunnel({ profile: field(form, "profile"), name: field(form, "name"), port, automatic_port: portMode === "automatic", subnet: field(form, "subnet"), egress_mode: field(form, "egress_mode") })
       : Promise.reject(new Error(m.forms.portSuggestionFailed)), { errorMode: "inline" });
   }}>
-    <label>{m.forms.protocol}<select aria-label={m.forms.protocol} name="profile" value={selected.id} onInput={(event) => setProfileID((event.currentTarget as HTMLSelectElement).value)}>{profiles.map((item) => <option key={item.id} value={item.id}>{profileTitle(item.id)}{isExperimentalProfile(item.id) ? ` · ${m.common.experimental}` : ""}</option>)}</select></label>
+    <label>{m.forms.protocol}<select aria-label={m.forms.protocol} name="profile" value={selected.id} onInput={(event) => setProfileID((event.currentTarget as HTMLSelectElement).value)}>{profiles.map((item) => <option key={item.id} value={item.id}>{item.name}{item.experimental ? ` · ${m.common.experimental}` : ""}</option>)}</select></label>
     <label>{m.forms.nameInterface}<input key={`${selected.id}-name`} aria-label={m.forms.nameInterface} name="name" defaultValue={selected.suggested_name || "awg0"} /></label>
     <label>{m.forms.portSelection}<select aria-label={m.forms.portSelection} value={portMode} onInput={(event) => setPortMode((event.currentTarget as HTMLSelectElement).value as PortSelectionMode)}><option value="automatic">{m.forms.automaticPort}</option><option value="manual">{m.forms.manualPort}</option></select></label>
     <div class="form-field"><span class="field-title">{m.forms.listenPort}</span><span class="port-input-wrap">
@@ -634,10 +739,11 @@ function CreateTunnelForm({ state, profile, runAction }: { state: AppState; prof
 function TunnelSettingsForm({ state, tunnel, runAction }: { state: AppState; tunnel: Tunnel; runAction: RunAction }) {
   const { m } = useI18n();
   const [egressMode, setEgressMode] = useState(tunnel.egress_mode || "wan");
+  const profileName = profileDisplayName(state.profiles, tunnel.profile);
   useEffect(() => {
     setEgressMode(tunnel.egress_mode || "wan");
   }, [tunnel.id, tunnel.egress_mode]);
-  return <Form title={m.forms.tunnelSettingsTitle} subtitle={`${tunnel.name} · ${profileTitle(tunnel.profile)}`} submit={m.common.save} onSubmit={(form) => runAction(m.forms.settingsSaved, () => api.updateTunnel(tunnel.id, {
+  return <Form title={m.forms.tunnelSettingsTitle} subtitle={`${tunnel.name} · ${profileName}`} submit={m.common.save} onSubmit={(form) => runAction(m.forms.settingsSaved, () => api.updateTunnel(tunnel.id, {
     name: field(form, "name"),
     server_host: field(form, "server_host"),
     egress_mode: field(form, "egress_mode"),
@@ -666,9 +772,9 @@ function TunnelSettingsForm({ state, tunnel, runAction }: { state: AppState; tun
   </Form>;
 }
 
-function ProtocolForm({ tunnel, runAction }: { tunnel: Tunnel; runAction: RunAction }) {
+function ProtocolForm({ tunnel, profileName, runAction }: { tunnel: Tunnel; profileName: string; runAction: RunAction }) {
   const { m } = useI18n();
-  return <Form title={m.forms.protocolTitle} subtitle={`${tunnel.name} · ${tunnel.profile}`} submit={m.forms.saveProtocol} secondary={<button class="button" type="button" onClick={() => confirm(m.forms.regenerateConfirm) && void runAction(m.forms.protocolRegenerated, () => api.regenerateProtocol(tunnel.id, tunnel.profile))}>{m.forms.regenerate}</button>} onSubmit={(form) => {
+  return <Form title={m.forms.protocolTitle} subtitle={`${tunnel.name} · ${profileName}`} submit={m.forms.saveProtocol} secondary={<button class="button" type="button" onClick={() => confirm(m.forms.regenerateConfirm) && void runAction(m.forms.protocolRegenerated, () => api.regenerateProtocol(tunnel.id, tunnel.profile))}>{m.forms.regenerate}</button>} onSubmit={(form) => {
     const params: Record<string, string> = {};
     for (const item of tunnel.params) params[item.key] = field(form, item.key).trim();
     return runAction(m.forms.protocolSaved, () => api.updateProtocol(tunnel.id, tunnel.profile, params), { errorMode: "inline" });
@@ -684,9 +790,9 @@ function ProtocolForm({ tunnel, runAction }: { tunnel: Tunnel; runAction: RunAct
   </Form>;
 }
 
-function CreateClientForm({ tunnel, trafficLimitsEnabled, runAction }: { tunnel: Tunnel; trafficLimitsEnabled: boolean; runAction: RunAction }) {
+function CreateClientForm({ tunnel, profileName, trafficLimitsEnabled, runAction }: { tunnel: Tunnel; profileName: string; trafficLimitsEnabled: boolean; runAction: RunAction }) {
   const { m } = useI18n();
-  return <Form title={m.forms.createClientTitle} subtitle={`${tunnel.name} · ${tunnel.profile}`} submit={m.common.createClient} onSubmit={(form) => runAction(m.forms.clientCreatedOpenConfig, async () => {
+  return <Form title={m.forms.createClientTitle} subtitle={`${tunnel.name} · ${profileName}`} submit={m.common.createClient} onSubmit={(form) => runAction(m.forms.clientCreatedOpenConfig, async () => {
     const trafficLimit = trafficLimitsEnabled ? trafficLimitFromForm(form, m.forms.trafficLimitInvalid) : { bytes: null, period: "lifetime" as TrafficLimitPeriod };
     await api.createClient(tunnel.id, field(form, "name"), expirationFromForm(form), trafficLimit.bytes, trafficLimit.period);
   }, { errorMode: "inline" })}>
@@ -988,7 +1094,7 @@ function ClientConfigPanel({ client, notify }: { client: Client; notify: (messag
   </PanelTitle>;
 }
 
-function MaintenanceCenter({ state, notify, reload }: { state: AppState; notify: (message: string) => void; close: () => void; reload: () => Promise<void> }) {
+function MaintenanceCenter({ state, notify, reload, close, recoveryCodesPending, setRecoveryCodesPending, setControllerActivationPending }: { state: AppState; notify: (message: string) => void; close: () => void; reload: () => Promise<void>; recoveryCodesPending: boolean; setRecoveryCodesPending: (pending: boolean) => void; setControllerActivationPending: (pending: boolean) => void }) {
   const { m } = useI18n();
   const [tab, setTab] = useState<MaintenanceTab>("overview");
   const [doctorResults, setDoctorResults] = useState<DoctorResult[] | null>(null);
@@ -1058,7 +1164,7 @@ function MaintenanceCenter({ state, notify, reload }: { state: AppState; notify:
   const repairableFirewallIssue = state.apply_enabled && Boolean(doctorResults?.some((result) => result.category === "firewall" && result.level !== "ok"));
 
   return <PanelTitle title={m.maintenance.title} subtitle={m.maintenance.subtitle}>
-    <nav class="subtabs">{(["overview", "doctor", "warp", "backup", "traffic", "logs", "support"] as MaintenanceTab[]).map((item) => <button key={item} className={classNames("button", tab === item && "active")} type="button" onClick={() => setTab(item)}>{m.maintenance.tabs[item]}</button>)}</nav>
+    <nav class="subtabs">{(["overview", "doctor", "warp", "backup", "traffic", "logs", "support", "controller"] as MaintenanceTab[]).map((item) => <button key={item} className={classNames("button", tab === item && "active")} type="button" disabled={recoveryCodesPending && item !== "controller"} onClick={() => setTab(item)}>{m.maintenance.tabs[item]}</button>)}</nav>
     {tab === "overview" && <MaintenanceOverview state={state} />}
     {tab === "doctor" && <div class="stack"><button class="button primary" disabled={Boolean(busyAction)} type="button" onClick={() => action("doctor", m.maintenance.doctorCompleted, async () => { const report = await api.doctor(); setDoctorResults(report.results); setFirewall(null); })}><ButtonContent busy={busyAction === "doctor"}>{m.maintenance.runDoctor}</ButtonContent></button><ResultList results={doctorResults} />{repairableFirewallIssue && <section class="stack maintenance-action"><div><h3>{m.maintenance.firewall}</h3><p class="note">{m.maintenance.firewallNote}</p></div><button class="button primary" disabled={Boolean(busyAction)} type="button" onClick={() => action("firewall", m.maintenance.firewallRepaired, async () => setFirewall((await api.firewallRepair()).firewall))}><ButtonContent busy={busyAction === "firewall"}>{m.maintenance.repairFirewall}</ButtonContent></button>{firewall && <ResultList results={firewall.results.map((item) => ({ level: item.status === "ok" ? "ok" : item.status === "duplicate" ? "warn" : "fail", area: `${item.tunnel}/${item.name}`, message: item.message || item.rule }))} />}</section>}</div>}
     {tab === "warp" && <WarpPanel state={state} action={action} busyAction={busyAction} />}
@@ -1066,7 +1172,88 @@ function MaintenanceCenter({ state, notify, reload }: { state: AppState; notify:
     {tab === "support" && <SupportPanel state={state} action={action} busyAction={busyAction} />}
     {tab === "logs" && <div class="stack"><p class="note">{m.maintenance.auditAutoRefresh}</p><div class="list">{events.length === 0 ? <div class="empty compact">{m.maintenance.noAuditEvents}</div> : events.map((event) => <div class="row" key={`${event.time}-${event.event}`}><strong>{event.event}</strong><p>{event.time} · {event.level} · {event.message}{event.error ? ` · ${event.error}` : ""}</p></div>)}</div></div>}
     {tab === "traffic" && <TrafficPanel state={state} traffic={traffic} reload={async () => setTraffic(await api.trafficSummary())} />}
+    {tab === "controller" && <ControllerPanel state={state} notify={notify} reload={reload} close={close} setRecoveryCodesPending={setRecoveryCodesPending} setControllerActivationPending={setControllerActivationPending} />}
   </PanelTitle>;
+}
+
+function ControllerPanel({ state, notify, reload, close, setRecoveryCodesPending, setControllerActivationPending }: { state: AppState; notify: (message: string) => void; reload: () => Promise<void>; close: () => void; setRecoveryCodesPending: (pending: boolean) => void; setControllerActivationPending: (pending: boolean) => void }) {
+  const { m } = useI18n();
+  const [mode, setMode] = useState<api.AuthMode | null>(null);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
+  const [enrollment, setEnrollment] = useState<{ totp_secret: string; qr_png: string } | null>(null);
+  const [codes, setCodes] = useState<string[]>([]);
+  const [saved, setSaved] = useState(false);
+  const [recent, setRecent] = useState(false);
+  const [recovery, setRecovery] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    void api.authStatus().then(async (status) => {
+      if (!alive) return;
+      setMode(status.mode);
+      if (status.mode === "controller") {
+        const session = await api.authSession();
+        if (alive) setRecent(Boolean(session.recent_auth));
+      }
+    }).catch((err) => { if (alive) notify(errorMessage(err, m.common.requestFailed)); });
+    return () => { alive = false; };
+  }, []);
+
+  async function perform(fn: () => Promise<void>) {
+    setBusy(true);
+    try { await fn(); } catch (err) { notify(errorMessage(err, m.common.requestFailed)); }
+    finally { setBusy(false); }
+  }
+
+  if (mode === null) return <p role="status">{m.common.loading}</p>;
+  if (mode === "activating") return <p role="status">{m.controller.unavailable}</p>;
+  if (codes.length > 0) return <section class="stack controller-panel" aria-label={m.controller.codesTitle}>
+    <h3>{m.controller.codesTitle}</h3>
+    <p class="note">{m.controller.codesNote}</p>
+    <ol class="controller-codes">{codes.map((item) => <li key={item}><code>{item}</code></li>)}</ol>
+    <label class="check-label"><input type="checkbox" checked={saved} onChange={(event) => setSaved((event.currentTarget as HTMLInputElement).checked)} />{m.controller.codesSaved}</label>
+    <button class="button primary" type="button" disabled={!saved} onClick={() => { setCodes([]); setSaved(false); setRecoveryCodesPending(false); close(); }}>{m.controller.finish}</button>
+  </section>;
+  if (mode === "standalone") return <section class="stack controller-panel" aria-label={m.controller.title}>
+    <h3>{m.controller.title}</h3><p class="note">{m.controller.subtitle}</p>
+    {state.database.mode !== "sqlite" ? <p role="alert">{m.controller.dbRequired}</p> : !enrollment ? <form class="form single" onSubmit={(event) => { event.preventDefault(); void perform(async () => { setEnrollment(await api.controllerSetup(username)); }); }}>
+      <label>{m.controller.username}<input autocomplete="username" value={username} onInput={(event) => setUsername((event.currentTarget as HTMLInputElement).value)} required /></label>
+      <label>{m.controller.password}<input type="password" autocomplete="new-password" minLength={12} value={password} onInput={(event) => setPassword((event.currentTarget as HTMLInputElement).value)} required /></label>
+      <button class="button primary" type="submit" disabled={busy}>{m.controller.generateMFA}</button>
+    </form> : <form class="form single" onSubmit={(event) => { event.preventDefault(); void perform(async () => {
+      setControllerActivationPending(true);
+      let result: Awaited<ReturnType<typeof api.controllerActivate>>;
+      try {
+        result = await api.controllerActivate({ username, password, totp_secret: enrollment.totp_secret, confirmation_code: code });
+      } finally {
+        setControllerActivationPending(false);
+      }
+      setPassword(""); setCode(""); setEnrollment(null); setCodes(result.recovery_codes); setRecoveryCodesPending(true); setMode("controller"); setRecent(true); await reload();
+    }); }}>
+      <p>{m.controller.scanQR}</p>
+      <img class="controller-qr" src={enrollment.qr_png} alt={m.controller.scanQR} />
+      <label>{m.controller.secret}<code class="controller-secret">{enrollment.totp_secret}</code></label>
+      <label>{m.controller.code}<input autocomplete="one-time-code" inputMode="numeric" value={code} onInput={(event) => setCode((event.currentTarget as HTMLInputElement).value)} required /></label>
+      <button class="button primary" type="submit" disabled={busy}>{busy ? m.controller.activating : m.controller.activate}</button>
+    </form>}
+  </section>;
+  return <section class="stack controller-panel" aria-label={m.controller.title}>
+    <h3>{m.controller.active}</h3>
+    {!recent && <p class="note">{m.controller.recentRequired}</p>}
+    <form class="form single" onSubmit={(event) => { event.preventDefault(); void perform(async () => {
+      await api.controllerReauth(password, code, recovery); setPassword(""); setCode(""); setRecent(true);
+    }); }}>
+      <label>{m.controller.password}<input type="password" autocomplete="current-password" value={password} onInput={(event) => setPassword((event.currentTarget as HTMLInputElement).value)} required /></label>
+      <label>{recovery ? m.controller.recoveryCode : m.controller.code}<input autocomplete="one-time-code" value={code} onInput={(event) => setCode((event.currentTarget as HTMLInputElement).value)} required /></label>
+      <button class="button" type="button" onClick={() => { setRecovery(!recovery); setCode(""); }}>{recovery ? m.controller.useAuthenticator : m.controller.useRecovery}</button>
+      <button class="button" type="submit" disabled={busy}>{m.controller.reauth}</button>
+    </form>
+    <button class="button primary" type="button" disabled={!recent || busy} onClick={() => void perform(async () => { const result = await api.controllerRotateRecoveryCodes(); setCodes(result.recovery_codes); setRecoveryCodesPending(true); setRecent(true); })}>{m.controller.rotateCodes}</button>
+    <ControllerOnboarding recent={recent} notify={notify} m={m} />
+  </section>;
 }
 
 function MaintenanceOverview({ state }: { state: AppState }) {
@@ -1391,6 +1578,10 @@ function defaultCreateProfile(profiles: Profile[], fallback?: Profile): Profile 
   return profiles.find((profile) => profile.id === "awg_2_0" && profile.available) || profiles.find((profile) => profile.available) || fallback;
 }
 
+function profileDisplayName(profiles: Profile[], profileID: string): string {
+  return profiles.find((profile) => profile.id === profileID)?.name || profileID;
+}
+
 function versionLabel(version: string): string {
   const trimmed = version.trim();
   if (!trimmed || trimmed === "dev") return "dev";
@@ -1486,14 +1677,6 @@ function initParallax() {
     document.documentElement.style.setProperty("--px", `${(x * 10).toFixed(2)}px`);
     document.documentElement.style.setProperty("--py", `${(y * 8).toFixed(2)}px`);
   }, { passive: true });
-}
-
-async function doLogout(setState: (state: AppState | null) => void) {
-  try {
-    await api.logout();
-  } finally {
-    setState(null);
-  }
 }
 
 render(<App />, document.querySelector("#app")!);

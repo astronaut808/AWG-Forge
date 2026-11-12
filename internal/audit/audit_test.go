@@ -10,6 +10,7 @@ import (
 
 	"github.com/astronaut808/awg-forge/internal/config"
 	"github.com/astronaut808/awg-forge/internal/sqldb"
+	"github.com/astronaut808/awg-forge/internal/storage"
 )
 
 func TestFileLoggerWritesRedactedJSONL(t *testing.T) {
@@ -129,6 +130,28 @@ func TestDatabaseLoggerWritesAndReadsAuditEvents(t *testing.T) {
 	}
 	if events[0].Fields["private_key"] != "<redacted>" {
 		t.Fatalf("private key field was not redacted: %#v", events[0].Fields)
+	}
+}
+
+func TestPendingControllerRestoreKeepsAuditOutOfSQLite(t *testing.T) {
+	cfg := testDBConfig(t)
+	if _, err := sqldb.Migrate(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.New(cfg.ConfigDir).BeginRestorePending("11111111-1111-4111-8111-111111111111"); err != nil {
+		t.Fatal(err)
+	}
+	New(cfg).Log(context.Background(), Event{Level: "error", Event: "restore.failed", Message: "interrupted"})
+	events, err := sqldb.ListAuditEvents(context.Background(), cfg, sqldb.AuditFilter{Tail: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("SQLite audit changed during pending controller restore: %d events", len(events))
+	}
+	data, err := os.ReadFile(cfg.AuditLogPath)
+	if err != nil || !strings.Contains(string(data), "restore.failed") {
+		t.Fatalf("file audit missing during pending restore: %q, %v", data, err)
 	}
 }
 

@@ -624,6 +624,11 @@ validate_port() {
   [[ "$value" =~ ^[0-9]+$ ]] && (( value >= 1 && value <= 65535 ))
 }
 
+validate_server_name() {
+  local value="$1"
+  [[ -z "$value" || ( ${#value} -le 32 && "$value" =~ ^[A-Za-z0-9]+$ ) ]]
+}
+
 normalize_acme_domain() {
   local domain="$1" label
   domain="${domain#"${domain%%[![:space:]]*}"}"
@@ -829,6 +834,7 @@ write_env() {
   fi
   set_env_value WEBUI_HOST "$webui_host"
   set_env_value WEBUI_PORT "$webui_port"
+  ensure_env_value SERVER_NAME ""
   set_env_value EXTERNAL_INTERFACE "$external_interface"
   if [[ "$mode" == "fresh" ]]; then
     set_env_value PASSWORD "$password"
@@ -896,6 +902,7 @@ initialize_state() {
   local keepalive="$8"
   local mtu="$9"
   local profile="${10}"
+  local server_name="${11:-}"
 
   ensure_image_available
   local data_dir_abs
@@ -906,6 +913,7 @@ initialize_state() {
     --env-file "$ENV_FILE" \
     -v "$data_dir_abs:/etc/awg-forge$volume_suffix" \
     "$IMAGE" init \
+      --server-name "$server_name" \
       --server-host "$server_host" \
       --external-interface "$external_interface" \
       --profile "$profile" \
@@ -1237,7 +1245,318 @@ upgrade_main() {
   fi
 }
 
+# Node onboarding deliberately has no dependency on the interactive installer
+# below.  It is safe to invoke from a downloaded, verified copy of this script
+# and never writes an existing installation outside the application itself.
+join_usage() {
+  cat >&2 <<'USAGE'
+usage: install.sh join|rebind --workdir DIR --image IMAGE --script-sha256 SHA256 \
+  --artifact-version VERSION --artifact-commit SHA40 --controller-url URL \
+  --ca-pin sha256:PIN --invitation-id UUID --name NAME [options]
+
+Options: --secret-fd 0, --timeout DURATION, --mode fresh|existing, --fresh,
+         --container NAME, --maintenance (acknowledges service downtime), --start-service, --confirm-node-id UUID,
+         --confirm-controller-id UUID
+USAGE
+}
+
+join_fail() { fail "$*"; return 1; }
+
+join_is_sha256() { [[ "$1" =~ ^[a-f0-9]{64}$ ]]; }
+join_is_commit() { [[ "$1" =~ ^[a-f0-9]{40}$ ]]; }
+join_is_version() { [[ "$1" =~ ^(v[0-9]+\.[0-9]+\.[0-9]+|local-[a-f0-9]{12})$ ]]; }
+join_is_image() {
+  [[ "$1" =~ ^ghcr\.io/astronaut808/awg-forge@sha256:[a-f0-9]{64}$ || "$1" =~ ^sha256:[a-f0-9]{64}$ ]]
+}
+
+join_clean_up() {
+  local status=$?
+  local helper_id='' remaining='' helper_gone=true
+  set +e
+  if [[ -n "${JOIN_CIDFILE:-}" && -f "$JOIN_CIDFILE" ]]; then
+    helper_id="$(<"$JOIN_CIDFILE")"
+    if [[ "$helper_id" =~ ^[a-f0-9]{64}$ ]]; then
+      if ! timeout --foreground -k 5s 15s docker rm -f "$helper_id" >/dev/null 2>&1; then
+        remaining="$(timeout --foreground -k 5s 10s docker ps -a --no-trunc --filter "id=$helper_id" --format '{{.ID}}' 2>/dev/null)" || helper_gone=false
+        [[ -z "$remaining" ]] || helper_gone=false
+      fi
+    fi
+  fi
+  if [[ -n "${JOIN_TMPDIR:-}" ]]; then
+    rm -rf "$JOIN_TMPDIR"
+  fi
+  if [[ "${JOIN_STOP_ATTEMPTED:-false}" == true && "${JOIN_WAS_RUNNING:-false}" == true && "${JOIN_COMMITTED:-false}" != true && -n "${JOIN_CONTAINER:-}" ]]; then
+    if "$helper_gone"; then
+      timeout --foreground -k 5s 45s docker start "$JOIN_CONTAINER" >/dev/null 2>&1 || warn "previous service could not be resumed; inspect the retained identity and journal before retrying start"
+    else
+      warn "helper termination is uncertain; service remains stopped for inspection"
+    fi
+  fi
+  if [[ "$status" != 0 && "${JOIN_FRESH_WORKDIR:-}" != '' ]]; then
+    warn "fresh workdir retained for offline identity/journal inspection; do not replay a consumed invitation"
+  fi
+  exit "$status"
+}
+
+join_timeout_seconds() {
+  local value="$1" number unit seconds
+  [[ "$value" =~ ^([1-9][0-9]*)([smh])$ ]] || return 1
+  number="${BASH_REMATCH[1]}"; unit="${BASH_REMATCH[2]}"
+  (( ${#number} <= 3 )) || return 1
+  case "$unit" in s) seconds="$number" ;; m) seconds=$((number * 60)) ;; h) seconds=$((number * 3600)) ;; esac
+  (( seconds > 0 && seconds <= 900 )) || return 1
+  printf '%s' "$seconds"
+}
+
+join_signal() {
+  if [[ "${JOIN_HELPER_LAUNCHING:-false}" == true ]]; then
+    JOIN_SIGNAL_STATUS="$1"
+    return
+  fi
+  if [[ "${JOIN_HELPER_PID:-}" =~ ^[0-9]+$ ]]; then
+    kill -TERM "$JOIN_HELPER_PID" 2>/dev/null || true
+  fi
+  exit "$1"
+}
+
+# Create before attach: an interrupted create can leave only a stopped helper,
+# never an enrollment process whose CID is not yet known. Explicit stdin
+# forwarding and builtin wait keep PID-only signals cancellable without losing
+# the private FD channel to background-job /dev/null defaults.
+join_run_helper() {
+  local deadline="$1" helper_id status=0
+  shift
+  timeout --foreground -k 5s 30s docker create "$@" >/dev/null || return 1
+  helper_id="$(<"$JOIN_CIDFILE")"
+  [[ "$helper_id" =~ ^[a-f0-9]{64}$ ]] || return 1
+  JOIN_HELPER_LAUNCHING=true
+  timeout --foreground -k 5s "$deadline" docker start -ai "$helper_id" <&0 &
+  JOIN_HELPER_PID=$!
+  JOIN_HELPER_LAUNCHING=false
+  if [[ "$JOIN_SIGNAL_STATUS" != 0 ]]; then join_signal "$JOIN_SIGNAL_STATUS"; fi
+  wait "$JOIN_HELPER_PID" || status=$?
+  JOIN_HELPER_PID=''
+  return "$status"
+}
+
+join_open_tty() {
+  exec {JOIN_TTY}<>/dev/tty
+}
+
+join_require_unlabelled_docker() {
+  local security_options
+  security_options="$(timeout --foreground -k 5s 10s docker info --format '{{range .SecurityOptions}}{{println .}}{{end}}')" || return 1
+  if grep -Eq '^name=selinux([[:space:],]|$)' <<<"$security_options"; then
+    join_fail "installer join/rebind does not support Docker SELinux labels; use a deployment-specific offline workflow"
+    return 1
+  fi
+}
+
+join_require_prerequisites() {
+  [[ "$(uname -s)" == Linux ]] || { join_fail "join requires Linux"; return 1; }
+  [[ "${EUID:-$(id -u)}" -eq 0 ]] || { join_fail "join requires root"; return 1; }
+  have docker || { join_fail "docker is not installed"; return 1; }
+  have timeout || { join_fail "join requires the timeout utility"; return 1; }
+  timeout --foreground -k 5s 15s docker info >/dev/null 2>&1 || { join_fail "docker daemon is not reachable"; return 1; }
+  timeout --foreground -k 5s 15s docker compose version >/dev/null 2>&1 || { join_fail "docker compose is not available"; return 1; }
+  join_require_unlabelled_docker || return 1
+}
+
+join_verify_script() {
+  local expected="$1" actual
+  [[ -f "${BASH_SOURCE[0]}" ]] || { join_fail "join requires a downloaded script file"; return 1; }
+  actual="$(sha256sum "${BASH_SOURCE[0]}" | awk '{print $1}')"
+  [[ "$actual" == "$expected" ]] || { join_fail "script SHA-256 does not match --script-sha256"; return 1; }
+}
+
+join_verify_artifact() {
+  local image="$1" version="$2" commit="$3" endpoint="$4" pin="$5" invitation="$6" name="$7" node_id="${8:-}" controller_id="${9:-}"
+  local -a checker=(node installer-check --artifact-version "$version" --artifact-commit "$commit" --controller-url "$endpoint" --ca-pin "$pin" --invitation-id "$invitation" --name "$name")
+  [[ -n "$node_id" ]] && checker+=(--confirm-node-id "$node_id")
+  [[ -n "$controller_id" ]] && checker+=(--confirm-controller-id "$controller_id")
+  timeout --foreground -k 5s 15s docker image inspect "$image" >/dev/null 2>&1 || { join_fail "verified image is not available locally"; return 1; }
+  timeout --foreground -k 5s 30s docker run --rm "$image" "${checker[@]}" | grep -qx 'installer-onboarding-v1 compatible' ||
+    { join_fail "image does not support this installer artifact"; return 1; }
+}
+
+join_container_is_owned() {
+  local container="$1" workdir="$2" image="$3" container_id actual_workdir service actual_image expected_image user userns process_label mount_label
+  container_id="$(timeout --foreground -k 5s 10s docker inspect --format '{{.Id}}' "$container" 2>/dev/null)" || return 1
+  [[ "$container_id" =~ ^[a-f0-9]{64}$ ]] || return 1
+  actual_workdir="$(timeout --foreground -k 5s 10s docker inspect --format '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' "$container_id" 2>/dev/null)" || return 1
+  service="$(timeout --foreground -k 5s 10s docker inspect --format '{{ index .Config.Labels "com.docker.compose.service" }}' "$container_id" 2>/dev/null)" || return 1
+  actual_image="$(timeout --foreground -k 5s 10s docker inspect --format '{{.Image}}' "$container_id" 2>/dev/null)" || return 1
+  expected_image="$(timeout --foreground -k 5s 10s docker image inspect --format '{{.Id}}' "$image" 2>/dev/null)" || return 1
+  [[ "$actual_workdir" == "$workdir" && "$service" == awg-forge && "$actual_image" == "$expected_image" ]] || return 1
+  user="$(timeout --foreground -k 5s 10s docker inspect --format '{{.Config.User}}' "$container_id" 2>/dev/null)" || return 1
+  userns="$(timeout --foreground -k 5s 10s docker inspect --format '{{.HostConfig.UsernsMode}}' "$container_id" 2>/dev/null)" || return 1
+  [[ -z "$user" || "$user" == root || "$user" == 0 || "$user" == 0:0 || "$user" == root:root ]] || return 1
+  [[ -z "$userns" ]] || return 1
+  process_label="$(timeout --foreground -k 5s 10s docker inspect --format '{{.ProcessLabel}}' "$container_id" 2>/dev/null)" || return 1
+  mount_label="$(timeout --foreground -k 5s 10s docker inspect --format '{{.MountLabel}}' "$container_id" 2>/dev/null)" || return 1
+  [[ -z "$process_label" && -z "$mount_label" ]] || return 1
+  printf '%s\n' "$container_id"
+}
+
+join_capture_container_env() {
+  local container="$1" env_file="$2"
+  umask 077
+  timeout --foreground -k 5s 10s docker inspect --format '{{range .Config.Env}}{{printf "%q\n" .}}{{end}}' "$container" >"$env_file.quoted" || return 1
+  if grep -Eq '\\(n|r|x|u)' "$env_file.quoted"; then
+    join_fail "container environment contains unsafe control characters"
+    return 1
+  fi
+  timeout --foreground -k 5s 10s docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$container" >"$env_file" || return 1
+  awk '$0 != "" && $0 !~ /^[A-Za-z_][A-Za-z0-9_]*=/ { exit 1 }' "$env_file" || { rm -f "$env_file"; join_fail "container environment cannot be safely forwarded"; return 1; }
+  chmod 600 "$env_file"
+}
+
+join_write_fresh_files() {
+  local workdir="$1" image="$2" container="$3" password session_secret
+  [[ ! -e "$workdir" ]] || { join_fail "--fresh requires an empty, non-existent --workdir"; return 1; }
+  umask 077
+  mkdir -m 700 "$workdir" || return 1
+  mkdir -m 700 "$workdir/data" || return 1
+  chmod 700 "$workdir" "$workdir/data"
+  password="$(random_hex 24)"
+  session_secret="$(random_hex 32)"
+  cat >"$workdir/.env" <<EOF
+WEBUI_HOST=127.0.0.1
+WEBUI_PORT=51821
+PASSWORD=$password
+SESSION_SECRET=$session_secret
+DATABASE_MODE=off
+APPLY_CONFIG=true
+EOF
+  chmod 600 "$workdir/.env"
+  cat >"$workdir/docker-compose.yml" <<EOF
+services:
+  awg-forge:
+    image: $image
+    container_name: $container
+    env_file: .env
+    network_mode: host
+    volumes:
+      - ./data:/etc/awg-forge
+      - /lib/modules:/lib/modules:ro
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    restart: unless-stopped
+EOF
+  chmod 600 "$workdir/docker-compose.yml"
+}
+
+join_run() {
+  set -euo pipefail
+  set +x
+  local action="$1"
+  shift
+  local workdir='' image='' script_sha='' version='' commit='' endpoint='' pin='' invitation='' name=''
+  local secret_fd='' timeout='10m' timeout_seconds='' fresh=false container="$APP_NAME" maintenance=false start_service=false node_id='' controller_id='' mode=''
+  local JOIN_TMPDIR='' JOIN_CIDFILE='' JOIN_CONTAINER='' JOIN_WAS_RUNNING=false JOIN_COMMITTED=false JOIN_TTY='' JOIN_STOP_ATTEMPTED=false JOIN_FRESH_WORKDIR='' JOIN_HELPER_PID='' JOIN_HELPER_LAUNCHING=false JOIN_SIGNAL_STATUS=0
+  while (( $# )); do
+    case "$1" in
+      --workdir|--image|--script-sha256|--artifact-version|--artifact-commit|--controller-url|--ca-pin|--invitation-id|--name|--secret-fd|--timeout|--container|--confirm-node-id|--confirm-controller-id|--mode)
+        (( $# >= 2 )) || { join_usage; return 2; }
+        case "$1" in
+          --workdir) workdir="$2" ;; --image) image="$2" ;; --script-sha256) script_sha="$2" ;;
+          --artifact-version) version="$2" ;; --artifact-commit) commit="$2" ;; --controller-url) endpoint="$2" ;;
+          --ca-pin) pin="$2" ;; --invitation-id) invitation="$2" ;; --name) name="$2" ;;
+          --secret-fd) secret_fd="$2" ;; --timeout) timeout="$2" ;; --container) container="$2" ;;
+          --confirm-node-id) node_id="$2" ;; --confirm-controller-id) controller_id="$2" ;;
+          --mode) mode="$2" ;;
+        esac
+        shift 2 ;;
+      --fresh) fresh=true; shift ;;
+      --maintenance) maintenance=true; shift ;;
+      --start-service) start_service=true; shift ;;
+      --help|-h) join_usage; return 0 ;;
+      *) join_usage; return 2 ;;
+    esac
+  done
+  [[ -n "$workdir" && -n "$image" && -n "$script_sha" && -n "$version" && -n "$commit" && -n "$endpoint" && -n "$pin" && -n "$invitation" && -n "$name" ]] || { join_usage; return 2; }
+  join_is_sha256 "$script_sha" && join_is_commit "$commit" && join_is_version "$version" && join_is_image "$image" || { join_fail "invalid verified artifact metadata"; return 1; }
+  [[ "$pin" =~ ^sha256:[a-f0-9]{64}$ && "$container" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || { join_fail "invalid pin or container name"; return 1; }
+  [[ -z "$secret_fd" || "$secret_fd" == 0 ]] || { join_fail "--secret-fd only supports stdin (0)"; return 1; }
+  [[ -z "$mode" || "$mode" == fresh || "$mode" == existing ]] || { join_fail "--mode must be fresh or existing"; return 1; }
+  [[ "$mode" != fresh || "$fresh" == true ]] || fresh=true
+  [[ "$mode" != existing || "$fresh" == false ]] || { join_fail "--fresh conflicts with --mode existing"; return 1; }
+  [[ "$action" != join || ( -z "$node_id" && -z "$controller_id" ) ]] || { join_fail "join does not accept recovery confirmations"; return 1; }
+  [[ "$action" != rebind || ( -n "$node_id" && -n "$controller_id" ) ]] || { join_fail "rebind requires both current identity confirmations"; return 1; }
+  [[ "$action" != rebind || "$fresh" == false ]] || { join_fail "rebind applies to an existing node only"; return 1; }
+  timeout_seconds="$(join_timeout_seconds "$timeout")" || { join_fail "timeout must be 1s..15m"; return 1; }
+  join_require_prerequisites || return 1
+  join_verify_script "$script_sha" || return 1
+  join_verify_artifact "$image" "$version" "$commit" "$endpoint" "$pin" "$invitation" "$name" "$node_id" "$controller_id" || return 1
+  if [[ -z "$secret_fd" ]]; then
+    join_open_tty || { join_fail "secret requires a TTY or --secret-fd 0"; return 1; }
+  fi
+  if "$fresh"; then
+    local fresh_parent fresh_base
+    fresh_parent="$(cd "$(dirname "$workdir")" && pwd -P)" || { join_fail "fresh workdir parent does not exist"; return 1; }
+    fresh_base="$(basename "$workdir")"
+    [[ "$fresh_base" != . && "$fresh_base" != .. && ! -L "$workdir" && ! -e "$workdir" ]] || { join_fail "--fresh requires a non-existent direct child workdir"; return 1; }
+    workdir="$fresh_parent/$fresh_base"
+  else
+    workdir="$(cd "$workdir" && pwd -P)" || { join_fail "existing workdir is unavailable"; return 1; }
+  fi
+  local node_action=enroll
+  [[ "$action" == rebind ]] && node_action=rebind
+  local -a node_args=(node "$node_action" --controller-url "$endpoint" --ca-pin "$pin" --invitation-id "$invitation" --name "$name" --timeout "$timeout" --secret-fd 0)
+  if [[ "$action" == rebind ]]; then node_args+=(--confirm-node-id "$node_id" --confirm-controller-id "$controller_id"); fi
+  JOIN_TMPDIR="$(mktemp -d /tmp/awg-forge-join.XXXXXX)" || return 1
+  JOIN_CIDFILE="$JOIN_TMPDIR/helper.cid"
+  JOIN_CONTAINER="$container"
+  trap join_clean_up EXIT
+  trap 'join_signal 129' HUP
+  trap 'join_signal 130' INT
+  trap 'join_signal 143' TERM
+  if "$fresh"; then
+    join_write_fresh_files "$workdir" "$image" "$container" || exit 1
+    JOIN_FRESH_WORKDIR="$workdir"
+    if [[ -n "$secret_fd" ]]; then
+      join_run_helper "$((timeout_seconds + 30))s" --rm --cidfile "$JOIN_CIDFILE" -i --network host --env-file "$workdir/.env" -v "$workdir/data:/etc/awg-forge" "$image" "${node_args[@]}" || exit 1
+    else
+      join_run_helper "$((timeout_seconds + 30))s" --rm --cidfile "$JOIN_CIDFILE" -it --network host --env-file "$workdir/.env" -v "$workdir/data:/etc/awg-forge" "$image" "${node_args[@]}" <&"$JOIN_TTY" || exit 1
+    fi
+    JOIN_COMMITTED=true
+    timeout --foreground -k 5s 45s docker compose -f "$workdir/docker-compose.yml" --project-directory "$workdir" up -d awg-forge || { join_fail "enrollment committed; service start is pending"; exit 1; }
+    ok "enrollment committed; controller connectivity is pending until presence is observed"
+    exit 0
+  fi
+  JOIN_CONTAINER="$(join_container_is_owned "$container" "$workdir" "$image")" || { join_fail "container is not the requested root Compose service with supported user namespace and exact artifact"; exit 1; }
+  if [[ "$(timeout --foreground -k 5s 10s docker inspect --format '{{.State.Running}}' "$JOIN_CONTAINER")" == true ]]; then
+    JOIN_WAS_RUNNING=true
+  fi
+  "$maintenance" || { join_fail "existing installation requires --maintenance before stop"; exit 1; }
+  join_capture_container_env "$JOIN_CONTAINER" "$JOIN_TMPDIR/env" || exit 1
+  if "$JOIN_WAS_RUNNING"; then
+    JOIN_STOP_ATTEMPTED=true
+    timeout --foreground -k 5s 40s docker stop -t 30 "$JOIN_CONTAINER" >/dev/null || exit 1
+  fi
+  if [[ -n "$secret_fd" ]]; then
+    join_run_helper "$((timeout_seconds + 30))s" --rm --cidfile "$JOIN_CIDFILE" -i --network host --volumes-from "$JOIN_CONTAINER" --env-file "$JOIN_TMPDIR/env" "$image" "${node_args[@]}" || exit 1
+  else
+    join_run_helper "$((timeout_seconds + 30))s" --rm --cidfile "$JOIN_CIDFILE" -it --network host --volumes-from "$JOIN_CONTAINER" --env-file "$JOIN_TMPDIR/env" "$image" "${node_args[@]}" <&"$JOIN_TTY" || exit 1
+  fi
+  JOIN_COMMITTED=true
+  if "$JOIN_WAS_RUNNING" || "$start_service"; then
+    timeout --foreground -k 5s 45s docker start "$JOIN_CONTAINER" >/dev/null || { join_fail "enrollment committed; service start is pending"; exit 1; }
+  fi
+  ok "enrollment committed; controller connectivity is pending until presence is observed"
+  exit 0
+}
+
 main() {
+  if [[ "${1:-}" == join || "${1:-}" == rebind ]]; then
+    local join_action="$1"
+    shift
+    join_run "$join_action" "$@"
+    return
+  fi
   if [[ "${1:-}" == "upgrade" ]]; then
     if (( $# != 1 )); then
       fail "usage: install.sh upgrade"
@@ -1292,9 +1611,15 @@ main() {
 
   printf '\n'
   bold "Network"
-  local server_host external_interface webui_host webui_port tls_mode tls_acme_domain tls_acme_ip tls_acme_email
+  local server_name server_host external_interface webui_host webui_port tls_mode tls_acme_domain tls_acme_ip tls_acme_email
+  server_name=""
   server_host="$default_host"
   if ! $existing_state; then
+    server_name="$(prompt "Server name (optional, letters and numbers only)")"
+    while ! validate_server_name "$server_name"; do
+      warn "Use at most 32 English letters or numbers, or leave the name empty"
+      server_name="$(prompt "Server name (optional, letters and numbers only)")"
+    done
     if [[ "$default_host" != "vpn.example.com" ]]; then
       muted "Detected outbound address: $default_host. Verify it is the public endpoint; NAT or floating IP can differ."
     fi
@@ -1483,7 +1808,7 @@ main() {
   if ! $existing_state; then
     printf '\n'
     bold "Initialize state"
-    initialize_state "$server_host" "$tunnel_name" "$listen_port" "$external_interface" "$ipv4_subnet" "$dns" "$allowed_ips" "$keepalive" "$mtu" "$profile"
+    initialize_state "$server_host" "$tunnel_name" "$listen_port" "$external_interface" "$ipv4_subnet" "$dns" "$allowed_ips" "$keepalive" "$mtu" "$profile" "$server_name"
 
     printf '\n'
     bold "Configure Web UI TLS"

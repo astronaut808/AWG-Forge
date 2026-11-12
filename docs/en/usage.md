@@ -40,6 +40,23 @@ Maintenance actions are available through the `Maintenance` button:
 - `Traffic`: aggregate traffic history when SQLite is enabled.
 - `Audit log`: inspect recent safe audit events. The panel auto-refreshes while the Audit log tab is open and shows newest events first.
 - `Support`: download a support bundle without secrets and view the safe runtime, database, TLS, and version summary.
+- `Controller`: with SQLite enabled, create the administrator, scan the MFA QR, confirm a TOTP code, and save the recovery codes before finishing. In controller mode, reauthenticate and replace recovery codes here.
+
+After activation, log in with username, password, and TOTP. The login page has a
+separate recovery-code option; each recovery code works once. Store replacement
+codes when they are displayed because they cannot be retrieved later.
+
+For offline administrator recovery, stop `awg-forge serve` first. As Linux root,
+prepare a root-owned regular JSON file with mode `0600` containing `username`
+and `password`, then run:
+
+```bash
+awg-forge controller recover-admin --input-file /etc/awg-forge/recovery-input.json
+```
+
+The command prints a new TOTP secret and recovery codes once and revokes all
+browser sessions. Remove the input file after use. Missing SQLite or
+`controller-auth.keys` is an error; do not create replacement files.
 
 ## Stale Configs
 
@@ -88,16 +105,29 @@ In `serve` mode, awg-forge periodically enforces expired clients and re-renders 
 
 ## CLI In Docker
 
-After restore, restart the container to reload all restored settings, including TLS and database state. With `APPLY_CONFIG=true`, startup applies enabled tunnels and reconciles WARP. Restarting only a tunnel is not enough. Wait for startup before running the remaining checks.
+Restore must run while the server container is stopped. The one-shot restore
+container uses the same data volume; starting the service afterwards loads the
+restored desired state and TLS assets. Standalone and managed-node backups do
+not include SQLite operational history. Controller backups include the
+authentication database snapshot and its key file. If a control
+identity has been prepared, they also include the private keys and certificates
+of its exact CA and server generations. Restore revokes every archived node
+certificate and binding; recovering the administrator does not restore node
+access. Restore always disables the control listener, including when the archive
+records an enabled identity. See [controller recovery](diagnostics.md) before restarting.
+With `APPLY_CONFIG=true`, startup applies
+enabled tunnels and reconciles WARP. Wait for startup before running the
+remaining checks.
 
 ```bash
 docker exec awg-forge awg-forge doctor
 docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge backup /tmp/awg-forge.afbackup
 docker cp awg-forge:/tmp/awg-forge.afbackup ./awg-forge-backup-YYYYMMDD-HHMMSS.afbackup
-docker cp ./<backup-file>.afbackup awg-forge:/tmp/backup.afbackup
-docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore verify /tmp/backup.afbackup
-docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore /tmp/backup.afbackup
-docker restart awg-forge
+cp ./<backup-file>.afbackup ./data/backup.afbackup
+docker exec -e BACKUP_PASSWORD='long-random-backup-password' awg-forge awg-forge restore verify /etc/awg-forge/backup.afbackup
+docker compose stop awg-forge
+docker compose run --rm -e BACKUP_PASSWORD='long-random-backup-password' awg-forge restore /etc/awg-forge/backup.afbackup
+docker compose up -d awg-forge
 docker exec awg-forge awg-forge firewall repair
 docker exec awg-forge awg-forge firewall check
 docker exec awg-forge awg-forge support-bundle
@@ -115,6 +145,10 @@ docker exec awg-forge awg-forge tunnel create awg_1_5 awg15 51825 10.15.0.0/24
 
 ## Local CLI
 
+Stop any `awg-forge serve` process that uses the same config directory before
+running the local restore command. The state-directory lock rejects an online
+restore.
+
 ```bash
 awg-forge init --server-host vpn.example.com --external-interface eth0 --profile awg_2_0 --tunnel-name awg20 --listen-port 51830 --ipv4-subnet 10.20.0.0/24
 awg-forge serve
@@ -130,7 +164,85 @@ awg-forge updates
 awg-forge logs
 ```
 
-After a local restore, restart the running awg-forge process to reload restored settings.
+Managed-node restore fencing and the explicit `--detach-managed-node` recovery
+option are described in [Diagnostics](diagnostics.md#encrypted-backup--restore).
+Controller restore has additional identity, archive-location, and offline
+administrator-recovery requirements in the same section.
+
+## Explicit control listener and node enrollment
+
+This checkpoint supports authenticated enrollment and mTLS presence on an
+explicitly enabled control endpoint. Use the controller browser session and recent MFA
+reauthentication with the internal routes in [the browser API contract](../../api/openapi.json):
+
+1. `POST /api/controller/control/prepare` with a specific literal `bind_ip`,
+   an `advertised` IP address or DNS name for the TLS SAN, and a dedicated `port`
+   different from the Web UI and TCP/80. Wildcard, multicast, scoped and IPv4-mapped
+   bind addresses are rejected. Preparation leaves the listener disabled.
+2. `POST /api/controller/control/backup` with a backup `password`. Save the
+   encrypted response outside the configuration directory. Keep its
+   `X-Control-Enable-Receipt` header; it expires with recent authentication and
+   cannot survive restart or another backup preparation.
+3. `POST /api/controller/control/enable` with `receipt` and `backup_saved: true`
+   only after retaining the archive. If either endpoint value is not a literal
+   loopback address, also send `allow_non_loopback: true`. Omission or `false`
+   denies that endpoint and consumes a matching receipt; obtain a new backup
+   before retrying. Consent covers only the exact prepared endpoint.
+   `GET /api/controller/control/status`
+   returns public identity metadata. Disable with
+   `POST /api/controller/control/disable` after recent authentication.
+4. `POST /api/controller/enrollments/invite` with `{}`. Save the JSON download
+   as a current-user-owned `0600` regular file. It contains the one-time secret
+   and public CA, expires after ten minutes, and must not be logged or copied
+   into command arguments or environment variables.
+5. On the node, with its own `CONFIG_DIR`, run:
+
+   ```bash
+   awg-forge node enroll --input-file ./node-invitation.json --name node
+   ```
+
+6. Review `POST /api/controller/enrollments/review` with `invitation_id`.
+   Compare its `verification_code` with the code shown by the node. Approve or
+   reject using `POST /api/controller/enrollments/decide` with `enrollment_id`,
+   the matching `verification_code`, and `approve`. Then start or restart the
+   node's `awg-forge serve` process to send mTLS presence.
+
+Use a reachable advertised address whose certificate SAN the node can verify;
+DNS/NAT routing and firewall access are configured by the operator. The listener
+binds only the specified local IP; enable fails if that socket is unavailable.
+The browser UI can remain on loopback HTTP. The control listener serves TLS 1.3
+only, ignores forwarded identity headers, and exposes only the existing enrollment,
+public CA bootstrap, presence and certificate-renewal routes. Existing mTLS registry checks and resource
+limits apply on every interface. `serve` restarts a previously enabled exact endpoint;
+install/upgrade and preparation never enable it automatically. Disable or restore
+requires a fresh verified backup and explicit consent before enabling it again.
+
+The node verifies the pinned CA and normal TLS certificate before transmitting
+its secret. Its private key stays local. An invitation accepts exactly one CSR;
+repeating that CSR is safe, while a competing CSR is denied. Existing local
+configuration and tunnel revisions are preserved; a fresh node has no default
+tunnel. Controller connection loss leaves local forwarding running. Revocation
+stops the connection worker and requires explicit local recovery.
+
+While `serve` is running, the node automatically renews its certificate after
+two thirds of its validity period. It saves a new private key and the exact CSR
+before requesting renewal, so a restart or lost response retries the same request.
+The controller keeps the old certificate valid for at most 24 hours after renewal;
+revocation ends that overlap immediately. Switching credentials preserves local
+tunnels, configuration revisions and the current boot identity. An expired or
+revoked certificate requires local recovery; local service remains available.
+The controller also renews its server certificate automatically under its existing
+CA; see [Security](security.md) for startup prerequisites and expiry behavior.
+
+Cold controller restore disables the listener and administrator, revokes all
+restored node certificates/bindings, and removes invitations, claim credentials
+and presence sessions. Managed-node backups include the protected credential
+generation; backup is blocked while node renewal is pending. Restore still
+enforces identity fencing or explicit detach. Detach removes controller authority.
+Linux-root [offline recovery](security.md#offline-node-recovery) supports detach
+and fresh enrollment with a new identity. Explicit installer join/rebind and the minimal onboarding UI are described in
+[Quick Install](quick-install.md#explicit-installer-connection-to-a-controller).
+Endpoint replacement and remote operations remain separate work.
 
 ## Client Config Import
 
@@ -149,3 +261,127 @@ Use the client `Config` action to choose between:
 For AWG 3.x, the structured AmneziaVPN QR uses protocol version `3.1` and includes the same Header Protection and timing fields as the rendered `.conf`. The `vpn://` value is base64url-encoded raw `.conf`, which AmneziaVPN 5.0.1.5+ passes through its normal config importer. Disabled `RandomTrailers` and `DisableCookies` options are omitted from client exports. These links and QR payloads contain the client private key, PSK, and AWG 3.x Header Protection key.
 
 If an official client cannot import the QR on a specific platform or version, download and import the `.conf` file instead.
+
+## Read-only node observation
+
+An authenticated controller administrator can select **This server** or an
+individual node. The local view retains its existing controls; node views show
+only tunnels, clients, live peer counters/handshakes and a limited runtime Doctor
+summary. A node can advertise `client.enabled.set.v1`, `client.create.v1`,
+`client.delete.v1`, and `client.config.export.v1` for the limited client actions
+described below.
+
+The node list is paged in node ID order, with up to 128 identities per page.
+Use **Next page** and **First page** to browse it. Changing pages clears the
+selected node and returns to **This server**. Revoked registrations remain
+visible as history. Inventory page size is independent of the snapshot cache quota. Each page is
+a current read, so restart from the first page to include registrations added
+before the current cursor while browsing.
+
+Node reachability and VPN health are separate. **Online** means a current
+certificate-bound presence, not a working tunnel. Snapshot observation and
+controller receipt times remain visible; offline or old snapshots are marked
+stale. Revoked or incompatible nodes expose no previous projection. Selecting a
+node, changing its identity epochs or logging out clears the prior view.
+Logout waits at most 10 seconds before cancelling its request and allowing
+another login. A timeout clears the local view but does not confirm that the
+server revoked the previous session.
+
+Nodes send snapshots outbound over the existing TLS/mTLS listener, without an
+additional node management port. `state.json` remains authoritative; the
+controller SQLite cache keeps one allowlisted projection per identity, at most
+1024 entries and 16 MiB of payloads. Each snapshot is limited to 512 KiB, 64
+tunnels and 2048 clients. These limits fail closed; a node exceeding them has no
+new snapshot. DB-off nodes report runtime counters without invented history;
+SQLite history remains local. Cold controller restore removes projections and
+invalidates existing authority before control can be enabled again.
+
+The authenticated, no-store internal reads are `GET /api/controller/nodes` and
+`GET /api/controller/nodes/{node_id}`. They expose no keys, PSKs, session bearers,
+full configurations, protocol parameters, QR/import payloads or raw diagnostics.
+The inventory response includes `next_cursor` when another page is available;
+pass it as `GET /api/controller/nodes?after=<next_cursor>`. Omit `after` for the
+first page. The cursor is a canonical node UUID, not an authorization token.
+Arbitrary commands remain future work. Local container acceptance does not close
+the external multi-host release gate.
+
+## Change client access on a selected node
+
+Choose a client under **Client access**, then confirm **Enable client** or
+**Disable client**. The confirmation identifies the selected node, tunnel and
+client. This operation changes only that client's enabled state; it does not
+create/delete a client or expose its configuration.
+
+Queued and applying messages show delivery progress. **Result unconfirmed** means
+the node may have saved an outcome but the controller has not confirmed it yet;
+retry uses the same request. **Client change committed** means the node durably
+saved the matching result, but the UI waits for a newer projection before showing
+current data. A missing or mismatched result is never success. Switching node,
+account or identity epochs, and logging out, clears the operation view.
+
+The request expires after two minutes. It can reconcile a saved outcome after
+expiry but cannot start a new change late. The node remains the authority: a
+local change advances its generation, so an older request conflicts instead of
+undoing it. Existing quota and traffic-limit checks still apply when enabling.
+`ConfigRevision` keeps its existing client-configuration meaning.
+
+## Refresh a selected node
+
+Choose **Refresh** on an online node supporting `snapshot.refresh.v1`.
+Queued and running states confirm delivery progress; only **New snapshot accepted**
+confirms a correlated snapshot accepted by the controller. A newer periodic
+snapshot alone does not complete the request. An unavailable response means the
+outcome is unconfirmed, not successful. Retry after an uncertain creation reuses
+the same request; after a generation conflict the UI reads a fresh projection
+before enabling an explicit new retry. Changing node/account/epochs or logging out
+clears the operation view and cancels pending browser reads.
+
+The request expires after two minutes. A lease lasts at most 40 seconds; delivery
+can repeat after a crash. Refresh is read-only: configuration, generation,
+ConfigRevision, runtime configuration and history remain unchanged. Empty DB-off
+nodes stay empty and DB-off. Unsupported/offline nodes cannot receive new work.
+This read-only operation and the limited client actions are the only delivered
+remote actions. Arbitrary commands and secret exports remain future work.
+
+## Create or delete a client on a selected node
+
+On an online node with a fresh projection, **Remote client management** exposes
+only the capabilities advertised by that node. Choose a tunnel, enter an ASCII
+client name, and confirm **Create client**. The browser assigns one lowercase
+16-hex client ID for that request. To remove a client, choose the tunnel and
+existing client, then confirm **Delete client**. The confirmation shows the
+node, tunnel, client, action, and complete fenced request before it is sent.
+
+The browser keeps the operation and both UUIDs only in memory. After an uncertain
+admission it retries the identical request; switching node, account, identity
+epochs, or logging out cancels browser work and clears it. Success requires the
+matching committed result and then a fresh projection at that generation with the
+new exact client ID present for creation or absent for deletion. A later
+generation can reflect an independent local change and is not overwritten.
+
+The actions remain disabled for offline, stale, unavailable, or unsupported
+nodes. They do not expose QR codes, import links, `.conf` files, private keys,
+PSKs, or other client configuration material.
+
+## One-use remote `.conf` export
+
+On an online node with a fresh projection and `client.config.export.v1`, choose
+one existing client under **Remote client configuration** and confirm the shown
+node, tunnel, and client. The browser checks the fresh generation, epochs, tunnel
+revision, capability, and client association before sending the fenced export
+request. This read-only export does not change node state, desired generation, runtime configuration, or
+`ConfigRevision`.
+
+The controller prepares one opaque export for at most 60 seconds. The browser
+then makes one consuming download request, which can wait up to 20 seconds; the
+browser deadline is 45 seconds. A response starts a raw `.conf` attachment with
+`Cache-Control: no-store`. There is no retry for a download: an interrupted,
+malformed, or lost response may already have consumed the export, so start a new
+export instead. The UI keeps neither the configuration nor its export ID in
+browser storage and revokes its temporary download URL promptly.
+
+Switching node, account, identity context, or logging out aborts browser work and
+best-effort cancels a known export. The controller also checks the same browser
+session, recent MFA, current node authority, capability, exact projection and
+client association at preparation and consumption. If recent authentication has
+expired, reauthenticate in **Maintenance** and begin a new export.

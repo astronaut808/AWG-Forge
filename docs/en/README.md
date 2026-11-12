@@ -4,6 +4,7 @@ English documentation:
 
 - [Quick install](quick-install.md)
 - [Setup](setup.md)
+- [Upgrade](quick-install.md#upgrade) and [uninstall](quick-install.md#uninstall)
 - [Configuration](configuration.md)
 - [Web UI and CLI](usage.md)
 - [Diagnostics and troubleshooting](diagnostics.md)

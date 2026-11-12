@@ -5,6 +5,7 @@
 - [README EN](../../README.en.md)
 - [Быстрая установка](quick-install.md)
 - [Установка и запуск](setup.md)
+- [Обновление](quick-install.md#обновление) и [удаление](quick-install.md#удаление)
 - [Конфигурация](configuration.md)
 - [Web UI и CLI](usage.md)
 - [Диагностика и troubleshooting](diagnostics.md)

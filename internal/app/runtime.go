@@ -29,8 +29,10 @@ func (s *Service) RestartTunnel() error {
 }
 
 func (s *Service) RestartTunnelByID(tunnelID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lockStateMutation(); err != nil {
+		return err
+	}
+	defer s.unlockStateMutation()
 	state, err := s.initLocked()
 	if err != nil {
 		return err
@@ -211,11 +213,15 @@ func (s *Service) FirewallCheck() (firewall.Report, error) {
 }
 
 func (s *Service) FirewallRepair() (firewall.Report, error) {
-	state, err := s.Init()
+	if err := s.lockStateMutation(); err != nil {
+		return firewall.Report{}, err
+	}
+	defer s.unlockStateMutation()
+	state, err := s.initLocked()
 	if err != nil {
 		return firewall.Report{}, err
 	}
-	report, err := firewall.Repair(s.cfg, state, firewall.IPTablesRunner{})
+	report, err := s.runtimeOps.repairFirewall(s.cfg, state)
 	level := "info"
 	event := "firewall.repaired"
 	message := "managed firewall rules repaired"
@@ -482,8 +488,11 @@ func runtimeAWGShow(interfaceName string) (runtimeInterface, error) {
 var handshakeAgePartRE = regexp.MustCompile(`(?i)(\d+)\s+(day|hour|minute|second)s?`)
 
 func (s *Service) ClientRuntimeSnapshot(state config.State) (config.State, map[string]map[string]ClientRuntimeStatus) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lockStateMutation(); err != nil {
+		s.log("warn", "client.snapshot.lock_failed", "client runtime snapshot skipped because state could not be locked", nil, err)
+		return state, map[string]map[string]ClientRuntimeStatus{}
+	}
+	defer s.unlockStateMutation()
 	if latest, err := s.initLocked(); err == nil {
 		state = latest
 	}

@@ -6,6 +6,7 @@ The main example is [.env.example](../../.env.example).
 
 - `WEBUI_HOST`: Web UI bind address. Defaults to `127.0.0.1`.
 - `WEBUI_PORT`: Web UI port. Defaults to `51821`.
+- `SERVER_NAME`: optional ASCII alphanumeric name (up to 32 characters) shown in the panel header. It provides an initial or explicitly changed deployment value; the name always remains editable in the Web UI.
 - `PASSWORD`: Web UI password. Required for public binds and recommended always.
 - `SESSION_COOKIE_SECURE`: Secure cookie policy for UI sessions. Values: `auto`, `true`, `false`. Defaults to `auto`.
 - `WEBUI_TRUST_PROXY_HEADERS`: permits trusted `X-Forwarded-Proto` and `X-Forwarded-For` handling. Defaults to `false`.
@@ -23,7 +24,7 @@ The main example is [.env.example](../../.env.example).
 - `DATABASE_PATH`: SQLite database path. Defaults to `/etc/awg-forge/awg-forge.db`.
 - `DATABASE_RETENTION_DAYS`: default operational data retention window. Defaults to `90`.
 - `DATABASE_BUSY_TIMEOUT`: SQLite busy timeout. Defaults to `5s`.
-- `DATABASE_QUERY_TIMEOUT`: database command/query timeout. Defaults to `2s`.
+- `DATABASE_QUERY_TIMEOUT`: timeout for database operations where a query deadline is applied. Defaults to `2s`. Controller startup, post-activation authentication runtime setup, activation recovery, and `db migrate` give schema migration a separate deadline of at least `30s`. Database opening and status or administrator checks use fresh query deadlines; `db retention apply` has an operation deadline of at least `30s`.
 - `DATABASE_MAX_OPEN_CONNS`: database connection limit. Defaults to `1`.
 - `DATABASE_MAX_IDLE_CONNS`: idle connection limit. Defaults to `1`.
 
@@ -32,6 +33,8 @@ The main example is [.env.example](../../.env.example).
 New installs keep runtime settings in `.env` and tunnel settings in `state.json`.
 
 During a fresh install, `install.sh` runs a one-shot `awg-forge init` container before starting the service. That command creates `data/state.json` with the selected first tunnel. After that, `docker compose up -d` starts from ready state, and tunnel settings are managed from the Web UI/API and persisted in `state.json`.
+
+The installer also offers an optional server name. It is stored in `state.json` and can later be changed or removed from the compact name control next to the server address in the header. Manual initialization can use `--server-name MyServer`, and deployment configuration can provide `SERVER_NAME=MyServer`. AWG-Forge remembers the last startup value: a later external change to `SERVER_NAME` is applied, while an unchanged old value does not overwrite a newer UI edit after restart. UI edits update the persisted local panel name without changing the startup environment or the host `.env` file. In controller mode this name belongs to the local panel; selecting a remote node retains its separate enrollment identity. Renaming does not change tunnel configuration, client revisions or managed desired generation.
 
 The installer asks for the protocol profile before tunnel defaults, so profile-specific defaults stay aligned. Pressing Enter on the profile question selects AWG 2.0. The installer selects a free UDP port from `30000-49999` by default; the profile ports below remain the defaults for manual selection:
 
@@ -416,4 +419,14 @@ When SQLite is enabled, migrated, and `APPLY_CONFIG=true`, awg-forge samples run
 
 Client creation and client settings can store an optional traffic limit when SQLite is enabled. The Web UI accepts MiB, GiB, or TiB. A limit can apply to all recorded traffic (`Lifetime`) or to the previous 30 UTC days (`Rolling 30 days (UTC)`); existing limits remain lifetime limits after migration. Unlimited means no limit row is stored.
 
-When recorded traffic reaches or exceeds the configured limit, awg-forge disables the client through the normal render/apply path and writes an audit event. Re-enable attempts are rejected while the active limit period is exceeded. The rolling window moves forward as daily UTC aggregates age out. awg-forge automatically re-enables only clients it disabled for that quota; a manual disable clears the quota-block marker and is never auto-reversed. The HTTP API returns `409 Conflict`; the CLI returns an error.
+When recorded traffic reaches or exceeds the configured limit, awg-forge records the quota-block marker, disables the client through the normal render/apply path, and writes an audit event. If the marker cannot be recorded, the client stays enabled and enforcement retries on a later pass. Re-enable attempts are rejected while the active limit period is exceeded. The rolling window moves forward as daily UTC aggregates age out. awg-forge automatically re-enables only clients it disabled for that quota; a manual disable clears the quota-block marker and is never auto-reversed. The HTTP API returns `409 Conflict`; the CLI returns an error.
+
+Explicit `install.sh join --mode fresh` is a separate path: no `init` or default tunnel, loopback local UI with protected credentials, and `DATABASE_MODE=off`. Existing join/rebind reuse the owned service environment and mounts without rewriting Compose or deployment settings; see [Quick Install](quick-install.md).
+
+## Refresh storage and limits
+
+Snapshot refresh adds no environment setting or node database requirement.
+Controller SQLite schema 12 stores bounded operation/lease/result rows; unavailable
+storage closes admission. DB-off node history remains disabled. Queue TTL (two
+minutes), lease (40 seconds), retention (24 hours after expiry), admission limits
+and poll bounds are fixed internal protocol limits, described in [API](api.md#snapshot-refresh-delivery).

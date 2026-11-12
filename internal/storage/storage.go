@@ -1,9 +1,11 @@
 package storage
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,8 +14,41 @@ import (
 	"github.com/astronaut808/awg-forge/internal/config"
 )
 
+const ControllerActivationJournalFileName = ".controller-activation.json"
+
+// ControllerActivationJournal is secret-free recovery metadata for the
+// prepare-before-mode-switch controller activation transaction.
+type ControllerActivationJournal struct {
+	ControllerID string    `json:"controller_id"`
+	StartedAt    time.Time `json:"started_at"`
+}
+
 type Store struct {
 	dir string
+}
+
+// PendingDesiredStateCommit records the minimum runtime cleanup information
+// needed if the process stops after applying a candidate but before committing
+// it to state.json. It intentionally contains no tunnel or control-plane secrets.
+type PendingDesiredStateCommit struct {
+	OperationID             string                 `json:"operation_id"`
+	IdempotencyKeyHash      string                 `json:"idempotency_key_hash"`
+	StateEpoch              string                 `json:"state_epoch"`
+	PreviousGeneration      uint64                 `json:"previous_generation"`
+	CandidateGeneration     uint64                 `json:"candidate_generation"`
+	CandidateRuntimeTunnels []PendingRuntimeTunnel `json:"candidate_runtime_tunnels,omitempty"`
+	CreatedAt               time.Time              `json:"created_at"`
+}
+
+// PendingRuntimeTunnel is the non-secret subset required to remove candidate
+// interfaces and firewall rules during startup recovery.
+type PendingRuntimeTunnel struct {
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	InterfaceName string `json:"interface_name"`
+	EgressMode    string `json:"egress_mode,omitempty"`
+	ListenPort    int    `json:"listen_port"`
+	IPv4Subnet    string `json:"ipv4_subnet"`
 }
 
 func New(dir string) Store {
@@ -21,6 +56,12 @@ func New(dir string) Store {
 }
 
 func (s Store) StatePath() string { return filepath.Join(s.dir, "state.json") }
+func (s Store) PendingDesiredStateCommitPath() string {
+	return filepath.Join(s.dir, ".desired-state-commit.json")
+}
+func (s Store) ControllerActivationJournalPath() string {
+	return filepath.Join(s.dir, ControllerActivationJournalFileName)
+}
 func (s Store) TunnelDir(tunnel string) string {
 	return filepath.Join(s.dir, "tunnels", tunnel)
 }
@@ -60,17 +101,138 @@ func (s Store) Load() (config.State, error) {
 }
 
 func (s Store) Save(state config.State) error {
+	return s.savePrivateJSON(s.StatePath(), ".state-*.tmp", state)
+}
+
+func (s Store) SaveClientOperations(value any) error {
+	if err := s.savePrivateJSON(filepath.Join(s.dir, ".client-operations.json"), ".client-operations-*.tmp", value); err != nil {
+		return err
+	}
+	return s.SyncStateDirectory()
+}
+
+func (s Store) LoadClientOperations(value any) error {
+	p := filepath.Join(s.dir, ".client-operations.json")
+	info, err := os.Lstat(p)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm() != 0600 || info.Size() > 2<<20 {
+		return errors.New("invalid client operation storage")
+	}
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		return err
+	}
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return errors.New("invalid client operation storage")
+	}
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.DisallowUnknownFields()
+	if err := d.Decode(value); err != nil {
+		return err
+	}
+	var extra any
+	if err := d.Decode(&extra); !errors.Is(err, io.EOF) {
+		return errors.New("invalid client operation storage")
+	}
+	return nil
+}
+
+// RetireClientOperations runs only after a proven detach/rebind state commit.
+// Authority retirement invalidates this node-local delivery journal.
+func (s Store) RetireClientOperations() error {
+	p := filepath.Join(s.dir, ".client-operations.json")
+	info, err := os.Lstat(p)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return errors.New("invalid client operation storage")
+	}
+	if err := os.Remove(p); err != nil {
+		return err
+	}
+	return s.SyncStateDirectory()
+}
+
+func (s Store) SavePendingDesiredStateCommit(pending PendingDesiredStateCommit) error {
+	return s.savePrivateJSON(s.PendingDesiredStateCommitPath(), ".desired-state-commit-*.tmp", pending)
+}
+
+func (s Store) LoadPendingDesiredStateCommit() (PendingDesiredStateCommit, error) {
+	b, err := os.ReadFile(s.PendingDesiredStateCommitPath())
+	if err != nil {
+		return PendingDesiredStateCommit{}, err
+	}
+	var pending PendingDesiredStateCommit
+	if err := json.Unmarshal(b, &pending); err != nil {
+		return PendingDesiredStateCommit{}, err
+	}
+	return pending, nil
+}
+
+func (s Store) DeletePendingDesiredStateCommit() error {
+	err := os.Remove(s.PendingDesiredStateCommitPath())
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
+func (s Store) SaveControllerActivationJournal(journal ControllerActivationJournal) error {
+	return s.savePrivateJSON(s.ControllerActivationJournalPath(), ".controller-activation-*.tmp", journal)
+}
+
+func (s Store) LoadControllerActivationJournal() (ControllerActivationJournal, error) {
+	path := s.ControllerActivationJournalPath()
+	info, err := os.Lstat(path)
+	if err != nil {
+		return ControllerActivationJournal{}, err
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm() != 0600 {
+		return ControllerActivationJournal{}, errors.New("invalid controller activation journal")
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return ControllerActivationJournal{}, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	var journal ControllerActivationJournal
+	if err := decoder.Decode(&journal); err != nil {
+		return ControllerActivationJournal{}, errors.New("invalid controller activation journal")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return ControllerActivationJournal{}, errors.New("invalid controller activation journal")
+	}
+	return journal, nil
+}
+
+func (s Store) DeleteControllerActivationJournal() error {
+	err := os.Remove(s.ControllerActivationJournalPath())
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
+func (s Store) savePrivateJSON(path, tempPattern string, value any) error {
 	if err := os.MkdirAll(s.dir, 0700); err != nil {
 		return err
 	}
 	if err := os.Chmod(s.dir, 0700); err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(state, "", "  ")
+	b, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(s.dir, ".state-*.tmp")
+	tmp, err := os.CreateTemp(s.dir, tempPattern)
 	if err != nil {
 		return err
 	}
@@ -96,7 +258,7 @@ func (s Store) Save(state config.State) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmpPath, s.StatePath()); err != nil {
+	if err := os.Rename(tmpPath, path); err != nil {
 		return err
 	}
 	removeTmp = false

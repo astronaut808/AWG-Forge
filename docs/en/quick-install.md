@@ -133,7 +133,7 @@ PASSWORD=...
 
 ## After Install
 
-Open the UI, create a client, open `Config`, and use one of the offered import methods. AWG 3.x supports `.conf`, AmneziaWG QR, AmneziaVPN QR, and `vpn://`; use AmneziaVPN 5.0.1.5+ and keep `.conf` as the fallback. Then check IPv4 egress:
+Open the UI, create a client, open `Config`, and use one of the offered import methods. AWG 3.x supports `.conf`, AmneziaWG QR, AmneziaVPN QR, and `vpn://`; use AmneziaVPN 5.0.1.5+ and keep `.conf` as the fallback. Connect the VPN on the client device, then check IPv4 egress from that device:
 
 ```bash
 curl -4 https://ifconfig.co
@@ -178,3 +178,32 @@ After reviewing those interfaces, remove them explicitly:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/uninstall.sh | sudo bash -s -- --remove-orphans
 ```
+
+## Explicit installer connection to a controller
+
+Ordinary installation remains standalone. In Maintenance → Controller, use recent MFA to prepare the exact control endpoint, download and retain a verified encrypted backup, and enable it. An external endpoint needs its separate consent checkbox. Then choose Add node, fresh or existing installation, and the node name. Compare the displayed code and name with the node terminal before approving; Connected appears only after authenticated presence from that enrollment. Closing the flow, logout, account change, rejection or expiry clears the invitation and stops polling.
+
+After connection, use **This server** or select the node for
+[read-only observation](usage.md#read-only-node-observation). Connection status and
+snapshot freshness are separate from VPN health; node views have no remote actions
+or client configuration exports.
+
+This development build has no published compatible installer artifact. The UI therefore copies **public arguments only**, and reports the missing release. It does not offer a release URL or fall back to `latest`. For local testing, use a downloaded/reviewed script with its verified SHA-256, and an explicitly built local image ID with matching compiled version and commit. The skeleton below contains only public placeholders; replace each from trusted artifact metadata and the UI:
+
+```bash
+sudo bash ./install.sh join --workdir /opt/awg-node --mode fresh \
+  --image sha256:IMAGE_ID_64_HEX --script-sha256 SCRIPT_SHA256_64_HEX \
+  --artifact-version local-SOURCE_HASH_12_HEX --artifact-commit COMMIT_40_HEX \
+  --controller-url 'https://controller.example:9443' \
+  --ca-pin 'sha256:CA_SPKI_PIN_64_HEX' --invitation-id INVITATION_UUID --name 'node'
+```
+
+The downloaded script and local image must support `installer-onboarding-v1`; metadata mismatch, an older image or a missing local image fails before stopping a service. No image is pulled implicitly. A published immutable GHCR digest is accepted only with matching compiled metadata. Obtain the invitation secret separately from the authenticated UI and paste it into the hidden terminal prompt. Never put it in the command, exported variables, a heredoc or shell substitution. A noninteractive caller may explicitly supply a private pipe/FD as stdin with `--secret-fd 0`; stdin is never used implicitly, including with `curl | bash`.
+
+Fresh join requires a nonexistent direct-child workdir. It generates protected local login credentials in `.env`, binds the break-glass Web UI to loopback, uses DB-off, and creates no tunnel or WARP/ACME setup. Access through an SSH tunnel; inspect the local protected `.env` for the password without copying it into logs.
+
+For an existing root-run Compose service, replace `--mode fresh` with `--mode existing --maintenance`, and optionally select `--container NAME`. The service must carry the exact Compose working-directory/service labels and use the exact verified image. Update an older installation separately first. The installer stops and restarts only that container ID, reuses its mounts and environment, and retains Compose, networks, logging, UI/TLS/session policy, history and local tunnel configuration. Unsupported container users, explicit user namespaces, SELinux process/mount labels or multiline environment values fail before stop. Installer join/rebind requires Docker without SELinux labels and rejects an SELinux-enabled daemon before creating fresh files; deployments using private `:Z` volumes require a deployment-specific offline enrollment/recovery workflow. Do not disable SELinux or relabel existing data to bypass this check. This action interrupts VPN service; an initially stopped service stays stopped unless `--start-service` is explicit.
+
+A managed node requires the separate `rebind` action with `--maintenance`, a fresh invitation, and both exact local `--confirm-node-id` and `--confirm-controller-id`. It calls offline recovery directly, never detach-first. Revoke copied old credentials on the former controller separately.
+
+A failed/interrupted fresh join retains its protected workdir for offline inspection: failure may follow an identity commit. Do not rerun a consumed invitation or delete a pending journal blindly. Before commit, an existing service resumes its previous identity when helper termination is proven. After commit, startup/connectivity failure remains pending; retain the new identity and diagnose/retry service start. Only the controller's authenticated presence confirms connectivity. Controller outage after setup leaves local forwarding independent.

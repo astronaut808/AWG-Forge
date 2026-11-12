@@ -2,6 +2,8 @@ package sqldb
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"testing"
 	"time"
 )
@@ -209,6 +211,9 @@ func TestTrafficLimitBlockRoundTrip(t *testing.T) {
 	if err := db.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	if err := db.MarkClientTrafficLimitBlocked(context.Background(), "tunnel", "missing", time.Now().UTC()); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("mark missing traffic limit = %v, want sql.ErrNoRows", err)
+	}
 	limit := uint64(1000)
 	if err := db.SetClientTrafficLimitWithPeriod(context.Background(), "tunnel", "client", &limit, TrafficLimitPeriodRolling30Days); err != nil {
 		t.Fatal(err)
@@ -233,6 +238,69 @@ func TestTrafficLimitBlockRoundTrip(t *testing.T) {
 	}
 	if len(blocks) != 0 {
 		t.Fatalf("blocks after clear = %#v, want none", blocks)
+	}
+}
+
+func TestMarkExceededTrafficLimitRechecksCurrentLimit(t *testing.T) {
+	cfg := retentionTestConfig(t)
+	db, err := Open(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	if err := db.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := db.RecordTrafficSamples(context.Background(), []TrafficSample{
+		{SampledAt: now.Add(-time.Minute), TunnelID: "tunnel", ClientID: "client", Present: true},
+		{SampledAt: now, TunnelID: "tunnel", ClientID: "client", RxBytes: 6000, Present: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	limit := uint64(5000)
+	if err := db.SetClientTrafficLimitWithPeriod(context.Background(), "tunnel", "client", &limit, TrafficLimitPeriodLifetime); err != nil {
+		t.Fatal(err)
+	}
+	exceeded, err := db.ListExceededTrafficLimits(context.Background(), now)
+	if err != nil || len(exceeded) != 1 {
+		t.Fatalf("initial exceeded limits = %#v, %v", exceeded, err)
+	}
+	limit = 7000
+	if err := db.SetClientTrafficLimitWithPeriod(context.Background(), "tunnel", "client", &limit, TrafficLimitPeriodLifetime); err != nil {
+		t.Fatal(err)
+	}
+	marked, err := db.MarkExceededClientTrafficLimitBlocked(context.Background(), "tunnel", "client", now)
+	if err != nil || marked {
+		t.Fatalf("mark after limit increase = %v, %v", marked, err)
+	}
+	blocked, err := db.IsClientTrafficLimitBlocked(context.Background(), "tunnel", "client")
+	if err != nil || blocked {
+		t.Fatalf("block after limit increase = %v, %v", blocked, err)
+	}
+	limit = 5000
+	if err := db.SetClientTrafficLimitWithPeriod(context.Background(), "tunnel", "client", &limit, TrafficLimitPeriodLifetime); err != nil {
+		t.Fatal(err)
+	}
+	marked, err = db.MarkExceededClientTrafficLimitBlocked(context.Background(), "tunnel", "client", now)
+	if err != nil || !marked {
+		t.Fatalf("mark current exceeded limit = %v, %v", marked, err)
+	}
+	limit = 7000
+	if err := db.SetClientTrafficLimitWithPeriod(context.Background(), "tunnel", "client", &limit, TrafficLimitPeriodLifetime); err != nil {
+		t.Fatal(err)
+	}
+	releasable, err := db.CanReleaseClientTrafficLimitBlock(context.Background(), "tunnel", "client", now)
+	if err != nil || !releasable {
+		t.Fatalf("release after limit increase = %v, %v", releasable, err)
+	}
+	limit = 5000
+	if err := db.SetClientTrafficLimitWithPeriod(context.Background(), "tunnel", "client", &limit, TrafficLimitPeriodLifetime); err != nil {
+		t.Fatal(err)
+	}
+	releasable, err = db.CanReleaseClientTrafficLimitBlock(context.Background(), "tunnel", "client", now)
+	if err != nil || releasable {
+		t.Fatalf("release after limit decrease = %v, %v", releasable, err)
 	}
 }
 

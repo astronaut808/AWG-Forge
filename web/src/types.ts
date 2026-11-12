@@ -2,8 +2,10 @@ export type Level = "ok" | "warn" | "fail" | "bad" | "neutral";
 
 export type Profile = {
   id: string;
+  name: string;
   tab: string;
   label: string;
+  experimental: boolean;
   available: boolean;
   suggested_name: string;
   suggested_port: number;
@@ -163,6 +165,7 @@ export type TLSSummary = {
 export type AppState = {
   authenticated: boolean;
   apply_enabled: boolean;
+  server_name: string;
   server_host: string;
   warp: WarpSummary;
   database: DatabaseSummary;
@@ -221,3 +224,30 @@ export type RestoreReport = {
   client_count: number;
   server_host: string;
 };
+
+export type SnapshotClient = { id: string; name: string; enabled: boolean; address: string };
+export type SnapshotTunnel = { id: string; name: string; interface: string; profile: string; enabled: boolean; listen_port: number; revision: number; clients: SnapshotClient[] };
+export type SnapshotObservations = { apply_enabled: boolean; history_available: boolean; tunnels: { id: string; known: boolean; up: boolean; apply_failed: boolean; clients: { id: string; present: boolean; last_handshake: string; rx_bytes: number; tx_bytes: number }[] }[]; doctor: { scope: "runtime"; tun_available: boolean; forwarding: boolean; runtime_unknown: number; tunnels_down: number; apply_failures: number } };
+export type NodeView = { node_id: string; name: string; binding_epoch: number; state_epoch: string; boot_id: string; status: "online" | "offline" | "revoked" | "incompatible"; last_confirmed_at: string | null; application_version: string; contract_version: number; capabilities: string[] };
+export type NodeInventory = { controller_id: string; nodes: NodeView[]; next_cursor?: string };
+export type NodeProjection = { controller_id: string; node: NodeView; state_epoch: string; boot_id: string; desired_generation: number; snapshot_sequence: number; observed_at: string | null; received_at: string | null; stale: boolean; available: boolean; desired: { tunnels: SnapshotTunnel[] } | null; observations: SnapshotObservations | null };
+
+export type RefreshRequest = { operation_id: string; idempotency_key: string; expected_state_epoch: string; expected_binding_epoch: number; expected_desired_generation: number };
+export type RefreshStatus = { controller_id: string; node_id: string; operation_id: string; state_epoch: string; binding_epoch: number; expected_desired_generation: number; status: "queued" | "leased" | "succeeded" | "conflict" | "failed" | "expired" | "rejected"; code: string; issued_at: string; expires_at: string; completed_at: string | null; snapshot_sequence: number };
+
+export type ClientEnabledRequest = RefreshRequest & { tunnel_id: string; client_id: string; enabled: boolean };
+export type ClientEnabledResult = { committed_desired_generation: number; tunnel_id: string; client_id: string; enabled: boolean };
+export type ClientOperationStatus = Omit<RefreshStatus, "status"> & { status: RefreshStatus["status"] | "reconciling"; kind: "client.enabled.set"; client_result?: ClientEnabledResult };
+export type ClientCreateRequest = RefreshRequest & { tunnel_id: string; client_id: string; name: string };
+export type ClientDeleteRequest = RefreshRequest & { tunnel_id: string; client_id: string; confirmed: true };
+export type ClientCreateResult = { committed_desired_generation: number; tunnel_id: string; client_id: string; name: string };
+export type ClientDeleteResult = { committed_desired_generation: number; tunnel_id: string; client_id: string; deleted: true };
+export type ClientCRUDOperationStatus = Omit<RefreshStatus, "status"> & {
+  status: RefreshStatus["status"] | "reconciling";
+  kind: "client.create" | "client.delete";
+  create_result?: ClientCreateResult;
+  delete_result?: ClientDeleteResult;
+};
+
+export type ClientConfigExportRequest = { expected_state_epoch: string; expected_binding_epoch: number; expected_desired_generation: number; tunnel_id: string; client_id: string; expected_tunnel_revision: number };
+export type ClientConfigExport = { export_id: string; node_id: string; tunnel_id: string; client_id: string; expires_at: string };

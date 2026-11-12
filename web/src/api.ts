@@ -1,5 +1,9 @@
 import type {
+  RefreshRequest,
+  RefreshStatus,
   AppState,
+  NodeInventory,
+  NodeProjection,
   AuditEvent,
   DoctorResult,
   FirewallReport,
@@ -24,6 +28,7 @@ type RequestOptions = {
   method?: string;
   body?: unknown;
   idempotencyKey?: string;
+  signal?: AbortSignal;
 };
 
 export function newIdempotencyKey(): string {
@@ -35,6 +40,8 @@ async function request<T>(url: string, options: RequestOptions = {}): Promise<T>
   const init: RequestInit = {
     method: options.method || "GET",
     headers: {},
+    signal: options.signal,
+    cache: "no-store",
   };
   const headers = init.headers as Record<string, string>;
   if (options.idempotencyKey) headers["Idempotency-Key"] = options.idempotencyKey;
@@ -76,12 +83,92 @@ export function login(password: string): Promise<{ ok: true }> {
   return request("/api/login", { method: "POST", body: { password } });
 }
 
-export function logout(): Promise<{ ok: true }> {
-  return request("/api/logout", { method: "POST", body: {} });
+export type AuthMode = "standalone" | "activating" | "controller";
+
+export function authStatus(): Promise<{ mode: AuthMode }> {
+  return request("/api/auth/status");
+}
+
+export function authSession(signal?: AbortSignal): Promise<{ mode: AuthMode; authenticated: true; username?: string; recent_auth?: boolean; expires_at?: string }> {
+  return request("/api/auth/session", { signal });
+}
+
+export type ControlEndpoint = { enabled: boolean; bind_ip: string; advertised: string; port: number; ca_pin: string };
+export type NodeInvitation = { invitation_id: string; secret: string; controller_url: string; ca_pin: string; ca_cert_pem: string; expires_at: string };
+export type OnboardingStatus = { invitation_id: string; controller_id: string; enrollment_id?: string; node_id?: string; binding_epoch?: number; status: string; connected: boolean; expires_at: string };
+
+export function controlStatus(signal?: AbortSignal): Promise<{ controller_id: string; control: ControlEndpoint | null }> {
+  return request("/api/controller/control/status", { signal });
+}
+export function controlPrepare(body: { bind_ip: string; advertised: string; port: number }, signal?: AbortSignal): Promise<ControlEndpoint> {
+  return request("/api/controller/control/prepare", { method: "POST", body, signal });
+}
+export async function controlBackup(password: string, signal?: AbortSignal): Promise<Response> {
+  const res = await fetch("/api/controller/control/backup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password }), cache: "no-store", signal });
+  if (!res.ok) { const error = await errorDetails(res); throw new APIError(res.status, error.message, error.code); }
+  return res;
+}
+export function controlEnable(receipt: string, allowNonLoopback: boolean, signal?: AbortSignal): Promise<{ enabled: boolean }> {
+  return request("/api/controller/control/enable", { method: "POST", body: { receipt, backup_saved: true, allow_non_loopback: allowNonLoopback }, signal });
+}
+export function nodeInvitation(signal?: AbortSignal): Promise<NodeInvitation> {
+  return request("/api/controller/enrollments/invite", { method: "POST", body: {}, signal });
+}
+export function onboardingStatus(invitationID: string, signal?: AbortSignal): Promise<OnboardingStatus> {
+  return request("/api/controller/enrollments/status", { method: "POST", body: { invitation_id: invitationID }, signal });
+}
+export function enrollmentReview(invitationID: string, signal?: AbortSignal): Promise<{ enrollment_id: string; requested_name: string; verification_code: string; status: string; expires_at: string }> {
+  return request("/api/controller/enrollments/review", { method: "POST", body: { invitation_id: invitationID }, signal });
+}
+export function enrollmentDecide(enrollmentID: string, code: string, approve: boolean, signal?: AbortSignal): Promise<{ approved: boolean }> {
+  return request("/api/controller/enrollments/decide", { method: "POST", body: { enrollment_id: enrollmentID, verification_code: code, approve }, signal });
+}
+export function installerInfo(signal?: AbortSignal): Promise<{ supported: boolean; reason: string }> {
+  return request("/api/controller/installer-info", { signal });
+}
+
+export function controllerSetup(username: string): Promise<{ totp_secret: string; qr_png: string }> {
+  return request("/api/controller/setup", { method: "POST", body: { username } });
+}
+
+export function controllerActivate(body: { username: string; password: string; totp_secret: string; confirmation_code: string }): Promise<{ mode: "controller"; username: string; recovery_codes: string[] }> {
+  return request("/api/controller/activate", { method: "POST", body });
+}
+
+export function controllerLogin(username: string, password: string, code: string, recovery = false): Promise<{ ok: true }> {
+  return request(recovery ? "/api/controller/login/recovery" : "/api/controller/login", { method: "POST", body: { username, password, code } });
+}
+
+export function controllerReauth(password: string, code: string, recovery = false): Promise<{ ok: true }> {
+  return request("/api/controller/reauth", { method: "POST", body: { password, code, recovery } });
+}
+
+export function controllerRotateRecoveryCodes(): Promise<{ recovery_codes: string[] }> {
+  return request("/api/controller/recovery-codes", { method: "POST", body: {} });
+}
+
+export async function logout(): Promise<{ ok: true }> {
+  const controller = new AbortController();
+  const deadline = setTimeout(() => controller.abort(), 10_000);
+  try {
+    // Abort the old request before its caller permits another login; a pending
+    // logout response must not clear the cookie created by that new login.
+    return await request<{ ok: true }>("/api/logout", { method: "POST", body: {}, signal: controller.signal });
+  } finally {
+    clearTimeout(deadline);
+  }
 }
 
 export function state(): Promise<AppState> {
   return request("/api/state");
+}
+
+export function updateServerName(name: string) {
+  return request<{ server_name: string }>("/api/server-name", {
+    method: "PATCH",
+    body: { name },
+    idempotencyKey: newIdempotencyKey(),
+  });
 }
 
 export function createTunnel(body: { profile: string; name: string; port: number; automatic_port?: boolean; subnet: string; egress_mode: string }) {
@@ -251,4 +338,54 @@ export async function restoreVerify(file: File, password: string): Promise<{ rep
   const res = await fetch("/api/restore/verify", { method: "POST", body: form });
   if (!res.ok) throw new APIError(res.status, await errorText(res));
   return (await res.json()) as { report: RestoreReport };
+}
+
+export function controllerNodes(signal?: AbortSignal, after = ""): Promise<NodeInventory> {
+  const query = after ? `?after=${encodeURIComponent(after)}` : "";
+  return request(`/api/controller/nodes${query}`, { signal });
+}
+export function controllerNode(nodeID: string, signal?: AbortSignal): Promise<NodeProjection> {
+  return request(`/api/controller/nodes/${encodeURIComponent(nodeID)}`, { signal });
+}
+
+export function refreshUUID(): string {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  // getRandomValues remains available on HTTP node/controller browser surfaces.
+  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 15) | 64; bytes[8] = (bytes[8] & 63) | 128;
+  const hex = [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+export function createNodeRefresh(nodeID: string, body: RefreshRequest, signal: AbortSignal): Promise<RefreshStatus> {
+  return request(`/api/controller/nodes/${encodeURIComponent(nodeID)}/refresh`, { method: "POST", body, signal });
+}
+export function nodeRefreshStatus(nodeID: string, operationID: string, signal: AbortSignal): Promise<RefreshStatus> {
+  return request(`/api/controller/nodes/${encodeURIComponent(nodeID)}/operations/${encodeURIComponent(operationID)}`, { signal });
+}
+
+export function createClientEnabled(nodeID: string, body: import("./types").ClientEnabledRequest, signal: AbortSignal): Promise<import("./types").ClientOperationStatus> {
+  return request(`/api/controller/nodes/${encodeURIComponent(nodeID)}/client-enabled`, { method: "POST", body, signal });
+}
+export function clientOperationStatus(nodeID: string, operationID: string, signal: AbortSignal): Promise<import("./types").ClientOperationStatus> {
+  return request(`/api/controller/nodes/${encodeURIComponent(nodeID)}/operations/${encodeURIComponent(operationID)}`, { signal });
+}
+export function createRemoteClient(nodeID: string, body: import("./types").ClientCreateRequest, signal: AbortSignal): Promise<import("./types").ClientCRUDOperationStatus> {
+  return request(`/api/controller/nodes/${encodeURIComponent(nodeID)}/client-create`, { method: "POST", body, signal });
+}
+export function deleteRemoteClient(nodeID: string, body: import("./types").ClientDeleteRequest, signal: AbortSignal): Promise<import("./types").ClientCRUDOperationStatus> {
+  return request(`/api/controller/nodes/${encodeURIComponent(nodeID)}/client-delete`, { method: "POST", body, signal });
+}
+export function remoteClientOperationStatus(nodeID: string, operationID: string, signal: AbortSignal): Promise<import("./types").ClientCRUDOperationStatus> {
+  return request(`/api/controller/nodes/${encodeURIComponent(nodeID)}/operations/${encodeURIComponent(operationID)}`, { signal });
+}
+export function prepareClientConfigExport(nodeID: string, body: import("./types").ClientConfigExportRequest, signal: AbortSignal): Promise<import("./types").ClientConfigExport> {
+  return request(`/api/controller/nodes/${encodeURIComponent(nodeID)}/client-config-exports`, { method: "POST", body, signal });
+}
+export async function downloadClientConfigExport(nodeID: string, exportID: string, signal: AbortSignal): Promise<Response> {
+  const res = await fetch(`/api/controller/nodes/${encodeURIComponent(nodeID)}/client-config-exports/download`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ export_id: exportID }), cache: "no-store", signal });
+  if (!res.ok) { const error = await errorDetails(res); throw new APIError(res.status, error.message, error.code); }
+  return res;
+}
+export function cancelClientConfigExport(nodeID: string, exportID: string): Promise<void> {
+  return request(`/api/controller/nodes/${encodeURIComponent(nodeID)}/client-config-exports/cancel`, { method: "POST", body: { export_id: exportID } });
 }

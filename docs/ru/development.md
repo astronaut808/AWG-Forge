@@ -1,9 +1,17 @@
 # Разработка
 
+## Ветки и pull requests
+
+Создавай ветки для новых функций и исправлений от актуального `develop` и
+направляй pull request в `develop`. GitHub может предложить ветку по умолчанию,
+`master`; перед отправкой поменяй base на `develop`. `master` предназначен для
+релизов. Требования к изменениям и проверкам описаны в
+[CONTRIBUTING.md](../../CONTRIBUTING.md).
+
 ## Требования
 
-- Go `1.26.7`;
-- Node.js `24.x` и npm для сборки Web UI;
+- Go `1.26.9`;
+- Node.js `24.21.0` и npm для сборки Web UI;
 - Deno `2.x` для lint frontend source;
 - `golangci-lint` `2.x` для Go linting;
 - Docker для проверки image/runtime сценариев.
@@ -21,10 +29,12 @@ make ui-test
 make api-contract
 make lint-go
 make lint-js
+make lint-markdown
 make lint-shell
 make lint-docker
 make lint-actions
 make lint-actions-security
+make npm-audit
 make quality
 make ci
 make security
@@ -93,11 +103,51 @@ git diff --check
 - `npm run ui:test`, который собирает встроенный UI и выполняет регрессионные тесты Chromium;
 - `make api-contract`, который разбирает исходный OpenAPI-документ и проверяет описанные core control-plane routes и envelope ошибок;
 - `npm run ui:lint`, проверяющий исходники frontend и браузерные тесты;
+- `make lint-markdown`, проверяющий структуру Markdown и ссылки внутри документа;
 - `npm run quality:aislop`, который запускает `aislop ci` с проектным `.aislop/config.yml`.
 
-Для pull request отдельно запускаются jobs `Security`, `Race` и проверка Docker-образа. Security job выполняет `govulncheck`, Gitleaks, focused Semgrep и Trivy filesystem scans, ShellCheck, Hadolint, actionlint и offline pedantic-аудит zizmor. Docker job запускает собранный образ с отключённым runtime apply, выполняет вход в API, проверяет встроенные AmneziaWG binaries и parser сгенерированного конфига, перезапускает контейнер и убеждается, что конфигурация туннеля осталась доступной и корректно разбирается.
+Workflow `CI` на GitHub запускает `Go checks` и `UI checks` параллельно на
+отдельных runner'ах. `Go checks` проверяет форматирование, Go-тесты, shell-тесты,
+vet, сборку и Go lint. `UI checks` проверяет Markdown, типы и сборку UI, контракт
+API, воспроизводимость сгенерированного UI, браузерные тесты, UI lint и Aislop.
+
+Общая проверка сохраняет прежнее имя `Go`. Она ждёт обе задачи и завершается
+успешно только при успехе обеих; ошибка, отмена или пропуск зависимой задачи
+не могут дать успешный общий результат. В защите веток сохраняйте `Go` как
+обязательную проверку CI. Локальный `make ci` по-прежнему выполняет полный набор
+проверок; браузерные тесты используют четыре воркера. Их время и стабильность
+нужно проверять на CI runner.
+
+Для pull request отдельно запускаются jobs `Security`, `Race` и проверка Docker-образа. Security job выполняет `govulncheck`, npm audit, Gitleaks, focused Semgrep и Trivy filesystem scans, ShellCheck, Hadolint, actionlint и offline pedantic-аудит zizmor. Docker job запускает собранный образ с отключённым runtime apply, выполняет вход в API, проверяет встроенные AmneziaWG binaries и parser сгенерированного конфига, перезапускает контейнер и убеждается, что конфигурация туннеля осталась доступной и корректно разбирается.
 
 Aislop CI gate сейчас падает при score ниже `80`. Config исключает воспроизводимые generated Web UI assets и словари локализации, которые дают scanner-only шум. Source warnings стоит оставлять видимыми, если finding не является документированным false positive.
+
+Еженедельные Dependabot version updates для Go modules, GitHub Actions, npm и Docker направляются в `develop`. Dependabot security updates по правилам GitHub по-прежнему направляются в default branch репозитория, `master`, независимо от `target-branch`.
+
+## Проверка Markdown
+
+После `npm ci` запускайте `make lint-markdown` или `npm run docs:lint`. Эта же
+проверка входит в `make quality`, `make ci` и workflow GitHub CI.
+
+Закреплённый `markdownlint-cli` использует `.markdownlint.jsonc` с явным
+списком правил. Проверяются структура заголовков и блоков, пробелы в конце строк,
+копируемые примеры команд, язык блоков кода, пустые и перевёрнутые ссылки, локальные
+якоря, reference labels, alt-текст изображений и число столбцов таблиц. Доступность
+внешних URL и существование файлов по ссылкам не проверяются.
+
+Длина строк, нумерация и маркеры списков, стиль выделения, raw HTML, bare URL и
+визуальное выравнивание таблиц не ограничиваются. Заголовки разрешено повторять
+под разными родительскими разделами, включая версии в `CHANGELOG.md`. Табуляция
+в примерах кода и намеренный текст в квадратных скобках сохраняются. Новые правила
+требуют явного изменения конфигурации и не включаются автоматически при обновлении.
+
+Проверка охватывает Markdown во всём репозитории, учитывает `.gitignore` и исключает
+зависимости, generated UI assets и локальные каталоги инструментов.
+Она сообщает об ошибках без перезаписи файлов; автоматические исправления не входят в CI.
+
+Точечные npm overrides закрепляют исправленные версии `smol-toml`, `js-yaml` и KaTeX для
+Markdown-инструмента. Пересматривайте их при обновлении инструмента и запускайте
+`make npm-audit` перед удалением этих ограничений.
 
 ## Security Checks
 
@@ -107,7 +157,9 @@ Aislop CI gate сейчас падает при score ниже `80`. Config ис
 make security
 ```
 
-`make security` запускает `govulncheck` для AWG-Forge и корневого daemon package из точного `AMNEZIAWG_GO_REF`, а также ShellCheck, Hadolint, actionlint, zizmor, Gitleaks, Trivy и полный набор Semgrep registry rules. Команде может понадобиться доступ к сети для pinned upstream source, Go tools, баз сканеров и правил. Zizmor дополняет actionlint и проверяет permissions, опасные triggers, mutable action references, обработку untrusted input и другие security-свойства GitHub Actions.
+`make security` запускает `govulncheck` для AWG-Forge и корневого daemon package из точного `AMNEZIAWG_GO_REF`, а также ShellCheck, Hadolint, actionlint, zizmor, Gitleaks, Trivy и полный набор Semgrep registry rules. Оба security gate также проверяют полный npm lock, включая dev dependencies, и отклоняют findings уровня MODERATE и выше. Команде может понадобиться доступ к сети для pinned upstream source, npm audit, Go tools, баз сканеров и правил. Zizmor дополняет actionlint и проверяет permissions, опасные triggers, mutable action references, обработку untrusted input и другие security-свойства GitHub Actions.
+
+`make npm-audit` отдельно запускает ту же проверку lockfile. Она явно включает dev, optional и peer dependencies и выполняет online-аудит даже при включённой настройке npm `offline`. Недоступность audit registry приводит к ошибке проверки.
 
 Для более быстрой локальной проверки:
 
@@ -168,3 +220,17 @@ Runtime и Docker image не требуют Node/npm/Deno. Эти инструм
 - `internal/doctor`: diagnostics;
 - `internal/support`: secret-free support bundle generation;
 - `internal/updates`: AmneziaWG upstream update checks.
+
+`internal/protocol` владеет упорядоченным реестром профилей, их ID, отображаемыми именами, версиями, редактируемыми параметрами, значениями по умолчанию, валидацией и рендерингом. `internal/server` владеет только представлением для браузера: вкладками, групповыми метками, признаком экспериментального профиля и runtime-доступностью. Frontend получает имя и статус профиля из `/api/state` и не должен поддерживать собственную таблицу соответствия profile ID. При добавлении профиля его нужно один раз зарегистрировать в `internal/protocol`, добавить server presentation metadata и расширить тесты полноты реестра и API-каталога.
+
+## Checkpoint обновления снимка
+
+[Дизайн доставки](../design/snapshot-refresh-delivery.md) описывает реализованный
+read-only протокол. Migration 12 добавляет durable операции и archive validation;
+restore удаляет очередь в транзакции сброса authority. Единый worker узла управляет
+sequence и повторами pending result, включая DB-off. UI source хранится в `web/`;
+embedded static пересобирается через `npm run ui:build`. Contracts и negative tests
+проверяют strict JSON, коррелированный success, replay и fencing. Выполни `make ci`,
+`make quality`, `make security-fast`, `go test -race ./...`; приёмка итогового образа
+требует настоящего TLS/mTLS worker, браузера и Linux-root recovery tests. Native
+multi-host G12 остаётся самостоятельным release requirement.

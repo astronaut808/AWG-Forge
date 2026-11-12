@@ -27,6 +27,16 @@ Reverse-proxy mode requires a Web UI password, `WEBUI_TRUST_PROXY_HEADERS=true`,
 
 UI sessions expire after 30 minutes.
 
+In controller mode, sign-in requires the administrator password and a current
+TOTP code or a one-time recovery code. Controller sessions are opaque and held
+server-side in SQLite. The first session is issued during activation; the
+confirmation TOTP code cannot be reused. Reauthentication rotates the session
+cookie and opens a five-minute recent-auth window for recovery-code replacement.
+Logout revokes the server-side session. Root recovery revokes every session.
+During activation, previously signed standalone cookies and `PASSWORD` stop
+working without a restart. SQLite and `controller-auth.keys` are required at
+controller startup; missing material fails closed.
+
 `SESSION_SECRET` can be omitted. If absent, awg-forge creates and stores it in `state.json`.
 
 By default `SESSION_COOKIE_SECURE=auto`: non-`Secure` cookies are allowed only for loopback HTTP (`127.0.0.1`, `localhost`, `::1`), while external hosts use `Secure`. For plain HTTP on an external host, explicitly set `SESSION_COOKIE_SECURE=false`; doctor will warn about this. Use that mode only on a trusted network or behind separate protection.
@@ -46,6 +56,7 @@ Do not log:
 - private keys;
 - preshared keys;
 - passwords;
+- TOTP secrets and recovery codes;
 - session secrets;
 - backup passwords;
 - full client configs;
@@ -62,3 +73,112 @@ Doctor checks config directory permissions and warns about problems.
 If a mutating operation changes state/configs but runtime apply fails, awg-forge rolls back state and rendered configs.
 
 This prevents the UI from showing a created client or modified tunnel when runtime state was not successfully applied.
+
+Controller control TLS automatically renews its server certificate under the existing CA at two thirds of the certificate lifetime. A previously enabled controller may renew an intact expired server certificate before opening its explicitly enabled listener, only with valid existing CA, identity, registry/auth and cleared recovery fences. Missing or corrupt data and expired CA require local recovery. Disabled or restored controllers stay disabled; node revocations and tunnel configurations are preserved. Non-loopback enablement separately requires explicit endpoint consent and a fresh verified backup.
+
+## Offline node recovery
+
+For an existing managed node with an unavailable controller or expired/revoked
+credentials, stop its `serve` process and run the CLI as Linux root with the same
+`CONFIG_DIR`. Both commands require the current `managed_node.node_id` and
+`managed_node.controller_id` from the local `state.json`; inspect only these
+fields, because the full state contains secrets. Recovery refuses a running
+server, incorrect confirmation, unsafe directory/file permissions, pending
+restore or overlapping identity/desired-state transitions.
+
+```bash
+awg-forge node detach --confirm-node-id <current-node-uuid> --confirm-controller-id <current-controller-uuid>
+awg-forge node rebind --confirm-node-id <current-node-uuid> --confirm-controller-id <current-controller-uuid> --input-file /protected/invitation.json --name node --timeout 10m
+```
+
+`detach` removes the binding and replay metadata and returns to standalone mode.
+After detach, use ordinary `node enroll` for fresh enrollment. `rebind` performs
+fresh enrollment directly while retaining the former local binding until the
+pinned TLS handshake, comparison code and controller administrator approval
+succeed. The invitation must be a root-owned regular file with mode `0600`,
+without symlinks or hardlinks; its secret must not appear in command arguments.
+Invitations may use an explicitly enabled external control endpoint; CA pinning and TLS verification remain required.
+
+Rebind explicitly resets local node identity: it installs a new node ID, state
+epoch and credentials, with a fresh boot/desired-generation/receipt namespace.
+Tunnels, clients, local authentication, operational history and `ConfigRevision`
+are preserved. The old controller registry record remains revoked or historical;
+rebind never restores its authority. Offline deletion cannot revoke a copied
+certificate on the old controller: revoke the former node there separately when
+applicable. Cleanup removes only the former active credential generation and a
+recorded valid pending renewal; unrelated historical directories are not erased.
+
+Before state commit, refusal, timeout or cancellation keeps the former binding.
+A private `.node-local-recovery.json` journal resolves interrupted staging or
+cleanup by proving the exact old/new full state; it never rolls state back.
+Restart `serve` after success. After a reported uncertain commit, restart permits
+deterministic journal reconciliation; malformed evidence, changed state or unsafe
+paths require offline inspection and remain fail closed. Do not delete evidence
+to bypass that check. Backup and restore reject pending recovery, and an old node
+archive cannot replace the identity established by fresh rebind.
+
+## Installer enrollment trust and secrets
+
+The secret-free `GET /control/v1/bootstrap` exposes only the public CA certificate. The node treats it as untrusted, verifies the operator-provided CA SPKI pin, and repeats retrieval with ordinary TLS 1.3 chain/SAN/time validation before transmitting any invitation secret. Proxy, redirects, URL confusion and oversized responses are rejected. Enrollment holds the same exclusive state-directory lock as serving through approval and commit. Existing protected `--input-file` remains supported; the alternative public metadata interface reads a bounded secret from a private FD or hidden TTY.
+
+Browser enrollment status requires recent controller authentication and the invitation's exact approved controller/node/binding with a live registry session authenticated by an active certificate from the current CA generation. Certificate issuance or legacy presence without certificate provenance cannot count as connected. Responses use an allowlisted DTO and no-store. Invitation secrets and backup receipts stay only in flow memory; browser traces/screenshots/videos containing secrets must stay disabled. Installer interruption never restores pre-commit credentials over a potentially committed identity; inspect journals before manual recovery. See [installer lifecycle](quick-install.md#explicit-installer-connection-to-a-controller).
+
+## Node observation security
+
+Nodes send bounded, allowlisted snapshots outbound through the existing TLS/mTLS
+control listener. Admission requires current registry authority and matching
+certificate, session, binding/state/boot epochs, generation and snapshot sequence;
+replays and same-generation configuration substitution are rejected. Private keys,
+PSKs, session bearers, full configs, QR/import payloads, WARP credentials and raw
+diagnostics are excluded. Authenticated controller reads are `no-store`; node views
+are read-only and retain data only in browser memory. Switching node/account/epoch
+or logging out discards the previous context and its pending responses. Cold
+controller restore clears projections and invalidates archived authority before
+control can be re-enabled. See [node observation](usage.md#read-only-node-observation)
+for freshness semantics and resource limits.
+
+## Refresh operation authority
+
+Refresh uses a durable controller queue and the existing outbound mTLS channel.
+Each dequeue and result rechecks current certificate, binding, session, boot and
+state epochs. A lease UUID fences old deliveries; success also requires a snapshot
+accepted atomically under that lease at the expected generation. Periodic snapshots
+and an asserted success cannot supply this evidence. Held polls never retain a
+mutation lock or database transaction and are bounded to one per node/eight globally.
+Cold restore deletes operations while disabling control and revoking old authority.
+DB-off nodes keep one pending result in memory: crash may repeat safe reads, without
+an exactly-once claim. No generic command or secret export is delivered.
+
+## Remote client mutation authority
+
+Client creation and deletion use the same durable queue, outbound mTLS channel,
+current authority checks, lease fencing, and two-minute operation expiry as other
+node operations. Admission requires the exact state epoch, binding epoch, desired
+generation, operation UUID, and idempotency UUID. A create request also carries a
+browser-assigned lowercase 16-hex client ID and an ASCII name; deletion carries
+the exact tunnel/client IDs and `confirmed: true`.
+
+The node validates all fences again before changing `state.json`, applies and
+rolls back through the existing mutation path, and returns only a matching
+committed generation and non-secret identity result. `client_unavailable`,
+`tunnel_unavailable`, `resource_conflict`, and `address_unavailable` never count
+as success. The controller and browser require a fresh projected generation with
+the exact created ID present or deleted ID absent before showing completion.
+They retain neither requests nor operation IDs in browser storage, and node
+views never provide configuration exports, QR payloads, keys, PSKs, or imports.
+
+## One-use remote client configuration export
+
+Remote `.conf` export is available only through the separate
+`client.config.export.v1` capability. Preparation and consumption both require a
+same-origin current controller session with recent MFA and the exact current node
+authority, state epoch, binding epoch, desired generation, tunnel revision and
+client association. The controller returns only opaque export metadata at
+preparation; the ID is a locator, never a bearer credential.
+
+The one-use secret is retained for at most 60 seconds and is claimed before the
+download response waits. The response is an authenticated `text/plain` attachment
+with `Cache-Control: no-store`; duplicate, cancelled, expired, mismatched, or
+uncertain downloads are denied. Losing a response requires a new export. Browser
+memory holds the ID only while the component is mounted; the `.conf` body is a
+transient Blob and is never logged or placed in Web Storage.

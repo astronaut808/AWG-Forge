@@ -1,10 +1,10 @@
 import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const directory = mkdtempSync(join(tmpdir(), "awg-forge-ui-"));
+const directory = realpathSync(mkdtempSync(join(tmpdir(), "awg-forge-ui-")));
 const binary = join(directory, "awg-forge");
 // Do not inherit deployment settings or point the tests at an existing data directory.
 const env = {
