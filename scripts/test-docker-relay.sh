@@ -155,7 +155,10 @@ if [[ "${RELAY_PREVIOUS_IMAGE:-$image}" == "$image" ]]; then
   docker exec "$relay" iptables -A FORWARD -d "$target_ip" -p udp --dport 40123 -j DROP
 fi
 relay_compose "$current" up -d
-wait_for_rules "${args[@]}"
+if ! wait_for_rules "${args[@]}"; then
+  docker logs --tail 30 "$relay_service" >&2
+  exit 1
+fi
 docker inspect --format '{{json .HostConfig.Binds}}' "$relay_service" |
   jq -e 'any(.[]; split(":") | .[-2] == "/var/lib/awg-forge-relay" and (.[-1] | split(",") | index("Z") != null))' >/dev/null
 printf 'OK Docker received the private SELinux label for the relay runtime bind mount\n'

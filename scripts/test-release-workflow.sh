@@ -47,7 +47,7 @@ require_line '^    needs: validate$' "$publish" 'image publication requires vali
 require_line "^    if: github.event_name == 'push'$" "$publish" 'PR and manual dispatch cannot publish'
 require_line '^      - name: Smoke test image$' "$validate" 'API smoke must run'
 require_line '^    runs-on: ubuntu-24\.04$' "$validate" 'validate the publishable image on the supported relay host OS'
-require_line '^          make docker-relay-smoke IMAGE=awg-forge:ci$' "$validate" 'UDP relay smoke must run against the publishable image'
+require_line '^          sudo make docker-relay-smoke IMAGE=awg-forge:ci$' "$validate" 'UDP relay smoke must run against the publishable image with a root-owned bind mount'
 require_line '^      - name: Test encrypted traffic and restart for all profiles$' "$validate" 'runtime smoke must run'
 require_line 'trivy image .*--pkg-types os,library .*--exit-code 1 awg-forge:ci$' "$validate" 'OS and library scan must block'
 require_line '^          platforms: linux/amd64$' "$validate" 'supported architecture must be built'

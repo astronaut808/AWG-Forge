@@ -75,7 +75,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(docker image inspect --format '{{.Id}}' awg-forge:ci)" = "$IMAGE_ID"
-          make docker-relay-smoke IMAGE=awg-forge:ci
+          sudo make docker-relay-smoke IMAGE=awg-forge:ci
           . /etc/os-release
           printf 'UDP relay smoke passed on %s (%s) with image ID %s.\n' \
             "$PRETTY_NAME" "$(uname -m)" "$IMAGE_ID" >> "$GITHUB_STEP_SUMMARY"
