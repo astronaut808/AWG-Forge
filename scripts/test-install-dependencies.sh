@@ -14,6 +14,10 @@ run_case() (
   : >"$log"
   case "$scenario" in
     fresh) ;;
+    relay-fresh) tun=false; expected=failure ;;
+    relay-ready) engine=true; compose=true; tools=true; daemon=true; tun=false; expected=failure ;;
+    relay-compose-only) engine=true; tools=true; daemon=true; tun=false; expected=failure ;;
+    relay-invalid|relay-status|relay-remove) expected=failure ;;
     ready) engine=true; compose=true; tools=true; daemon=true ;;
     compose-only) engine=true; tools=true; daemon=true ;;
     tools-only) engine=true; compose=true; daemon=true ;;
@@ -48,18 +52,26 @@ run_case() (
   have() {
     case "$1" in
       docker) "$engine" ;;
-      docker-compose) return 1 ;;
+      docker-compose) [[ "$scenario" == relay-compose-only ]] ;;
       *) return 0 ;;
     esac
   }
+  docker-compose() { [[ "$scenario" == relay-compose-only && "$1" == version ]]; }
   missing_host_packages() {
-    if ! $tools; then printf '%s\n' iproute2 kmod; fi
+    if ! $tools; then
+      if [[ "${1:-server}" == relay ]]; then
+        printf '%s\n' iproute2 jq
+      else
+        printf '%s\n' iproute2 kmod
+      fi
+    fi
   }
   docker() {
     case "$*" in
       'compose version') "$compose" ;;
       info) "$engine" && "$daemon" ;;
       'context show') if $remote; then printf remote; else printf default; fi ;;
+      'context inspect --format {{.Endpoints.docker.Host}}') printf 'tcp://fixture.invalid:2376\n' ;;
       *) printf 'unexpected Docker command: %s\n' "$*" >&2; return 1 ;;
     esac
   }
@@ -105,7 +117,18 @@ run_case() (
     read() { return 1; }
   fi
   local actual=success
-  ensure_host_dependencies >"$test_dir/$scenario.out" 2>&1 || actual=failure
+  if [[ "$scenario" == relay-* ]]; then
+    uname() { if [[ "$1" == -s ]]; then printf 'Linux\n'; else printf 'x86_64\n'; fi; }
+    local -a args=(--id 0123456789abcdef --version v1.2.3 --listen-port 40124 --target exit.example.test:40123)
+    case "$scenario" in
+      relay-invalid) args[5]=65536 ;;
+      relay-status|relay-remove) args=("${scenario#relay-}" --id 0123456789abcdef) ;;
+    esac
+    # The fixture reports a remote context to stop before touching the host.
+    relay_main "${args[@]}" >"$test_dir/$scenario.out" 2>&1 || actual=failure
+  else
+    ensure_host_dependencies >"$test_dir/$scenario.out" 2>&1 || actual=failure
+  fi
   if [[ "$actual" != "$expected" ]]; then
     cat "$test_dir/$scenario.out" >&2
     printf 'FAIL dependency case %s: expected %s, got %s\n' "$scenario" "$expected" "$actual" >&2
@@ -123,6 +146,24 @@ run_case() (
       grep -q 'systemctl enable --now docker' "$log"
       grep -qx 'Suites: noble' "$test_dir/$scenario.sources"
       grep -qx 'URIs: https://download.docker.com/linux/ubuntu' "$test_dir/$scenario.sources" ;;
+    relay-fresh)
+      grep -q 'apt-get install -y --no-install-recommends --no-remove --no-upgrade iproute2 jq$' "$log"
+      grep -q 'docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin' "$log"
+      grep -q 'systemctl enable --now docker' "$log"
+      grep -q 'relay installer requires a local Docker daemon' "$test_dir/$scenario.out" ;;
+    relay-ready)
+      [[ ! -s "$log" ]]
+      grep -q 'relay installer requires a local Docker daemon' "$test_dir/$scenario.out" ;;
+    relay-compose-only)
+      grep -q 'apt-get install -y --no-install-recommends --no-remove --no-upgrade docker-compose-plugin$' "$log"
+      ! grep -q 'docker-ce-cli\|systemctl' "$log"
+      grep -q 'relay installer requires a local Docker daemon' "$test_dir/$scenario.out" ;;
+    relay-invalid)
+      [[ ! -s "$log" ]]
+      grep -q 'UDP ports must be between 1 and 65535' "$test_dir/$scenario.out" ;;
+    relay-status|relay-remove)
+      [[ ! -s "$log" ]]
+      grep -q 'relay installer requires docker' "$test_dir/$scenario.out" ;;
     compose-only)
       grep -q 'apt-get install -y --no-install-recommends --no-remove --no-upgrade docker-compose-plugin$' "$log"
       ! grep -q 'docker-ce-cli\|systemctl' "$log" ;;
@@ -145,7 +186,7 @@ run_case() (
   printf 'OK   dependency case %s\n' "$scenario"
 )
 
-for scenario in fresh ready compose-only tools-only stopped unsupported unsupported-ready unprivileged declined confirmation-read-failure conflicting-runtime package-failure update-failure no-tun remote-context service-failure centos rhel rpm-compose-only rpm-conflict rpm-package-failure; do
+for scenario in fresh relay-fresh relay-ready relay-compose-only relay-invalid relay-status relay-remove ready compose-only tools-only stopped unsupported unsupported-ready unprivileged declined confirmation-read-failure conflicting-runtime package-failure update-failure no-tun remote-context service-failure centos rhel rpm-compose-only rpm-conflict rpm-package-failure; do
   run_case "$scenario"
 done
 
@@ -182,6 +223,18 @@ done
   printf 'DATABASE_MODE=off\n' >.env
   write_compose_if_missing
   grep -qx '      - ./data:/etc/awg-forge:Z' docker-compose.yml
+  [[ "$(relay_runtime_mount)" == '      - ./runtime:/var/lib/awg-forge-relay:Z' ]]
+  (
+    selinux_volume_suffix() { :; }
+    relay_runtime_mount | grep -qx '          create_host_path: false'
+  )
+  docker() { printf '%s\n' "$@" >"$test_dir/selinux-relay-validate.log"; }
+  relay_validate fixture-image 0123456789abcdef 40124 exit.example.test 40123 auto auto
+  grep -qx 'validate' "$test_dir/selinux-relay-validate.log"
+  if grep -Eq '^(-v|--volume|--mount)(=|$)|/var/lib/awg-forge-relay' "$test_dir/selinux-relay-validate.log"; then
+    printf 'FAIL relay validation mounts private runtime state\n' >&2
+    exit 1
+  fi
   grep -qx '      - /lib/modules:/lib/modules:ro' docker-compose.yml
   docker() { printf '%s\n' "$*" >>"$test_dir/selinux-docker.log"; }
   initialize_state example.com awg0 51820 eth0 10.8.0.0/24 1.1.1.1 0.0.0.0/0 25 1280 awg_2_0

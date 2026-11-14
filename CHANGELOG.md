@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+## v0.21.0 - 2026-11-14
+
+### Added
+
+- Add transparent UDP relays for AWG tunnels on Ubuntu 24.04 LTS x86_64 relay hosts. Verified on Ubuntu 24.04.5 LTS x86_64. Support for relay hosts on CentOS Stream and RHEL is deferred. Existing AWG-Forge platform support continues to apply to the exit server.
+
+### Upgrading
+
+- The state schema is now v4 to protect client relay assignments. This release restores v3 backups. Keep a pre-upgrade backup if you may need to roll back to v0.20.0, which rejects v4 backups.
+
 ## v0.20.0 - 2026-11-12
 
 ### Added

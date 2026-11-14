@@ -179,6 +179,8 @@ When troubleshooting “connected but no internet”, useful events include:
 
 ## Encrypted Backup / Restore
 
+This release restores v3 backups and creates v4 backups. Keep a backup made before upgrading if you may need to restore on v0.20.0, which rejects v4 backups.
+
 Backups contain private keys and client configurations. Keep the archive and its password private. In Bash, read the password without echoing it or writing it into the command history.
 
 ```bash

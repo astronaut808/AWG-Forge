@@ -82,6 +82,7 @@ type Tunnel struct {
 	ProtocolParams    ProtocolParams  `json:"protocol_params"`
 	ProtocolSecrets   ProtocolSecrets `json:"protocol_secrets,omitempty"`
 	ConfigRevision    int             `json:"config_revision"`
+	Relays            []Relay         `json:"relays,omitempty"`
 	Clients           []Client        `json:"clients"`
 	LastRenderAt      time.Time       `json:"last_render_at,omitempty"`
 	LastApplyAt       time.Time       `json:"last_apply_at,omitempty"`
@@ -91,21 +92,24 @@ type Tunnel struct {
 }
 
 type Client struct {
-	ID             string    `json:"id"`
-	TunnelID       string    `json:"tunnel_id"`
-	Name           string    `json:"name"`
-	Notes          string    `json:"notes,omitempty"`
-	Enabled        bool      `json:"enabled"`
-	IPv4Address    string    `json:"ipv4_address"`
-	PrivateKey     string    `json:"private_key"`
-	PublicKey      string    `json:"public_key"`
-	PresharedKey   string    `json:"preshared_key"`
-	ConfigRevision int       `json:"config_revision"`
-	EverConnected  bool      `json:"ever_connected,omitempty"`
-	LastSeenAt     time.Time `json:"last_seen_at,omitempty"`
-	ExpiresAt      time.Time `json:"expires_at,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID                        string    `json:"id"`
+	TunnelID                  string    `json:"tunnel_id"`
+	Name                      string    `json:"name"`
+	Notes                     string    `json:"notes,omitempty"`
+	Enabled                   bool      `json:"enabled"`
+	IPv4Address               string    `json:"ipv4_address"`
+	PrivateKey                string    `json:"private_key"`
+	PublicKey                 string    `json:"public_key"`
+	PresharedKey              string    `json:"preshared_key"`
+	RelayID                   string    `json:"relay_id,omitempty"`
+	EndpointRevision          uint64    `json:"endpoint_revision,omitempty"`
+	DeliveredEndpointRevision uint64    `json:"delivered_endpoint_revision,omitempty"`
+	ConfigRevision            int       `json:"config_revision"`
+	EverConnected             bool      `json:"ever_connected,omitempty"`
+	LastSeenAt                time.Time `json:"last_seen_at,omitempty"`
+	ExpiresAt                 time.Time `json:"expires_at,omitempty"`
+	CreatedAt                 time.Time `json:"created_at"`
+	UpdatedAt                 time.Time `json:"updated_at"`
 }
 
 func ClientExpired(client Client, now time.Time) bool {

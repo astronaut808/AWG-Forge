@@ -22,7 +22,7 @@ env:
 jobs:
   validate:
     name: Build and verify linux/amd64 image
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     outputs:
       image-id: ${{ steps.identity.outputs.id }}
@@ -68,6 +68,17 @@ jobs:
 
       - name: Smoke test image
         run: make docker-smoke IMAGE=awg-forge:ci
+
+      - name: Test UDP relay forwarding and lifecycle
+        env:
+          IMAGE_ID: ${{ steps.identity.outputs.id }}
+        run: |
+          set -euo pipefail
+          test "$(docker image inspect --format '{{.Id}}' awg-forge:ci)" = "$IMAGE_ID"
+          make docker-relay-smoke IMAGE=awg-forge:ci
+          . /etc/os-release
+          printf 'UDP relay smoke passed on %s (%s) with image ID %s.\n' \
+            "$PRETTY_NAME" "$(uname -m)" "$IMAGE_ID" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Set up Node for runtime interoperability test
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0

@@ -229,6 +229,19 @@ func (s *Service) FirewallRepair() (firewall.Report, error) {
 }
 
 func (s *Service) apply(tunnel config.Tunnel) error {
+	unlock, err := lockRelayNetwork()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	reserved, err := managedRelayPorts()
+	if err != nil {
+		return err
+	}
+	if reserved[tunnel.ListenPort] {
+		return fmt.Errorf("UDP port %d is reserved by an awg-forge relay", tunnel.ListenPort)
+	}
+
 	serverPath := filepath.Join(s.cfg.ConfigDir, "tunnels", tunnel.InterfaceName, "server.conf")
 	runtimePath, err := runtimeConfigPath(tunnel.InterfaceName)
 	if err != nil {

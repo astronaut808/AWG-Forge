@@ -109,6 +109,7 @@ export function CreateTunnelForm({ state, profile, runAction, onCreateStarted }:
 
 export function TunnelSettingsForm({ state, tunnel, runAction }: { state: AppState; tunnel: Tunnel; runAction: RunAction }) {
   const { m } = useI18n();
+  const hasRelays = Boolean(tunnel.relays?.length);
   const [egressMode, setEgressMode] = useState(tunnel.egress_mode || "wan");
   useEffect(() => {
     setEgressMode(tunnel.egress_mode || "wan");
@@ -117,7 +118,7 @@ export function TunnelSettingsForm({ state, tunnel, runAction }: { state: AppSta
     name: field(form, "name"),
     server_host: field(form, "server_host"),
     egress_mode: field(form, "egress_mode"),
-    port: Number(field(form, "port")),
+    port: hasRelays ? tunnel.listen_port : Number(field(form, "port")),
     subnet: field(form, "subnet"),
     dns: field(form, "dns"),
     allowed_ips: field(form, "allowed_ips"),
@@ -128,7 +129,7 @@ export function TunnelSettingsForm({ state, tunnel, runAction }: { state: AppSta
     <fieldset className="connection-group full"><legend>{m.ui.addressing}</legend><div className="form-grid">
       <TextInput className="form-control" label={m.forms.nameInterface} aria-label={m.forms.nameInterface} name="name" defaultValue={tunnel.name} />
       <TextInput className="form-control" label={m.forms.serverHost} aria-label={m.forms.serverHost} description={m.ui.inheritEndpoint} name="server_host" defaultValue={tunnel.server_host || ""} placeholder={state.server_host} />
-      <TextInput className="form-control" label={m.forms.listenPort} aria-label={m.forms.listenPort} name="port" inputMode="numeric" defaultValue={tunnel.listen_port} />
+      <TextInput className="form-control" label={m.forms.listenPort} aria-label={m.forms.listenPort} name="port" inputMode="numeric" defaultValue={tunnel.listen_port} readOnly={hasRelays} description={hasRelays ? m.forms.relayPortLocked : undefined} />
       <TextInput className="form-control" label={m.forms.ipv4Subnet} aria-label={m.forms.ipv4Subnet} name="subnet" defaultValue={tunnel.subnet} />
     </div></fieldset>
     <fieldset className="connection-group full"><legend>{m.ui.routing}</legend><div className="form-grid">
@@ -198,12 +199,15 @@ export function CreateClientForm({ tunnels, initialTunnelID, trafficLimitsEnable
     const target = tunnels.find((tunnel) => tunnel.id === field(form, "tunnel_id"));
     if (!target) throw new Error(m.ui.chooseTunnel);
     const trafficLimit = trafficLimitsEnabled ? trafficLimitFromForm(form, m.forms.trafficLimitInvalid) : { bytes: null, period: "lifetime" as TrafficLimitPeriod };
-    await api.createClient(target.id, field(form, "name"), expirationFromForm(form), trafficLimit.bytes, trafficLimit.period);
+    const relayID = field(form, "relay_id");
+    if (relayID && !target.relays?.some((relay) => relay.id === relayID)) throw new Error(m.forms.clientRelayUnavailable);
+    await api.createClient(target.id, field(form, "name"), expirationFromForm(form), trafficLimit.bytes, trafficLimit.period, relayID || undefined);
     onCreated(target.id);
   }, { errorMode: "inline" })}>
     <div className="stack full">
       <SelectField label={m.ui.clientTunnel} aria-label={m.ui.clientTunnel} name="tunnel_id" required value={selected?.id || null} searchable nothingFoundMessage={m.ui.noMatches} placeholder={m.ui.chooseTunnel} onChange={(value) => setTunnelID(value!)} data={tunnels.map((tunnel) => ({ value: tunnel.id, label: tunnel.name }))} />
       {selected && <p className="client-tunnel-context">{profileTitle(selected.profile)} · {selected.subnet}</p>}
+      {selected && <ClientRelayField key={selected.id} tunnel={selected} />}
       <TextInput className="form-control" label={m.forms.clientName} aria-label={m.forms.clientName} name="name" placeholder={m.ui.clientNamePlaceholder} description={m.ui.clientNameShortHint} title={m.ui.clientNameHint} required minLength={1} maxLength={64} pattern={clientNamePattern} />
       <details className="field-help"><summary>{m.ui.nameRules}</summary><p>{m.ui.clientNameHint}</p></details>
       <ExpirationField />
@@ -212,20 +216,55 @@ export function CreateClientForm({ tunnels, initialTunnelID, trafficLimitsEnable
   </Form>;
 }
 
-export function ClientSettingsForm({ client, runAction }: { client: Client; runAction: RunAction }) {
+export function ClientSettingsForm({ client, tunnel, runAction }: { client: Client; tunnel: Tunnel; runAction: RunAction }) {
   const { m } = useI18n();
   return <Form title={m.forms.clientSettingsTitle} subtitle={`${client.name} · ${client.address}`} submit={m.common.save} onSubmit={(form) => runAction(m.forms.clientSaved, async () => {
-    await api.updateClient(client.id, { name: field(form, "name"), notes: field(form, "notes"), expires_at: expirationFromForm(form, client.expires_at) });
-    if (client.traffic?.enabled) {
-      const trafficLimit = trafficLimitFromForm(form, m.forms.trafficLimitInvalid);
+    const relayID = new FormData(form).get("relay_id")?.toString();
+    if (relayID && !tunnel.relays?.some((relay) => relay.id === relayID)) throw new Error(m.forms.clientRelayUnavailable);
+    const trafficLimit = client.traffic?.enabled ? trafficLimitFromForm(form, m.forms.trafficLimitInvalid) : undefined;
+    await api.updateClient(client.id, {
+      name: field(form, "name"),
+      notes: field(form, "notes"),
+      expires_at: expirationFromForm(form, client.expires_at),
+      relay_id: relayID,
+    });
+    if (trafficLimit) {
       await api.updateClientTrafficLimit(client.id, trafficLimit.bytes, trafficLimit.period);
     }
   }, { errorMode: "inline" })}>
     <TextInput className="form-control" label={m.forms.clientName} aria-label={m.forms.clientName} name="name" description={m.ui.clientNameHint} required maxLength={64} pattern={clientNamePattern} defaultValue={client.name} />
+    <ClientRelayField tunnel={tunnel} currentRelayID={tunnel.clients.find((item) => item.id === client.id)?.relay_id} />
     <ExpirationField current={client.expires_at} keepCurrent />
     {client.traffic?.enabled && <TrafficLimitField limitBytes={client.traffic.limit_bytes} limitPeriod={client.traffic.limit_period} exceeded={client.traffic.exceeded} />}
     <Textarea className="form-control full" label={m.forms.notes} aria-label={m.forms.notes} name="notes" maxLength={1000} defaultValue={client.notes || ""} />
   </Form>;
+}
+
+function ClientRelayField({ tunnel, currentRelayID }: { tunnel: Tunnel; currentRelayID?: string }) {
+  const { m } = useI18n();
+  const [draft, setDraft] = useState<string>();
+  const saved = currentRelayID ?? "";
+  const relayID = draft ?? saved;
+  const changed = relayID !== saved;
+  const relays = tunnel.relays ?? [];
+  if (!relays.length && !relayID && !saved) return null;
+  const missingRelay = relayID !== "" && !relays.some((relay) => relay.id === relayID);
+  const options = [
+    { value: "direct", label: m.forms.clientDirectConnection },
+    ...relays.map((relay) => ({ value: relay.id, label: `${relay.name} · ${relay.host}:${relay.port}` })),
+  ];
+  if (missingRelay) options.push({ value: relayID, label: m.forms.clientRelayUnavailable });
+  return <div className="full">
+    {changed && <input type="hidden" name="relay_id" value={relayID} />}
+    <SelectField label={m.forms.clientConnectionRoute} value={relayID || "direct"} data={options}
+      onChange={(value) => {
+        if (value === null) return;
+        const next = value === "direct" ? "" : value;
+        setDraft(next === saved ? undefined : next);
+      }}
+      description={changed ? m.forms.clientRouteChangeHint : undefined}
+      error={missingRelay ? m.forms.clientRelayUnavailable : undefined} />
+  </div>;
 }
 
 function TrafficLimitField({ limitBytes, limitPeriod = "lifetime", exceeded = false }: { limitBytes?: number | null; limitPeriod?: "" | TrafficLimitPeriod; exceeded?: boolean }) {

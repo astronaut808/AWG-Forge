@@ -14,6 +14,7 @@ addFormats(ajv);
 
 const createClient = ajv.compile(schemas.CreateClientRequest);
 const updateClient = ajv.compile(schemas.UpdateClientSettingsRequest);
+const relay = ajv.compile(schemas.RelayRequest);
 const login = ajv.compile(schemas.LoginRequest);
 const serverName = ajv.compile(schemas.UpdateServerNameRequest);
 const cases = [
@@ -27,6 +28,12 @@ const cases = [
   ["username login", login, { username: "operator", password: "secret" }, true],
   ["login rejects empty username", login, { username: "", password: "secret" }, false],
   ["login rejects missing password", login, { username: "admin" }, false],
+  ["relay settings", relay, { name: "Edge", host: "edge.example.com", port: 40123, target_ipv4: "192.0.2.20" }, true],
+  ["relay DNS destination", relay, { name: "Edge", host: "edge.example.com", port: 40123, target_host: "exit.example.com" }, true],
+  ["relay requires one destination", relay, { name: "Edge", host: "edge.example.com", port: 40123, target_ipv4: "192.0.2.20", target_host: "exit.example.com" }, false],
+  ["relay rejects IPv6 target", relay, { name: "Edge", host: "edge.example.com", port: 40123, target_ipv4: "2001:db8::1" }, false],
+  ["create with relay", createClient, { tunnel_id: "tunnel-1", name: "phone", relay_id: "0123456789abcdef" }, true],
+  ["clear relay", updateClient, { name: "phone", notes: "", expires_at: "", relay_id: "" }, true],
   ["create without expiration", createClient, { tunnel_id: "tunnel-1", name: "phone" }, true],
   ["create with empty expiration", createClient, { tunnel_id: "tunnel-1", name: "phone", expires_at: "" }, true],
   ["create with RFC3339 expiration", createClient, { tunnel_id: "tunnel-1", name: "phone", expires_at: "2026-09-05T12:00:00Z" }, true],

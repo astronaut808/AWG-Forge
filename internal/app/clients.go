@@ -13,12 +13,14 @@ import (
 )
 
 type ClientCreateOptions struct {
+	RelayID         string
 	ExpiresAt       time.Time
 	Persist         func(config.Client) error
 	RollbackPersist func(config.Client) error
 }
 
 type ClientSettingsUpdate struct {
+	RelayID   *string
 	Name      string
 	Notes     string
 	ExpiresAt time.Time
@@ -79,6 +81,10 @@ func (s *Service) AddClientToTunnelWithOptions(tunnelID, name string, opts Clien
 		ConfigRevision: state.Tunnels[idx].ConfigRevision,
 		ExpiresAt:      opts.ExpiresAt.UTC(),
 		CreatedAt:      now, UpdatedAt: now,
+	}
+	client.RelayID = opts.RelayID
+	if _, err := state.Tunnels[idx].ClientEndpoint(state.ServerHost, client); err != nil {
+		return config.Client{}, err
 	}
 	if opts.Persist != nil {
 		if err := opts.Persist(client); err != nil {
@@ -306,12 +312,35 @@ func (s *Service) UpdateClientSettingsWithOptions(id string, update ClientSettin
 			if state.Tunnels[ti].Clients[ci].ID == id {
 				now := time.Now().UTC()
 				expirationChanged := !state.Tunnels[ti].Clients[ci].ExpiresAt.Equal(update.ExpiresAt)
+				client := &state.Tunnels[ti].Clients[ci]
+				relayChanged := update.RelayID != nil && client.RelayID != *update.RelayID
+				if relayChanged {
+					oldEndpoint, err := state.Tunnels[ti].ClientEndpoint(state.ServerHost, *client)
+					if err != nil {
+						return config.Client{}, err
+					}
+					client.RelayID = *update.RelayID
+					nextEndpoint, err := state.Tunnels[ti].ClientEndpoint(state.ServerHost, *client)
+					if err != nil {
+						return config.Client{}, err
+					}
+					if oldEndpoint != nextEndpoint {
+						client.EndpointRevision++
+					}
+				}
 				state.Tunnels[ti].Clients[ci].Name = name
 				state.Tunnels[ti].Clients[ci].Notes = notes
 				state.Tunnels[ti].Clients[ci].ExpiresAt = update.ExpiresAt.UTC()
 				state.Tunnels[ti].Clients[ci].UpdatedAt = now
 				state.Tunnels[ti].UpdatedAt = now
 				state.UpdatedAt = now
+				if relayChanged && !expirationChanged {
+					if err := s.saveRelayState(previousState, state, ti); err != nil {
+						return config.Client{}, err
+					}
+					s.log("info", "client.settings.updated", "client settings updated", clientAuditFields(state.Tunnels[ti], *client), nil)
+					return *client, nil
+				}
 				if err := s.store.Save(state); err != nil {
 					return config.Client{}, err
 				}
@@ -333,39 +362,13 @@ func (s *Service) UpdateClientSettingsWithOptions(id string, update ClientSettin
 }
 
 func (s *Service) ClientConfig(id string) (string, error) {
-	state, err := s.Init()
-	if err != nil {
-		return "", err
-	}
-	tunnel, client, ok := findClient(state, id)
-	if !ok {
-		return "", errors.New("client not found")
-	}
-	conf, err := render.ClientConfig(state, tunnel, client)
-	if err != nil {
-		return "", err
-	}
-	_ = s.markClientConfigDelivered(id)
-	s.log("info", "client.config.rendered", "client config rendered", clientAuditFields(tunnel, client), nil)
-	return conf, nil
+	ctx, err := s.clientExportContext(id, "rendered")
+	return ctx.RenderedConf, err
 }
 
 func (s *Service) ClientConfigForDownload(id string) (string, config.Client, error) {
-	state, err := s.Init()
-	if err != nil {
-		return "", config.Client{}, err
-	}
-	tunnel, client, ok := findClient(state, id)
-	if !ok {
-		return "", config.Client{}, errors.New("client not found")
-	}
-	conf, err := render.ClientConfig(state, tunnel, client)
-	if err != nil {
-		return "", config.Client{}, err
-	}
-	_ = s.markClientConfigDelivered(id)
-	s.log("info", "client.config.downloaded", "client config downloaded", clientAuditFields(tunnel, client), nil)
-	return conf, client, nil
+	ctx, err := s.ClientExportContext(id)
+	return ctx.RenderedConf, ctx.Client, err
 }
 
 type ClientExportContext struct {
@@ -376,6 +379,19 @@ type ClientExportContext struct {
 }
 
 func (s *Service) ClientExportContext(id string) (ClientExportContext, error) {
+	return s.clientExportContext(id, "downloaded")
+}
+
+func (s *Service) clientExportContext(id, action string) (ClientExportContext, error) {
+	ctx, err := s.PreviewClientExport(id)
+	if err != nil {
+		return ClientExportContext{}, err
+	}
+	s.recordClientExport(ctx, action)
+	return ctx, nil
+}
+
+func (s *Service) PreviewClientExport(id string) (ClientExportContext, error) {
 	state, err := s.Init()
 	if err != nil {
 		return ClientExportContext{}, err
@@ -388,9 +404,16 @@ func (s *Service) ClientExportContext(id string) (ClientExportContext, error) {
 	if err != nil {
 		return ClientExportContext{}, err
 	}
-	_ = s.markClientConfigDelivered(id)
-	s.log("info", "client.config.downloaded", "client config downloaded", clientAuditFields(tunnel, client), nil)
 	return ClientExportContext{ServerHost: state.ServerHost, Tunnel: tunnel, Client: client, RenderedConf: conf}, nil
+}
+
+func (s *Service) RecordClientExport(ctx ClientExportContext) {
+	s.recordClientExport(ctx, "downloaded")
+}
+
+func (s *Service) recordClientExport(ctx ClientExportContext, action string) {
+	_ = s.markClientConfigDelivered(ctx.Client.ID, ctx.Tunnel.ConfigRevision, ctx.Client.EndpointRevision)
+	s.log("info", "client.config."+action, "client config "+action, clientAuditFields(ctx.Tunnel, ctx.Client), nil)
 }
 
 func (s *Service) ClientImportKey(id string) (string, config.Client, error) {
@@ -432,7 +455,7 @@ func (s *Service) EnforceExpiredClients() error {
 	return nil
 }
 
-func (s *Service) markClientConfigDelivered(id string) error {
+func (s *Service) markClientConfigDelivered(id string, tunnelRevision int, endpointRevision uint64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	state, err := s.initLocked()
@@ -442,11 +465,13 @@ func (s *Service) markClientConfigDelivered(id string) error {
 	for ti := range state.Tunnels {
 		for ci := range state.Tunnels[ti].Clients {
 			if state.Tunnels[ti].Clients[ci].ID == id {
-				if state.Tunnels[ti].Clients[ci].ConfigRevision == state.Tunnels[ti].ConfigRevision {
+				client := &state.Tunnels[ti].Clients[ci]
+				if state.Tunnels[ti].ConfigRevision != tunnelRevision || client.EndpointRevision != endpointRevision || !state.Tunnels[ti].NeedsClientConfig(*client) {
 					return nil
 				}
 				now := time.Now().UTC()
-				state.Tunnels[ti].Clients[ci].ConfigRevision = state.Tunnels[ti].ConfigRevision
+				client.ConfigRevision = tunnelRevision
+				client.DeliveredEndpointRevision = endpointRevision
 				state.Tunnels[ti].Clients[ci].UpdatedAt = now
 				state.Tunnels[ti].UpdatedAt = now
 				state.UpdatedAt = now

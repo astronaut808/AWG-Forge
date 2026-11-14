@@ -1,10 +1,6 @@
 package protocol
 
-import (
-	"strings"
-
-	"github.com/astronaut808/awg-forge/internal/config"
-)
+import "github.com/astronaut808/awg-forge/internal/config"
 
 type ConfigLine struct {
 	Key   string
@@ -16,11 +12,8 @@ type RenderContext struct {
 	Tunnel config.Tunnel
 }
 
-func (ctx RenderContext) EndpointHost() string {
-	if host := strings.TrimSpace(ctx.Tunnel.ServerHost); host != "" {
-		return host
-	}
-	return ctx.State.ServerHost
+func (ctx RenderContext) ClientEndpoint(client config.Client) (config.Endpoint, error) {
+	return ctx.Tunnel.ClientEndpoint(ctx.State.ServerHost, client)
 }
 
 type ProtocolProfile interface {

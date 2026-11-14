@@ -81,7 +81,11 @@ func (s *Service) SuggestTunnel(profileID string) (TunnelSuggestion, error) {
 		return TunnelSuggestion{}, err
 	}
 	suggestion := SuggestedNextTunnelSpec(profileID, state)
-	port, portRange, err := selectAutomaticUDPPort(s.cfg, state.Tunnels, cryptoRandomIndex, s.automaticUDPPortAvailable)
+	available, err := s.automaticUDPPortCheck()
+	if err != nil {
+		return TunnelSuggestion{}, err
+	}
+	port, portRange, err := selectAutomaticUDPPort(s.cfg, state.Tunnels, cryptoRandomIndex, available)
 	if err != nil {
 		return TunnelSuggestion{}, err
 	}
@@ -246,8 +250,15 @@ func (s *Service) createTunnel(profileID, name, subnet string, port int, automat
 	if name == "" {
 		name = suggestion.Name
 	}
+	var available func(int) bool
+	if automaticPort {
+		available, err = s.automaticUDPPortCheck()
+		if err != nil {
+			return config.Tunnel{}, err
+		}
+	}
 	if automaticPort && port == 0 {
-		port, _, err = selectAutomaticUDPPort(s.cfg, state.Tunnels, cryptoRandomIndex, s.automaticUDPPortAvailable)
+		port, _, err = selectAutomaticUDPPort(s.cfg, state.Tunnels, cryptoRandomIndex, available)
 		if err != nil {
 			return config.Tunnel{}, err
 		}
@@ -259,7 +270,7 @@ func (s *Service) createTunnel(profileID, name, subnet string, port int, automat
 		if !eligible {
 			return config.Tunnel{}, fmt.Errorf("UDP port %d is outside the automatic range %s", port, rangeSpec)
 		}
-		if !s.automaticUDPPortAvailable(port) {
+		if !available(port) {
 			return config.Tunnel{}, errors.New("suggested UDP port is no longer available; request another suggestion")
 		}
 	}
@@ -391,6 +402,9 @@ func (s *Service) updateTunnelSettings(tunnelID string, update TunnelSettingsUpd
 	settings, err := resolveTunnelSettings(state, idx, update)
 	if err != nil {
 		return config.Tunnel{}, err
+	}
+	if old.ListenPort != settings.Port && len(old.Relays) != 0 {
+		return config.Tunnel{}, errors.New("remove the tunnel relays before changing its listen port")
 	}
 	state.Tunnels[idx] = applyTunnelSettings(old, settings)
 	next := state.Tunnels[idx]
@@ -605,6 +619,9 @@ func (s *Service) DeleteTunnelWithConfirmation(tunnelID, confirmationName string
 		return err
 	}
 	tunnel := state.Tunnels[idx]
+	if len(tunnel.Relays) != 0 {
+		return errors.New("remove the tunnel relays before deleting the tunnel")
+	}
 	if tunnelHasEverConnectedClient(tunnel) && confirmationName != tunnel.Name {
 		return fmt.Errorf("type tunnel name %q to confirm deletion", tunnel.Name)
 	}

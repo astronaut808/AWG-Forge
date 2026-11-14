@@ -42,6 +42,7 @@ The panel supports a separate server display name. It is saved in `state.json` a
 
 ## Documentation
 
+- [Transparent UDP relay](docs/en/udp-relay.md)
 - [Manual installation and startup](docs/en/setup.md)
 - [Upgrade](docs/en/quick-install.md#upgrade) · [Uninstall](docs/en/quick-install.md#uninstall)
 - [Configuration, Web UI, CLI, and diagnostics](docs/en/README.md)

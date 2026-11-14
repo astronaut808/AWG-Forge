@@ -13,7 +13,7 @@ import { navigate, navigationEvent } from "./navigation";
 import { Badge, Dialog, Empty } from "./shared";
 import type { AppState, Client, Profile, TrafficSummary, Tunnel } from "./types";
 import { activeLabel, classNames, dateOnly, formatBytes, isExperimentalProfile, profileTitle, relativeTime } from "./utils";
-import { Activity, Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Activity, Fragment, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 type ShellProps = {
@@ -281,12 +281,14 @@ export function TunnelFirstDashboard({ profiles, tunnels, filter, setFilter, req
 export function TunnelCard(props: {
   tunnel: Tunnel; onCreateClient: () => void; onSettings: () => void; onProtocol: () => void;
   onRestart: () => void; onRegenerate: () => void; onDelete: () => void;
-  renderSettings: () => ReactNode; renderProtocol: () => ReactNode;
+  renderSettings: () => ReactNode; renderProtocol: () => ReactNode; renderRelays: () => ReactNode;
   onClientConfig: (client: Client) => void; onClientSettings: (client: Client) => void;
   onClientToggle: (client: Client) => void; onClientDelete: (client: Client) => void;
 }) {
   const { m } = useI18n();
   const { tunnel } = props;
+  const deleteHintID = useId();
+  const hasRelays = Boolean(tunnel.relays?.length);
   const compact = useMediaQuery("(max-width:760px)", undefined, { getInitialValueInEffect: false });
   const [factsOpen, setFactsOpen] = useState(!compact);
   useEffect(() => { setFactsOpen(!compact); }, [compact, tunnel.id]);
@@ -301,6 +303,7 @@ export function TunnelCard(props: {
       <Button className={classNames(tab === "clients" && "active")} type="button" aria-current={tab === "clients" ? "page" : undefined} onClick={() => setTab("clients")}>{m.tunnel.clients}</Button>
       <Button className={classNames(tab === "connection" && "active")} type="button" aria-current={tab === "connection" ? "page" : undefined} onClick={() => setTab("connection")}>{m.ui.connection}</Button>
       <Button className={classNames(tab === "protocol" && "active")} type="button" aria-current={tab === "protocol" ? "page" : undefined} onClick={() => setTab("protocol")}>{m.ui.protocolParameters}</Button>
+      <Button className={classNames(tab === "relays" && "active")} type="button" aria-current={tab === "relays" ? "page" : undefined} onClick={() => setTab("relays")}>{m.relays.title}</Button>
     </nav>
     <details className="tunnel-facts" open={!compact || factsOpen} onToggle={(event) => { if (compact) setFactsOpen(event.currentTarget.open); }}><summary>{m.ui.connectionSummary}<Icon name="chevron" /></summary><div className="facts">
       <Fact label={m.tunnel.protocol} value={profileTitle(tunnel.profile)} />
@@ -316,7 +319,13 @@ export function TunnelCard(props: {
       {isExperimentalProfile(tunnel.profile) && <Badge tone="warn">{m.common.experimental}</Badge>}
     </div>
     <div className="tunnel-content">
-      {tab === "connection" ? <>{props.renderSettings()}<div className="form-actions"><Button className="button danger" type="button" onClick={props.onDelete}>{m.common.delete}</Button></div></> : tab === "protocol" ? props.renderProtocol() : <section className="clients">
+      {tab === "connection" ? <>
+        {props.renderSettings()}
+        <div className="form-actions">
+          <Button className="button danger" type="button" disabled={hasRelays} aria-describedby={hasRelays ? deleteHintID : undefined} onClick={props.onDelete}>{m.common.delete}</Button>
+          {hasRelays && <span className="note" id={deleteHintID}>{m.forms.relayTunnelDeleteLocked}</span>}
+        </div>
+      </> : tab === "protocol" ? props.renderProtocol() : tab === "relays" ? props.renderRelays() : <section className="clients">
         <div className="clients-toolbar"><div><h3>{m.tunnel.clients}</h3><span>{m.tunnel.clientTotal(tunnel.clients.length)}</span></div><Button className="button primary" type="button" onClick={props.onCreateClient}><Icon name="plus" />{m.common.createClient}</Button></div>
         {(tunnel.clients.length > 4 || query !== "") && <input className="client-search" type="search" aria-label={m.ui.searchClients} placeholder={m.ui.searchClients} value={query} onInput={(event) => setQuery(event.currentTarget.value)} />}
         {tunnel.clients.length === 0 ? <div className="empty compact">{m.tunnel.createFirstClient}</div> : <div className="client-table">

@@ -45,7 +45,7 @@ FROM debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1de
 ARG AWG_FORGE_VERSION=dev
 ARG AWG_FORGE_COMMIT=unknown
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    apt bash ca-certificates dumb-init iproute2 iptables nftables procps openresolv perl-base zlib1g \
+    apt bash ca-certificates conntrack dumb-init iproute2 iptables nftables procps openresolv perl-base util-linux zlib1g \
   && rm -rf /var/lib/apt/lists/*
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -54,8 +54,8 @@ COPY --from=forge-builder /out/awg-forge /usr/local/bin/awg-forge
 COPY --from=awg-go-builder /out-amneziawg-go /usr/local/bin/amneziawg-go
 COPY --from=tools-builder /out/usr/bin/awg /usr/local/bin/awg
 COPY --from=tools-builder /out/usr/bin/awg-quick /usr/local/bin/awg-quick
-COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
+COPY scripts/docker-entrypoint.sh scripts/udp-relay.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/udp-relay.sh \
   && iptables -V | grep -q nf_tables
 LABEL org.opencontainers.image.title="awg-forge" \
       org.opencontainers.image.version=$AWG_FORGE_VERSION \

@@ -6,6 +6,11 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"os/exec"
+	"regexp"
+	"runtime"
+	"strconv"
+	"strings"
 
 	"github.com/astronaut808/awg-forge/internal/config"
 )
@@ -63,11 +68,15 @@ func udpPortAvailable(port int) bool {
 	return true
 }
 
-func (s *Service) automaticUDPPortAvailable(port int) bool {
+func (s *Service) automaticUDPPortCheck() (func(int) bool, error) {
 	if !s.cfg.ApplyConfig {
-		return true
+		return func(int) bool { return true }, nil
 	}
-	return udpPortAvailable(port)
+	reserved, err := managedRelayPorts()
+	if err != nil {
+		return nil, err
+	}
+	return func(port int) bool { return !reserved[port] && udpPortAvailable(port) }, nil
 }
 
 func automaticUDPPortDenied(port int) bool {
@@ -94,4 +103,42 @@ func automaticUDPPortEligible(cfg config.Config, port int) (bool, string, error)
 		}
 	}
 	return false, rangeSpec, nil
+}
+
+// managedRelayPorts reads only the public ports reserved by Forge relay DNAT rules.
+func managedRelayPorts() (map[int]bool, error) {
+	if runtime.GOOS != "linux" {
+		return map[int]bool{}, nil
+	}
+	output, err := exec.Command("iptables", "-w", "5", "-t", "nat", "-S").Output()
+	if err != nil {
+		return nil, fmt.Errorf("inspect managed relay ports: %w", err)
+	}
+	return parseManagedRelayPorts(string(output)), nil
+}
+
+var managedRelayComment = regexp.MustCompile(`^awg-forge-relay-[0-9a-f]{16}-dnat$`)
+
+func parseManagedRelayPorts(listing string) map[int]bool {
+	ports := make(map[int]bool)
+	for _, line := range strings.Split(listing, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "-A" || fields[1] != "PREROUTING" {
+			continue
+		}
+		var owned bool
+		var port int
+		for i := 2; i+1 < len(fields); i++ {
+			switch fields[i] {
+			case "--comment":
+				owned = managedRelayComment.MatchString(strings.Trim(fields[i+1], `"`))
+			case "--dport":
+				port, _ = strconv.Atoi(fields[i+1])
+			}
+		}
+		if owned && port > 0 && port <= 65535 {
+			ports[port] = true
+		}
+	}
+	return ports
 }

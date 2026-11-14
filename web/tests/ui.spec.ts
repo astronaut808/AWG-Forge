@@ -904,6 +904,107 @@ for (const profile of ["awg_2_0", "awg_3"]) {
 }
 
 
+test("UDP relay installation, client assignment, and configuration export", async ({ page, m, session }) => {
+  await openDashboard(page, m, session);
+  await page.locator(".main-nav").getByRole("button", { name: m.dashboard.tunnels, exact: true }).click();
+  const tunnel = await createTunnel(page, m, "awg_2_0");
+  const tunnelName = await tunnel.locator(".tunnel-head h2").innerText();
+  const tabs = tunnel.locator(".tunnel-tabs");
+  const dialog = page.getByRole("dialog");
+  const host = "edge.example.com";
+  const relayRow = tunnel.getByRole("listitem").filter({ has: page.getByRole("heading", { name: host, exact: true }) });
+  const target = "exit.example.test";
+  const publicPort = 40123;
+  const state = async () => (await (await page.request.get("/api/state")).json() as AppState).tunnels.find((item) => item.name === tunnelName)!;
+  await page.route("**/api/tunnels/*/relays/health", async (route) => {
+    const current = await state();
+    await route.fulfill({ json: { health: Object.fromEntries((current?.relays ?? []).map(({ id }) => [id, { status: "reachable", succeeded_at: "2026-11-13T10:00:00Z" }])) } });
+  });
+  const openRelays = () => tabs.getByRole("button", { name: m.relays.title, exact: true }).click();
+  const openClients = () => tabs.getByRole("button", { name: m.tunnel.clients, exact: true }).click();
+  const openConnection = () => tabs.getByRole("button", { name: m.ui.connection, exact: true }).click();
+
+  await openConnection();
+  await tunnel.getByLabel(m.forms.serverHost, { exact: true }).fill("192.0.2.19");
+  await tunnel.getByRole("button", { name: m.common.save, exact: true }).click();
+  await expect.poll(async () => (await state()).server_host).toBe("192.0.2.19");
+  const listenPort = (await state()).listen_port;
+  await openRelays();
+  await tunnel.getByRole("button", { name: m.relays.add, exact: true }).click();
+  await expect(dialog.getByRole("spinbutton", { name: m.relays.port, exact: true })).toHaveValue(String(listenPort));
+  await expect(dialog.getByRole("textbox", { name: m.relays.target, exact: true })).toHaveValue("192.0.2.19");
+  await dialog.getByRole("textbox", { name: m.relays.host, exact: true }).fill(host);
+  await dialog.getByRole("spinbutton", { name: m.relays.port, exact: true }).fill(String(publicPort));
+  await dialog.getByRole("textbox", { name: m.relays.target, exact: true }).fill(target);
+  await dialog.getByRole("button", { name: m.common.save, exact: true }).click();
+  await expect(relayRow).toContainText(`${host}:${publicPort}`);
+  await expect(relayRow).toContainText(m.relays.health.reachable);
+  const configured = await state();
+  const relayID = configured.relays![0].id;
+  const command = dialog.getByLabel(m.relays.installCommand, { exact: true });
+  await expect(command).toHaveValue(new RegExp(`--id ${relayID} --listen-port ${publicPort} --target ${target}:${configured.listen_port}$`));
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await dialog.getByRole("button", { name: m.relays.copy, exact: true }).first().click();
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(await command.inputValue());
+  await expectContained(page, dialog);
+  await page.keyboard.press("Escape");
+  await expect(dialog).not.toBeVisible();
+  await expectContained(page, tunnel);
+
+  await openConnection();
+  await expect(tunnel.getByLabel(m.forms.listenPort, { exact: true })).toHaveAttribute("readonly", "");
+  await expect(tunnel.getByRole("button", { name: m.common.delete, exact: true })).toBeDisabled();
+
+  await openClients();
+  const direct = await createClient(page, tunnel, m, "Direct client");
+  await tunnel.getByRole("button", { name: m.common.createClient, exact: true }).click();
+  const route = dialog.getByLabel(m.forms.clientConnectionRoute, { exact: true });
+  await expect(route).toHaveValue(m.forms.clientDirectConnection);
+  await chooseOption(route, relayID);
+  await dialog.getByLabel(m.forms.clientName, { exact: true }).fill("Relayed client");
+  await dialog.getByRole("button", { name: m.common.createClient, exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  const client = tunnel.locator(".client-row").filter({ hasText: "Relayed client" });
+  await expect(client).toBeVisible();
+  const assigned = (await state()).clients.find((item) => item.name === "Relayed client")!;
+  expect(assigned.relay_id).toBe(relayID);
+  await client.getByRole("button", { name: m.ui.clientActions, exact: true }).click();
+  await client.getByRole("button", { name: m.ui.connectClient, exact: true }).click();
+  const downloading = page.waitForEvent("download");
+  await dialog.getByRole("button", { name: m.clientConfig.downloadConf, exact: true }).click();
+  const config = await (await downloading).createReadStream();
+  const chunks = [];
+  for await (const chunk of config!) chunks.push(chunk);
+  expect(Buffer.concat(chunks).toString().split("\n").find((line) => line.startsWith("Endpoint = "))).toBe(`Endpoint = ${host}:${publicPort}`);
+  await page.keyboard.press("Escape");
+  await expect(dialog).not.toBeVisible();
+
+  await openRelays();
+  await expect(relayRow.getByRole("button", { name: m.common.delete, exact: true })).toBeDisabled();
+  await relayRow.getByRole("button", { name: m.common.edit, exact: true }).click();
+  await dialog.getByRole("spinbutton", { name: m.relays.port, exact: true }).fill(String(publicPort + 1));
+  await dialog.getByRole("button", { name: m.common.save, exact: true }).click();
+  await expect(relayRow).toContainText(`${host}:${publicPort + 1}`);
+  await expect(dialog).not.toBeVisible();
+  await openClients();
+  await expect(client.getByText(m.common.stale, { exact: true })).toBeVisible();
+  await expect(direct.getByText(m.common.stale, { exact: true })).toHaveCount(0);
+  expect((await page.request.get(`/api/clients/${assigned.id}/amnezia-vpn-qr-series`)).ok()).toBe(true);
+  expect((await state()).clients.find((item) => item.id === assigned.id)?.needs_new_config).toBe(true);
+  await client.getByRole("button", { name: m.ui.clientActions, exact: true }).click();
+  await client.getByRole("button", { name: m.common.edit, exact: true }).click();
+  await chooseOption(route, "direct");
+  await dialog.getByRole("button", { name: m.common.save, exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  expect((await state()).clients.find((item) => item.id === assigned.id)?.relay_id).toBeUndefined();
+
+  await openRelays();
+  await relayRow.getByRole("button", { name: m.common.delete, exact: true }).click();
+  await dialog.getByRole("button", { name: m.common.delete, exact: true }).click();
+  await expect(relayRow).toHaveCount(0);
+  await deleteTunnel(page, tunnel, m);
+});
+
 test("navigation, client search, quota editing and unified connection preserve tunnel context", async ({ page, m, session }, testInfo) => {
   await openDashboard(page, m, session);
   const tunnel = await createTunnel(page, m, "awg_2_0");

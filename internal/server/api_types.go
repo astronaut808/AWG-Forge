@@ -59,6 +59,7 @@ type regenerateProtocolRequest struct {
 }
 
 type createClientRequest struct {
+	RelayID            string          `json:"relay_id"`
 	TunnelID           string          `json:"tunnel_id"`
 	Name               string          `json:"name"`
 	ExpiresAt          string          `json:"expires_at"`
@@ -67,9 +68,10 @@ type createClientRequest struct {
 }
 
 type updateClientSettingsRequest struct {
-	Name      string `json:"name"`
-	Notes     string `json:"notes"`
-	ExpiresAt string `json:"expires_at"`
+	RelayID   *string `json:"relay_id"`
+	Name      string  `json:"name"`
+	Notes     string  `json:"notes"`
+	ExpiresAt string  `json:"expires_at"`
 }
 
 type updateClientTrafficLimitRequest struct {

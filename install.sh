@@ -155,13 +155,20 @@ dependency_bootstrap_supported() {
 }
 
 missing_host_packages() {
+  local mode="${1:-server}"
   have curl || printf '%s\n' curl
   [[ -s /etc/ssl/certs/ca-certificates.crt || -s /etc/pki/tls/certs/ca-bundle.crt ]] || printf '%s\n' ca-certificates
+  have awk || printf '%s\n' gawk
+  if [[ "$mode" == relay ]]; then
+    have ip || { if [[ "$PACKAGE_FAMILY" == rpm ]]; then printf '%s\n' iproute; else printf '%s\n' iproute2; fi; }
+    have flock || printf '%s\n' util-linux
+    have jq || printf '%s\n' jq
+    return 0
+  fi
   have ip && have ss || { if [[ "$PACKAGE_FAMILY" == rpm ]]; then printf '%s\n' iproute; else printf '%s\n' iproute2; fi; }
   have iptables || printf '%s\n' iptables
   have openssl || printf '%s\n' openssl
   have modprobe || printf '%s\n' kmod
-  have awk || printf '%s\n' gawk
 }
 
 apt_install_missing() {
@@ -255,16 +262,17 @@ EOF
 }
 
 ensure_host_dependencies() {
+  local mode="${1:-server}"
   detect_distribution
   ok "distribution: $DISTRO_ID ${DISTRO_VERSION:-unknown version}"
   local install_engine=false install_compose=false
   have docker || install_engine=true
-  compose_cmd >/dev/null || install_compose=true
+  host_compose_available "$mode" || install_compose=true
   local -a packages=()
   local package
   while IFS= read -r package; do
     packages+=("$package")
-  done < <(missing_host_packages)
+  done < <(missing_host_packages "$mode")
 
   if $install_engine || $install_compose || (( ${#packages[@]} > 0 )); then
     if ! dependency_bootstrap_supported; then
@@ -297,7 +305,7 @@ ensure_host_dependencies() {
     fi
   fi
 
-  if [[ -n "$(missing_host_packages)" ]]; then
+  if [[ -n "$(missing_host_packages "$mode")" ]]; then
     fail "required host tools are still missing after preparation"
     return 1
   fi
@@ -314,12 +322,24 @@ ensure_host_dependencies() {
     confirm "Start the local Docker service?" "y" || return 1
     systemctl enable --now docker || return 1
   fi
-  if ! docker info >/dev/null 2>&1 || ! compose_cmd >/dev/null; then
+  if ! docker info >/dev/null 2>&1 || ! host_compose_available "$mode"; then
     fail "Docker or Compose is still unavailable after preparation"
     return 1
   fi
-  ensure_tun_device || return 1
-  ok "Docker, Compose and TUN are ready"
+  if [[ "$mode" == relay ]]; then
+    ok "Docker and Compose are ready"
+  else
+    ensure_tun_device || return 1
+    ok "Docker, Compose and TUN are ready"
+  fi
+}
+
+host_compose_available() {
+  if [[ "$1" == relay ]]; then
+    docker compose version >/dev/null 2>&1
+  else
+    compose_cmd >/dev/null
+  fi
 }
 
 ensure_tun_device() {
@@ -392,6 +412,28 @@ port_in_use_udp() {
   return 1
 }
 
+managed_relay_ports() {
+  # Installation also supports a non-root shell with access to Docker.
+  if ! running_as_root || ! have iptables; then
+    return 0
+  fi
+  iptables -w 5 -t nat -S | awk '
+    $1 == "-A" && $2 == "PREROUTING" {
+      port = ""
+      managed = 0
+      for (i = 3; i < NF; i++) {
+        if ($i == "--dport") port = $(i+1)
+        if ($i == "--comment") {
+          tag = $(i+1)
+          gsub(/"/, "", tag)
+          if (tag ~ /^awg-forge-relay-[0-9a-f]+-dnat$/ && length(tag) == 37) managed = 1
+        }
+      }
+      if (managed && port ~ /^[0-9]+$/) printf " %s ", port
+    }
+  '
+}
+
 random_u32() {
   od -An -N4 -tu4 /dev/urandom | tr -d ' \n'
 }
@@ -405,6 +447,8 @@ random_available_udp_port() {
   fi
   local count=$((last - first + 1))
   local start=$(( $(random_u32) % count ))
+  local relay_ports
+  relay_ports="$(managed_relay_ports)" || return 1
   local offset candidate
   for ((offset = 0; offset < count; offset++)); do
     candidate=$((first + (start + offset) % count))
@@ -414,7 +458,7 @@ random_available_udp_port() {
     case "$candidate" in
       53|123|443|500|3478|4500|5349) continue ;;
     esac
-    if ! port_in_use_udp "$candidate"; then
+    if [[ "$relay_ports" != *" $candidate "* ]] && ! port_in_use_udp "$candidate"; then
       printf '%s' "$candidate"
       return 0
     fi
@@ -1635,7 +1679,372 @@ upgrade_locked() (
   fi
 )
 
+relay_compose() {
+  docker compose --project-name "awg-forge-relay-$relay_id" --project-directory "$relay_dir" -f "$1" "${@:2}"
+}
+
+relay_runtime_mount() {
+  local label
+  label="$(selinux_volume_suffix)"
+  if [[ -n "$label" ]]; then
+    # Compose sends this form via HostConfig.Binds, which preserves :Z.
+    # relay_main checks and creates the private source directory first.
+    printf '      - ./runtime:/var/lib/awg-forge-relay%s\n' "$label"
+    return
+  fi
+  cat <<'YAML'
+      - type: bind
+        source: ./runtime
+        target: /var/lib/awg-forge-relay
+        bind:
+          create_host_path: false
+YAML
+}
+
+relay_write_compose() {
+  local file="$1" runtime_mount
+  runtime_mount="$(relay_runtime_mount)" || return 1
+  cat > "$file" <<YAML
+services:
+  relay:
+    image: ghcr.io/astronaut808/awg-forge:${version#v}
+    network_mode: host
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /run
+      - /etc/awg-forge
+    volumes:
+$runtime_mount
+    command: ["relay", "serve", "$relay_id", "$listen_port", "$target_host", "$target_port", "$local_ip", "$interface"]
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/udp-relay.sh", "status", "$relay_id", "$listen_port", "$target_host", "$target_port", "$local_ip", "$interface"]
+      interval: 2s
+      timeout: 10s
+      retries: 5
+    stop_grace_period: 40s
+    restart: unless-stopped
+    logging:
+      driver: local
+YAML
+}
+
+relay_validate() {
+  local image="$1"
+  shift
+  # A one-off Compose container would relabel the live container's private
+  # runtime directory on SELinux hosts. Validation only needs host networking.
+  docker run --rm --pull never --network host --cap-drop ALL --cap-add NET_ADMIN \
+    --security-opt no-new-privileges --read-only --tmpfs /run --tmpfs /etc/awg-forge \
+    "$image" relay validate "$@"
+}
+
+relay_runtime_action() {
+  local file="$1" action="$2" args
+  args="$(relay_compose "$file" config --format json | jq -er '.services.relay.command | .[2:] | @tsv')" || return 1
+  local -a rule_args
+  read -r -a rule_args <<< "$args"
+  if [[ "$action" == status ]]; then
+    relay_compose "$file" ps || return 1
+    relay_compose "$file" exec -T relay /usr/local/bin/udp-relay.sh status "${rule_args[@]}"
+    return
+  fi
+  relay_compose "$file" down || return 1
+  relay_compose "$file" run --no-deps --rm -T relay relay remove "${rule_args[@]}"
+}
+
+relay_stop_for_replacement() {
+  # Keep the last installed DNAT rule available to the new image. A legacy
+  # container can remove it on SIGTERM without clearing its conntrack entries.
+  relay_compose "$current" kill -s SIGKILL relay &&
+    relay_compose "$current" down &&
+    relay_runtime_action "$next" remove
+}
+
+# Both files use the same project. Compare service hashes because renaming
+# compose.next.yaml leaves the original config path in the container labels.
+relay_live_config() {
+  local containers
+  containers="$(docker ps -aq --filter "label=com.docker.compose.project=awg-forge-relay-$relay_id" \
+    --filter label=com.docker.compose.service=relay --filter label=com.docker.compose.oneoff=False)" || return 1
+  [[ -n "$containers" ]] || return 0
+  [[ "$containers" =~ ^[0-9a-f]+$ ]] || { fail "multiple containers found for relay $relay_id"; return 1; }
+  local actual file expected
+  actual="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.config-hash"}}' "$containers")" || return 1
+  for file in "$current" "$next"; do
+    [[ -f "$file" ]] || continue
+    expected="$(relay_compose "$file" config --hash relay)" || return 1
+    if [[ "$expected" == "relay $actual" && "$actual" =~ ^[0-9a-f]{64}$ ]]; then
+      printf '%s\n' "$file"
+      return
+    fi
+  done
+  fail "unexpected Compose configuration for relay $relay_id"
+  return 1
+}
+
+relay_restore() {
+  if ! relay_runtime_action "$current" status >/dev/null 2>&1; then
+    relay_compose "$current" up -d --force-recreate --wait --wait-timeout 45
+  fi
+}
+
+relay_remove_pending() {
+  local image
+  image="$(relay_compose "$next" config --images relay)" || return 1
+  # An interrupted pull can leave the draft before an image or container exists.
+  if docker image inspect "$image" >/dev/null 2>&1; then
+    relay_runtime_action "$next" remove || return 1
+  fi
+}
+
+relay_remove_installation() {
+  local live="$1" cleanup_config="$current" image
+  [[ -f "$current" || -f "$next" ]] || return 0
+  if [[ -f "$next" ]]; then
+    image="$(relay_compose "$next" config --images relay)" || return 1
+    if [[ "$live" == "$next" ]] || docker image inspect "$image" >/dev/null 2>&1; then
+      cleanup_config="$next"
+    fi
+  fi
+  if [[ "$cleanup_config" == "$next" && "$live" == "$current" ]]; then
+    relay_stop_for_replacement || return 1
+  elif [[ -f "$cleanup_config" ]]; then
+    relay_runtime_action "$cleanup_config" remove || return 1
+  fi
+  if [[ -d "$relay_dir/runtime" ]]; then
+    rmdir -- "$relay_dir/runtime" || return 1
+  fi
+  rm -f -- "$current" "$next" || return 1
+  rmdir -- "$relay_dir"
+}
+
+relay_recover_update() {
+  local live
+  live="$(relay_live_config)" || return 1
+  if [[ "$live" == "$next" ]] && relay_runtime_action "$next" status >/dev/null 2>&1; then
+    mv -f -- "$next" "$current" || return 1
+    ok "recovered the new configuration for relay $relay_id"
+    return
+  fi
+  if [[ "$live" == "$next" ]]; then
+    relay_runtime_action "$next" remove || return 1
+  elif [[ -z "$live" ]]; then
+    relay_remove_pending || return 1
+  fi
+  if [[ -f "$current" ]]; then
+    relay_restore || return 1
+  fi
+  rm -- "$next"
+}
+
+relay_check_local_awg_ports() {
+  local port="$1" containers container data_dir state_file occupied
+  local -a state_files=("$INSTALL_DIR_DEFAULT/data/state.json")
+  containers="$(docker ps -aq --filter label=com.docker.compose.service=awg-forge)" || return 1
+  for container in $containers; do
+    data_dir="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/etc/awg-forge"}}{{.Source}}{{end}}{{end}}' "$container")" || return 1
+    if [[ "$data_dir" == /* ]]; then
+      state_files+=("$data_dir/state.json")
+    fi
+  done
+  for state_file in "${state_files[@]}"; do
+    [[ -f "$state_file" ]] || continue
+    occupied="$(jq -r --argjson port "$port" 'any(.tunnels[]; .listen_port == $port)' "$state_file")" ||
+      { fail "cannot inspect local AWG Forge listen ports"; return 1; }
+    if [[ "$occupied" == true ]]; then
+      fail "UDP port $port is configured on the local AWG Forge server"
+      return 1
+    fi
+  done
+}
+
+relay_main() (
+  local action=apply relay_id="" version="" listen_port="" destination="" target_host target_ip target_port
+  local route local_ip interface relay_root=/opt/awg-forge-relays relay_dir current next
+  case "${1:-}" in
+    status|remove) action="$1"; shift ;;
+  esac
+  while (( $# > 0 )); do
+    if (( $# < 2 )); then
+      fail "missing value for $1"
+      return 1
+    fi
+    case "$1" in
+      --id) relay_id="$2" ;;
+      --version) version="$2" ;;
+      --listen-port) listen_port="$2" ;;
+      --target) destination="$2" ;;
+      *) fail "unknown relay option $1"; return 1 ;;
+    esac
+    shift 2
+  done
+  if [[ ! "$relay_id" =~ ^[0-9a-f]{16}$ ]]; then
+    fail "relay --id must contain 16 lowercase hexadecimal characters"
+    return 1
+  fi
+  if [[ "$(uname -s)" != Linux ]] || ! running_as_root; then
+    fail "run the relay installer as root on Linux"
+    return 1
+  fi
+  if [[ "$action" == apply ]]; then
+    if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ||
+      ! "$listen_port" =~ ^[1-9][0-9]{0,4}$ ||
+      ! "$destination" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]{0,253}:[1-9][0-9]{0,4}$ ]]; then
+      fail "usage: install.sh relay --id ID --version vX.Y.Z --listen-port PORT --target HOST:PORT"
+      return 1
+    fi
+    target_host="${destination%:*}"
+    target_port="${destination##*:}"
+    if (( listen_port > 65535 || target_port > 65535 )); then
+      fail "UDP ports must be between 1 and 65535"
+      return 1
+    fi
+    if [[ "$(uname -m)" != x86_64 ]]; then
+      fail "official relay images currently support x86_64 only"
+      return 1
+    fi
+    ensure_host_dependencies relay || return 1
+  else
+    local dependency
+    for dependency in docker flock jq; do
+      have "$dependency" || { fail "relay installer requires $dependency"; return 1; }
+    done
+    host_compose_available relay || { fail "relay installer requires Docker Compose v2"; return 1; }
+  fi
+  local docker_endpoint
+  if ! docker_endpoint="$(docker context inspect --format '{{.Endpoints.docker.Host}}')" ||
+    [[ "$docker_endpoint" != unix://* || "${DOCKER_HOST:-unix://}" != unix://* ]]; then
+    fail "relay installer requires a local Docker daemon"
+    return 1
+  fi
+  local -x COMPOSE_REMOVE_ORPHANS=false
+  umask 077
+  if [[ -L "$relay_root" || ( -e "$relay_root" && ! -d "$relay_root" ) ]]; then
+    fail "invalid relay installation directory"
+    return 1
+  fi
+  mkdir -p -- "$relay_root"
+  if [[ "$(stat -c '%u:%a' "$relay_root")" != 0:700 || -L "$relay_root/.lock" ]]; then
+    fail "relay installation directory must be root-owned with mode 0700"
+    return 1
+  fi
+  exec 9>"$relay_root/.lock"
+  flock -x -w 30 9 || { fail "relay installer is busy"; return 1; }
+
+  relay_dir="$relay_root/$relay_id"
+  current="$relay_dir/compose.yaml"
+  next="$relay_dir/compose.next.yaml"
+  if [[ -L "$relay_dir" || -L "$current" || -L "$next" ||
+    ( -e "$current" && ! -f "$current" ) || ( -e "$next" && ! -f "$next" ) ]]; then
+    fail "unexpected relay installation files; inspect $relay_dir"
+    return 1
+  fi
+  if [[ -L "$relay_dir/runtime" ]] ||
+    { [[ -e "$relay_dir/runtime" ]] && [[ ! -d "$relay_dir/runtime" || "$(stat -c '%u:%a' "$relay_dir/runtime")" != 0:700 ]]; }; then
+    fail "relay runtime directory must be root-owned with mode 0700; inspect $relay_dir"
+    return 1
+  fi
+  local live=""
+  if [[ -f "$next" ]]; then
+    if [[ "$action" == apply ]]; then
+      relay_recover_update || { fail "could not recover relay update; inspect $relay_dir"; return 1; }
+    else
+      live="$(relay_live_config)" || return 1
+    fi
+  fi
+  case "$action" in
+    status)
+      if [[ -f "$next" ]]; then
+        warn "relay update was interrupted; run the install command again to recover"
+        [[ -n "$live" ]] || { fail "relay has no container"; return 1; }
+      else
+        live="$current"
+      fi
+      [[ -f "$live" ]] || { fail "relay is not installed"; return 1; }
+      relay_runtime_action "$live" status
+      return
+      ;;
+    remove)
+      relay_remove_installation "$live"
+      return
+      ;;
+  esac
+  if [[ "$(cat /proc/sys/net/ipv4/ip_forward)" != 1 ]]; then
+    fail "enable IPv4 forwarding on the host before installing a relay"
+    return 1
+  fi
+  if [[ "$target_host" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+    target_ip="$target_host"
+    route="$(ip -4 route get "$target_ip")" || return 1
+    local_ip="$(route_field "$route" src)"
+    interface="$(route_field "$route" dev)"
+    if [[ ! "$local_ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ||
+      ! "$interface" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,14}$ ||
+      "$route" == local\ * || "$local_ip" == "$target_ip" ]]; then
+      fail "target must be routed through a non-local IPv4 interface"
+      return 1
+    fi
+  else
+    local_ip=auto
+    interface=auto
+  fi
+
+  relay_check_local_awg_ports "$listen_port" || return 1
+
+  mkdir -p -- "$relay_dir/runtime" || return 1
+  local draft
+  draft="$(mktemp "$relay_dir/.compose.XXXXXX")" || return 1
+  trap 'rm -f -- "$draft"' EXIT
+  relay_write_compose "$draft" && mv -f -- "$draft" "$next" || return 1
+  trap - EXIT
+  if ! relay_compose "$next" pull; then
+    rm -- "$next"
+    return 1
+  fi
+  if [[ -f "$current" ]] && cmp -s -- "$current" "$next"; then
+    rm -- "$next"
+    if relay_compose "$current" exec -T relay /usr/local/bin/udp-relay.sh status "$relay_id" "$listen_port" "$target_host" "$target_port" "$local_ip" "$interface" >/dev/null 2>&1; then
+      ok "relay $relay_id is already active"
+      return
+    fi
+    relay_compose "$current" up -d --force-recreate --wait --wait-timeout 45
+    return
+  fi
+  if ! relay_validate "ghcr.io/astronaut808/awg-forge:${version#v}" \
+    "$relay_id" "$listen_port" "$target_host" "$target_port" "$local_ip" "$interface"; then
+    rm -- "$next"
+    return 1
+  fi
+  if [[ -f "$current" ]]; then
+    if ! relay_stop_for_replacement; then
+      if relay_restore; then rm -- "$next"; else fail "previous relay could not be restarted"; fi
+      return 1
+    fi
+  fi
+  if relay_compose "$next" up -d --wait --wait-timeout 45 && mv -f -- "$next" "$current"; then
+    ok "relay $relay_id is active"
+    return
+  fi
+  if ! relay_runtime_action "$next" remove; then
+    fail "could not clean up the failed relay; inspect $relay_dir"
+    return 1
+  fi
+  if [[ -f "$current" ]]; then
+    relay_restore || { fail "previous relay could not be restarted"; return 1; }
+  fi
+  rm -- "$next"
+  return 1
+)
+
 main() (
+  if [[ "${1:-}" == "relay" ]]; then
+    shift
+    relay_main "$@"
+    return
+  fi
   if [[ "${1:-}" == "upgrade" ]]; then
     if (( $# != 1 )); then
       fail "usage: install.sh upgrade"
@@ -1645,7 +2054,7 @@ main() (
     return
   fi
   if (( $# != 0 )); then
-    fail "usage: install.sh [upgrade]"
+    fail "usage: install.sh [upgrade|relay]"
     exit 1
   fi
   bold "awg-forge quick installer"
@@ -1818,6 +2227,12 @@ main() (
         warn "Port must be 1..65535"
         listen_port="$(prompt "AmneziaWG UDP listen port" "$(profile_default_port "$profile")")"
       done
+      local relay_ports
+      relay_ports="$(managed_relay_ports)" || exit 1
+      if [[ "$relay_ports" == *" $listen_port "* ]]; then
+        fail "UDP port $listen_port is reserved by an awg-forge relay"
+        exit 1
+      fi
       if port_in_use_udp "$listen_port"; then
         warn "UDP port $listen_port appears to be in use"
       fi

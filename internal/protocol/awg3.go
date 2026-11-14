@@ -218,12 +218,16 @@ func (p AWG3) RenderClientInterface(ctx RenderContext, client config.Client) ([]
 }
 
 func (AWG3) RenderClientPeer(ctx RenderContext, client config.Client) ([]ConfigLine, error) {
+	endpoint, err := ctx.ClientEndpoint(client)
+	if err != nil {
+		return nil, err
+	}
 	return []ConfigLine{
 		{"PublicKey", ctx.Tunnel.ServerPublicKey},
 		{"PresharedKey", client.PresharedKey},
 		{"AllowedIPs", ctx.Tunnel.AllowedIPs},
 		{"PersistentKeepalive", ctx.Tunnel.ProtocolParams["PersistentKeepalive"]},
-		{"Endpoint", fmt.Sprintf("%s:%d", ctx.EndpointHost(), ctx.Tunnel.ListenPort)},
+		{"Endpoint", endpoint.String()},
 	}, nil
 }
 

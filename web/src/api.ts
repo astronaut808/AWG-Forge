@@ -3,6 +3,9 @@ import type {
   AuditEvent,
   DoctorResult,
   FirewallReport,
+  Relay,
+  RelayHealth,
+  RelaySettings,
   RestoreReport,
   TrafficSummary,
   TunnelSuggestion,
@@ -24,6 +27,7 @@ type RequestOptions = {
   method?: string;
   body?: unknown;
   idempotencyKey?: string;
+  signal?: AbortSignal;
 };
 
 export function newIdempotencyKey(): string {
@@ -35,6 +39,7 @@ async function request<T>(url: string, options: RequestOptions = {}): Promise<T>
   const init: RequestInit = {
     method: options.method || "GET",
     headers: {},
+    signal: options.signal,
   };
   const headers = init.headers as Record<string, string>;
   if (options.idempotencyKey) headers["Idempotency-Key"] = options.idempotencyKey;
@@ -140,15 +145,50 @@ export function regenerateProtocol(id: string, profile: string) {
   });
 }
 
-export function createClient(tunnelID: string, name: string, expiresAt: string, trafficLimitBytes: number | null, trafficLimitPeriod = "lifetime") {
+function relaysURL(tunnelID: string, relayID?: string) {
+  const base = `/api/tunnels/${encodeURIComponent(tunnelID)}/relays`;
+  return relayID ? `${base}/${encodeURIComponent(relayID)}` : base;
+}
+
+export function relayHealth(tunnelID: string, signal: AbortSignal) {
+  return request<{ health: Record<string, RelayHealth> }>(`${relaysURL(tunnelID)}/health`, { signal });
+}
+
+export function relayTargetSuggestion(tunnelID: string, signal: AbortSignal) {
+  return request<{ target_ipv4: string }>(`${relaysURL(tunnelID)}/suggestion`, { signal });
+}
+
+export function createRelay(tunnelID: string, body: RelaySettings) {
+  return request<{ relay: Relay }>(relaysURL(tunnelID), {
+    method: "POST", body, idempotencyKey: newIdempotencyKey(),
+  });
+}
+
+export function updateRelay(tunnelID: string, current: Relay, body: RelaySettings) {
+  return request<{ relay: Relay }>(relaysURL(tunnelID, current.id), {
+    method: "PUT", body: { ...body, expected: current }, idempotencyKey: newIdempotencyKey(),
+  });
+}
+
+export function deleteRelay(tunnelID: string, relayID: string) {
+  return request<{ ok: true }>(relaysURL(tunnelID, relayID), {
+    method: "DELETE", idempotencyKey: newIdempotencyKey(),
+  });
+}
+
+export function relayInstallCommand(tunnelID: string, relayID: string) {
+  return request<{ command: string }>(`${relaysURL(tunnelID, relayID)}/install`);
+}
+
+export function createClient(tunnelID: string, name: string, expiresAt: string, trafficLimitBytes: number | null, trafficLimitPeriod = "lifetime", relayID?: string) {
   return request<{ client: { id: string } }>("/api/clients", {
     method: "POST",
-    body: { tunnel_id: tunnelID, name, expires_at: expiresAt, traffic_limit_bytes: trafficLimitBytes, traffic_limit_period: trafficLimitBytes ? trafficLimitPeriod : "" },
+    body: { tunnel_id: tunnelID, name, expires_at: expiresAt, traffic_limit_bytes: trafficLimitBytes, traffic_limit_period: trafficLimitBytes ? trafficLimitPeriod : "", relay_id: relayID },
     idempotencyKey: newIdempotencyKey(),
   });
 }
 
-export function updateClient(id: string, body: { name: string; notes: string; expires_at: string }) {
+export function updateClient(id: string, body: { name: string; notes: string; expires_at: string; relay_id?: string }) {
   return request(`/api/clients/${encodeURIComponent(id)}/settings`, {
     method: "PATCH",
     body,

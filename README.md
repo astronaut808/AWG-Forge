@@ -42,6 +42,7 @@ ssh -L 51821:127.0.0.1:51821 user@server
 
 ## Документация
 
+- [Прозрачное UDP-реле](docs/ru/udp-relay.md)
 - [Ручная установка и запуск](docs/ru/setup.md)
 - [Обновление](docs/ru/quick-install.md#обновление) · [Удаление](docs/ru/quick-install.md#удаление)
 - [Конфигурация, Web UI, CLI и диагностика](docs/ru/README.md)

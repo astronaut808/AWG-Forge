@@ -6,7 +6,7 @@ GOVULNCHECK_VERSION ?= v1.9.0
 ACTIONLINT_VERSION ?= v1.7.12
 NPM ?= npm
 
-.PHONY: test test-race test-shell vet build lint-go lint-js lint-shell lint-docker lint-actions lint-actions-security quality ui-build ui-check ui-test api-contract ci vuln-check security security-fast docker-smoke docker-runtime-smoke updates updates-local updates-docker update-amneziawg-refs docker-build docker-up docker-down
+.PHONY: test test-race test-shell vet build lint-go lint-js lint-shell lint-docker lint-actions lint-actions-security quality ui-build ui-check ui-test api-contract ci vuln-check security security-fast docker-smoke docker-runtime-smoke docker-relay-smoke updates updates-local updates-docker update-amneziawg-refs docker-build docker-up docker-down
 
 test:
 	go test ./...
@@ -60,7 +60,7 @@ ui-test:
 
 api-contract:
 	$(NPM) run api:contract
-	go test ./internal/server -run '^Test(API(ErrorResponseContract|ContractRegenerateProtocolRejectsMalformedJSON)|Idempotency|OpenAPIContract)'
+	go test ./internal/server -run '^Test(API(ErrorResponseContract|ContractRegenerateProtocolRejectsMalformedJSON|ContractRelayLifecycle)|Idempotency|OpenAPIContract)'
 
 ci: ui-check ui-test api-contract test test-shell vet build lint-go lint-js quality
 
@@ -87,6 +87,9 @@ docker-smoke:
 
 docker-runtime-smoke:
 	IMAGE=$(IMAGE) node scripts/test-docker-runtime.mjs
+
+docker-relay-smoke:
+	IMAGE=$(IMAGE) bash scripts/test-docker-relay.sh
 
 updates: updates-local
 
