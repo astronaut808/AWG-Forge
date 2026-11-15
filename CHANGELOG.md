@@ -8,6 +8,15 @@
 
 - Add transparent UDP relays for AWG tunnels on Ubuntu 24.04 LTS x86_64 relay hosts. Verified on Ubuntu 24.04.5 LTS x86_64. Support for relay hosts on CentOS Stream and RHEL is deferred. Existing AWG-Forge platform support continues to apply to the exit server.
 
+### Changed
+
+- Update Mantine to 9.7.5 and Vite to 8.3.8, and rebuild the embedded Web UI.
+- Refresh the Debian 13 base images and the GitHub Actions used for artifact upload and registry login.
+
+### Security
+
+- Update the development dependencies Hono to 4.13.18 and `@hono/node-server` to 2.1.8.
+
 ### Upgrading
 
 - The state schema is now v4 to protect client relay assignments. v0.21.0 restores v3 backups and creates v4 backups. To roll back to v0.20.0, keep a v3 backup made before upgrading. Restoring it returns the configuration to that snapshot.
