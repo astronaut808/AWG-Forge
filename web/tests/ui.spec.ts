@@ -775,8 +775,9 @@ test("AWG3 forms preserve input on error and support client and tunnel edits", a
   expect(workspace.width).toBeGreaterThan(2000);
   expect(Math.abs(main.x + main.width - workspace.x - workspace.width - 32)).toBeLessThanOrEqual(1);
   await expectContained(page, tunnel);
-  const numericGaps = await tunnel.locator(".protocol-column").evaluate((column) => Array.from(column.children).slice(1).map((group) => group.getBoundingClientRect().top - group.previousElementSibling!.getBoundingClientRect().bottom));
-  expect(numericGaps).toEqual([16, 16]);
+  await expect.poll(() => tunnel.locator(".protocol-column").evaluate((column) =>
+    Array.from(column.children).slice(1).map((group) => group.getBoundingClientRect().top - group.previousElementSibling!.getBoundingClientRect().bottom),
+  )).toEqual([16, 16]);
   const state = await (await page.request.get("/api/state")).json();
   const tunnelName = await tunnel.locator(".tunnel-head h2").innerText();
   const currentTunnel = state.tunnels.find((item: { name: string }) => item.name === tunnelName);
