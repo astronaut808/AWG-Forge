@@ -1367,9 +1367,9 @@ func (w *web) publicState(ctx context.Context, state config.State) map[string]an
 	firewallReport, firewallErr := w.service.FirewallCheck()
 	state, runtime := w.service.ClientRuntimeSnapshot(state)
 	traffic := w.clientTrafficSummary(ctx, state)
+	statuses, _ := w.service.TunnelStatuses(state.Tunnels)
 	for _, tunnel := range state.Tunnels {
-		status, _ := w.service.TunnelStatusByID(tunnel.ID)
-		tunnels = append(tunnels, publicTunnelWithFirewall(tunnel, status, firewallSummaryForTunnel(tunnel, firewallReport, firewallErr), runtime[tunnel.ID], traffic[tunnel.ID]))
+		tunnels = append(tunnels, publicTunnelWithFirewall(tunnel, statuses[tunnel.ID], firewallSummaryForTunnel(tunnel, firewallReport, firewallErr), runtime[tunnel.ID], traffic[tunnel.ID]))
 	}
 	profiles := []map[string]any{
 		profileMeta("awg_legacy_1_0", "1.0", "Legacy", true, state),

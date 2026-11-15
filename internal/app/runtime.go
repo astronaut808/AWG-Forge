@@ -80,24 +80,33 @@ func (s *Service) RestartTunnelByID(tunnelID string) error {
 	return nil
 }
 
-func (s *Service) TunnelStatusByID(tunnelID string) (TunnelStatus, error) {
+// TunnelStatuses checks the requested tunnels against one current state read.
+// A tunnel removed since the caller's snapshot has no status in the result.
+func (s *Service) TunnelStatuses(tunnels []config.Tunnel) (map[string]TunnelStatus, error) {
+	if len(tunnels) == 0 {
+		return map[string]TunnelStatus{}, nil
+	}
 	state, err := s.Init()
 	if err != nil {
-		return TunnelStatus{}, err
+		return nil, err
 	}
-	idx, ok := tunnelIndexByID(state, tunnelID)
-	if !ok {
-		return TunnelStatus{}, errors.New("tunnel not found")
+	statuses := make(map[string]TunnelStatus, len(tunnels))
+	for _, requested := range tunnels {
+		idx, ok := tunnelIndexByID(state, requested.ID)
+		if !ok {
+			continue
+		}
+		tunnel := state.Tunnels[idx]
+		statuses[requested.ID] = TunnelStatus{
+			TunnelID:     tunnel.ID,
+			ApplyEnabled: s.cfg.ApplyConfig,
+			Up:           exec.Command("ip", "link", "show", tunnel.InterfaceName).Run() == nil,
+			LastRenderAt: tunnel.LastRenderAt,
+			LastApplyAt:  tunnel.LastApplyAt,
+			LastError:    tunnel.LastApplyError,
+		}
 	}
-	tunnel := state.Tunnels[idx]
-	return TunnelStatus{
-		TunnelID:     tunnel.ID,
-		ApplyEnabled: s.cfg.ApplyConfig,
-		Up:           exec.Command("ip", "link", "show", tunnel.InterfaceName).Run() == nil,
-		LastRenderAt: tunnel.LastRenderAt,
-		LastApplyAt:  tunnel.LastApplyAt,
-		LastError:    tunnel.LastApplyError,
-	}, nil
+	return statuses, nil
 }
 
 func (s *Service) TunnelHealthByID(tunnelID string, sampleSeconds int) (TunnelHealth, error) {
