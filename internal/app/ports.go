@@ -72,11 +72,22 @@ func (s *Service) automaticUDPPortCheck() (func(int) bool, error) {
 	if !s.cfg.ApplyConfig {
 		return func(int) bool { return true }, nil
 	}
-	reserved, err := managedRelayPorts()
+	reserved, err := s.runtimeOps.managedRelayPorts()
 	if err != nil {
 		return nil, err
 	}
 	return func(port int) bool { return !reserved[port] && udpPortAvailable(port) }, nil
+}
+
+func (s *Service) checkRelayPortReservation(port int) error {
+	reserved, err := s.runtimeOps.managedRelayPorts()
+	if err != nil {
+		return err
+	}
+	if reserved[port] {
+		return fmt.Errorf("UDP port %d is reserved by an awg-forge relay", port)
+	}
+	return nil
 }
 
 func automaticUDPPortDenied(port int) bool {

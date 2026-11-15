@@ -370,7 +370,13 @@ func (s *Service) ensureWarpForTunnelSettings(ctx context.Context, tunnelID stri
 		return err
 	}
 	needsRegistration := settings.EgressMode == config.EgressWarp && !state.Warp.Configured()
+	if needsRegistration {
+		err = s.validateTunnelListenPortUpdate(state.Tunnels[idx], settings)
+	}
 	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
 	if !needsRegistration {
 		return nil
 	}
@@ -403,8 +409,8 @@ func (s *Service) updateTunnelSettings(tunnelID string, update TunnelSettingsUpd
 	if err != nil {
 		return config.Tunnel{}, err
 	}
-	if old.ListenPort != settings.Port && len(old.Relays) != 0 {
-		return config.Tunnel{}, errors.New("remove the tunnel relays before changing its listen port")
+	if err := s.validateTunnelListenPortUpdate(old, settings); err != nil {
+		return config.Tunnel{}, err
 	}
 	state.Tunnels[idx] = applyTunnelSettings(old, settings)
 	next := state.Tunnels[idx]
@@ -485,6 +491,17 @@ type resolvedTunnelSettings struct {
 	MTU        int
 	Port       int
 	Enabled    bool
+}
+
+func (s *Service) validateTunnelListenPortUpdate(old config.Tunnel, settings resolvedTunnelSettings) error {
+	portChanged := old.ListenPort != settings.Port
+	if portChanged && len(old.Relays) != 0 {
+		return errors.New("remove the tunnel relays before changing its listen port")
+	}
+	if s.cfg.ApplyConfig && settings.Enabled && (!old.Enabled || portChanged) {
+		return s.checkRelayPortReservation(settings.Port)
+	}
+	return nil
 }
 
 func resolveTunnelSettings(state config.State, idx int, update TunnelSettingsUpdate) (resolvedTunnelSettings, error) {

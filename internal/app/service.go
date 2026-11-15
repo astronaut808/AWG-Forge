@@ -45,9 +45,10 @@ type Service struct {
 }
 
 type runtimeOperations struct {
-	applyTunnel   func(config.Tunnel) error
-	removeTunnel  func(config.Tunnel) error
-	reconcileWarp func(config.State) error
+	applyTunnel       func(config.Tunnel) error
+	removeTunnel      func(config.Tunnel) error
+	reconcileWarp     func(config.State) error
+	managedRelayPorts func() (map[int]bool, error)
 }
 
 type TunnelStatus struct {
@@ -129,9 +130,10 @@ func New(cfg config.Config) *Service {
 func NewWithRuntimeLog(cfg config.Config, runtimeLog *observability.Logger) *Service {
 	service := &Service{cfg: cfg, store: storage.New(cfg.ConfigDir), audit: audit.New(cfg), runtime: runtimeLog}
 	service.runtimeOps = runtimeOperations{
-		applyTunnel:   service.apply,
-		removeTunnel:  service.removeTunnelRuntime,
-		reconcileWarp: service.reconcileWarpRuntime,
+		applyTunnel:       service.apply,
+		removeTunnel:      service.removeTunnelRuntime,
+		reconcileWarp:     service.reconcileWarpRuntime,
+		managedRelayPorts: managedRelayPorts,
 	}
 	return service
 }

@@ -25,7 +25,7 @@ After changing a relay, run the updated install command on the relay host. A des
 
 The relay uses a separate Compose project. The container manages its own iptables-nft rules, and the Linux kernel forwards packets. Allocate a free UDP port. Check that existing host firewall rules and any third-party firewall chains allow the traffic.
 
-Keep an encrypted v3 backup from before the upgrade if you may need to roll back to v0.20.0. v0.20.0 rejects v4 backups even after you remove relay assignments. Restoring the v3 backup returns the exit server to its saved configuration. Reimport direct client configurations and remove the relay from its host if it is no longer needed. See [backup and restore](diagnostics.md#encrypted-backup--restore).
+For a manual rollback to v0.20.0, stop the exit server and save a separate copy of its v4 data directory. Restore the v3 backup made before upgrading, then start v0.20.0. Starting v0.20.0 on the v4 data directory can discard relay settings and client assignments. You can also install v0.20.0 with a fresh data directory and recreate the tunnels and clients. Reimport direct client configurations and remove the relay from its host if it is no longer needed. See [backup and restore](diagnostics.md#encrypted-backup--restore).
 
 If installation is interrupted, rerun the install command. The installer checks the running container and either keeps the new configuration or restores the previous one. Relay forwarding rules are appended to `FORWARD`, so existing firewall rules take precedence.
 

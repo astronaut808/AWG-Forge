@@ -234,12 +234,8 @@ func (s *Service) apply(tunnel config.Tunnel) error {
 		return err
 	}
 	defer unlock()
-	reserved, err := managedRelayPorts()
-	if err != nil {
+	if err := s.checkRelayPortReservation(tunnel.ListenPort); err != nil {
 		return err
-	}
-	if reserved[tunnel.ListenPort] {
-		return fmt.Errorf("UDP port %d is reserved by an awg-forge relay", tunnel.ListenPort)
 	}
 
 	serverPath := filepath.Join(s.cfg.ConfigDir, "tunnels", tunnel.InterfaceName, "server.conf")

@@ -19,7 +19,7 @@
 
 ### Upgrading
 
-- The state schema is now v4 to protect client relay assignments. v0.21.0 restores v3 backups and creates v4 backups. To roll back to v0.20.0, keep a v3 backup made before upgrading. Restoring it returns the configuration to that snapshot.
+- The state schema is now v4 to protect client relay assignments. v0.21.0 restores v3 backups and creates v4 backups. For a manual rollback, stop the service, save a copy of the v4 data directory, and restore the pre-upgrade v3 backup before starting v0.20.0. A clean v0.20.0 installation is also possible.
 
 ## v0.20.0 - 2026-11-12
 
