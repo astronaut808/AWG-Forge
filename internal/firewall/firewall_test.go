@@ -114,8 +114,43 @@ func TestIPTablesCheckReusesListingsAndPreservesRuleReports(t *testing.T) {
 	}
 }
 
+func TestIPTablesCheckRefreshesCachedMiss(t *testing.T) {
+	cfg, state := testConfig(), testState()
+	state.Tunnels = state.Tunnels[:1]
+	rules := ExpectedRules(cfg, state)
+	forwardCalls := 0
+	returnChecks := 0
+	runner := IPTablesRunner{
+		output: func(args ...string) ([]byte, error) {
+			if strings.Join(args, " ") != "-S FORWARD" {
+				return nil, nil
+			}
+			forwardCalls++
+			listing := "-A " + rules[2].Spec() + "\n"
+			if forwardCalls > 1 {
+				listing += "-A " + rules[3].Spec() + "\n"
+			}
+			return []byte(listing), nil
+		},
+		run: func(args ...string) error {
+			if strings.Join(args, " ") == "-C "+rules[3].Spec() {
+				returnChecks++
+			}
+			return nil
+		},
+	}
+	report := Check(cfg, state, runner)
+	if got := report.Results[3]; got.Status != "ok" || got.Count != 1 {
+		t.Fatalf("rule added after the first listing: %+v", got)
+	}
+	if forwardCalls != 2 || returnChecks != 1 {
+		t.Fatalf("FORWARD listings = %d, exact return checks = %d, want 2 and 1", forwardCalls, returnChecks)
+	}
+}
+
 func TestIPTablesCheckRetriesFailedListingForNextRule(t *testing.T) {
 	cfg, state := testConfig(), testState()
+	state.Tunnels = state.Tunnels[:1]
 	forwardCalls := 0
 	runner := IPTablesRunner{output: func(args ...string) ([]byte, error) {
 		if strings.Join(args, " ") == "-S FORWARD" {
