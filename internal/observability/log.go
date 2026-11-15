@@ -65,10 +65,6 @@ func (l *Logger) Warn(ctx context.Context, component, event, message string, fie
 	l.Log(ctx, slog.LevelWarn, component, event, message, fields, err)
 }
 
-func (l *Logger) Error(ctx context.Context, component, event, message string, fields map[string]any, err error) {
-	l.Log(ctx, slog.LevelError, component, event, message, fields, err)
-}
-
 func parseLevel(value string) slog.Level {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "debug":

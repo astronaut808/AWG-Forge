@@ -80,17 +80,6 @@ func (s *Service) RestartTunnelByID(tunnelID string) error {
 	return nil
 }
 
-func (s *Service) TunnelStatus() (TunnelStatus, error) {
-	state, err := s.Init()
-	if err != nil {
-		return TunnelStatus{}, err
-	}
-	if len(state.Tunnels) == 0 {
-		return TunnelStatus{}, errors.New("no tunnels configured")
-	}
-	return s.TunnelStatusByID(state.Tunnels[0].ID)
-}
-
 func (s *Service) TunnelStatusByID(tunnelID string) (TunnelStatus, error) {
 	state, err := s.Init()
 	if err != nil {

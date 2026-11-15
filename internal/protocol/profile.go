@@ -64,7 +64,3 @@ func ByID(id string) (ProtocolProfile, bool) {
 		return nil, false
 	}
 }
-
-func All() []ProtocolProfile {
-	return []ProtocolProfile{Legacy10{}, AWG15{}, AWG20{}, AWG3{}}
-}
