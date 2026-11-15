@@ -119,6 +119,12 @@ func Check(cfg config.Config, state config.State, runner Runner) Report {
 	if !cfg.ApplyConfig {
 		return report
 	}
+	switch iptables := runner.(type) {
+	case IPTablesRunner:
+		runner = iptables.withChainListings()
+	case *IPTablesRunner:
+		runner = iptables.withChainListings()
+	}
 	for _, rule := range ExpectedRules(cfg, state) {
 		item := RuleReport{
 			Tunnel: rule.Tunnel,
@@ -286,6 +292,24 @@ func (r Rule) Spec() string {
 type IPTablesRunner struct {
 	output func(args ...string) ([]byte, error)
 	run    func(args ...string) error
+}
+
+// withChainListings reuses successful chain reads within one read-only Check.
+func (r IPTablesRunner) withChainListings() IPTablesRunner {
+	listings := make(map[string][]byte)
+	read := r.commandOutput
+	r.output = func(args ...string) ([]byte, error) {
+		key := strings.Join(args, " ")
+		if listing, ok := listings[key]; ok {
+			return listing, nil
+		}
+		listing, err := read(args...)
+		if err == nil {
+			listings[key] = listing
+		}
+		return listing, err
+	}
+	return r
 }
 
 func (r IPTablesRunner) Count(rule Rule) (int, error) {

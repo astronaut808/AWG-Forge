@@ -2,6 +2,8 @@ package firewall
 
 import (
 	"errors"
+	"os/exec"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -45,6 +47,131 @@ func TestCheckReportsMissingAndDuplicate(t *testing.T) {
 	}
 	if got["forward-egress"] != "ok" {
 		t.Fatalf("forward-egress status = %q, want ok", got["forward-egress"])
+	}
+}
+
+func TestIPTablesCheckReusesListingsAndPreservesRuleReports(t *testing.T) {
+	cfg, state := testConfig(), testState()
+	rules := ExpectedRules(cfg, state)
+	listingArgs := func(rule Rule) string {
+		return strings.Join(append(tableArgs(rule.Table), "-S", rule.Chain), " ")
+	}
+	listings := map[string]string{}
+	for i, rule := range rules {
+		if i == 0 {
+			continue // Missing managed tag.
+		}
+		comment, _ := ruleCommentFromArgs(rule.Args)
+		line := "-A " + rule.Chain + " -m comment --comment " + comment + " -j ACCEPT\n"
+		listings[listingArgs(rule)] += line
+		if i == 2 {
+			listings[listingArgs(rule)] += line
+		}
+	}
+	listCalls := map[string]int{}
+	exactCalls := 0
+	runner := IPTablesRunner{
+		output: func(args ...string) ([]byte, error) {
+			key := strings.Join(args, " ")
+			listCalls[key]++
+			return []byte(listings[key]), nil
+		},
+		run: func(args ...string) error {
+			exactCalls++
+			if got, want := strings.Join(args, " "), "-C "+rules[3].Spec(); got == want {
+				return &exec.ExitError{} // Matching tag, different rule.
+			}
+			return nil
+		},
+	}
+	type uncachedRunner struct{ Runner }
+	want := Check(cfg, state, uncachedRunner{runner})
+	for i, status := range []string{"missing", "ok", "duplicate", "error", "ok", "ok", "ok", "ok"} {
+		if want.Results[i].Status != status {
+			t.Fatalf("rule %d status = %s, want %s", i, want.Results[i].Status, status)
+		}
+	}
+	clear(listCalls)
+	exactCalls = 0
+	got := Check(cfg, state, runner)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("cached report = %+v, want %+v", got, want)
+	}
+	if len(listCalls) != 3 || exactCalls != 7 {
+		t.Fatalf("listing calls = %v, exact calls = %d", listCalls, exactCalls)
+	}
+	for chain, calls := range listCalls {
+		if calls != 1 {
+			t.Fatalf("listing %s called %d times, want one", chain, calls)
+		}
+	}
+	clear(listings)
+	got = Check(cfg, state, &runner)
+	for _, item := range got.Results {
+		if item.Status != "missing" {
+			t.Fatalf("next check reused stale listing: %+v", item)
+		}
+	}
+}
+
+func TestIPTablesCheckRetriesFailedListingForNextRule(t *testing.T) {
+	cfg, state := testConfig(), testState()
+	forwardCalls := 0
+	runner := IPTablesRunner{output: func(args ...string) ([]byte, error) {
+		if strings.Join(args, " ") == "-S FORWARD" {
+			forwardCalls++
+			if forwardCalls == 1 {
+				return nil, errors.New("listing temporarily unavailable")
+			}
+		}
+		return nil, nil
+	}}
+	report := Check(cfg, state, runner)
+	if got := report.Results[2]; got.Status != "error" || got.Message != "iptables -S FORWARD failed: listing temporarily unavailable" {
+		t.Fatalf("first forward result = %+v", got)
+	}
+	if got := report.Results[3]; got.Status != "missing" || forwardCalls != 2 {
+		t.Fatalf("next forward result = %+v, listing calls = %d", got, forwardCalls)
+	}
+}
+
+func TestIPTablesRepairChecksFreshListingsAfterMutation(t *testing.T) {
+	cfg, state := testConfig(), testState()
+	state.Tunnels = state.Tunnels[:1]
+	listings := map[string]string{}
+	runner := IPTablesRunner{
+		output: func(args ...string) ([]byte, error) {
+			return []byte(listings[args[len(args)-1]]), nil
+		},
+		run: func(args ...string) error {
+			if args[0] == "-t" {
+				args = args[2:]
+			}
+			switch args[0] {
+			case "-I":
+				listings[args[1]] += "-A " + args[1] + " " + strings.Join(args[3:], " ") + "\n"
+			case "-C":
+				if !strings.Contains(listings[args[1]], strings.Join(args[2:], " ")+"\n") {
+					return &exec.ExitError{}
+				}
+			default:
+				t.Fatalf("unexpected iptables arguments: %v", args)
+			}
+			return nil
+		},
+	}
+	before := Check(cfg, state, runner)
+	if before.Results[0].Status != "missing" {
+		t.Fatalf("initial result = %+v", before.Results[0])
+	}
+	report, err := Repair(cfg, state, runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range report.Results {
+		if item.Status != "ok" || item.Count != 1 {
+			t.Fatalf("repair reported stale rule data: %+v", item)
+		}
 	}
 }
 
