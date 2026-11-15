@@ -38,16 +38,24 @@ require_line() {
 docker_workflow="$root/.github/workflows/docker.yml"
 release_workflow="$root/.github/workflows/release.yml"
 validate=$(job_block "$docker_workflow" validate)
+relay_compatibility=$(job_block "$docker_workflow" relay-compatibility)
 publish=$(job_block "$docker_workflow" publish)
 image=$(job_block "$release_workflow" image)
 release=$(job_block "$release_workflow" publish)
 tag_check=$(job_block "$release_workflow" validate-tag)
 
-require_line '^    needs: validate$' "$publish" 'image publication requires validation'
+require_line '^    needs: \[validate, relay-compatibility\]$' "$publish" 'image publication requires validation on both Ubuntu versions'
 require_line "^    if: github.event_name == 'push'$" "$publish" 'PR and manual dispatch cannot publish'
 require_line '^      - name: Smoke test image$' "$validate" 'API smoke must run'
-require_line '^    runs-on: ubuntu-24\.04$' "$validate" 'validate the publishable image on the supported relay host OS'
+require_line '^    runs-on: ubuntu-26\.04$' "$validate" 'run primary image validation on Ubuntu 26.04'
 require_line '^          sudo make docker-relay-smoke IMAGE=awg-forge:ci$' "$validate" 'UDP relay smoke must run against the publishable image with a root-owned bind mount'
+require_line '^    needs: validate$' "$relay_compatibility" 'Ubuntu 24.04 smoke uses the validated image'
+require_line '^    runs-on: ubuntu-24\.04$' "$relay_compatibility" 'run relay compatibility on Ubuntu 24.04'
+require_line 'artifact-ids: \$\{\{ needs\.validate\.outputs\.artifact-id \}\}$' "$relay_compatibility" 'Ubuntu 24.04 downloads the artifact produced by validation'
+require_line 'IMAGE_ID: \$\{\{ needs\.validate\.outputs\.image-id \}\}$' "$relay_compatibility" 'Ubuntu 24.04 expects the same image ID as primary validation'
+require_line 'docker image load --input verified/verified-image.tar$' "$relay_compatibility" 'load the validated image for Ubuntu 24.04 smoke'
+require_line 'test .*docker image inspect.* = "\$IMAGE_ID"$' "$relay_compatibility" 'verify image identity on Ubuntu 24.04'
+require_line '^          sudo make docker-relay-smoke IMAGE=awg-forge:ci$' "$relay_compatibility" 'UDP relay smoke runs on Ubuntu 24.04'
 require_line '^      - name: Test encrypted traffic and restart for all profiles$' "$validate" 'runtime smoke must run'
 require_line 'trivy image .*--pkg-types os,library .*--exit-code 1 awg-forge:ci$' "$validate" 'OS and library scan must block'
 require_line '^          platforms: linux/amd64$' "$validate" 'supported architecture must be built'
@@ -59,8 +67,8 @@ require_line '^    uses: \./\.github/workflows/docker\.yml([[:space:]]+#.*)?$' "
 require_line 'git merge-base --is-ancestor HEAD refs/remotes/origin/master$' "$tag_check" 'tag must belong to master'
 require_line '^    needs: image$' "$release" 'GitHub Release follows the image'
 require_line '^  group: docker-' "$(cat "$docker_workflow")" 'reusable workflow has separate concurrency'
-if grep -Eq '^    if:|packages: write|contents: write' <<<"$validate" ||
-   grep -Eq 'build-push-action|docker (build|buildx)' <<<"$publish"; then
+if grep -Eq '^    if:|packages: write|contents: write' <<<"$validate"$'\n'"$relay_compatibility" ||
+   grep -Eq 'build-push-action|docker (build|buildx)' <<<"$relay_compatibility"$'\n'"$publish"; then
   echo 'FAIL release workflow: validation is conditional or privileged, or publication rebuilds the image' >&2
   exit 1
 fi

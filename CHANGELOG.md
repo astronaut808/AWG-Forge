@@ -6,7 +6,7 @@
 
 ### Added
 
-- Add transparent UDP relays for AWG tunnels on Ubuntu 24.04 LTS x86_64 relay hosts. Verified on Ubuntu 24.04.5 LTS x86_64. Support for relay hosts on CentOS Stream and RHEL is deferred. Existing AWG-Forge platform support continues to apply to the exit server.
+- Add transparent UDP relays for AWG tunnels on Ubuntu 24.04 LTS and 26.04 LTS x86_64 relay hosts. CI verifies relay forwarding on both versions. Installation and removal were also verified in an Ubuntu 24.04.5 LTS x86_64 VM. Support for relay hosts on CentOS Stream and RHEL is deferred. Existing AWG-Forge platform support continues to apply to the exit server.
 
 ### Changed
 

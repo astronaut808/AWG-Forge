@@ -2,7 +2,7 @@
 
 The client connects to the relay endpoint. The relay forwards encrypted datagrams to an existing tunnel on the exit server. The tunnel decrypts the traffic and uses its configured egress, either direct or through WARP. One relay can serve multiple clients on the same tunnel.
 
-The first release supports Ubuntu 24.04 LTS x86_64 as the relay host. Installation, removal, and the UDP relay smoke test were verified on Ubuntu 24.04.5 LTS x86_64. CentOS Stream and RHEL relay hosts are outside the initial support scope. The exit server keeps the existing AWG-Forge platform support.
+The first release supports Ubuntu 24.04 LTS and 26.04 LTS on x86_64 relay hosts. CI runs the UDP relay smoke test on both versions. Installation and removal were also verified in a VM running Ubuntu 24.04.5 LTS x86_64. Support for relay hosts on CentOS Stream and RHEL is deferred. The exit server keeps the existing AWG-Forge platform support.
 
 ## Setup
 
