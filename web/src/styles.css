@@ -1305,15 +1305,6 @@ middle panels span 2 + 1 columns. */
   padding-top:14px;
   border-top:1px solid var(--border);
 }
-.danger-zone {
-  padding:18px;
-  border:1px solid color-mix(in srgb,var(--bad),transparent 50%);
-  border-radius:var(--radius);
-  background:var(--bad-soft);
-}
-.danger-zone h3 {
-  color:var(--bad)
-}
 /* QR, maintenance and dialogs */
 .config-options {
   display:grid;
@@ -1330,30 +1321,6 @@ middle panels span 2 + 1 columns. */
 .qr-config-option {
   display:grid;
   gap:14px;
-}
-.segmented {
-  display:inline-flex;
-  overflow:hidden;
-  border:1px solid var(--border);
-  border-radius:var(--radius-sm);
-  background:var(--subtle);
-}
-.segmented button {
-  min-height:36px;
-  padding:0 12px;
-  color:var(--muted);
-  border:0;
-  border-right:1px solid var(--border);
-  background:transparent;
-  cursor:pointer;
-}
-.segmented button:last-child {
-  border-right:0
-}
-.segmented button.active {
-  color:var(--accent-strong);
-  background:var(--accent-soft);
-  font-weight:650;
 }
 .qr-panel {
   min-height:240px;
@@ -1812,12 +1779,12 @@ middle panels span 2 + 1 columns. */
 .protocol-group .form-control .mantine-Input-input {
   font-variant-numeric:tabular-nums
 }
-.regenerate-section p,.danger-zone p {
+.regenerate-section p {
   margin-top:6px;
   color:var(--muted);
   font-size:13px;
 }
-.regenerate-section .button,.danger-zone .button {
+.regenerate-section .button {
   margin-top:12px
 }
 @container(max-width:840px) {
