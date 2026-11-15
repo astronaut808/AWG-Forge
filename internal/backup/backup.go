@@ -331,6 +331,9 @@ func loadAndValidate(password, archivePath string) (validatedBackup, error) {
 	if metadata.SchemaVersion > config.CurrentStateSchemaVersion || state.SchemaVersion > config.CurrentStateSchemaVersion {
 		return validatedBackup{}, fmt.Errorf("backup schema %d is newer than supported schema %d", max(metadata.SchemaVersion, state.SchemaVersion), config.CurrentStateSchemaVersion)
 	}
+	if err := config.ValidateRelays(state); err != nil {
+		return validatedBackup{}, err
+	}
 	if err := validateStateSanity(state); err != nil {
 		return validatedBackup{}, err
 	}

@@ -56,6 +56,7 @@ make security
 make docker-build
 make docker-smoke IMAGE=awg-forge:local
 make docker-runtime-smoke IMAGE=awg-forge:local
+make docker-relay-smoke IMAGE=awg-forge:local
 ```
 
 `make security-fast` runs a smaller set of scans for local iteration. The runtime
@@ -67,6 +68,7 @@ Prepare a reviewed candidate on a release branch and submit a PR to `master`.
 Finalize the dated changelog section and OpenAPI version after deployment
 validation. Create the signed version tag after the release commit is on `master`.
 
-Tag CI checks ancestry and release notes, builds the supported `linux/amd64`
-image, runs both Docker smoke tests and Trivy, then transfers and publishes
-that verified image. GitHub Release publication depends on the image job.
+Tag CI checks ancestry and release notes. It builds the `linux/amd64` image on
+Ubuntu 26.04, runs the Docker smoke tests and Trivy, and checks UDP relay
+forwarding with the same image on Ubuntu 24.04. GitHub Release publication
+depends on successful image publication.

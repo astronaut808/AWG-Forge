@@ -6,6 +6,11 @@ if ! iptables -V | grep -q nf_tables; then
   exit 1
 fi
 
+if [ "${1:-}" = "relay" ]; then
+  shift
+  exec /usr/local/bin/udp-relay.sh "$@"
+fi
+
 if [ "${1:-}" = "serve" ]; then
   exec awg-forge serve
 fi

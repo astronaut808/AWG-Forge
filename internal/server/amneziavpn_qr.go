@@ -84,10 +84,11 @@ type amneziaVPNLastConfig struct {
 }
 
 func buildAmneziaVPNClientConfig(ctx app.ClientExportContext) ([]byte, error) {
-	host := strings.TrimSpace(ctx.Tunnel.ServerHost)
-	if host == "" {
-		host = strings.TrimSpace(ctx.ServerHost)
+	endpoint, err := ctx.Tunnel.ClientEndpoint(ctx.ServerHost, ctx.Client)
+	if err != nil {
+		return nil, err
 	}
+	host := strings.TrimSpace(endpoint.Host)
 	if host == "" {
 		return nil, fmt.Errorf("empty endpoint host")
 	}
@@ -99,7 +100,7 @@ func buildAmneziaVPNClientConfig(ctx app.ClientExportContext) ([]byte, error) {
 	// array; changing them to strings can produce profiles that fail to connect.
 	// The types intentionally match the wg-easy AmneziaVPN QR reference and the
 	// AmneziaVPN compatibility investigation.
-	port := strconv.Itoa(ctx.Tunnel.ListenPort)
+	port := strconv.Itoa(endpoint.Port)
 	params := ctx.Tunnel.ProtocolParams
 	persistentKeepalive := strconv.Itoa(ctx.Tunnel.Keepalive)
 	if ctx.Tunnel.ProtocolProfileID == "awg_3" {
@@ -112,7 +113,7 @@ func buildAmneziaVPNClientConfig(ctx app.ClientExportContext) ([]byte, error) {
 		Config:              ctx.RenderedConf,
 		HostName:            host,
 		PersistentKeepalive: persistentKeepalive,
-		Port:                ctx.Tunnel.ListenPort,
+		Port:                endpoint.Port,
 		PresharedKey:        ctx.Client.PresharedKey,
 		ServerPublicKey:     ctx.Tunnel.ServerPublicKey,
 		Jc:                  params["Jc"],

@@ -25,8 +25,8 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 45
     outputs:
-      image-id: ${{ steps.identity.outputs.id }}
       artifact-id: ${{ steps.archive.outputs.artifact-id }}
+      archive-sha256: ${{ steps.save.outputs.sha256 }}
       tags: ${{ steps.meta.outputs.tags }}
     steps:
       - name: Checkout
@@ -69,6 +69,17 @@ jobs:
       - name: Smoke test image
         run: make docker-smoke IMAGE=awg-forge:ci
 
+      - name: Test UDP relay forwarding and lifecycle
+        env:
+          IMAGE_ID: ${{ steps.identity.outputs.id }}
+        run: |
+          set -euo pipefail
+          test "$(docker image inspect --format '{{.Id}}' awg-forge:ci)" = "$IMAGE_ID"
+          sudo make docker-relay-smoke IMAGE=awg-forge:ci
+          . /etc/os-release
+          printf 'UDP relay smoke passed on %s (%s) with image ID %s.\n' \
+            "$PRETTY_NAME" "$(uname -m)" "$IMAGE_ID" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Set up Node for runtime interoperability test
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -88,7 +99,7 @@ jobs:
         run: trivy image --scanners vuln --pkg-types os,library --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 awg-forge:ci
 
       - name: Save the verified image
-        if: github.event_name == 'push'
+        id: save
         env:
           IMAGE_ID: ${{ steps.identity.outputs.id }}
         run: |
@@ -96,20 +107,52 @@ jobs:
           test -n "$IMAGE_ID"
           test "$(docker image inspect --format '{{.Id}}' awg-forge:ci)" = "$IMAGE_ID"
           docker image save --output verified-image.tar awg-forge:ci
+          sha256sum verified-image.tar | awk '{print "sha256=" $1}' >> "$GITHUB_OUTPUT"
 
       - name: Transfer the verified image
-        if: github.event_name == 'push'
         id: archive
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           path: verified-image.tar
           archive: false
           if-no-files-found: error
           retention-days: 3
 
+  relay-compatibility:
+    name: Verify UDP relay on Ubuntu 24.04
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download verified image
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.validate.outputs.artifact-id }}
+          path: verified
+          merge-multiple: true
+
+      - name: Test UDP relay forwarding and lifecycle
+        env:
+          ARCHIVE_SHA256: ${{ needs.validate.outputs.archive-sha256 }}
+        run: |
+          set -euo pipefail
+          # Docker image stores can report different IDs after loading the same archive.
+          printf '%s  verified/verified-image.tar\n' "$ARCHIVE_SHA256" | sha256sum --check --strict
+          docker image load --input verified/verified-image.tar
+          test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' awg-forge:ci)" = linux/amd64
+          sudo make docker-relay-smoke IMAGE=awg-forge:ci
+          . /etc/os-release
+          printf 'UDP relay smoke passed on %s (%s) with image archive SHA-256 %s.\n' \
+            "$PRETTY_NAME" "$(uname -m)" "$ARCHIVE_SHA256" >> "$GITHUB_STEP_SUMMARY"
+
   publish:
     if: github.event_name == 'push'
-    needs: validate
+    needs: [validate, relay-compatibility]
     name: Publish linux/amd64 image
     runs-on: ubuntu-26.04
     timeout-minutes: 60
@@ -125,17 +168,20 @@ jobs:
           merge-multiple: true
 
       - name: Load and verify image identity
+        id: loaded
         env:
-          IMAGE_ID: ${{ needs.validate.outputs.image-id }}
+          ARCHIVE_SHA256: ${{ needs.validate.outputs.archive-sha256 }}
         run: |
           set -euo pipefail
-          test -n "$IMAGE_ID"
+          printf '%s  verified/verified-image.tar\n' "$ARCHIVE_SHA256" | sha256sum --check --strict
           docker image load --input verified/verified-image.tar
-          test "$(docker image inspect --format '{{.Id}}' awg-forge:ci)" = "$IMAGE_ID"
           test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' awg-forge:ci)" = linux/amd64
+          IMAGE_ID=$(docker image inspect --format '{{.Id}}' awg-forge:ci)
+          test -n "$IMAGE_ID"
+          printf 'id=%s\n' "$IMAGE_ID" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -144,7 +190,7 @@ jobs:
       - name: Push the verified image
         env:
           TAGS: ${{ needs.validate.outputs.tags }}
-          IMAGE_ID: ${{ needs.validate.outputs.image-id }}
+          IMAGE_ID: ${{ steps.loaded.outputs.id }}
         run: |
           set -euo pipefail
           test -n "$TAGS"

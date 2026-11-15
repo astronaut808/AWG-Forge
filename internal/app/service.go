@@ -35,18 +35,20 @@ var serverHostRE = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0
 var transferRE = regexp.MustCompile(`^transfer:\s+(.+?) received,\s+(.+?) sent$`)
 
 type Service struct {
-	mu         sync.Mutex
-	cfg        config.Config
-	store      storage.Store
-	audit      audit.Logger
-	runtime    *observability.Logger
-	runtimeOps runtimeOperations
+	mu          sync.Mutex
+	cfg         config.Config
+	store       storage.Store
+	audit       audit.Logger
+	runtime     *observability.Logger
+	runtimeOps  runtimeOperations
+	relayChecks relayChecks
 }
 
 type runtimeOperations struct {
-	applyTunnel   func(config.Tunnel) error
-	removeTunnel  func(config.Tunnel) error
-	reconcileWarp func(config.State) error
+	applyTunnel       func(config.Tunnel) error
+	removeTunnel      func(config.Tunnel) error
+	reconcileWarp     func(config.State) error
+	managedRelayPorts func() (map[int]bool, error)
 }
 
 type TunnelStatus struct {
@@ -128,9 +130,10 @@ func New(cfg config.Config) *Service {
 func NewWithRuntimeLog(cfg config.Config, runtimeLog *observability.Logger) *Service {
 	service := &Service{cfg: cfg, store: storage.New(cfg.ConfigDir), audit: audit.New(cfg), runtime: runtimeLog}
 	service.runtimeOps = runtimeOperations{
-		applyTunnel:   service.apply,
-		removeTunnel:  service.removeTunnelRuntime,
-		reconcileWarp: service.reconcileWarpRuntime,
+		applyTunnel:       service.apply,
+		removeTunnel:      service.removeTunnelRuntime,
+		reconcileWarp:     service.reconcileWarpRuntime,
+		managedRelayPorts: managedRelayPorts,
 	}
 	return service
 }

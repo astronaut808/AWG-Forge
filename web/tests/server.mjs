@@ -17,6 +17,7 @@ const env = {
   APPLY_CONFIG: "false",
   DATABASE_MODE: "sqlite",
   LOG_LEVEL: "error",
+  AWG_FORGE_VERSION: "v0.0.0",
 };
 let server = null;
 for (const signal of ["SIGINT", "SIGTERM"]) {

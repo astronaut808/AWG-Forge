@@ -17,6 +17,7 @@ import type { AppState, Tunnel } from "./types";
 import type { LoadResult, Modal, RunAction, RunActionOptions } from "./ui-types";
 import { profileTitle } from "./utils";
 import { AllClients, Brand, ClientRow, FooterLinks, Shell, TunnelCard, TunnelFirstDashboard } from "./workspace";
+import { TunnelRelays } from "./relays";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const themeKey = "awg-forge.theme";
@@ -179,6 +180,7 @@ export function App() {
       onProtocol={() => setModal({ kind: "protocol", tunnel })}
       renderSettings={() => <TunnelSettingsForm key={`${tunnel.id}:${tunnel.revision}`} state={state} tunnel={tunnel} runAction={runAction} />}
       renderProtocol={() => <ProtocolForm key={`${tunnel.id}:${tunnel.revision}`} tunnel={tunnel} runAction={runAction} onRegenerate={() => requestRegeneration(tunnel)} />}
+      renderRelays={() => <TunnelRelays key={tunnel.id} tunnel={tunnel} serverHost={state.server_host} runAction={runAction} />}
       onRegenerate={() => requestRegeneration(tunnel)}
       onRestart={() => runAction(m.actions.tunnelRestarted, () => api.restartTunnel(tunnel.id))}
       onDelete={() => {
@@ -315,9 +317,16 @@ function ModalContent({ modal, state, notify, close, reload, runAction, onRegene
   if (modal.kind === "settings") return <TunnelSettingsForm state={state} tunnel={modal.tunnel} runAction={runAction} />;
   if (modal.kind === "protocol") return <ProtocolForm tunnel={modal.tunnel} runAction={runAction} onRegenerate={() => onRegenerate(modal.tunnel)} />;
   if (modal.kind === "create-client") return <CreateClientForm tunnels={state.tunnels} initialTunnelID={modal.tunnelID} onCreated={onClientCreated} trafficLimitsEnabled={state.database.enabled} runAction={runAction} />;
-  if (modal.kind === "client-settings") return <ClientSettingsForm client={modal.client} runAction={runAction} />;
+  if (modal.kind === "client-settings") {
+    const tunnel = state.tunnels.find((item) => item.id === modal.tunnel.id) ?? modal.tunnel;
+    return <ClientSettingsForm client={modal.client} tunnel={tunnel} runAction={runAction} />;
+  }
   if (modal.kind === "client-config") {
-    return <ClientConfigPanel key={modal.client.id} client={modal.client} notify={notify} />;
+    const tunnel = state.tunnels.find((item) => item.id === modal.client.tunnel_id);
+    const client = tunnel?.clients.find((item) => item.id === modal.client.id) ?? modal.client;
+    const relay = tunnel?.relays?.find((item) => item.id === client.relay_id);
+    const exportKey = JSON.stringify([client.id, tunnel?.revision, relay?.host, relay?.port]);
+    return <ClientConfigPanel key={exportKey} client={client} notify={notify} />;
   }
   if (modal.kind === "delete-tunnel") return <DeleteTunnelConfirmation tunnel={modal.tunnel} close={close} runAction={runAction} />;
   return <MaintenanceCenter state={state} notify={notify} close={close} reload={reload} />;

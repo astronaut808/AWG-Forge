@@ -1023,6 +1023,89 @@ middle panels span 2 + 1 columns. */
   border-radius:var(--radius);
   background:var(--surface);
 }
+.relay-section,.relay-command {
+  display:grid;
+  gap:10px;
+  min-width:0;
+}
+.relay-list {
+  margin:0;
+  padding:0;
+  list-style:none;
+  border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+}
+.relay-row {
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  align-items:end;
+  gap:8px 16px;
+  padding:14px;
+}
+.relay-row+.relay-row {
+  border-top:1px solid var(--border);
+}
+.relay-row h4,.relay-installation-name {
+  margin:0;
+  overflow-wrap:anywhere;
+}
+.relay-row h4,.relay-assignment {
+  grid-column:1/-1;
+}
+.relay-addresses {
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:8px 14px;
+  margin:0;
+}
+.relay-addresses dt {
+  color:var(--muted);
+  font-size:12px;
+}
+.relay-addresses dd {
+  margin:3px 0 0;
+  overflow-wrap:anywhere;
+}
+.relay-health {
+  grid-column:1/-1;
+}
+.relay-health dd {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:4px 8px;
+}
+.relay-actions {
+  justify-content:flex-end;
+}
+.relay-assignment {
+  margin:0;
+}
+.relay-command-input {
+  overflow-wrap:anywhere;
+}
+.relay-command-error {
+  display:grid;
+  gap:8px;
+  justify-items:start;
+}
+@container (max-width:620px) {
+  .relay-row {
+    grid-template-columns:minmax(0,1fr);
+  }
+  .relay-health {
+  grid-column:1/-1;
+}
+.relay-health dd {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:4px 8px;
+}
+.relay-actions {
+    justify-content:flex-start;
+  }
+}
 /* forms and protocol */
 .form,.stack {
   display:grid;

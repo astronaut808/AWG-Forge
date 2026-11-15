@@ -229,6 +229,15 @@ func (s *Service) FirewallRepair() (firewall.Report, error) {
 }
 
 func (s *Service) apply(tunnel config.Tunnel) error {
+	unlock, err := lockRelayNetwork()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if err := s.checkRelayPortReservation(tunnel.ListenPort); err != nil {
+		return err
+	}
+
 	serverPath := filepath.Join(s.cfg.ConfigDir, "tunnels", tunnel.InterfaceName, "server.conf")
 	runtimePath, err := runtimeConfigPath(tunnel.InterfaceName)
 	if err != nil {

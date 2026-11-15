@@ -104,3 +104,15 @@ func TestAutomaticUDPPortEligible(t *testing.T) {
 		t.Fatal("port outside the automatic range must not be eligible")
 	}
 }
+
+func TestParseManagedRelayPorts(t *testing.T) {
+	listing := `-P PREROUTING ACCEPT
+-A PREROUTING -p udp -m udp --dport 40123 -m comment --comment "awg-forge-relay-0123456789abcdef-dnat" -j DNAT --to-destination 192.0.2.20:40124
+-A PREROUTING -p udp -m udp --dport 40124 -m comment --comment awg-forge-relay-fedcba9876543210-dnat -j DNAT --to-destination 192.0.2.20:40123
+-A PREROUTING -p udp -m udp --dport 40125 -m comment --comment manual-rule -j DNAT --to-destination 192.0.2.20:40123
+-A POSTROUTING -p udp -m udp --dport 40126 -m comment --comment awg-forge-relay-fedcba9876543210-snat -j SNAT --to-source 192.0.2.1`
+	ports := parseManagedRelayPorts(listing)
+	if len(ports) != 2 || !ports[40123] || !ports[40124] {
+		t.Fatalf("unexpected reserved ports: %v", ports)
+	}
+}

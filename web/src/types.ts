@@ -68,6 +68,7 @@ export type ClientTraffic = {
 export type Client = {
   id: string;
   tunnel_id: string;
+  relay_id?: string;
   name: string;
   notes: string;
   enabled: boolean;
@@ -95,6 +96,21 @@ export type TunnelStatus = {
   stale_clients: number;
 };
 
+export type RelaySettings = {
+  name: string;
+  host: string;
+  port: number;
+  target_ipv4?: string;
+  target_host?: string;
+};
+
+export type Relay = RelaySettings & { id: string };
+export type RelayHealth = {
+  status: "pending" | "reachable" | "unreachable" | "unavailable" | "stale";
+  checked_at?: string;
+  succeeded_at?: string;
+};
+
 export type Tunnel = {
   id: string;
   name: string;
@@ -113,6 +129,7 @@ export type Tunnel = {
   revision: number;
   params: ProtocolParam[];
   clients: Client[];
+  relays?: Relay[];
   status: TunnelStatus;
 };
 

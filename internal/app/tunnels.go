@@ -81,7 +81,11 @@ func (s *Service) SuggestTunnel(profileID string) (TunnelSuggestion, error) {
 		return TunnelSuggestion{}, err
 	}
 	suggestion := SuggestedNextTunnelSpec(profileID, state)
-	port, portRange, err := selectAutomaticUDPPort(s.cfg, state.Tunnels, cryptoRandomIndex, s.automaticUDPPortAvailable)
+	available, err := s.automaticUDPPortCheck()
+	if err != nil {
+		return TunnelSuggestion{}, err
+	}
+	port, portRange, err := selectAutomaticUDPPort(s.cfg, state.Tunnels, cryptoRandomIndex, available)
 	if err != nil {
 		return TunnelSuggestion{}, err
 	}
@@ -246,8 +250,15 @@ func (s *Service) createTunnel(profileID, name, subnet string, port int, automat
 	if name == "" {
 		name = suggestion.Name
 	}
+	var available func(int) bool
+	if automaticPort {
+		available, err = s.automaticUDPPortCheck()
+		if err != nil {
+			return config.Tunnel{}, err
+		}
+	}
 	if automaticPort && port == 0 {
-		port, _, err = selectAutomaticUDPPort(s.cfg, state.Tunnels, cryptoRandomIndex, s.automaticUDPPortAvailable)
+		port, _, err = selectAutomaticUDPPort(s.cfg, state.Tunnels, cryptoRandomIndex, available)
 		if err != nil {
 			return config.Tunnel{}, err
 		}
@@ -259,7 +270,7 @@ func (s *Service) createTunnel(profileID, name, subnet string, port int, automat
 		if !eligible {
 			return config.Tunnel{}, fmt.Errorf("UDP port %d is outside the automatic range %s", port, rangeSpec)
 		}
-		if !s.automaticUDPPortAvailable(port) {
+		if !available(port) {
 			return config.Tunnel{}, errors.New("suggested UDP port is no longer available; request another suggestion")
 		}
 	}
@@ -359,7 +370,13 @@ func (s *Service) ensureWarpForTunnelSettings(ctx context.Context, tunnelID stri
 		return err
 	}
 	needsRegistration := settings.EgressMode == config.EgressWarp && !state.Warp.Configured()
+	if needsRegistration {
+		err = s.validateTunnelListenPortUpdate(state.Tunnels[idx], settings)
+	}
 	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
 	if !needsRegistration {
 		return nil
 	}
@@ -390,6 +407,9 @@ func (s *Service) updateTunnelSettings(tunnelID string, update TunnelSettingsUpd
 	old := state.Tunnels[idx]
 	settings, err := resolveTunnelSettings(state, idx, update)
 	if err != nil {
+		return config.Tunnel{}, err
+	}
+	if err := s.validateTunnelListenPortUpdate(old, settings); err != nil {
 		return config.Tunnel{}, err
 	}
 	state.Tunnels[idx] = applyTunnelSettings(old, settings)
@@ -471,6 +491,17 @@ type resolvedTunnelSettings struct {
 	MTU        int
 	Port       int
 	Enabled    bool
+}
+
+func (s *Service) validateTunnelListenPortUpdate(old config.Tunnel, settings resolvedTunnelSettings) error {
+	portChanged := old.ListenPort != settings.Port
+	if portChanged && len(old.Relays) != 0 {
+		return errors.New("remove the tunnel relays before changing its listen port")
+	}
+	if s.cfg.ApplyConfig && settings.Enabled && (!old.Enabled || portChanged) {
+		return s.checkRelayPortReservation(settings.Port)
+	}
+	return nil
 }
 
 func resolveTunnelSettings(state config.State, idx int, update TunnelSettingsUpdate) (resolvedTunnelSettings, error) {
@@ -605,6 +636,9 @@ func (s *Service) DeleteTunnelWithConfirmation(tunnelID, confirmationName string
 		return err
 	}
 	tunnel := state.Tunnels[idx]
+	if len(tunnel.Relays) != 0 {
+		return errors.New("remove the tunnel relays before deleting the tunnel")
+	}
 	if tunnelHasEverConnectedClient(tunnel) && confirmationName != tunnel.Name {
 		return fmt.Errorf("type tunnel name %q to confirm deletion", tunnel.Name)
 	}

@@ -28,7 +28,7 @@ func publicTunnel(tunnel config.Tunnel, status app.TunnelStatus) map[string]any 
 }
 
 func publicTunnelWithFirewall(tunnel config.Tunnel, status app.TunnelStatus, fw firewallSummary, runtime map[string]app.ClientRuntimeStatus, traffic map[string]clientTrafficSummary) map[string]any {
-	return map[string]any{
+	result := map[string]any{
 		"id":          tunnel.ID,
 		"name":        tunnel.Name,
 		"interface":   tunnel.InterfaceName,
@@ -56,6 +56,10 @@ func publicTunnelWithFirewall(tunnel config.Tunnel, status app.TunnelStatus, fw 
 			"stale_clients": staleClientCount(tunnel),
 		},
 	}
+	if len(tunnel.Relays) > 0 {
+		result["relays"] = tunnel.Relays
+	}
+	return result
 }
 
 type firewallSummary struct {
@@ -106,12 +110,9 @@ func firewallSummaryForTunnel(tunnel config.Tunnel, report firewall.Report, err 
 }
 
 func staleClientCount(tunnel config.Tunnel) int {
-	if tunnel.ConfigRevision <= 0 {
-		return 0
-	}
 	count := 0
 	for _, client := range tunnel.Clients {
-		if client.ConfigRevision < tunnel.ConfigRevision {
+		if tunnel.NeedsClientConfig(client) {
 			count++
 		}
 	}
@@ -133,7 +134,7 @@ func publicClient(client config.Client) map[string]any {
 func publicClientForTunnel(tunnel config.Tunnel, client config.Client, runtime app.ClientRuntimeStatus, traffic clientTrafficSummary) map[string]any {
 	now := time.Now().UTC()
 	expired := config.ClientExpired(client, now)
-	return map[string]any{
+	result := map[string]any{
 		"id":               client.ID,
 		"tunnel_id":        client.TunnelID,
 		"name":             client.Name,
@@ -143,7 +144,7 @@ func publicClientForTunnel(tunnel config.Tunnel, client config.Client, runtime a
 		"expired":          expired,
 		"address":          client.IPv4Address,
 		"revision":         client.ConfigRevision,
-		"needs_new_config": tunnel.ConfigRevision > 0 && client.ConfigRevision < tunnel.ConfigRevision,
+		"needs_new_config": tunnel.NeedsClientConfig(client),
 		"ever_connected":   client.EverConnected,
 		"last_seen_at":     publicTime(client.LastSeenAt),
 		"expires_at":       publicTime(client.ExpiresAt),
@@ -166,6 +167,10 @@ func publicClientForTunnel(tunnel config.Tunnel, client config.Client, runtime a
 		"created_at": client.CreatedAt,
 		"updated_at": client.UpdatedAt,
 	}
+	if client.RelayID != "" {
+		result["relay_id"] = client.RelayID
+	}
+	return result
 }
 
 type clientTrafficSummary struct {

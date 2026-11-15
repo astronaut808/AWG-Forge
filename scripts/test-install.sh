@@ -212,6 +212,15 @@ if [[ "$(random_available_udp_port "30000-30002")" != "30002" ]]; then
 fi
 
 printf 'OK   automatic UDP port selection skips occupied ports\n'
+(
+  running_as_root() { return 0; }
+  iptables() {
+    printf '%s\n' '-A PREROUTING -p udp -m udp --dport 30002 -m comment --comment "awg-forge-relay-0123456789abcdef-dnat" -j DNAT --to-destination 192.0.2.20:40123'
+  }
+  [[ "$(managed_relay_ports)" == ' 30002 ' ]]
+  [[ "$(random_available_udp_port "30000-30002")" == 30000 ]]
+)
+printf 'OK   automatic UDP port selection skips relay reservations\n'
 
 write_compose_if_missing
 if ! grep -A4 '^    logging:$' "$COMPOSE_FILE" | grep -qx '      driver: local'; then
@@ -293,3 +302,150 @@ if ! grep -q 'https://docs.docker.com/engine/install/' "$test_dir/no-docker.log"
 fi
 
 printf 'OK   missing Docker exits before creating the install directory\n'
+
+(
+  relay_id=0123456789abcdef
+  relay_dir="$test_dir/relay-recovery"
+  mkdir -p "$relay_dir"
+  current="$relay_dir/compose.yaml"
+  next="$relay_dir/compose.next.yaml"
+  old_hash="$(printf '%064d' 1)"
+  new_hash="$(printf '%064d' 2)"
+  live_hash="$old_hash"
+  healthy=true
+  image_present=true
+  restore_ok=true
+  : >"$current"
+  : >"$next"
+  docker() {
+    case "$1" in
+      ps) if [[ -n "$live_hash" ]]; then printf 'abcd\n'; fi ;;
+      inspect) printf '%s\n' "$live_hash" ;;
+      image) "$image_present" ;;
+      *) return 1 ;;
+    esac
+  }
+  relay_compose() {
+    case "$2" in
+      config)
+        if [[ "$3" == --images ]]; then printf 'relay-fixture\n'
+        elif [[ "$1" == "$current" ]]; then printf 'relay %s\n' "$old_hash"
+        else printf 'relay %s\n' "$new_hash"
+        fi ;;
+      up) [[ "$1" == "$current" ]] && "$restore_ok" && printf 'restored\n' >>"$relay_dir/actions" ;;
+      *) return 1 ;;
+    esac
+  }
+  relay_runtime_action() {
+    case "$2" in
+      status) "$healthy" ;;
+      remove) printf 'removed %s\n' "${1##*/}" >>"$relay_dir/actions" ;;
+      *) return 1 ;;
+    esac
+  }
+  relay_recover_update
+  [[ -f "$current" && ! -e "$next" && ! -e "$relay_dir/actions" ]]
+
+  live_hash="$new_hash"
+  printf 'new\n' >"$next"
+  relay_recover_update
+  [[ "$(cat "$current")" == new && ! -e "$next" && ! -e "$relay_dir/actions" ]]
+
+  live_hash=""
+  healthy=false
+  : >"$next"
+  relay_recover_update
+  [[ -f "$current" && ! -e "$next" ]]
+  [[ "$(cat "$relay_dir/actions")" == $'removed compose.next.yaml\nrestored' ]]
+
+  image_present=false
+  restore_ok=false
+  : >"$next"
+  : >"$relay_dir/actions"
+  if relay_recover_update; then
+    printf 'FAIL relay recovery hid a failed restore\n' >&2
+    exit 1
+  fi
+  [[ -f "$next" && ! -s "$relay_dir/actions" ]]
+  restore_ok=true
+  relay_recover_update
+  [[ ! -e "$next" && "$(cat "$relay_dir/actions")" == restored ]]
+)
+printf 'OK   relay recovery keeps a healthy container or restores the previous configuration\n'
+
+(
+  current=compose.yaml
+  next=compose.next.yaml
+  replacement_log="$test_dir/relay-replacement"
+  fail_stop=false
+  relay_compose() {
+    printf '%s\n' "$*" >>"$replacement_log"
+    [[ "$2" != kill ]] || ! "$fail_stop"
+  }
+  relay_runtime_action() { printf '%s\n' "$*" >>"$replacement_log"; }
+  relay_stop_for_replacement
+  [[ "$(cat "$replacement_log")" == $'compose.yaml kill -s SIGKILL relay\ncompose.yaml down\ncompose.next.yaml remove' ]]
+  : >"$replacement_log"
+  fail_stop=true
+  if relay_stop_for_replacement; then
+    printf 'FAIL relay replacement accepted a failed stop\n' >&2
+    exit 1
+  fi
+  [[ "$(cat "$replacement_log")" == 'compose.yaml kill -s SIGKILL relay' ]]
+)
+printf 'OK   relay replacement stops the old writer before cleaning rules with the new image\n'
+
+for scenario in old-stopped no-container new-running image-missing cleanup-failed mapping-left; do
+  (
+    relay_dir="$test_dir/relay-remove-$scenario"
+    mkdir "$relay_dir"
+    current="$relay_dir/compose.yaml"
+    next="$relay_dir/compose.next.yaml"
+    : >"$current"
+    : >"$next"
+    mkdir "$relay_dir/runtime"
+    : >"$relay_dir/runtime/mapping"
+    actions="$test_dir/relay-remove-$scenario.log"
+    docker() {
+      [[ "$*" == 'image inspect fixture-next' && "$scenario" != image-missing ]]
+    }
+    relay_compose() {
+      case "$2" in
+        config) [[ "$1" == "$next" ]] && printf 'fixture-next\n' ;;
+        kill|down) printf '%s %s\n' "${1##*/}" "$2" >>"$actions" ;;
+        *) return 1 ;;
+      esac
+    }
+    relay_runtime_action() {
+      printf '%s %s\n' "${1##*/}" "$2" >>"$actions"
+      [[ "$scenario" != cleanup-failed ]] || return 1
+      if [[ "$scenario" != mapping-left ]]; then
+        rm -f -- "$relay_dir/runtime/mapping"
+      fi
+    }
+    live="$current"
+    case "$scenario" in
+      no-container) live="" ;;
+      new-running) live="$next" ;;
+    esac
+    if [[ "$scenario" == cleanup-failed || "$scenario" == mapping-left ]]; then
+      if relay_remove_installation "$live" 2>"$test_dir/relay-remove-$scenario.err"; then
+        printf 'FAIL relay removal accepted incomplete cleanup\n' >&2
+        exit 1
+      fi
+      [[ -f "$current" && -f "$next" && -f "$relay_dir/runtime/mapping" ]]
+    else
+      relay_remove_installation "$live"
+      [[ ! -e "$relay_dir" ]]
+    fi
+    case "$scenario" in
+      old-stopped|cleanup-failed|mapping-left)
+        [[ "$(cat "$actions")" == $'compose.yaml kill\ncompose.yaml down\ncompose.next.yaml remove' ]] ;;
+      no-container|new-running)
+        [[ "$(cat "$actions")" == 'compose.next.yaml remove' ]] ;;
+      image-missing)
+        [[ "$(cat "$actions")" == 'compose.yaml remove' ]] ;;
+    esac
+  )
+done
+printf 'OK   interrupted relay removal uses the downloaded replacement and preserves recovery on failure\n'

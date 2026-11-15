@@ -196,6 +196,9 @@ func validateInitialTunnelOptions(options InitOptions, spec tunnelSpec) error {
 }
 
 func (s *Service) repairLoadedState(state config.State) (config.State, error) {
+	if err := config.ValidateRelays(state); err != nil {
+		return config.State{}, err
+	}
 	originalState := state
 	changed := false
 	protocolRepaired := false

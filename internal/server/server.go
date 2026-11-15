@@ -103,6 +103,15 @@ func ServeContext(ctx context.Context, cfg config.Config, service *app.Service, 
 
 	go enforceExpiredClients(ctx, service)
 	go collectTrafficHistory(ctx, cfg, service)
+	relayChecksDone := make(chan struct{})
+	go func() {
+		defer close(relayChecksDone)
+		service.RunRelayChecks(serverContext)
+	}()
+	defer func() {
+		stopServer()
+		<-relayChecksDone
+	}()
 	service.RuntimeLog().Info(context.Background(), "server", "server.workers.started", "runtime workers started", map[string]any{
 		"expiration_enforcement": true,
 		"traffic_history":        cfg.DatabaseMode == sqldb.ModeSQLite && cfg.ApplyConfig,
@@ -783,6 +792,8 @@ func (w *web) tunnelAPI(rw http.ResponseWriter, r *http.Request) {
 	}
 	id, action := parts[0], parts[1]
 	switch action {
+	case "relays":
+		w.tunnelRelaysAPI(rw, r, id, parts[2:])
 	case "settings":
 		w.updateTunnelSettingsAPI(rw, r, id)
 	case "delete":
@@ -960,7 +971,7 @@ func (w *web) clientsAPI(rw http.ResponseWriter, r *http.Request) {
 				return http.StatusBadRequest, errorPayload("traffic limit database unavailable")
 			}
 		}
-		options := app.ClientCreateOptions{ExpiresAt: expiresAt}
+		options := app.ClientCreateOptions{ExpiresAt: expiresAt, RelayID: req.RelayID}
 		limitPersistFailed := false
 		if hasLimit {
 			options.Persist = func(client config.Client) error {
@@ -1038,7 +1049,7 @@ func (w *web) updateClientSettingsAPI(rw http.ResponseWriter, r *http.Request, i
 			w.audit("warn", "client.settings.rejected", "client settings request rejected", map[string]any{"client_id": id, "client_name": req.Name, "reason": "invalid expires_at"}, err)
 			return http.StatusBadRequest, errorPayload("invalid expires_at")
 		}
-		client, err := w.service.UpdateClientSettingsWithOptions(id, app.ClientSettingsUpdate{Name: req.Name, Notes: req.Notes, ExpiresAt: expiresAt})
+		client, err := w.service.UpdateClientSettingsWithOptions(id, app.ClientSettingsUpdate{Name: req.Name, Notes: req.Notes, ExpiresAt: expiresAt, RelayID: req.RelayID})
 		if err != nil {
 			w.audit("warn", "client.settings.rejected", "client settings request rejected", map[string]any{"client_id": id, "client_name": req.Name}, err)
 			return mutationErrorStatus(err, http.StatusBadRequest), operationErrorPayload("client_settings_update_failed", "failed to update client settings")
@@ -1185,7 +1196,7 @@ func (w *web) clientQRAPI(rw http.ResponseWriter, r *http.Request, id string) {
 		writeError(rw, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	ctx, err := w.service.ClientExportContext(id)
+	ctx, err := w.service.PreviewClientExport(id)
 	if err != nil {
 		writeClientExportError(rw, r)
 		return
@@ -1199,7 +1210,9 @@ func (w *web) clientQRAPI(rw http.ResponseWriter, r *http.Request, id string) {
 	w.audit("info", "client.qr.viewed", "client config QR viewed", map[string]any{"client_id": id}, nil)
 	if err := writeQRCodePNG(rw, code, configFilename(ctx.Client)+".png"); err != nil {
 		w.audit("warn", "client.qr.write_failed", "client QR response write failed", map[string]any{"client_id": id}, err)
+		return
 	}
+	w.service.RecordClientExport(ctx)
 }
 
 func (w *web) clientAmneziaVPNQRAPI(rw http.ResponseWriter, r *http.Request, id string) {
@@ -1207,7 +1220,7 @@ func (w *web) clientAmneziaVPNQRAPI(rw http.ResponseWriter, r *http.Request, id 
 		writeError(rw, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	ctx, err := w.service.ClientExportContext(id)
+	ctx, err := w.service.PreviewClientExport(id)
 	if err != nil {
 		writeClientExportError(rw, r)
 		return
@@ -1236,7 +1249,9 @@ func (w *web) clientAmneziaVPNQRAPI(rw http.ResponseWriter, r *http.Request, id 
 	rw.Header().Set("X-QR-Chunks", "1")
 	if err := writeQRCodePNG(rw, code, fmt.Sprintf("%s-amneziavpn.png", configFilename(ctx.Client))); err != nil {
 		w.audit("warn", "client.amneziavpn_qr.write_failed", "client AmneziaVPN QR response write failed", map[string]any{"client_id": id}, err)
+		return
 	}
+	w.service.RecordClientExport(ctx)
 }
 
 func (w *web) clientAmneziaVPNQRSeriesAPI(rw http.ResponseWriter, r *http.Request, id string) {
@@ -1244,7 +1259,7 @@ func (w *web) clientAmneziaVPNQRSeriesAPI(rw http.ResponseWriter, r *http.Reques
 		writeError(rw, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if _, err := w.service.ClientExportContext(id); err != nil {
+	if _, err := w.service.PreviewClientExport(id); err != nil {
 		writeClientExportError(rw, r)
 		return
 	}

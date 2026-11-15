@@ -505,7 +505,7 @@ func (c *checker) checkClientRuntime(tunnel config.Tunnel, client config.Client,
 		c.warn(categoryClients, area, "client expired")
 		return
 	}
-	if tunnel.ConfigRevision > 0 && client.ConfigRevision < tunnel.ConfigRevision {
+	if tunnel.NeedsClientConfig(client) {
 		c.warn(categoryClients, area, "client config is stale; download and import a fresh .conf")
 	}
 	peer, ok := show.Peers[client.PublicKey]

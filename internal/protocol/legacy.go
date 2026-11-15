@@ -174,12 +174,16 @@ func (p Legacy10) RenderClientInterface(ctx RenderContext, client config.Client)
 }
 
 func (Legacy10) RenderClientPeer(ctx RenderContext, client config.Client) ([]ConfigLine, error) {
+	endpoint, err := ctx.ClientEndpoint(client)
+	if err != nil {
+		return nil, err
+	}
 	return []ConfigLine{
 		{"PublicKey", ctx.Tunnel.ServerPublicKey},
 		{"PresharedKey", client.PresharedKey},
 		{"AllowedIPs", ctx.Tunnel.AllowedIPs},
 		{"PersistentKeepalive", strconv.Itoa(ctx.Tunnel.Keepalive)},
-		{"Endpoint", fmt.Sprintf("%s:%d", ctx.EndpointHost(), ctx.Tunnel.ListenPort)},
+		{"Endpoint", endpoint.String()},
 	}, nil
 }
 

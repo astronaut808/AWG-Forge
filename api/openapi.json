@@ -2,7 +2,7 @@
   "openapi": "3.1.1",
   "info": {
     "title": "AWG-Forge browser control API",
-    "version": "0.20.0",
+    "version": "0.21.0",
     "description": "Same-origin control API used by the bundled Web UI. This is not a public remote-management API. It uses the authenticated browser session, does not enable CORS, and the bundled UI supplies an Idempotency-Key for state-changing operations."
   },
   "servers": [{ "url": "/" }],
@@ -90,6 +90,53 @@
         "responses": { "200": { "$ref": "#/components/responses/OK" }, "default": { "$ref": "#/components/responses/APIError" } }
       }
     },
+    "/api/tunnels/{id}/relays": {
+      "get": {
+        "operationId": "listRelays",
+        "parameters": [{ "$ref": "#/components/parameters/TunnelID" }],
+        "responses": { "200": { "description": "Configured relays.", "content": { "application/json": { "schema": { "type": "object", "required": ["relays"], "properties": { "relays": { "type": "array", "items": { "$ref": "#/components/schemas/Relay" } } } } } } }, "default": { "$ref": "#/components/responses/APIError" } }
+      },
+      "post": {
+        "operationId": "createRelay",
+        "parameters": [{ "$ref": "#/components/parameters/TunnelID" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RelayRequest" } } } },
+        "responses": { "201": { "$ref": "#/components/responses/RelaySaved" }, "default": { "$ref": "#/components/responses/APIError" } }
+      }
+    },
+    "/api/tunnels/{id}/relays/health": {
+      "get": {
+        "operationId": "getRelayHealth",
+        "parameters": [{ "$ref": "#/components/parameters/TunnelID" }],
+        "responses": { "200": { "description": "Latest automatic AWG handshake checks, keyed by relay ID.", "content": { "application/json": { "schema": { "type": "object", "required": ["health"], "properties": { "health": { "type": "object", "additionalProperties": { "$ref": "#/components/schemas/RelayHealth" } } } } } } }, "default": { "$ref": "#/components/responses/APIError" } }
+      }
+    },
+    "/api/tunnels/{id}/relays/suggestion": {
+      "get": {
+        "operationId": "suggestRelayTarget",
+        "parameters": [{ "$ref": "#/components/parameters/TunnelID" }],
+        "responses": { "200": { "description": "Suggested destination IPv4, or an empty string when no single usable address can be determined.", "content": { "application/json": { "schema": { "type": "object", "required": ["target_ipv4"], "properties": { "target_ipv4": { "anyOf": [{ "type": "string", "format": "ipv4" }, { "const": "" }] } } } } } }, "default": { "$ref": "#/components/responses/APIError" } }
+      }
+    },
+    "/api/tunnels/{id}/relays/{relay_id}": {
+      "put": {
+        "operationId": "updateRelay",
+        "parameters": [{ "$ref": "#/components/parameters/TunnelID" }, { "$ref": "#/components/parameters/RelayID" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateRelayRequest" } } } },
+        "responses": { "200": { "$ref": "#/components/responses/RelaySaved" }, "409": { "$ref": "#/components/responses/APIError" }, "default": { "$ref": "#/components/responses/APIError" } }
+      },
+      "delete": {
+        "operationId": "deleteRelay",
+        "parameters": [{ "$ref": "#/components/parameters/TunnelID" }, { "$ref": "#/components/parameters/RelayID" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "responses": { "200": { "$ref": "#/components/responses/OK" }, "default": { "$ref": "#/components/responses/APIError" } }
+      }
+    },
+    "/api/tunnels/{id}/relays/{relay_id}/install": {
+      "get": {
+        "operationId": "getRelayInstallCommand",
+        "parameters": [{ "$ref": "#/components/parameters/TunnelID" }, { "$ref": "#/components/parameters/RelayID" }],
+        "responses": { "200": { "description": "Versioned install command for the relay host.", "content": { "application/json": { "schema": { "type": "object", "required": ["command"], "properties": { "command": { "type": "string" } } } } } }, "default": { "$ref": "#/components/responses/APIError" } }
+      }
+    },
     "/api/clients": {
       "post": {
         "operationId": "createClient",
@@ -142,11 +189,13 @@
     "parameters": {
       "IdempotencyKey": { "name": "Idempotency-Key", "in": "header", "required": false, "schema": { "type": "string", "minLength": 1, "maxLength": 128 }, "description": "The bundled UI sends a unique key for each logical mutation. Reusing a key with a different request body returns 409." },
       "TunnelID": { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+      "RelayID": { "name": "relay_id", "in": "path", "required": true, "schema": { "type": "string", "pattern": "^[0-9a-f]{16}$" } },
       "ClientID": { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
     },
     "headers": { "RequestID": { "description": "Correlation ID for runtime logs and support.", "schema": { "type": "string" } } },
     "responses": {
       "OK": { "description": "Operation completed.", "headers": { "X-Request-ID": { "$ref": "#/components/headers/RequestID" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OK" } } } },
+      "RelaySaved": { "description": "Relay saved.", "content": { "application/json": { "schema": { "type": "object", "required": ["relay"], "properties": { "relay": { "$ref": "#/components/schemas/Relay" } } } } } },
       "APIError": { "description": "Safe API error. Exact internal details are recorded only in the audit and runtime logs.", "headers": { "X-Request-ID": { "$ref": "#/components/headers/RequestID" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/APIError" } } } }
     },
     "schemas": {
@@ -154,17 +203,22 @@
       "APIError": { "type": "object", "required": ["error", "code"], "properties": { "error": { "type": "string" }, "code": { "type": "string", "pattern": "^[a-z0-9_]+$" } } },
       "LoginRequest": { "type": "object", "required": ["password"], "properties": { "username": { "type": "string", "minLength": 1, "default": "admin", "description": "Administrator username. Omit for compatibility with the default admin account.", "writeOnly": true }, "password": { "type": "string", "writeOnly": true } } },
       "UpdateServerNameRequest": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string", "maxLength": 32, "pattern": "^[A-Za-z0-9]*$", "description": "Optional ASCII alphanumeric server label. An empty string removes it." } } },
-      "State": { "type": "object", "description": "Current safe control-plane state. Sensitive keys, raw client configurations, and QR payloads are excluded.", "additionalProperties": true },
+      "State": { "type": "object", "description": "Current safe control-plane state. Sensitive keys, raw client configurations, and QR payloads are excluded.", "properties": { "tunnels": { "type": ["array", "null"], "items": { "$ref": "#/components/schemas/Tunnel" } } }, "additionalProperties": true },
       "CreateTunnelRequest": { "type": "object", "required": ["profile", "name", "egress_mode", "subnet"], "properties": { "profile": { "type": "string" }, "name": { "type": "string" }, "egress_mode": { "type": "string", "enum": ["wan", "warp"] }, "port": { "type": "integer", "minimum": 1, "maximum": 65535 }, "automatic_port": { "type": "boolean" }, "subnet": { "type": "string" } } },
       "UpdateTunnelSettingsRequest": { "type": "object", "required": ["name", "server_host", "egress_mode", "port", "subnet", "dns", "allowed_ips", "keepalive", "mtu", "enabled"], "properties": { "name": { "type": "string" }, "server_host": { "type": "string" }, "egress_mode": { "type": "string", "enum": ["wan", "warp"] }, "port": { "type": "integer", "minimum": 1, "maximum": 65535 }, "subnet": { "type": "string" }, "dns": { "type": "string" }, "allowed_ips": { "type": "string" }, "keepalive": { "type": "integer", "minimum": 0 }, "mtu": { "type": "integer", "minimum": 0 }, "enabled": { "type": "boolean" } } },
       "DeleteTunnelRequest": { "type": "object", "properties": { "confirmation_name": { "type": "string" } } },
       "UpdateProtocolRequest": { "type": "object", "required": ["profile", "params"], "properties": { "profile": { "type": "string" }, "params": { "type": "object", "additionalProperties": { "type": "string" } } } },
       "RegenerateProtocolRequest": { "type": "object", "properties": { "profile": { "type": "string" } } },
-      "CreateClientRequest": { "type": "object", "required": ["tunnel_id", "name"], "properties": { "tunnel_id": { "type": "string" }, "name": { "type": "string" }, "expires_at": { "anyOf": [{ "type": "string", "const": "" }, { "type": "string", "format": "date-time" }] }, "traffic_limit_bytes": { "type": ["integer", "null"], "minimum": 1 }, "traffic_limit_period": { "type": "string", "enum": ["", "lifetime", "rolling_30d"] } } },
-      "UpdateClientSettingsRequest": { "type": "object", "required": ["name", "notes", "expires_at"], "properties": { "name": { "type": "string" }, "notes": { "type": "string" }, "expires_at": { "anyOf": [{ "type": "string", "const": "" }, { "type": "string", "format": "date-time" }] } } },
+      "RelayHealth": { "type": "object", "required": ["status"], "properties": { "status": { "type": "string", "enum": ["pending", "reachable", "unreachable", "unavailable", "stale"] }, "checked_at": { "type": "string", "format": "date-time" }, "succeeded_at": { "type": "string", "format": "date-time" } } },
+      "RelayRequest": { "type": "object", "required": ["name", "host", "port"], "oneOf": [{ "required": ["target_ipv4"], "properties": { "target_ipv4": true, "target_host": false } }, { "required": ["target_host"], "properties": { "target_host": true, "target_ipv4": false } }], "properties": { "name": { "type": "string", "minLength": 1, "maxLength": 64 }, "host": { "type": "string", "minLength": 1, "maxLength": 253 }, "port": { "type": "integer", "minimum": 1, "maximum": 65535 }, "target_ipv4": { "type": "string", "format": "ipv4" }, "target_host": { "type": "string", "minLength": 1, "maxLength": 254, "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?[.]?$" } } },
+      "UpdateRelayRequest": { "allOf": [{ "$ref": "#/components/schemas/RelayRequest" }, { "type": "object", "properties": { "expected": { "$ref": "#/components/schemas/RelayRequest", "description": "Previously read settings. A concurrent change returns 409 with relay_changed." } } }] },
+      "Relay": { "allOf": [{ "$ref": "#/components/schemas/RelayRequest" }, { "type": "object", "required": ["id"], "properties": { "id": { "type": "string", "pattern": "^[0-9a-f]{16}$" } } }] },
+      "CreateClientRequest": { "type": "object", "required": ["tunnel_id", "name"], "properties": { "relay_id": { "type": "string", "pattern": "^(|[0-9a-f]{16})$", "description": "Relay for this tunnel. An empty string selects direct connection." }, "tunnel_id": { "type": "string" }, "name": { "type": "string" }, "expires_at": { "anyOf": [{ "type": "string", "const": "" }, { "type": "string", "format": "date-time" }] }, "traffic_limit_bytes": { "type": ["integer", "null"], "minimum": 1 }, "traffic_limit_period": { "type": "string", "enum": ["", "lifetime", "rolling_30d"] } } },
+      "UpdateClientSettingsRequest": { "type": "object", "required": ["name", "notes", "expires_at"], "properties": { "relay_id": { "type": "string", "pattern": "^(|[0-9a-f]{16})$", "description": "Relay for this tunnel. An empty string selects direct connection." }, "name": { "type": "string" }, "notes": { "type": "string" }, "expires_at": { "anyOf": [{ "type": "string", "const": "" }, { "type": "string", "format": "date-time" }] } } },
       "TrafficLimitRequest": { "type": "object", "required": ["limit_bytes"], "properties": { "limit_bytes": { "type": ["integer", "null"], "minimum": 1 }, "limit_period": { "type": "string", "enum": ["", "lifetime", "rolling_30d"] } } },
       "WarpImportRequest": { "type": "object", "required": ["config"], "properties": { "config": { "type": "string", "writeOnly": true, "description": "Private WARP configuration. Never log or persist it outside the protected configuration store." } } },
-      "TunnelEnvelope": { "type": "object", "required": ["tunnel"], "properties": { "tunnel": { "type": "object", "additionalProperties": true } } },
+      "Tunnel": { "type": "object", "properties": { "relays": { "type": "array", "items": { "$ref": "#/components/schemas/Relay" } } }, "additionalProperties": true },
+      "TunnelEnvelope": { "type": "object", "required": ["tunnel"], "properties": { "tunnel": { "$ref": "#/components/schemas/Tunnel" } } },
       "ClientEnvelope": { "type": "object", "required": ["client"], "properties": { "client": { "type": "object", "additionalProperties": true } } },
       "TunnelSuggestionEnvelope": { "type": "object", "required": ["suggestion"], "properties": { "suggestion": { "type": "object", "required": ["name", "port", "subnet", "udp_port_range"], "properties": { "name": { "type": "string" }, "port": { "type": "integer" }, "subnet": { "type": "string" }, "udp_port_range": { "type": "string" } } } } }
     }

@@ -29,17 +29,22 @@ func TestOpenAPIContractDocumentsCoreControlPlane(t *testing.T) {
 		t.Fatalf("OpenAPI version = %q, want %q", got, want)
 	}
 	for path, method := range map[string]string{
-		"/api/login":                      http.MethodPost,
-		"/api/state":                      http.MethodGet,
-		"/api/server-name":                http.MethodPatch,
-		"/api/tunnels":                    http.MethodPost,
-		"/api/tunnels/{id}/settings":      http.MethodPatch,
-		"/api/tunnels/{id}/protocol":      http.MethodPatch,
-		"/api/tunnels/{id}/regenerate":    http.MethodPost,
-		"/api/clients":                    http.MethodPost,
-		"/api/clients/{id}/traffic-limit": http.MethodPatch,
-		"/api/warp":                       http.MethodGet,
-		"/api/warp/import":                http.MethodPost,
+		"/api/login":                                  http.MethodPost,
+		"/api/state":                                  http.MethodGet,
+		"/api/server-name":                            http.MethodPatch,
+		"/api/tunnels":                                http.MethodPost,
+		"/api/tunnels/{id}/settings":                  http.MethodPatch,
+		"/api/tunnels/{id}/protocol":                  http.MethodPatch,
+		"/api/tunnels/{id}/regenerate":                http.MethodPost,
+		"/api/tunnels/{id}/relays":                    http.MethodPost,
+		"/api/tunnels/{id}/relays/health":             http.MethodGet,
+		"/api/tunnels/{id}/relays/suggestion":         http.MethodGet,
+		"/api/tunnels/{id}/relays/{relay_id}":         http.MethodPut,
+		"/api/tunnels/{id}/relays/{relay_id}/install": http.MethodGet,
+		"/api/clients":                                http.MethodPost,
+		"/api/clients/{id}/traffic-limit":             http.MethodPatch,
+		"/api/warp":                                   http.MethodGet,
+		"/api/warp/import":                            http.MethodPost,
 	} {
 		operations, ok := document.Paths[path]
 		if !ok || operations[strings.ToLower(method)] == nil {

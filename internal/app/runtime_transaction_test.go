@@ -1,10 +1,12 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -127,6 +129,67 @@ func TestNonRoutingTunnelSettingsDoNotReconcileWarp(t *testing.T) {
 	}
 	if len(recorder.routeCounts) != 0 {
 		t.Fatalf("WARP reconcile calls = %d, want 0 for non-routing settings", len(recorder.routeCounts))
+	}
+}
+
+func TestTunnelSettingsRejectReservedRelayPortBeforeRuntimeChanges(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		changeMTU  bool
+		enableWarp bool
+	}{
+		{name: "port only"},
+		{name: "port and restart", changeMTU: true},
+		{name: "port and WARP registration", enableWarp: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := New(testServiceConfig(t))
+			state, err := svc.State()
+			if err != nil {
+				t.Fatal(err)
+			}
+			svc.cfg.ApplyConfig = true
+			recorder := runtimeRecorder{}
+			svc.runtimeOps = recorder.operations()
+			tunnel := state.Tunnels[0]
+			update := tunnelSettingsUpdate(tunnel, true)
+			update.Port++
+			if tt.changeMTU {
+				update.MTU = 1280
+			}
+			if tt.enableWarp {
+				update.EgressMode = config.EgressWarp
+				oldRegisterWarp := registerWarp
+				t.Cleanup(func() { registerWarp = oldRegisterWarp })
+				registerWarp = func(context.Context, string, string) (config.Warp, error) {
+					t.Error("WARP registration started for a reserved port")
+					return config.Warp{}, errors.New("unexpected WARP registration")
+				}
+			}
+			svc.runtimeOps.managedRelayPorts = func() (map[int]bool, error) {
+				return map[int]bool{update.Port: true}, nil
+			}
+			statePath := svc.store.StatePath()
+			before, err := os.ReadFile(statePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			_, err = svc.UpdateTunnelSettings(tunnel.ID, update)
+			if err == nil || !strings.Contains(err.Error(), "reserved by an awg-forge relay") {
+				t.Errorf("update error = %v, want relay port conflict", err)
+			}
+			if len(recorder.removed) != 0 || len(recorder.applied) != 0 || len(recorder.routeCounts) != 0 {
+				t.Errorf("runtime changed after conflict: removed %v, applied %v, reconciled %v", recorder.removed, recorder.applied, recorder.routeCounts)
+			}
+			after, err := os.ReadFile(statePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(before, after) {
+				t.Error("persisted state changed after rejected update")
+			}
+		})
 	}
 }
 
@@ -469,6 +532,7 @@ type runtimeRecorder struct {
 
 func (r *runtimeRecorder) operations() runtimeOperations {
 	return runtimeOperations{
+		managedRelayPorts: func() (map[int]bool, error) { return nil, nil },
 		applyTunnel: func(tunnel config.Tunnel) error {
 			r.applied = append(r.applied, tunnel.ID)
 			if r.failApplyCall > 0 && len(r.applied) == r.failApplyCall {
