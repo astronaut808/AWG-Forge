@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## v0.21.0 - 2026-11-14
+## v0.21.0 - 2026-11-15
 
 ### Added
 
@@ -10,7 +10,7 @@
 
 ### Upgrading
 
-- The state schema is now v4 to protect client relay assignments. This release restores v3 backups. Keep a pre-upgrade backup if you may need to roll back to v0.20.0, which rejects v4 backups.
+- The state schema is now v4 to protect client relay assignments. v0.21.0 restores v3 backups and creates v4 backups. To roll back to v0.20.0, keep a v3 backup made before upgrading. Restoring it returns the configuration to that snapshot.
 
 ## v0.20.0 - 2026-11-12
 

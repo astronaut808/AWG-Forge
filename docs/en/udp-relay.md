@@ -23,7 +23,9 @@ The container starts with Docker and restores its own rules. The status command 
 
 After changing a relay, run the updated install command on the relay host. A destination address change requires reinstalling the relay even when client configs stay current. To remove a relay, reassign its clients, run `relay remove` on the relay host, and delete the relay in the panel. Remove the tunnel's relays before changing its listen port or deleting the tunnel.
 
-The relay uses a separate Compose project. The container manages its own iptables-nft rules, and the Linux kernel forwards packets. Allocate a free UDP port. Existing manual rules stay on the host. Check that they and any third-party firewall chains allow the traffic. Before downgrading to a release without relay support, remove client relay assignments and take a backup.
+The relay uses a separate Compose project. The container manages its own iptables-nft rules, and the Linux kernel forwards packets. Allocate a free UDP port. Check that existing host firewall rules and any third-party firewall chains allow the traffic.
+
+Keep an encrypted v3 backup from before the upgrade if you may need to roll back to v0.20.0. v0.20.0 rejects v4 backups even after you remove relay assignments. Restoring the v3 backup returns the exit server to its saved configuration. Reimport direct client configurations and remove the relay from its host if it is no longer needed. See [backup and restore](diagnostics.md#encrypted-backup--restore).
 
 If installation is interrupted, rerun the install command. The installer checks the running container and either keeps the new configuration or restores the previous one. Relay forwarding rules are appended to `FORWARD`, so existing firewall rules take precedence.
 
