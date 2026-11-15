@@ -321,22 +321,28 @@ func (r IPTablesRunner) count(rule Rule, listings map[[2]string][]byte) (int, er
 		return 1, nil
 	}
 	key := [2]string{rule.Table, rule.Chain}
-	count := countRuleComments(listings[key], comment)
-	if count == 0 {
-		// A rule may have been added after the cached listing was read.
-		args := append(tableArgs(rule.Table), "-S", rule.Chain)
-		out, err := r.commandOutput(args...)
+	if count := countRuleComments(listings[key], comment); count > 0 {
+		exists, err := r.exists(rule)
 		if err != nil {
-			delete(listings, key)
-			return 0, fmt.Errorf("iptables %s failed: %w", strings.Join(args, " "), err)
+			return 0, err
 		}
-		if listings != nil {
-			listings[key] = out
+		if exists {
+			return count, nil
 		}
-		count = countRuleComments(out, comment)
-		if count == 0 {
-			return 0, nil
-		}
+	}
+	// Classify missing and conflicting rules using a fresh listing.
+	args := append(tableArgs(rule.Table), "-S", rule.Chain)
+	out, err := r.commandOutput(args...)
+	if err != nil {
+		delete(listings, key)
+		return 0, fmt.Errorf("iptables %s failed: %w", strings.Join(args, " "), err)
+	}
+	if listings != nil {
+		listings[key] = out
+	}
+	count := countRuleComments(out, comment)
+	if count == 0 {
+		return 0, nil
 	}
 	exists, err := r.exists(rule)
 	if err != nil {

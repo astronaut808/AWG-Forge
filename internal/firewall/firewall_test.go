@@ -97,12 +97,16 @@ func TestIPTablesCheckReusesListingsAndPreservesRuleReports(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("cached report = %+v, want %+v", got, want)
 	}
-	if len(listCalls) != 3 || exactCalls != 7 {
+	if len(listCalls) != 3 || exactCalls != 8 {
 		t.Fatalf("listing calls = %v, exact calls = %d", listCalls, exactCalls)
 	}
 	for chain, calls := range listCalls {
-		if calls != 1 {
-			t.Fatalf("listing %s called %d times, want one", chain, calls)
+		wantCalls := 1
+		if chain == "-S FORWARD" {
+			wantCalls++ // The conflict is classified using a fresh listing.
+		}
+		if calls != wantCalls {
+			t.Fatalf("listing %s called %d times, want %d", chain, calls, wantCalls)
 		}
 	}
 	clear(listings)
@@ -145,6 +149,40 @@ func TestIPTablesCheckRefreshesCachedMiss(t *testing.T) {
 	}
 	if forwardCalls != 2 || returnChecks != 1 {
 		t.Fatalf("FORWARD listings = %d, exact return checks = %d, want 2 and 1", forwardCalls, returnChecks)
+	}
+}
+
+func TestIPTablesCheckRefreshesWhenCachedRuleDisappears(t *testing.T) {
+	cfg, state := testConfig(), testState()
+	state.Tunnels = state.Tunnels[:1]
+	rules := ExpectedRules(cfg, state)
+	forwardCalls := 0
+	returnRemoved := false
+	runner := IPTablesRunner{
+		output: func(args ...string) ([]byte, error) {
+			if strings.Join(args, " ") != "-S FORWARD" {
+				return nil, nil
+			}
+			forwardCalls++
+			listing := "-A " + rules[2].Spec() + "\n"
+			if !returnRemoved {
+				listing += "-A " + rules[3].Spec() + "\n"
+			}
+			return []byte(listing), nil
+		},
+		run: func(args ...string) error {
+			if strings.Join(args, " ") == "-C "+rules[2].Spec() {
+				returnRemoved = true
+			}
+			if strings.Join(args, " ") == "-C "+rules[3].Spec() && returnRemoved {
+				return &exec.ExitError{}
+			}
+			return nil
+		},
+	}
+	report := Check(cfg, state, runner)
+	if got := report.Results[3]; got.Status != "missing" || got.Count != 0 || forwardCalls != 2 {
+		t.Fatalf("rule removed after the first listing: %+v, FORWARD listings = %d", got, forwardCalls)
 	}
 }
 
