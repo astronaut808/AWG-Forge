@@ -9,6 +9,7 @@ Manage AmneziaWG on your own server. One Docker image includes the web interface
 ## Features
 
 - **Multiple tunnels on one VPS.** Each tunnel has its own AmneziaWG profile, UDP port, subnet, and connection settings.
+- **Transparent UDP relay.** Route selected clients through a separate relay host that forwards encrypted packets to their tunnel.
 - **IPv4 routing.** Choose direct server egress or Cloudflare WARP for each tunnel.
 - **Client management.** Enable or disable clients, set expiration dates, and configure traffic limits. Export `.conf` files, AmneziaWG or AmneziaVPN QR codes, and `vpn://` links.
 - **Monitoring.** View last handshakes, counters, and traffic history. History and limits require SQLite.

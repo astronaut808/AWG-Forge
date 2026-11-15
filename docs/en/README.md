@@ -4,6 +4,7 @@ English documentation:
 
 - [Quick install](quick-install.md)
 - [Setup](setup.md)
+- [Transparent UDP relay](udp-relay.md)
 - [Upgrade](quick-install.md#upgrade) · [Uninstall](quick-install.md#uninstall)
 - [Configuration](configuration.md)
 - [Web UI and CLI](usage.md)

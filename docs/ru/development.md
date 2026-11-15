@@ -57,6 +57,7 @@ make security
 make docker-build
 make docker-smoke IMAGE=awg-forge:local
 make docker-runtime-smoke IMAGE=awg-forge:local
+make docker-relay-smoke IMAGE=awg-forge:local
 ```
 
 Для быстрой локальной проверки можно использовать `make security-fast`. Для
@@ -70,7 +71,7 @@ Docker. Обновление, откат и работу нативных VPN-к
 OpenAPI. Создавай подписанный тег версии после попадания релизного коммита
 в `master`.
 
-CI тега проверяет принадлежность коммита истории `master` и заметки релиза,
-собирает поддерживаемый образ `linux/amd64`, запускает оба Docker smoke-теста
-и Trivy, затем передаёт и публикует проверенный образ. Публикация GitHub
-Release зависит от успешной публикации образа.
+CI тега проверяет принадлежность коммита истории `master` и заметки релиза.
+Он собирает образ `linux/amd64` на Ubuntu 26.04, запускает Docker smoke-тесты
+и Trivy и проверяет UDP-реле с тем же образом на Ubuntu 24.04. Публикация
+GitHub Release зависит от успешной публикации образа.
