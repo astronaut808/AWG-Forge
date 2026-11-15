@@ -14,8 +14,21 @@ Use an IPv4 DNS record for the relay hostname. The installer takes the local add
 
 ## Operations
 
+The install command from the panel downloads `install.sh` to the current directory on the relay host as `awg-forge-install.sh`. Reuse that file, or download the script from `master` to run maintenance commands.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o awg-forge-install.sh
+```
+
+To find the relay ID in the panel, open **Tunnels**, select the tunnel, and go to **UDP relays**. Click **Installation** next to the relay. Copy the value after `--id` from **Install command** or **Removal command** and use it in place of `0123456789abcdef` below.
+
 ```bash
 sudo bash ./awg-forge-install.sh relay status --id 0123456789abcdef
+```
+
+To remove the relay after reassigning its clients, run the following command on the relay host.
+
+```bash
 sudo bash ./awg-forge-install.sh relay remove --id 0123456789abcdef
 ```
 
