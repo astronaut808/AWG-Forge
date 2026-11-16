@@ -273,6 +273,18 @@ test("responsive sections and dialogs contain long labels without page overflow"
       if (id === "traffic") await expect(page.getByRole("button", { name: m.maintenance.refreshTraffic, exact: true })).toBeEnabled();
       if (id === "maintenance") await page.locator(".subtabs").getByRole("button", { name: m.maintenance.tabs.overview, exact: true }).click();
       headerHeights.push(await page.locator(".sidebar").evaluate((element) => element.getBoundingClientRect().height));
+      if (width > 540 && (id === "overview" || id === "clients" || id === "tunnels")) {
+        const aligned = await page.locator(".client-table:visible").evaluate((table) => {
+          const edges = (row: Element) => Array.from(row.children, (cell) => {
+            const { left, right } = cell.getBoundingClientRect();
+            return [left, right];
+          });
+          const headers = edges(table.querySelector(".client-table-head")!);
+          return Array.from(table.querySelectorAll(".client-summary")).every((row) =>
+            edges(row).every((cell, column) => cell.every((edge, side) => Math.abs(edge - headers[column][side]) <= 1)));
+        });
+        if (!aligned) defects.push(`${width}/${id}: client table headers and rows have different column edges`);
+      }
       if (width <= 540 && (id === "overview" || id === "clients" || id === "tunnels")) {
         const rows = await page.locator(".client-row:visible").evaluateAll((elements) => elements.map((element) => {
           const rx = element.querySelector(".rx")!.getBoundingClientRect(), tx = element.querySelector(".tx")!.getBoundingClientRect();
@@ -921,10 +933,12 @@ test("UDP relay installation, client assignment, and configuration export", asyn
     const current = await state();
     await route.fulfill({ json: { health: Object.fromEntries((current?.relays ?? []).map(({ id }) => [id, { status: "reachable", succeeded_at: "2026-11-13T10:00:00Z" }])) } });
   });
-  const openRelays = () => tabs.getByRole("button", { name: m.relays.title, exact: true }).click();
+  const relayTab = tabs.getByRole("button", { name: m.relays.title, exact: true });
+  const openRelays = () => relayTab.click();
   const openClients = () => tabs.getByRole("button", { name: m.tunnel.clients, exact: true }).click();
   const openConnection = () => tabs.getByRole("button", { name: m.ui.connection, exact: true }).click();
 
+  await expect(relayTab).toHaveText(m.relays.title);
   await openConnection();
   await tunnel.getByLabel(m.forms.serverHost, { exact: true }).fill("192.0.2.19");
   await tunnel.getByRole("button", { name: m.common.save, exact: true }).click();
@@ -950,6 +964,9 @@ test("UDP relay installation, client assignment, and configuration export", asyn
   await expectContained(page, dialog);
   await page.keyboard.press("Escape");
   await expect(dialog).not.toBeVisible();
+  await expect(relayTab).toHaveText(`${m.relays.title} · 1`);
+  await expect(relayTab).toHaveAccessibleDescription(m.relays.configuredCount(1));
+  await expectContained(page, tabs);
   await expectContained(page, tunnel);
 
   await openConnection();
@@ -967,9 +984,12 @@ test("UDP relay installation, client assignment, and configuration export", asyn
   await expect(dialog).not.toBeVisible();
   const client = tunnel.locator(".client-row").filter({ hasText: "Relayed client" });
   await expect(client).toBeVisible();
+  await expect(client.getByText(m.relays.clientBadge, { exact: true })).toBeVisible();
+  await expect(direct.getByText(m.relays.clientBadge, { exact: true })).toHaveCount(0);
   const assigned = (await state()).clients.find((item) => item.name === "Relayed client")!;
   expect(assigned.relay_id).toBe(relayID);
   await client.getByRole("button", { name: m.ui.clientActions, exact: true }).click();
+  await expect(client.getByText(m.relays.clientAssignment(host), { exact: true })).toBeVisible();
   await client.getByRole("button", { name: m.ui.connectClient, exact: true }).click();
   const downloading = page.waitForEvent("download");
   await dialog.getByRole("button", { name: m.clientConfig.downloadConf, exact: true }).click();
@@ -998,11 +1018,13 @@ test("UDP relay installation, client assignment, and configuration export", asyn
   await dialog.getByRole("button", { name: m.common.save, exact: true }).click();
   await expect(dialog).not.toBeVisible();
   expect((await state()).clients.find((item) => item.id === assigned.id)?.relay_id).toBeUndefined();
+  await expect(client.getByText(m.relays.clientBadge, { exact: true })).toHaveCount(0);
 
   await openRelays();
   await relayRow.getByRole("button", { name: m.common.delete, exact: true }).click();
   await dialog.getByRole("button", { name: m.common.delete, exact: true }).click();
   await expect(relayRow).toHaveCount(0);
+  await expect(relayTab).toHaveText(m.relays.title);
   await deleteTunnel(page, tunnel, m);
 });
 

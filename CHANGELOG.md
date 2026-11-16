@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Changed
+
+- Show assigned UDP relays in client rows and the relay count in the tunnel tab.
+- Replace overview traffic bars with totals for today, 7 days, and 30 days.
+- Batch tunnel status reads and reuse firewall chain listings during a check.
+
+### Fixed
+
+- Align client table headers with their columns across the overview, client list, and tunnel details.
+- Refresh firewall chain listings before reporting missing or conflicting managed rules.
+
 ## v0.21.0 - 2026-11-15
 
 ### Added

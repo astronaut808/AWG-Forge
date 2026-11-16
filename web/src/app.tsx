@@ -213,7 +213,7 @@ export function App() {
     {confirmation && <ConfirmAction title={confirmation.title} description={confirmation.description} submit={confirmation.submit} danger={confirmation.danger} onClose={() => setConfirmation(null)} onConfirm={confirmation.action} />}
     {!modal && <Toast message={toast} />}
   </>;
-  const renderClient = (client: import("./types").Client, tunnel: Tunnel) => <ClientRow key={client.id} client={client} tunnelName={tunnel.name}
+  const renderClient = (client: import("./types").Client, tunnel: Tunnel) => <ClientRow key={client.id} client={client} tunnel={tunnel} withTunnel
     onConfig={() => setModal({ kind: "client-config", client })}
     onSettings={() => setModal({ kind: "client-settings", client, tunnel })}
     onToggle={() => { if (!client.enabled && client.traffic?.exceeded) { notify(m.forms.trafficLimitEnableBlocked); return; } void runAction(client.enabled ? m.actions.clientDisabled : m.actions.clientEnabled, () => api.setClientEnabled(client.id, !client.enabled)); }}
