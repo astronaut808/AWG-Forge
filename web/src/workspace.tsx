@@ -177,7 +177,6 @@ function Overview({ state, openTunnel, navigate, renderClient, onCreateClient }:
   const totals = (traffic?.rows || []).reduce((sum, row) => ({ today: sum.today + row.rx_today + row.tx_today, week: sum.week + row.rx_7d + row.tx_7d, month: sum.month + row.rx_30d + row.tx_30d }), { today: 0, week: 0, month: 0 });
   const hasHistory = Boolean(traffic?.enabled && traffic.rows?.length);
   const periods = [{ label: m.maintenance.today, value: totals.today }, { label: m.maintenance.last7d, value: totals.week }, { label: m.maintenance.last30d, value: totals.month }];
-  const scale = Math.max(...periods.map((period) => period.value), 1);
   return <div className="overview">
     <div className="overview-metrics">
       <section className="overview-metric metric-lead"><Icon name="tunnels" /><div><span>{m.dashboard.tunnels}</span><strong>{state.tunnels.length}</strong><small>{state.tunnels.filter((tunnel) => tunnel.status?.up === true).length} {copy.running} · {state.tunnels.filter((tunnel) => tunnel.status?.up === false).length} {copy.stopped}{state.tunnels.some((tunnel) => !tunnel.status) && <> · {state.tunnels.filter((tunnel) => !tunnel.status).length} {m.ui.noRuntimeData}</>}</small></div></section>
@@ -189,7 +188,12 @@ function Overview({ state, openTunnel, navigate, renderClient, onCreateClient }:
         {!state.tunnels.length ? <Empty title={m.dashboard.noTunnelsYet} text={m.dashboard.createFirstTunnel} /> : <div className="overview-table"><div className="overview-table-head" aria-hidden="true"><span>{copy.name}</span><span>{m.tunnel.protocol}</span><span className="numeric">UDP</span><span>{copy.egress}</span><span>{m.ui.status}</span><span /></div>{state.tunnels.slice(0, 5).map((tunnel) => <Button className="overview-table-row overview-card" type="button" key={tunnel.id} onClick={() => openTunnel(tunnel)} aria-label={`${m.ui.viewTunnel}: ${tunnel.name}`}><strong>{tunnel.name}</strong><span className="overview-protocol">{profileTitle(tunnel.profile)}{isExperimentalProfile(tunnel.profile) && <Badge tone="brand">{m.common.experimental}</Badge>}</span><span className="numeric"><span className="mobile-label">UDP </span>{tunnel.listen_port}</span><span>{tunnel.egress_mode === "warp" ? "WARP" : m.ui.server}</span><span className="table-status"><span className={classNames("status-dot", tunnel.status?.up ? "up" : "down")} />{tunnel.status ? tunnel.status.up ? m.status.up : m.status.down : m.ui.runtimeUnknown}</span><Icon name="chevron" /></Button>)}</div>}
       </section>
       <section className="overview-traffic"><div className="section-head"><div><h2>{copy.recorded}</h2><p>{copy.period}</p></div></div>
-        {loading ? <output className="overview-traffic-state">{m.common.loading}</output> : trafficError ? <div className="overview-traffic-state"><p className="form-error" role="alert">{trafficError}</p><Button className="button" type="button" onClick={() => void loadTraffic()}>{m.common.retry}</Button></div> : !state.database?.enabled || !traffic?.enabled ? <p className="overview-traffic-state note">{m.maintenance.trafficDisabled}</p> : !hasHistory ? <p className="overview-traffic-state note">{m.maintenance.noTrafficData}</p> : <div className="period-bars">{periods.map((period) => <div className="period-row" key={period.label}><span>{period.label}</span><div className="period-track" aria-hidden="true"><div className="period-fill" style={{ width: `${period.value / scale * 100}%` }} /></div><strong>{formatBytes(period.value)}</strong></div>)}</div>}
+        {loading ? <output className="overview-traffic-state">{m.common.loading}</output> : trafficError ? <div className="overview-traffic-state"><p className="form-error" role="alert">{trafficError}</p><Button className="button" type="button" onClick={() => void loadTraffic()}>{m.common.retry}</Button></div> : !state.database?.enabled || !traffic?.enabled ? <p className="overview-traffic-state note">{m.maintenance.trafficDisabled}</p> : !hasHistory ? <p className="overview-traffic-state note">{m.maintenance.noTrafficData}</p> : <dl className="traffic-periods">
+          {periods.map(({ label, value }) => <div className="traffic-period" key={label}>
+            <dt>{label}</dt>
+            <dd className="numeric">{formatBytes(value)}</dd>
+          </div>)}
+        </dl>}
         <Button className="text-link traffic-history-link" type="button" onClick={() => navigate("traffic")}>{copy.history}<Icon name="chevron" /></Button>
       </section>
     </div>
@@ -288,7 +292,8 @@ export function TunnelCard(props: {
   const { m } = useI18n();
   const { tunnel } = props;
   const deleteHintID = useId();
-  const hasRelays = Boolean(tunnel.relays?.length);
+  const relayCount = tunnel.relays?.length ?? 0;
+  const hasRelays = relayCount > 0;
   const compact = useMediaQuery("(max-width:760px)", undefined, { getInitialValueInEffect: false });
   const [factsOpen, setFactsOpen] = useState(!compact);
   useEffect(() => { setFactsOpen(!compact); }, [compact, tunnel.id]);
@@ -303,7 +308,9 @@ export function TunnelCard(props: {
       <Button className={classNames(tab === "clients" && "active")} type="button" aria-current={tab === "clients" ? "page" : undefined} onClick={() => setTab("clients")}>{m.tunnel.clients}</Button>
       <Button className={classNames(tab === "connection" && "active")} type="button" aria-current={tab === "connection" ? "page" : undefined} onClick={() => setTab("connection")}>{m.ui.connection}</Button>
       <Button className={classNames(tab === "protocol" && "active")} type="button" aria-current={tab === "protocol" ? "page" : undefined} onClick={() => setTab("protocol")}>{m.ui.protocolParameters}</Button>
-      <Button className={classNames(tab === "relays" && "active")} type="button" aria-current={tab === "relays" ? "page" : undefined} onClick={() => setTab("relays")}>{m.relays.title}</Button>
+      <Button className={classNames(tab === "relays" && "active")} type="button" aria-current={tab === "relays" ? "page" : undefined} aria-description={hasRelays ? m.relays.configuredCount(relayCount) : undefined} onClick={() => setTab("relays")}>
+        {m.relays.title}{hasRelays && <span aria-hidden="true">{` · ${relayCount}`}</span>}
+      </Button>
     </nav>
     <details className="tunnel-facts" open={!compact || factsOpen} onToggle={(event) => { if (compact) setFactsOpen(event.currentTarget.open); }}><summary>{m.ui.connectionSummary}<Icon name="chevron" /></summary><div className="facts">
       <Fact label={m.tunnel.protocol} value={profileTitle(tunnel.profile)} />
@@ -330,7 +337,7 @@ export function TunnelCard(props: {
         {(tunnel.clients.length > 4 || query !== "") && <input className="client-search" type="search" aria-label={m.ui.searchClients} placeholder={m.ui.searchClients} value={query} onInput={(event) => setQuery(event.currentTarget.value)} />}
         {tunnel.clients.length === 0 ? <div className="empty compact">{m.tunnel.createFirstClient}</div> : <div className="client-table">
           <ClientTableHead />
-          {clients.map((client) => <ClientRow key={client.id} client={client} onConfig={() => props.onClientConfig(client)} onSettings={() => props.onClientSettings(client)} onToggle={() => props.onClientToggle(client)} onDelete={() => props.onClientDelete(client)} />)}
+          {clients.map((client) => <ClientRow key={client.id} client={client} tunnel={tunnel} onConfig={() => props.onClientConfig(client)} onSettings={() => props.onClientSettings(client)} onToggle={() => props.onClientToggle(client)} onDelete={() => props.onClientDelete(client)} />)}
           {!clients.length && <p className="empty compact">{m.ui.noMatches}</p>}
         </div>}
       </section>}
@@ -340,10 +347,18 @@ export function TunnelCard(props: {
 
 function ClientTableHead({ withTunnel = false }: { withTunnel?: boolean }) {
   const { m } = useI18n();
-  return <div className={classNames("client-table-head", withTunnel && "with-tunnel")} aria-hidden="true"><span>{m.ui.device}</span>{withTunnel && <span>{m.dashboard.tunnels}</span>}<span>{m.ui.status}</span><span>{m.tunnel.received}</span><span>{m.tunnel.sent}</span><span>{m.ui.lastActivity}</span><span>{m.ui.actions}</span></div>;
+  return <div className="client-table-head" aria-hidden="true">
+    <span>{m.ui.device}</span>
+    {withTunnel && <span>{m.dashboard.tunnels}</span>}
+    <span>{m.ui.status}</span>
+    <span className="numeric">{m.tunnel.received}</span>
+    <span className="numeric">{m.tunnel.sent}</span>
+    <span>{m.ui.lastActivity}</span>
+    <span>{m.ui.actions}</span>
+  </div>;
 }
 
-export function ClientRow({ client, tunnelName, onConfig, onSettings, onToggle, onDelete }: { client: Client; tunnelName?: string; onConfig: () => void; onSettings: () => void; onToggle: () => void; onDelete: () => void }) {
+export function ClientRow({ client, tunnel, withTunnel = false, onConfig, onSettings, onToggle, onDelete }: { client: Client; tunnel: Tunnel; withTunnel?: boolean; onConfig: () => void; onSettings: () => void; onToggle: () => void; onDelete: () => void }) {
   const { m, locale } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const lastSeen = client.runtime?.last_seen_at || client.last_seen_at;
@@ -351,10 +366,13 @@ export function ClientRow({ client, tunnelName, onConfig, onSettings, onToggle, 
   const visualState = online ? "online" : client.enabled && !client.expired ? "enabled" : "disabled";
   const visualStatus = client.expired ? m.status.expired : online ? m.status.activeNow : client.enabled ? m.common.enabled : m.common.disabled;
   const enableBlocked = !client.enabled && Boolean(client.traffic?.exceeded);
-  return <div className={classNames("client-row", `client-status-${visualState}`, tunnelName && "with-tunnel", expanded && "expanded")}>
+  const relay = tunnel.relays?.find((item) => item.id === client.relay_id);
+  const relayAssignment = relay ? m.relays.clientAssignment(relay.name) : undefined;
+  const relayLabel = client.relay_id && <span className="client-relay-label" title={relayAssignment}>{withTunnel && <span aria-hidden="true">·</span>}<span>{m.relays.clientBadge}</span></span>;
+  return <div className={classNames("client-row", `client-status-${visualState}`, withTunnel && "with-tunnel", expanded && "expanded")}>
     <div className="client-summary">
-      <div className="client-identity"><Icon name="clients" /><div><strong className="client-name" title={client.name}>{client.name}</strong><span className="mono">{client.address}</span></div></div>
-      {tunnelName && <span className="client-tunnel-name" title={tunnelName}><span className="mobile-label">{m.dashboard.tunnels}: </span>{tunnelName}</span>}
+      <div className="client-identity"><Icon name="clients" /><div><strong className="client-name" title={client.name}>{client.name}</strong><span className="mono">{client.address}</span>{!withTunnel && relayLabel}</div></div>
+      {withTunnel && <div className="client-route-meta client-tunnel-context"><span className="client-tunnel-name" title={tunnel.name}><span className="mobile-label">{m.relays.clientTunnel}: </span>{tunnel.name}</span>{relayLabel}</div>}
       <div className="client-status-cell"><Badge tone={client.expired ? "warn" : online ? "ok" : "neutral"}>{visualStatus}</Badge>{client.traffic?.exceeded && <Badge tone="bad">{m.status.limitExceeded}</Badge>}{client.needs_new_config && <Badge tone="warn">{m.common.stale}</Badge>}</div>
       <span className="client-counter rx"><span className="sr-only">{m.tunnel.received}: </span><span className="mobile-label" aria-hidden="true">{m.tunnel.received} </span><span className="counter-value">{client.runtime?.present ? formatBytes(client.runtime.rx_bytes) : "—"}</span></span>
       <span className="client-counter tx"><span className="sr-only">{m.tunnel.sent}: </span><span className="mobile-label" aria-hidden="true">{m.tunnel.sent} </span><span className="counter-value">{client.runtime?.present ? formatBytes(client.runtime.tx_bytes) : "—"}</span></span>
@@ -366,6 +384,7 @@ export function ClientRow({ client, tunnelName, onConfig, onSettings, onToggle, 
     {client.traffic?.exceeded && <p className="client-detail note">{client.expired ? m.ui.expiredQuotaHelp : client.traffic.limit_period === "rolling_30d" ? m.forms.trafficLimitRolling30DaysExceededHelp : m.forms.trafficLimitExceededHelp}</p>}
     {client.notes && <p className="client-detail note">{client.notes}</p>}
     {expanded && <div className="client-expansion" id={`export-${client.id}`}>
+      {relayAssignment && <p className="client-relay-detail">{relayAssignment}</p>}
       <div className="actions"><Button className="button" type="button" onClick={onConfig}><Icon name="qr" />{m.ui.connectClient}</Button><Button className="button" type="button" onClick={onSettings}>{m.common.edit}</Button><Button className="button" type="button" disabled={enableBlocked} title={enableBlocked ? m.forms.trafficLimitEnableBlocked : undefined} onClick={onToggle}>{client.enabled ? m.common.disable : m.common.enable}</Button><Button className="button danger" type="button" onClick={onDelete}>{m.common.delete}</Button></div>
     </div>}
   </div>;

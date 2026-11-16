@@ -315,12 +315,6 @@ func (s *Service) renderAllLocked() error {
 	return nil
 }
 
-func (s *Service) RenderTunnel(tunnelID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.renderTunnelLocked(tunnelID, true)
-}
-
 func (s *Service) renderTunnelLocked(tunnelID string, failOnApply bool) error {
 	state, err := s.initLocked()
 	if err != nil {
@@ -448,17 +442,6 @@ func (s *Service) rollbackRuntimeAndWarp(previous config.State, tunnelID string,
 	return errors.Join(runtimeErr, warpErr)
 }
 
-func (s *Service) UpdateProtocol(profileID string, params config.ProtocolParams) error {
-	state, err := s.Init()
-	if err != nil {
-		return err
-	}
-	if len(state.Tunnels) == 0 {
-		return errors.New("no tunnels configured")
-	}
-	return s.UpdateTunnelProtocol(state.Tunnels[0].ID, profileID, params)
-}
-
 func (s *Service) UpdateTunnelProtocol(tunnelID, profileID string, params config.ProtocolParams) error {
 	return s.updateTunnelProtocol(tunnelID, profileID, params, false)
 }
@@ -531,17 +514,6 @@ func (s *Service) updateTunnelProtocol(tunnelID, profileID string, params config
 	}
 	s.log("info", "tunnel.protocol.updated", "protocol settings updated", tunnelAuditFields(state.Tunnels[idx]), nil)
 	return nil
-}
-
-func (s *Service) RegenerateProtocol(profileID string) error {
-	state, err := s.Init()
-	if err != nil {
-		return err
-	}
-	if len(state.Tunnels) == 0 {
-		return errors.New("no tunnels configured")
-	}
-	return s.RegenerateTunnelProtocol(state.Tunnels[0].ID, profileID)
 }
 
 func (s *Service) RegenerateTunnelProtocol(tunnelID, profileID string) error {

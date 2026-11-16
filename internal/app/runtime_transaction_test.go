@@ -14,6 +14,76 @@ import (
 	"github.com/astronaut808/awg-forge/internal/warp"
 )
 
+func TestTunnelStatusesUseOneCurrentStateDuringProbes(t *testing.T) {
+	svc := New(testServiceConfig(t))
+	first, err := svc.Init()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := svc.CreateTunnel("awg_1_5", "awg15", "10.15.0.0/24", 51825)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requested := append(first.Tunnels, second, config.Tunnel{ID: "removed"})
+	current, err := svc.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamp := time.Unix(1700000000, 0).UTC()
+	current.Tunnels[1].LastApplyAt = stamp
+	statePath := svc.store.StatePath()
+	current.Tunnels[1].LastApplyError = "new apply failure"
+	if err := svc.store.Save(current); err != nil {
+		t.Fatal(err)
+	}
+	nextPath := statePath + ".next"
+	if err := os.Rename(statePath, nextPath); err != nil {
+		t.Fatal(err)
+	}
+	current.Tunnels[1].LastApplyError = "apply failure"
+	if err := svc.store.Save(current); err != nil {
+		t.Fatal(err)
+	}
+	binDir := t.TempDir()
+	t.Setenv("PATH", binDir)
+	t.Setenv("PANEL_TEST_STATE", statePath)
+	t.Setenv("PANEL_TEST_NEXT_STATE", nextPath)
+	const probe = `#!/bin/sh
+[ "$1 $2" = "link show" ] || exit 2
+case "$3" in
+  awg0)
+    if [ -f "$PANEL_TEST_NEXT_STATE" ]; then
+      /bin/mv "$PANEL_TEST_NEXT_STATE" "$PANEL_TEST_STATE" || exit 2
+    fi
+    ;;
+  *) exit 1 ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "ip"), []byte(probe), 0700); err != nil {
+		t.Fatal(err)
+	}
+	statuses, err := svc.TunnelStatuses(requested)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(statuses) != 2 || !statuses[first.Tunnels[0].ID].Up {
+		t.Fatalf("unexpected tunnel statuses: %+v", statuses)
+	}
+	if got := statuses[second.ID]; got.Up || got.LastError != "apply failure" || !got.LastApplyAt.Equal(stamp) {
+		t.Fatalf("second tunnel status used a different state: %+v", got)
+	}
+	statuses, err = svc.TunnelStatuses(requested)
+	if err != nil || statuses[second.ID].LastError != "new apply failure" {
+		t.Fatalf("next lookup: statuses = %+v, error = %v", statuses, err)
+	}
+	if err := os.WriteFile(statePath, []byte("invalid state"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if statuses, err := svc.TunnelStatuses(requested); err == nil || len(statuses) != 0 {
+		t.Fatalf("unreadable state: statuses = %+v, error = %v", statuses, err)
+	}
+}
+
 func TestClientAndProtocolMutationsDoNotReconcileWarp(t *testing.T) {
 	svc, state := runtimeTransactionService(t)
 	recorder := runtimeRecorder{}

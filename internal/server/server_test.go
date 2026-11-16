@@ -2257,6 +2257,13 @@ func TestEventsAPIStreamsPublicState(t *testing.T) {
 	if !strings.Contains(rr.BodyString(), `"authenticated":true`) {
 		t.Fatalf("event stream body does not include public state: %q", rr.BodyString())
 	}
+	stateResponse := httptest.NewRecorder()
+	w.stateAPI(stateResponse, httptest.NewRequest(http.MethodGet, "/api/state", nil))
+	firstEvent, _, complete := strings.Cut(rr.BodyString(), "\n\n")
+	_, eventData, ok := strings.Cut(firstEvent, "\ndata: ")
+	if !complete || !ok || stateResponse.Code != http.StatusOK || eventData != strings.TrimSpace(stateResponse.Body.String()) {
+		t.Fatal("the first SSE event must contain the same public state as /api/state")
+	}
 }
 
 func TestClientImportKeyAPIReturnsVPNKey(t *testing.T) {

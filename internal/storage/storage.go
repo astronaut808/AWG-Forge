@@ -24,10 +24,6 @@ func (s Store) StatePath() string { return filepath.Join(s.dir, "state.json") }
 func (s Store) TunnelDir(tunnel string) string {
 	return filepath.Join(s.dir, "tunnels", tunnel)
 }
-func (s Store) ClientsDir(tunnel string) string {
-	return filepath.Join(s.TunnelDir(tunnel), "clients")
-}
-
 func (s Store) safeTunnelDir(tunnel string) (string, error) {
 	tunnel, err := safePathComponent("tunnel", tunnel)
 	if err != nil {

@@ -2,6 +2,8 @@ package firewall
 
 import (
 	"errors"
+	"os/exec"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -45,6 +47,246 @@ func TestCheckReportsMissingAndDuplicate(t *testing.T) {
 	}
 	if got["forward-egress"] != "ok" {
 		t.Fatalf("forward-egress status = %q, want ok", got["forward-egress"])
+	}
+}
+
+func TestIPTablesCheckReusesListingsAndPreservesRuleReports(t *testing.T) {
+	cfg, state := testConfig(), testState()
+	rules := ExpectedRules(cfg, state)
+	listingArgs := func(rule Rule) string {
+		return strings.Join(append(tableArgs(rule.Table), "-S", rule.Chain), " ")
+	}
+	listings := map[string]string{}
+	for i, rule := range rules {
+		if i == 0 {
+			continue // Missing managed tag.
+		}
+		comment, _ := ruleCommentFromArgs(rule.Args)
+		line := "-A " + rule.Chain + " -m comment --comment " + comment + " -j ACCEPT\n"
+		listings[listingArgs(rule)] += line
+		if i == 2 {
+			listings[listingArgs(rule)] += line
+		}
+	}
+	listCalls := map[string]int{}
+	exactCalls := 0
+	runner := IPTablesRunner{
+		output: func(args ...string) ([]byte, error) {
+			key := strings.Join(args, " ")
+			listCalls[key]++
+			return []byte(listings[key]), nil
+		},
+		run: func(args ...string) error {
+			exactCalls++
+			if got, want := strings.Join(args, " "), "-C "+rules[3].Spec(); got == want {
+				return &exec.ExitError{} // Matching tag, different rule.
+			}
+			return nil
+		},
+	}
+	type uncachedRunner struct{ Runner }
+	want := Check(cfg, state, uncachedRunner{runner})
+	for i, status := range []string{"missing", "ok", "duplicate", "error", "ok", "ok", "ok", "ok"} {
+		if want.Results[i].Status != status {
+			t.Fatalf("rule %d status = %s, want %s", i, want.Results[i].Status, status)
+		}
+	}
+	clear(listCalls)
+	exactCalls = 0
+	got := Check(cfg, state, runner)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("cached report = %+v, want %+v", got, want)
+	}
+	if len(listCalls) != 3 || exactCalls != 8 {
+		t.Fatalf("listing calls = %v, exact calls = %d", listCalls, exactCalls)
+	}
+	for chain, calls := range listCalls {
+		wantCalls := 1
+		if chain == "-S FORWARD" {
+			wantCalls++ // The conflict is classified using a fresh listing.
+		}
+		if calls != wantCalls {
+			t.Fatalf("listing %s called %d times, want %d", chain, calls, wantCalls)
+		}
+	}
+	clear(listings)
+	got = Check(cfg, state, &runner)
+	for _, item := range got.Results {
+		if item.Status != "missing" {
+			t.Fatalf("next check reused stale listing: %+v", item)
+		}
+	}
+}
+
+func TestIPTablesCheckRefreshesRuleMultiplicityOnNextPass(t *testing.T) {
+	for _, test := range []struct {
+		name                    string
+		before, after           int
+		firstStatus, nextStatus string
+	}{
+		{name: "add duplicate", before: 1, after: 2, firstStatus: "ok", nextStatus: "duplicate"},
+		{name: "remove duplicate", before: 2, after: 1, firstStatus: "duplicate", nextStatus: "ok"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg, state := testConfig(), testState()
+			state.Tunnels = state.Tunnels[:1]
+			rules := ExpectedRules(cfg, state)
+			copies := test.before
+			forwardListings := 0
+			runner := IPTablesRunner{
+				output: func(args ...string) ([]byte, error) {
+					if strings.Join(args, " ") != "-S FORWARD" {
+						return nil, nil
+					}
+					forwardListings++
+					return []byte("-A " + rules[2].Spec() + "\n" + strings.Repeat("-A "+rules[3].Spec()+"\n", copies)), nil
+				},
+				run: func(args ...string) error {
+					if strings.Join(args, " ") == "-C "+rules[2].Spec() {
+						copies = test.after
+					}
+					return nil
+				},
+			}
+			first := Check(cfg, state, runner).Results[3]
+			if first.Count != test.before || first.Status != test.firstStatus || forwardListings != 1 {
+				t.Fatalf("first pass: status=%s count=%d listings=%d", first.Status, first.Count, forwardListings)
+			}
+			next := Check(cfg, state, runner).Results[3]
+			if next.Count != test.after || next.Status != test.nextStatus || forwardListings != 2 {
+				t.Fatalf("next pass: status=%s count=%d listings=%d", next.Status, next.Count, forwardListings)
+			}
+		})
+	}
+}
+
+func TestIPTablesCheckRefreshesCachedMiss(t *testing.T) {
+	cfg, state := testConfig(), testState()
+	state.Tunnels = state.Tunnels[:1]
+	rules := ExpectedRules(cfg, state)
+	forwardCalls := 0
+	returnChecks := 0
+	runner := IPTablesRunner{
+		output: func(args ...string) ([]byte, error) {
+			if strings.Join(args, " ") != "-S FORWARD" {
+				return nil, nil
+			}
+			forwardCalls++
+			listing := "-A " + rules[2].Spec() + "\n"
+			if forwardCalls > 1 {
+				listing += "-A " + rules[3].Spec() + "\n"
+			}
+			return []byte(listing), nil
+		},
+		run: func(args ...string) error {
+			if strings.Join(args, " ") == "-C "+rules[3].Spec() {
+				returnChecks++
+			}
+			return nil
+		},
+	}
+	report := Check(cfg, state, runner)
+	if got := report.Results[3]; got.Status != "ok" || got.Count != 1 {
+		t.Fatalf("rule added after the first listing: %+v", got)
+	}
+	if forwardCalls != 2 || returnChecks != 1 {
+		t.Fatalf("FORWARD listings = %d, exact return checks = %d, want 2 and 1", forwardCalls, returnChecks)
+	}
+}
+
+func TestIPTablesCheckRefreshesWhenCachedRuleDisappears(t *testing.T) {
+	cfg, state := testConfig(), testState()
+	state.Tunnels = state.Tunnels[:1]
+	rules := ExpectedRules(cfg, state)
+	forwardCalls := 0
+	returnRemoved := false
+	runner := IPTablesRunner{
+		output: func(args ...string) ([]byte, error) {
+			if strings.Join(args, " ") != "-S FORWARD" {
+				return nil, nil
+			}
+			forwardCalls++
+			listing := "-A " + rules[2].Spec() + "\n"
+			if !returnRemoved {
+				listing += "-A " + rules[3].Spec() + "\n"
+			}
+			return []byte(listing), nil
+		},
+		run: func(args ...string) error {
+			if strings.Join(args, " ") == "-C "+rules[2].Spec() {
+				returnRemoved = true
+			}
+			if strings.Join(args, " ") == "-C "+rules[3].Spec() && returnRemoved {
+				return &exec.ExitError{}
+			}
+			return nil
+		},
+	}
+	report := Check(cfg, state, runner)
+	if got := report.Results[3]; got.Status != "missing" || got.Count != 0 || forwardCalls != 2 {
+		t.Fatalf("rule removed after the first listing: %+v, FORWARD listings = %d", got, forwardCalls)
+	}
+}
+
+func TestIPTablesCheckRetriesFailedListingForNextRule(t *testing.T) {
+	cfg, state := testConfig(), testState()
+	state.Tunnels = state.Tunnels[:1]
+	forwardCalls := 0
+	runner := IPTablesRunner{output: func(args ...string) ([]byte, error) {
+		if strings.Join(args, " ") == "-S FORWARD" {
+			forwardCalls++
+			if forwardCalls == 1 {
+				return nil, errors.New("listing temporarily unavailable")
+			}
+		}
+		return nil, nil
+	}}
+	report := Check(cfg, state, runner)
+	if got := report.Results[2]; got.Status != "error" || got.Message != "iptables -S FORWARD failed: listing temporarily unavailable" {
+		t.Fatalf("first forward result = %+v", got)
+	}
+	if got := report.Results[3]; got.Status != "missing" || forwardCalls != 2 {
+		t.Fatalf("next forward result = %+v, listing calls = %d", got, forwardCalls)
+	}
+}
+
+func TestIPTablesRepairChecksFreshListingsAfterMutation(t *testing.T) {
+	cfg, state := testConfig(), testState()
+	state.Tunnels = state.Tunnels[:1]
+	listings := map[string]string{}
+	runner := IPTablesRunner{
+		output: func(args ...string) ([]byte, error) {
+			return []byte(listings[args[len(args)-1]]), nil
+		},
+		run: func(args ...string) error {
+			if args[0] == "-t" {
+				args = args[2:]
+			}
+			switch args[0] {
+			case "-I":
+				listings[args[1]] += "-A " + args[1] + " " + strings.Join(args[3:], " ") + "\n"
+			case "-C":
+				if !strings.Contains(listings[args[1]], strings.Join(args[2:], " ")+"\n") {
+					return &exec.ExitError{}
+				}
+			default:
+				t.Fatalf("unexpected iptables arguments: %v", args)
+			}
+			return nil
+		},
+	}
+	before := Check(cfg, state, runner)
+	if before.Results[0].Status != "missing" {
+		t.Fatalf("initial result = %+v", before.Results[0])
+	}
+	report, err := Repair(cfg, state, runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range report.Results {
+		if item.Status != "ok" || item.Count != 1 {
+			t.Fatalf("repair reported stale rule data: %+v", item)
+		}
 	}
 }
 

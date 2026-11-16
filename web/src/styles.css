@@ -713,34 +713,23 @@ middle panels span 2 + 1 columns. */
 .overview-table-row:last-child {
   border-bottom:0
 }
-.period-bars {
+.traffic-periods {
   display:grid;
-  gap:22px;
-  margin-top:26px;
+  gap:12px;
+  margin:4px 0 0;
 }
-.period-row {
+.traffic-period {
   display:grid;
-  grid-template-columns:74px minmax(0,1fr) auto;
-  align-items:center;
-  gap:10px;
+  grid-template-columns:minmax(0,1fr) auto;
+  align-items:baseline;
+  gap:12px;
 }
-.period-row>span {
-  color:var(--muted)
+.traffic-period>dt {
+  color:var(--muted);
 }
-.period-row>strong {
-  font-size:13px;
-  font-variant-numeric:tabular-nums;
-}
-.period-track {
-  height:10px;
-  overflow:hidden;
-  border-radius:999px;
-  background:var(--border);
-}
-.period-fill {
-  height:100%;
-  border-radius:inherit;
-  background:var(--accent);
+.traffic-period>dd {
+  margin:0;
+  font-weight:600;
 }
 .overview-traffic>.note {
   margin-top:20px;
@@ -878,6 +867,7 @@ middle panels span 2 + 1 columns. */
   border-radius:var(--radius-sm);
   background:var(--subtle);
 }
+.tunnel-tabs { flex-wrap:wrap; }
 .tunnel-tabs button,.subtabs .button {
   min-height:34px;
   padding:0 12px;
@@ -941,16 +931,27 @@ middle panels span 2 + 1 columns. */
 .clients-toolbar .button {
   margin-left:auto
 }
+.client-table {
+  --client-table-min-width:760px;
+  --client-table-columns:minmax(140px,2fr) minmax(96px,1.15fr) minmax(88px,.75fr) minmax(88px,.75fr) minmax(88px,1fr) 156px;
+}
+.client-table.has-tunnel {
+  --client-table-min-width:900px;
+  --client-table-columns:minmax(160px,1.6fr) minmax(110px,.8fr) minmax(100px,1fr) minmax(88px,.7fr) minmax(88px,.7fr) minmax(90px,1fr) 156px;
+}
 .client-table-head,.client-summary {
-  min-width:760px;
+  min-width:var(--client-table-min-width);
   display:grid;
-  grid-template-columns:2fr 1.15fr .75fr .75fr 1fr auto;
+  grid-template-columns:var(--client-table-columns);
   align-items:center;
   column-gap:14px;
 }
+.client-table-head>span:last-child {
+  text-align:right;
+}
 .client-row {
   display:block;
-  min-width:760px;
+  min-width:var(--client-table-min-width);
   padding:0;
   border-bottom:1px solid var(--border);
   background:var(--surface);
@@ -975,11 +976,14 @@ middle panels span 2 + 1 columns. */
   min-width:0
 }
 .client-name,.client-identity .mono {
-  display:block;
+  display:block
+}
+.client-name {
   overflow:hidden;
   text-overflow:ellipsis;
   white-space:nowrap;
 }
+.client-identity .mono { overflow-wrap:anywhere; }
 .client-identity .mono,.client-lastseen,.client-detail {
   color:var(--muted);
   font-size:12px;
@@ -993,9 +997,9 @@ middle panels span 2 + 1 columns. */
 }
 .client-status-cell .badge { max-width:100%; white-space:normal; overflow-wrap:anywhere; }
 .client-counter {
-  justify-self:end;
+  text-align:right;
   font-variant-numeric:tabular-nums;
-  white-space:nowrap;
+  overflow-wrap:anywhere;
 }
 .client-actions {
   display:flex;
@@ -1016,6 +1020,12 @@ middle panels span 2 + 1 columns. */
   padding:14px 16px;
   border-top:1px solid var(--border);
   background:var(--subtle);
+}
+.client-relay-detail {
+  margin:0 0 10px;
+  color:var(--muted);
+  font-size:12px;
+  overflow-wrap:anywhere;
 }
 .all-clients {
   padding:20px;
@@ -1305,15 +1315,6 @@ middle panels span 2 + 1 columns. */
   padding-top:14px;
   border-top:1px solid var(--border);
 }
-.danger-zone {
-  padding:18px;
-  border:1px solid color-mix(in srgb,var(--bad),transparent 50%);
-  border-radius:var(--radius);
-  background:var(--bad-soft);
-}
-.danger-zone h3 {
-  color:var(--bad)
-}
 /* QR, maintenance and dialogs */
 .config-options {
   display:grid;
@@ -1330,30 +1331,6 @@ middle panels span 2 + 1 columns. */
 .qr-config-option {
   display:grid;
   gap:14px;
-}
-.segmented {
-  display:inline-flex;
-  overflow:hidden;
-  border:1px solid var(--border);
-  border-radius:var(--radius-sm);
-  background:var(--subtle);
-}
-.segmented button {
-  min-height:36px;
-  padding:0 12px;
-  color:var(--muted);
-  border:0;
-  border-right:1px solid var(--border);
-  background:transparent;
-  cursor:pointer;
-}
-.segmented button:last-child {
-  border-right:0
-}
-.segmented button.active {
-  color:var(--accent-strong);
-  background:var(--accent-soft);
-  font-weight:650;
 }
 .qr-panel {
   min-height:240px;
@@ -1751,19 +1728,20 @@ middle panels span 2 + 1 columns. */
 .select-menu .select-option[data-combobox-selected],.select-menu .select-option:hover { background:var(--hover); }
 .select-menu .select-option[data-combobox-disabled] { color:var(--faint); opacity:.6; }
 .mantine-Modal-body.dialog-body { overscroll-behavior:contain; }
-.client-table.has-tunnel .client-table-head,.client-row.with-tunnel .client-summary {
-  min-width:900px;
-  grid-template-columns:minmax(160px,1.6fr) minmax(90px,.8fr) minmax(100px,1fr) minmax(70px,.7fr) minmax(70px,.7fr) minmax(100px,1fr) minmax(170px,max-content);
+.client-route-meta {
+  display:flex;
+  align-items:baseline;
+  gap:4px;
+  min-width:0;
 }
-.client-row.with-tunnel { min-width:900px; }
-.client-table-head>span:nth-child(3),.client-table-head>span:nth-child(4) {
-  text-align:right
-}
-.client-table-head.with-tunnel>span:nth-child(3) {
-  text-align:left
-}
-.client-table-head.with-tunnel>span:nth-child(4),.client-table-head.with-tunnel>span:nth-child(5) {
-  text-align:right
+.client-relay-label {
+  display:inline-flex;
+  align-items:baseline;
+  flex:none;
+  gap:4px;
+  color:var(--muted);
+  font-size:11px;
+  white-space:nowrap;
 }
 .client-tunnel-name {
   min-width:0;
@@ -1812,12 +1790,12 @@ middle panels span 2 + 1 columns. */
 .protocol-group .form-control .mantine-Input-input {
   font-variant-numeric:tabular-nums
 }
-.regenerate-section p,.danger-zone p {
+.regenerate-section p {
   margin-top:6px;
   color:var(--muted);
   font-size:13px;
 }
-.regenerate-section .button,.danger-zone .button {
+.regenerate-section .button {
   margin-top:12px
 }
 @container(max-width:840px) {
@@ -1918,9 +1896,6 @@ middle panels span 2 + 1 columns. */
   }
   .overview-traffic-state {
     min-height:84px
-  }
-  .period-bars {
-    margin-top:12px
   }
   .traffic-history-link {
     padding-top:16px
@@ -2023,7 +1998,7 @@ middle panels span 2 + 1 columns. */
     grid-template-columns:minmax(0,1fr) 40px;
     grid-template-areas:'identity action' 'tunnel tunnel' 'status status' 'rx rx' 'tx tx' 'seen seen';
   }
-  .client-tunnel-name {
+  .client-tunnel-context {
     grid-area:tunnel;
     font-size:12px;
   }
@@ -2064,10 +2039,6 @@ middle panels span 2 + 1 columns. */
   }
   .overview-metric {
     padding:17px
-  }
-  .period-row {
-    grid-template-columns:62px minmax(0,1fr) auto;
-    gap:8px;
   }
   .tunnel-head {
     flex-wrap:wrap

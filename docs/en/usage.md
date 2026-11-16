@@ -60,7 +60,7 @@ Client rename and notes are metadata-only changes and do not make configs stale.
 
 A client row shows `Enabled`, `Disabled`, `Expired`, or `Active now`. An enabled client is shown as active when its latest handshake is no more than two minutes old. The last activity and traffic columns show the latest handshake time and runtime counters when available.
 
-If SQLite is enabled, client rows show total recorded traffic. `Maintenance` -> `Traffic` shows aggregate traffic history for today, 7 days, and 30 days across all clients and tunnels. Values are sampled from runtime counters once per minute; the first sample is treated as a baseline.
+If SQLite is enabled, client rows show total recorded traffic. The overview lists the combined received and sent totals for today, 7 days, and 30 days. The `Traffic` section shows the detailed history across clients and tunnels. Values are sampled from runtime counters once per minute; the first sample is treated as a baseline.
 
 When SQLite is enabled, client creation and client settings include an optional traffic limit. `Unlimited` means no limit; `Limit` accepts MiB, GiB, or TiB. Choose `Lifetime` for all recorded traffic or `Rolling 30 days (UTC)` for a sliding quota. Existing limits are lifetime limits. When recorded traffic reaches the active limit, awg-forge disables the client and the row shows `limit exceeded`. Attempts to enable the client are rejected while the active period is over its limit. The 30-day window advances as UTC-day aggregates age out. A client disabled by that quota is re-enabled automatically when its rolling usage drops below the limit; a manually disabled client is never auto-enabled.
 

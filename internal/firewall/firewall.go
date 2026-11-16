@@ -119,6 +119,12 @@ func Check(cfg config.Config, state config.State, runner Runner) Report {
 	if !cfg.ApplyConfig {
 		return report
 	}
+	switch iptables := runner.(type) {
+	case IPTablesRunner:
+		runner = iptables.withChainListings()
+	case *IPTablesRunner:
+		runner = iptables.withChainListings()
+	}
 	for _, rule := range ExpectedRules(cfg, state) {
 		item := RuleReport{
 			Tunnel: rule.Tunnel,
@@ -288,7 +294,24 @@ type IPTablesRunner struct {
 	run    func(args ...string) error
 }
 
+type chainListingRunner struct {
+	IPTablesRunner
+	listings map[[2]string][]byte
+}
+
+func (r IPTablesRunner) withChainListings() chainListingRunner {
+	return chainListingRunner{IPTablesRunner: r, listings: make(map[[2]string][]byte)}
+}
+
+func (r chainListingRunner) Count(rule Rule) (int, error) {
+	return r.count(rule, r.listings)
+}
+
 func (r IPTablesRunner) Count(rule Rule) (int, error) {
+	return r.count(rule, nil)
+}
+
+func (r IPTablesRunner) count(rule Rule, listings map[[2]string][]byte) (int, error) {
 	comment, managed := ruleCommentFromArgs(rule.Args)
 	if !managed {
 		exists, err := r.exists(rule)
@@ -297,17 +320,28 @@ func (r IPTablesRunner) Count(rule Rule) (int, error) {
 		}
 		return 1, nil
 	}
+	key := [2]string{rule.Table, rule.Chain}
+	if count := countRuleComments(listings[key], comment); count > 0 {
+		exists, err := r.exists(rule)
+		if err != nil {
+			return 0, err
+		}
+		if exists {
+			// Presence is live, while the number of copies is from this pass's listing.
+			return count, nil
+		}
+	}
+	// Classify missing and conflicting rules using a fresh listing.
 	args := append(tableArgs(rule.Table), "-S", rule.Chain)
 	out, err := r.commandOutput(args...)
 	if err != nil {
+		delete(listings, key)
 		return 0, fmt.Errorf("iptables %s failed: %w", strings.Join(args, " "), err)
 	}
-	count := 0
-	for _, line := range strings.Split(string(out), "\n") {
-		if lineHasComment(line, comment) {
-			count++
-		}
+	if listings != nil {
+		listings[key] = out
 	}
+	count := countRuleComments(out, comment)
 	if count == 0 {
 		return 0, nil
 	}
@@ -319,6 +353,16 @@ func (r IPTablesRunner) Count(rule Rule) (int, error) {
 		return 0, fmt.Errorf("managed firewall tag %q conflicts with the expected rule", comment)
 	}
 	return count, nil
+}
+
+func countRuleComments(out []byte, comment string) int {
+	count := 0
+	for _, line := range strings.Split(string(out), "\n") {
+		if lineHasComment(line, comment) {
+			count++
+		}
+	}
+	return count
 }
 
 func (r IPTablesRunner) Delete(rule Rule) error {

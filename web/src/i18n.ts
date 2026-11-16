@@ -114,6 +114,10 @@ const en = {
   },
   relays: {
     title: "UDP relays",
+    configuredCount: (count: number) => `Configured relays: ${count}`,
+    clientBadge: "UDP relay",
+    clientTunnel: "Tunnel",
+    clientAssignment: (name: string) => `Assigned relay: ${name}`,
     add: "Add relay",
     empty: "Add a relay to give clients another address for this tunnel.",
     name: "Relay name",
@@ -509,6 +513,10 @@ const ru: Messages = {
   },
   relays: {
     title: "UDP-реле",
+    configuredCount: (count: number) => `Настроено реле: ${count}`,
+    clientBadge: "UDP-реле",
+    clientTunnel: "Туннель",
+    clientAssignment: (name: string) => `Назначенное реле: ${name}`,
     add: "Добавить реле",
     empty: "Добавьте реле, чтобы у клиентов появился дополнительный адрес для подключения к туннелю.",
     name: "Название реле",
