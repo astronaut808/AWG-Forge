@@ -327,6 +327,7 @@ func (r IPTablesRunner) count(rule Rule, listings map[[2]string][]byte) (int, er
 			return 0, err
 		}
 		if exists {
+			// Presence is live, while the number of copies is from this pass's listing.
 			return count, nil
 		}
 	}

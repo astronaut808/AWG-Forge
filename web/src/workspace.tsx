@@ -368,10 +368,10 @@ export function ClientRow({ client, tunnel, withTunnel = false, onConfig, onSett
   const enableBlocked = !client.enabled && Boolean(client.traffic?.exceeded);
   const relay = tunnel.relays?.find((item) => item.id === client.relay_id);
   const relayAssignment = relay ? m.relays.clientAssignment(relay.name) : undefined;
-  const relayLabel = client.relay_id && <span className="client-relay-label" title={relayAssignment}><span aria-hidden="true">·</span><span>{m.relays.clientBadge}</span></span>;
+  const relayLabel = client.relay_id && <span className="client-relay-label" title={relayAssignment}>{withTunnel && <span aria-hidden="true">·</span>}<span>{m.relays.clientBadge}</span></span>;
   return <div className={classNames("client-row", `client-status-${visualState}`, withTunnel && "with-tunnel", expanded && "expanded")}>
     <div className="client-summary">
-      <div className="client-identity"><Icon name="clients" /><div><strong className="client-name" title={client.name}>{client.name}</strong><div className="client-route-meta"><span className="mono">{client.address}</span>{!withTunnel && relayLabel}</div></div></div>
+      <div className="client-identity"><Icon name="clients" /><div><strong className="client-name" title={client.name}>{client.name}</strong><span className="mono">{client.address}</span>{!withTunnel && relayLabel}</div></div>
       {withTunnel && <div className="client-route-meta client-tunnel-context"><span className="client-tunnel-name" title={tunnel.name}><span className="mobile-label">{m.relays.clientTunnel}: </span>{tunnel.name}</span>{relayLabel}</div>}
       <div className="client-status-cell"><Badge tone={client.expired ? "warn" : online ? "ok" : "neutral"}>{visualStatus}</Badge>{client.traffic?.exceeded && <Badge tone="bad">{m.status.limitExceeded}</Badge>}{client.needs_new_config && <Badge tone="warn">{m.common.stale}</Badge>}</div>
       <span className="client-counter rx"><span className="sr-only">{m.tunnel.received}: </span><span className="mobile-label" aria-hidden="true">{m.tunnel.received} </span><span className="counter-value">{client.runtime?.present ? formatBytes(client.runtime.rx_bytes) : "—"}</span></span>

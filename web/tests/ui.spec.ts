@@ -988,6 +988,13 @@ test("UDP relay installation, client assignment, and configuration export", asyn
   await expect(direct.getByText(m.relays.clientBadge, { exact: true })).toHaveCount(0);
   const assigned = (await state()).clients.find((item) => item.name === "Relayed client")!;
   expect(assigned.relay_id).toBe(relayID);
+  await expect(client.locator(".client-identity .mono")).toHaveText(assigned.address);
+  await expect.poll(() => client.locator(".client-identity").evaluate((identity) => {
+    const address = identity.querySelector(".mono") as HTMLElement;
+    const relayLabel = identity.querySelector(".client-relay-label")!;
+    return address.scrollWidth <= address.clientWidth + 1 &&
+      relayLabel.getBoundingClientRect().top >= address.getBoundingClientRect().bottom - 1;
+  })).toBe(true);
   await client.getByRole("button", { name: m.ui.clientActions, exact: true }).click();
   await expect(client.getByText(m.relays.clientAssignment(host), { exact: true })).toBeVisible();
   await client.getByRole("button", { name: m.ui.connectClient, exact: true }).click();

@@ -118,6 +118,48 @@ func TestIPTablesCheckReusesListingsAndPreservesRuleReports(t *testing.T) {
 	}
 }
 
+func TestIPTablesCheckRefreshesRuleMultiplicityOnNextPass(t *testing.T) {
+	for _, test := range []struct {
+		name                    string
+		before, after           int
+		firstStatus, nextStatus string
+	}{
+		{name: "add duplicate", before: 1, after: 2, firstStatus: "ok", nextStatus: "duplicate"},
+		{name: "remove duplicate", before: 2, after: 1, firstStatus: "duplicate", nextStatus: "ok"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg, state := testConfig(), testState()
+			state.Tunnels = state.Tunnels[:1]
+			rules := ExpectedRules(cfg, state)
+			copies := test.before
+			forwardListings := 0
+			runner := IPTablesRunner{
+				output: func(args ...string) ([]byte, error) {
+					if strings.Join(args, " ") != "-S FORWARD" {
+						return nil, nil
+					}
+					forwardListings++
+					return []byte("-A " + rules[2].Spec() + "\n" + strings.Repeat("-A "+rules[3].Spec()+"\n", copies)), nil
+				},
+				run: func(args ...string) error {
+					if strings.Join(args, " ") == "-C "+rules[2].Spec() {
+						copies = test.after
+					}
+					return nil
+				},
+			}
+			first := Check(cfg, state, runner).Results[3]
+			if first.Count != test.before || first.Status != test.firstStatus || forwardListings != 1 {
+				t.Fatalf("first pass: status=%s count=%d listings=%d", first.Status, first.Count, forwardListings)
+			}
+			next := Check(cfg, state, runner).Results[3]
+			if next.Count != test.after || next.Status != test.nextStatus || forwardListings != 2 {
+				t.Fatalf("next pass: status=%s count=%d listings=%d", next.Status, next.Count, forwardListings)
+			}
+		})
+	}
+}
+
 func TestIPTablesCheckRefreshesCachedMiss(t *testing.T) {
 	cfg, state := testConfig(), testState()
 	state.Tunnels = state.Tunnels[:1]

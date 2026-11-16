@@ -976,11 +976,14 @@ middle panels span 2 + 1 columns. */
   min-width:0
 }
 .client-name,.client-identity .mono {
-  display:block;
+  display:block
+}
+.client-name {
   overflow:hidden;
   text-overflow:ellipsis;
   white-space:nowrap;
 }
+.client-identity .mono { overflow-wrap:anywhere; }
 .client-identity .mono,.client-lastseen,.client-detail {
   color:var(--muted);
   font-size:12px;
