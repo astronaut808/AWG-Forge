@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.21.1 - 2026-11-16
+
 ### Changed
 
 - Show assigned UDP relays in client rows and the relay count in the tunnel tab.
