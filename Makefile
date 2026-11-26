@@ -2,11 +2,12 @@ COMPOSE ?= docker compose
 CONTAINER ?= awg-forge
 IMAGE ?= awg-forge:local
 GITLEAKS_LOG_OPTS ?= HEAD
-GOVULNCHECK_VERSION ?= v1.9.0
+GOVULNCHECK_VERSION ?= $(shell cat build/govulncheck.version)
 ACTIONLINT_VERSION ?= v1.7.12
 NPM ?= npm
 
 .PHONY: test test-race test-shell vet build lint-go lint-js lint-shell lint-docker lint-actions lint-actions-security quality ui-build ui-check ui-test api-contract ci vuln-check security security-fast docker-smoke docker-runtime-smoke docker-relay-smoke updates updates-local updates-docker update-amneziawg-refs docker-build docker-up docker-down
+.PHONY: mod-check vuln-check-app vuln-check-runtime
 
 test:
 	go test ./...
@@ -15,7 +16,7 @@ test-race:
 	go test -race ./...
 
 test-shell:
-	bash -n install.sh uninstall.sh scripts/*.sh
+	for script in install.sh uninstall.sh scripts/*.sh; do bash -n "$$script" || exit; done
 	bash scripts/test-install.sh
 	bash scripts/test-install-dependencies.sh
 	bash scripts/test-upgrade.sh
@@ -27,6 +28,10 @@ vet:
 
 build:
 	go build ./...
+
+mod-check:
+	go mod tidy -diff
+	go mod verify
 
 lint-go:
 	golangci-lint run
@@ -62,11 +67,15 @@ api-contract:
 	$(NPM) run api:contract
 	go test ./internal/server -run '^Test(API(ErrorResponseContract|ContractRegenerateProtocolRejectsMalformedJSON|ContractRelayLifecycle)|Idempotency|OpenAPIContract)'
 
-ci: ui-check ui-test api-contract test test-shell vet build lint-go lint-js quality
+ci: mod-check ui-check ui-test api-contract test test-shell vet build lint-go lint-js quality
 
-vuln-check:
-	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
-	GOVULNCHECK_VERSION=$(GOVULNCHECK_VERSION) bash scripts/check-amneziawg-runtime-vulns.sh
+vuln-check: vuln-check-app vuln-check-runtime
+
+vuln-check-app:
+	go run "golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)" ./...
+
+vuln-check-runtime:
+	GOVULNCHECK_VERSION="$(GOVULNCHECK_VERSION)" bash scripts/check-amneziawg-runtime-vulns.sh
 
 security:
 	$(MAKE) vuln-check lint-shell lint-docker lint-actions lint-actions-security

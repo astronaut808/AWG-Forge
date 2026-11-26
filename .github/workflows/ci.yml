@@ -27,7 +27,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
           cache: true
@@ -40,14 +40,14 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 26.13.0
+          node-version: 26.13.1
           package-manager-cache: false
           cache: npm
 
       - name: Set up npm
         env:
-          NPM_VERSION: "12.2.1"
-          NPM_SHA512: "6ca0a6151553fc107e60f1186d9c10d57508dcde6de31292a54d4cc4e8e8ef3de25b3281274657442d7115d10df930bb3794ddcb0681cdfd9d317189abf7b63d"
+          NPM_VERSION: "12.2.3"
+          NPM_SHA512: "a2f98d4517bbe89bdca7513a88e78f43a1fd66be1730eaea81f69e18d86d46f3f75d29762e8fdaf42d4de7f8d194b2ebb2a09e9bfa268067591e96796baca7d5"
         run: |
           set -euo pipefail
           work=$(mktemp -d)
@@ -65,6 +65,9 @@ jobs:
 
       - name: Download modules
         run: go mod download
+
+      - name: Verify Go module manifests and checksums
+        run: make mod-check
 
       - name: Install frontend dependencies
         run: npm ci

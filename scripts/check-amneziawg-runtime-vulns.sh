@@ -4,7 +4,7 @@ export GOWORK=off
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 refs_file="$root/build/amneziawg.refs"
-govulncheck_version=${GOVULNCHECK_VERSION:-v1.9.0}
+govulncheck_version=${GOVULNCHECK_VERSION:-$(cat "$root/build/govulncheck.version")}
 upstream=https://github.com/amnezia-vpn/amneziawg-go
 
 go_ref=$(awk -F= '$1 == "AMNEZIAWG_GO_REF" { print $2 }' "$refs_file")

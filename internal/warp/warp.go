@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/astronaut808/awg-forge/internal/config"
+	"github.com/astronaut808/awg-forge/internal/protocol"
 )
 
 const (
@@ -109,7 +110,69 @@ func Validate(w config.Warp) error {
 	if w.PersistentKeepalive < 0 || w.PersistentKeepalive > 65535 {
 		return errors.New("WARP persistent keepalive must be between 0 and 65535")
 	}
+	for _, field := range []struct{ name, value string }{
+		{"PrivateKey", w.PrivateKey}, {"PublicKey", w.PeerPublicKey},
+		{"PresharedKey", w.PresharedKey}, {"Endpoint", w.Endpoint},
+	} {
+		if err := validateSingleLine(field.name, field.value); err != nil {
+			return err
+		}
+	}
+	return validateProtocolParams(w.ProtocolParams)
+}
+
+func validateProtocolParams(params config.ProtocolParams) error {
+	for _, key := range protocolParamKeys {
+		value := params[key]
+		if err := validateSingleLine(key, value); err != nil {
+			return err
+		}
+		switch key {
+		case "I1", "I2", "I3", "I4", "I5":
+			if err := protocol.ValidateImportedSignature(key, configValue(value)); err != nil {
+				return err
+			}
+		}
+	}
+	if _, err := junkParam(params, "Jc"); err != nil {
+		return err
+	}
+	jmin, err := junkParam(params, "Jmin")
+	if err != nil {
+		return err
+	}
+	jmax, err := junkParam(params, "Jmax")
+	if err != nil {
+		return err
+	}
+	if jmin > jmax {
+		return errors.New("parameter Jmin must be less than or equal to Jmax")
+	}
 	return nil
+}
+
+func validateSingleLine(key, value string) error {
+	if strings.ContainsAny(value, "\x00\r\n") {
+		return fmt.Errorf("%s must be a single config line", key)
+	}
+	return nil
+}
+
+func configValue(raw string) string {
+	value, _, _ := strings.Cut(raw, "#")
+	return strings.TrimSpace(value)
+}
+
+func junkParam(params config.ProtocolParams, key string) (uint64, error) {
+	value := configValue(params[key])
+	if value == "" {
+		return 0, nil // The runtime starts each new WARP interface with zero junk parameters.
+	}
+	n, err := strconv.ParseUint(strings.TrimPrefix(value, "+"), 10, 16)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be between 0 and 65535", key)
+	}
+	return n, nil
 }
 
 func RenderConfig(w config.Warp, routes []TunnelRoute) (string, error) {
@@ -146,7 +209,7 @@ func RenderConfig(w config.Warp, routes []TunnelRoute) (string, error) {
 	writeLine(&b, "PrivateKey", w.PrivateKey)
 	writeLine(&b, "Address", address)
 	for _, key := range protocolParamKeys {
-		if value := w.ProtocolParams[key]; strings.TrimSpace(value) != "" {
+		if value := w.ProtocolParams[key]; configValue(value) != "" {
 			writeLine(&b, key, value)
 		}
 	}

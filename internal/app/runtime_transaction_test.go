@@ -84,6 +84,37 @@ esac
 	}
 }
 
+func TestInvalidWarpImportPreservesStateAndRuntime(t *testing.T) {
+	svc, _ := runtimeTransactionService(t)
+	recorder := runtimeRecorder{}
+	svc.runtimeOps = recorder.operations()
+	statePath := svc.store.StatePath()
+	before, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.ImportWarpConfig(`[Interface]
+PrivateKey = replacement-private-key
+Address = 172.16.0.3/32
+Jmin = 75
+Jmax = 60
+
+[Peer]
+PublicKey = replacement-peer-key
+Endpoint = warp.example:2408
+`)
+	if err == nil || !strings.Contains(err.Error(), "Jmin") {
+		t.Fatalf("expected WARP junk bounds error, got %v", err)
+	}
+	after, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) || len(recorder.routeCounts) != 0 {
+		t.Fatal("rejected WARP import modified saved state or invoked the runtime")
+	}
+}
+
 func TestClientAndProtocolMutationsDoNotReconcileWarp(t *testing.T) {
 	svc, state := runtimeTransactionService(t)
 	recorder := runtimeRecorder{}

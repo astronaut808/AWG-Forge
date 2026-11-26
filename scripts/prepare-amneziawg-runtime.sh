@@ -35,7 +35,7 @@ for arch in amd64 arm64; do
     echo "runtime imports an unaudited SDK on linux/$arch" >&2
     exit 1
   fi
-  for dependency in golang.org/x/crypto@v0.58.0 golang.org/x/net@v0.62.0 golang.org/x/sys@v0.49.0; do
+  for dependency in golang.org/x/crypto@v0.59.0 golang.org/x/net@v0.63.0 golang.org/x/sys@v0.50.0; do
     if ! grep -Fxq "$dependency" <<< "$modules"; then
       echo "unexpected runtime dependency version on linux/$arch: $dependency" >&2
       exit 1

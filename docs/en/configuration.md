@@ -315,7 +315,7 @@ If WARP is not configured yet, awg-forge automatically registers Cloudflare WARP
 
 `Maintenance` -> `WARP` is for operations: checking status, manually registering or re-registering WARP, restarting `warp0`, deleting WARP config, or importing a config manually.
 
-Manual import is only a fallback when you already have a Cloudflare WARP WireGuard/AmneziaWG config from an external generator or WARP client tool. In that case, open `Manual WARP config import`, paste the full config, and click `Import WARP config`.
+Manual import is only a fallback when you already have a Cloudflare WARP WireGuard/AmneziaWG config from an external generator or WARP client tool. In that case, open `Manual WARP config import`, paste the full config, and click `Import WARP config`. Optional AmneziaWG parameters are checked before the active config is replaced. `Jmin` must be at most `Jmax`, and each `I1–I5` signature must have non-negative lengths and a total size of at most 65,535 bytes. The same checks run during backup restore and before applying a stored WARP config.
 
 Existing client configs do not need to change when only egress mode changes, because the client still connects to the same AmneziaWG tunnel endpoint. Runtime routing/NAT changes on the server side.
 
@@ -325,7 +325,7 @@ Doctor checks WARP runtime, policy rules, and WARP-aware firewall expectations f
 
 AWG 3.x is included in the standard Docker image as one experimental profile. Selecting it in the Web UI is the explicit opt-in: the upstream 3.x implementation is still evolving, so enable and use the complete profile at your own risk. Existing tunnels are not converted, and AWG 2.0 remains the default and supported production profile.
 
-The image pins `amneziawg-go` 3.1.20260828 and `amneziawg-tools` 3.1.20260812, forces AWG 3.x through userspace, and exposes the `awg_3` profile without a separate environment flag, image, or Compose override. The profile reuses the same generated QUIC Initial-like `I1` mechanism as AWG 2.0.
+The image pins `amneziawg-go` at commit `08fe3d33bbb1` and `amneziawg-tools` 3.1.20260812, forces AWG 3.x through userspace, and exposes the `awg_3` profile without a separate environment flag, image, or Compose override. The profile reuses the same generated QUIC Initial-like `I1` mechanism as AWG 2.0.
 
 Client export supports downloaded `.conf`, the AmneziaWG QR containing that raw config, a typed structured AmneziaVPN QR, and `vpn://` containing base64url-encoded raw `.conf`. AmneziaVPN 5.0.1.5 is the minimum supported target for AWG 3.1 interoperability; do not use 5.0.0.5. `.conf` remains the stable fallback for client- or platform-specific import failures.
 

@@ -6,6 +6,8 @@ The installer offers to prepare missing dependencies on Ubuntu 22.04/24.04/26.04
 
 TUN must be available at `/dev/net/tun`. The installer attempts `modprobe tun` and stops before creating project files if the VPS provider or kernel does not provide TUN. The AmneziaWG userspace runtime is bundled in the image; host AmneziaWG packages or a DKMS module are not required. Provider firewall rules and public UDP/TCP reachability remain the operator's responsibility.
 
+If the host already provides the AmneziaWG kernel module, AWG 1.x, AWG 2.0, and the WARP interface can use it. Update the host module separately to `v3.1.20261113-02` or newer. [GHSA-xw5v-mhq7-h2w7](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/security/advisories/GHSA-xw5v-mhq7-h2w7)
+
 On SELinux hosts (typically CentOS/RHEL), new installations label only the private `data/` volume using `:Z`. SELinux stays enabled. For an existing custom Compose file, configure the appropriate volume labels manually; the installer does not rewrite it. RHEL must have access to its normal package repositories (subscription or an equivalent mirror).
 
 ```bash

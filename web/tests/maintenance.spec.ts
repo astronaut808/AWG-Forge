@@ -35,6 +35,70 @@ async function openMaintenance(page: Page, m: Messages, session: Session) {
   await page.getByRole("button", { name: m.common.maintenance, exact: true }).click();
 }
 
+test("WARP import rejects invalid replacements and allows a corrected retry", async ({ page, m, session }) => {
+  await openMaintenance(page, m, session);
+  await page.locator(".subtabs").getByRole("button", { name: m.maintenance.tabs.warp, exact: true }).click();
+  const summary = await page.request.get("/api/warp");
+  expect(summary.ok()).toBe(true);
+  expect((await summary.json()).warp.configured).toBe(false);
+  await page.getByText(m.warp.manualImport, { exact: true }).click();
+  const input = page.getByLabel(m.warp.wireGuardConfig, { exact: true });
+  const submit = page.getByRole("button", { name: m.warp.importConfig, exact: true });
+  const privateKey = Buffer.alloc(32, 1).toString("base64");
+  const peerKey = Buffer.alloc(32, 2).toString("base64");
+  const original = "192.0.2.10:2408";
+  const replacement = "192.0.2.20:2408";
+  const config = `[Interface]
+PrivateKey = ${privateKey}
+Address = 172.16.0.2/32
+Jc = 4
+Jmin = 40
+Jmax = 40
+I1 = <b 0x0102>
+
+[Peer]
+PublicKey = ${peerKey}
+Endpoint = ${original}
+`;
+  const corrected = config.replace(original, replacement);
+  const importConfig = async (value: string) => {
+    await input.fill(value);
+    const [response] = await Promise.all([
+      page.waitForResponse((res) => res.request().method() === "POST" && new URL(res.url()).pathname === "/api/warp/import"),
+      submit.click(),
+    ]);
+    return response;
+  };
+
+  try {
+    expect((await importConfig(config)).status()).toBe(200);
+    await expect(page.getByText(original, { exact: true })).toBeVisible();
+
+    for (const invalid of [corrected.replace("Jmin = 40", "Jmin = 41"), corrected.replace("0x0102", "0x123")]) {
+      const response = await importConfig(invalid);
+      expect(response.status()).toBe(400);
+      const failure = await response.json();
+      expect(failure.code).toBe("warp_import_failed");
+      expect(JSON.stringify(failure).includes(privateKey)).toBe(false);
+      await expect(page.locator(".toast")).toHaveText(failure.error);
+      expect((await input.inputValue()) === invalid).toBe(true);
+      await expect(page.getByText(original, { exact: true })).toBeVisible();
+      const saved = await page.request.get("/api/warp");
+      expect(saved.ok()).toBe(true);
+      expect((await saved.json()).warp.endpoint).toBe(original);
+    }
+
+    expect((await importConfig(corrected)).status()).toBe(200);
+    await expect(page.getByText(replacement, { exact: true })).toBeVisible();
+    await openMaintenance(page, m, session);
+    await page.locator(".subtabs").getByRole("button", { name: m.maintenance.tabs.warp, exact: true }).click();
+    await expect(page.getByText(replacement, { exact: true })).toBeVisible();
+  } finally {
+    const response = await page.request.delete("/api/warp", { headers: { Origin: new URL(page.url()).origin } });
+    expect(response.ok()).toBe(true);
+  }
+});
+
 test("audit retry exposes initial failure instead of an empty log", async ({ page, m, session }) => {
   let attempts = 0;
   await page.route("**/api/audit-log?tail=100", async (route) => {
