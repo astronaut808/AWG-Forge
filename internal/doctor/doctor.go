@@ -17,6 +17,7 @@ import (
 	"github.com/astronaut808/awg-forge/internal/firewall"
 	"github.com/astronaut808/awg-forge/internal/render"
 	"github.com/astronaut808/awg-forge/internal/sqldb"
+	"github.com/astronaut808/awg-forge/internal/warp"
 	"github.com/astronaut808/awg-forge/internal/webtls"
 )
 
@@ -171,12 +172,12 @@ func (c *checker) checkWarp(cfg config.Config, state config.State) {
 }
 
 func (c *checker) checkIPRule(tunnel config.Tunnel) {
-	out, err := exec.Command("ip", "rule", "show").CombinedOutput()
+	out, err := exec.Command("ip", "-4", "-N", "rule", "show", "table", warp.RoutingTable, "protocol", warp.RoutingProtocol).CombinedOutput()
 	if err != nil {
 		c.fail(categoryWarp, "warp rule "+tunnel.Name, strings.TrimSpace(string(out)))
 		return
 	}
-	needle := "from " + tunnel.IPv4Subnet + " lookup 200"
+	needle := "from " + tunnel.IPv4Subnet + " lookup " + warp.RoutingTable + " proto " + warp.RoutingProtocol
 	if strings.Contains(string(out), needle) {
 		c.ok(categoryWarp, "warp rule "+tunnel.Name, needle)
 		return

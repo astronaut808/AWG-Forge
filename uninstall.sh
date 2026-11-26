@@ -272,29 +272,16 @@ iptables_delete_all() {
   done
 }
 
-ip_rule_delete_all() {
-  local subnet="$1"
+cleanup_warp_policy() {
   have ip || return 0
+  # Keep in sync with internal/warp. Legacy entries in table 200 have no owner tag.
+  local table=51821 protocol=242
   if $DRY_RUN; then
-    run ip rule del from "$subnet" lookup 200
-    return 0
-  fi
-  while ip rule del from "$subnet" lookup 200 >/dev/null 2>&1; do
-    :
-  done
-}
-
-cleanup_warp_route() {
-  local iface="$1"
-  local subnet="$2"
-  [[ -n "$iface" && -n "$subnet" ]] || return 0
-  ip_rule_delete_all "$subnet"
-  if have ip; then
-    if $DRY_RUN; then
-      run ip route del "$subnet" dev "$iface" table 200
-    else
-      ip route del "$subnet" dev "$iface" table 200 >/dev/null 2>&1 || true
-    fi
+    run ip -4 rule flush table "$table" protocol "$protocol"
+    run ip -4 route flush table "$table" proto "$protocol"
+  else
+    ip -4 rule flush table "$table" protocol "$protocol" >/dev/null 2>&1 || true
+    ip -4 route flush table "$table" proto "$protocol" >/dev/null 2>&1 || true
   fi
 }
 
@@ -339,9 +326,9 @@ cleanup_tagged_tunnel_rules() {
 }
 
 cleanup_interface() {
-  local iface="$1"
+  local iface="$1" use_hooks="${2:-true}"
   [[ -n "$iface" ]] || return
-  if have awg-quick && [[ -f "/etc/amnezia/amneziawg/$iface.conf" ]]; then
+  if [[ "$use_hooks" == true ]] && have awg-quick && [[ -f "/etc/amnezia/amneziawg/$iface.conf" ]]; then
     if $DRY_RUN; then
       run awg-quick down "$iface"
     else
@@ -422,15 +409,15 @@ main() (
       warn "cleaning tunnel $iface"
       cleanup_tunnel_rules "$tunnel_id" "$iface" "$port" "$subnet" "$external_interface"
       if [[ "$egress" == "warp" ]]; then
-        cleanup_warp_route "$iface" "$subnet"
         warp_interface="${warp_interface:-$(state_warp_interface "$state")}"
         warp_interface="${warp_interface:-warp0}"
       fi
       cleanup_interface "$iface"
     done < <(state_tunnels "$state")
     if [[ -n "$warp_interface" ]]; then
-      cleanup_interface "$warp_interface"
+      cleanup_interface "$warp_interface" false
     fi
+    cleanup_warp_policy
     if $REMOVE_ORPHANS; then
       cleanup_orphan_interfaces "$state"
     fi

@@ -26,7 +26,15 @@ docker exec "$anchor" ip link set testwan0 up
 docker exec "$anchor" awg-forge init --server-host 127.0.0.1 --external-interface testwan0 \
   --profile awg_legacy_1_0 --tunnel-name awg0 --listen-port 51820 --ipv4-subnet 10.8.0.0/24 >/dev/null
 docker exec "$anchor" awg-forge tunnel create awg_legacy_1_0 awg1 51821 10.9.0.0/24 >/dev/null
-docker exec -e APPLY_CONFIG=true -e EXTERNAL_INTERFACE=testwan0 "$anchor" awg-forge render >/dev/null
+docker exec "$anchor" awg-forge tunnel create awg_legacy_1_0 awg2 51822 10.10.0.0/24 >/dev/null
+docker exec "$anchor" sh -ec '
+  umask 077
+  mkdir -p /etc/amnezia/amneziawg
+  for iface in awg0 awg1 awg2; do
+    install -m 600 "/etc/awg-forge/tunnels/$iface/server.conf" "/etc/amnezia/amneziawg/$iface.conf"
+    awg-quick up "$iface"
+  done
+' >/dev/null 2>&1
 
 docker exec "$anchor" sh -ec '
   umask 077
@@ -43,6 +51,7 @@ docker exec "$anchor" sh -ec '
   };
   state.tunnels[0].egress_mode = "warp";
   state.tunnels[1].egress_mode = "wan";
+  state.tunnels = state.tunnels.filter(tunnel => tunnel.interface_name !== "awg2");
   process.stdout.write(JSON.stringify(state));
 ' | docker exec -i "$anchor" sh -ec '
   umask 077
@@ -72,15 +81,28 @@ backend=$(docker exec "$anchor" sh -ec '
   fi
 ')
 old_index=$(docker exec "$anchor" cat /sys/class/net/warp0/ifindex)
-docker exec "$anchor" ip -4 rule add from 10.253.0.0/24 lookup 200
 docker exec "$anchor" sh -ec '
+  # The operator rule shares the old WARP subnet and table.
+  ip -4 rule add priority 12345 from 10.9.0.0/24 lookup 200
+  # These owned entries survived deletion of the tunnel from state.json.
+  ip -4 rule add from 10.10.0.0/24 lookup 51821 protocol 242
+  ip -4 route add 10.10.0.0/24 dev awg2 table 51821 proto 242
   ip -4 rule show from 10.9.0.0/24 table 200 | grep -q "lookup 200"
-  ip -4 route show table 200 exact 10.9.0.0/24 | grep -q "^10\.9\.0\.0/24 dev awg1 "
+  ip -4 -N rule show from 10.10.0.0/24 table 51821 protocol 242 | grep -q "lookup 51821"
 '
 
 # The replacement sees the same legacy link but has a fresh /etc/amnezia.
 docker run --rm --platform linux/amd64 --network "container:$anchor" --entrypoint /bin/sh \
   "$image" -ec 'ip link show warp0 >/dev/null; test ! -e /etc/amnezia/amneziawg/warp0.conf'
+
+# Refuse to introduce a WARP default into a table already selected by a foreign rule.
+docker exec "$anchor" ip -4 rule add priority 12346 from 10.253.0.0/24 lookup 51821
+docker run --rm --platform linux/amd64 --network "container:$anchor" \
+  --cap-add NET_ADMIN --device /dev/net/tun -e DATABASE_MODE=off -e EXTERNAL_INTERFACE=testwan0 \
+  -v "$data:/etc/awg-forge" -v "$sockets:/var/run/amneziawg" "$image" render >/dev/null
+test "$(docker exec "$anchor" cat /sys/class/net/warp0/ifindex)" = "$old_index"
+docker exec "$anchor" ip -4 rule del priority 12346 from 10.253.0.0/24 lookup 51821
+
 docker run -d --name "$successor" --platform linux/amd64 --network "container:$anchor" \
   --cap-add NET_ADMIN --device /dev/net/tun -e DATABASE_MODE=off -e EXTERNAL_INTERFACE=testwan0 \
   -v "$data:/etc/awg-forge" -v "$sockets:/var/run/amneziawg" "$image" >/dev/null
@@ -89,15 +111,17 @@ for _ in $(seq 1 30); do
   if docker exec "$successor" sh -ec '
     test -S /var/run/amneziawg/warp0.sock
     test "$(cat /sys/class/net/warp0/ifindex)" != "$1"
-    ip -4 route show table 200 | grep -q "^default dev warp0 "
-    test "$(ip -4 rule show from 10.8.0.0/24 table 200 | wc -l)" -eq 1
-    wan_rule=$(ip -4 rule show from 10.9.0.0/24 table 200)
-    wan_route=$(ip -4 route show table 200 exact 10.9.0.0/24)
-    test -z "$wan_rule$wan_route"
-    test "$(ip -4 rule show from 10.253.0.0/24 table 200 | wc -l)" -eq 1
+    ip -4 -N route show table 51821 proto 242 | grep -q "^default dev warp0 "
+    test "$(ip -4 rule show from 10.8.0.0/24 table 51821 protocol 242 | wc -l)" -eq 1
+    ip -4 rule show from 10.9.0.0/24 table 200 | grep -q "^12345:"
+    legacy_default=$(ip -4 route show table 200 exact 0.0.0.0/0)
+    wan_rule=$(ip -4 rule show from 10.9.0.0/24 table 51821 protocol 242)
+    deleted_rule=$(ip -4 rule show from 10.10.0.0/24 table 51821 protocol 242)
+    deleted_route=$(ip -4 route show table 51821 proto 242 exact 10.10.0.0/24)
+    test -z "$legacy_default$wan_rule$deleted_rule$deleted_route"
     test "$(stat -c %a /etc/amnezia/amneziawg/warp0.conf)" = 600
   ' sh "$old_index" 2>/dev/null; then
-    echo "OK WARP migration ($backend to userspace): commented key accepted, stale WAN policy removed"
+    echo "OK WARP migration ($backend to userspace): foreign rule preserved, owned orphan policy removed"
     exit 0
   fi
   sleep 1

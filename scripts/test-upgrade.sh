@@ -228,7 +228,8 @@ docker() {
       ;;
     "exec fixture-container ip")
       [[ "${*:4}" == '-j link show dev warp0' ]] || return 1
-      if [[ "$runtime_result" == warp-link-down && "$(<.fixture-image)" == "$NEW_IMAGE" ]]; then
+      if { [[ "$runtime_result" == warp-link-down && "$(<.fixture-image)" == "$NEW_IMAGE" ]]; } ||
+         { [[ "$runtime_result" == warp-rollback-link-down ]] && grep -Fxq 'compose start awg-forge' "$DOCKER_LOG"; }; then
         printf '[{"flags":["LOWER_UP"]}]\n'
       else
         printf '[{"flags":["UP","LOWER_UP"]}]\n'
@@ -816,6 +817,40 @@ for failure in warp-start-failed warp-link-down; do
   [[ ! -e .awg-forge-upgrade-pending ]]
 done
 printf 'OK   upgrade rolls back failed WARP startup after HTTP readiness\n'
+
+setup_case warp-degraded-before-upgrade
+set_env_value DATABASE_MODE sqlite
+touch "$DATA_DIR/awg-forge.db"
+printf '{"tunnels":[{"enabled":true,"egress_mode":"warp"}],"warp":{"last_apply_error":"preexisting failure"}}\n' >"$DATA_DIR/state.json"
+migration_result=fail
+if upgrade_main; then
+  printf 'FAIL SQLite migration failure unexpectedly upgraded\n' >&2
+  exit 1
+fi
+assert_log_contains 'compose start awg-forge'
+assert_contains "$OLD_IMAGE" .fixture-image
+assert_contains 'original' "$DATA_DIR/sentinel"
+[[ ! -e .awg-forge-upgrade-pending ]]
+jq -e '.warp.last_apply_error == "preexisting failure"' "$DATA_DIR/state.json" >/dev/null
+printf '{"tunnels":[{"enabled":true,"egress_mode":"warp"}]}\n' >"$DATA_DIR/state.json"
+migration_result=ok
+upgrade_main
+assert_contains "$NEW_IMAGE" .fixture-image
+printf 'OK   upgrade clears the rollback marker for a preexisting WARP outage\n'
+
+setup_case warp-healthy-before-upgrade
+set_env_value DATABASE_MODE sqlite
+touch "$DATA_DIR/awg-forge.db"
+printf '{"tunnels":[{"enabled":true,"egress_mode":"warp"}]}\n' >"$DATA_DIR/state.json"
+migration_result=fail
+runtime_result=warp-rollback-link-down
+if upgrade_main; then
+  printf 'FAIL SQLite migration failure unexpectedly upgraded\n' >&2
+  exit 1
+fi
+assert_contains "$OLD_IMAGE" .fixture-image
+[[ -e .awg-forge-upgrade-pending ]]
+printf 'OK   rollback detects new WARP failure against a healthy baseline\n'
 
 setup_case warp-apply-disabled
 printf '{"tunnels":[{"enabled":true,"egress_mode":"warp"}]}\n' >"$DATA_DIR/state.json"

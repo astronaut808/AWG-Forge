@@ -155,6 +155,11 @@ func (s *Service) DeleteWarpConfig(ctx context.Context) error {
 			return errors.New("cannot delete WARP config while tunnels use WARP egress")
 		}
 	}
+	if s.cfg.ApplyConfig {
+		if err := s.runtimeOps.reconcileWarp(state); err != nil {
+			return &ApplyError{Err: err}
+		}
+	}
 	unregister := state.Warp.Registered()
 	if unregister {
 		if err := warp.Unregister(ctx, state.Warp); err != nil {
@@ -167,9 +172,6 @@ func (s *Service) DeleteWarpConfig(ctx context.Context) error {
 	state.UpdatedAt = time.Now().UTC()
 	if err := s.store.Save(state); err != nil {
 		return err
-	}
-	if s.cfg.ApplyConfig {
-		_ = exec.Command("awg-quick", "down", interfaceName).Run()
 	}
 	s.log("info", "warp.deleted", "WARP config deleted", map[string]any{"interface": interfaceName, "unregistered": unregister}, nil)
 	return nil

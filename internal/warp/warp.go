@@ -14,7 +14,9 @@ import (
 
 const (
 	DefaultInterfaceName = "warp0"
-	RoutingTable         = "200"
+	// Keep legacy, unmarked rules for table 200 away from the new WARP default.
+	RoutingTable    = "51821"
+	RoutingProtocol = "242"
 )
 
 var protocolParamKeys = []string{"Jc", "Jmin", "Jmax", "S1", "S2", "S3", "S4", "H1", "H2", "H3", "H4", "I1", "I2", "I3", "I4", "I5"}
@@ -190,17 +192,18 @@ func RenderConfig(w config.Warp, routes []TunnelRoute) (string, error) {
 	if len(routes) == 0 {
 		return "", errors.New("at least one WARP tunnel route is required")
 	}
-	var postUp []string
+	postUp := []string{fmt.Sprintf("ip -4 route add default dev %%i table %s proto %s", RoutingTable, RoutingProtocol)}
 	for _, route := range routes {
+		if route.InterfaceName == "" || route.Subnet == "" {
+			return "", errors.New("WARP route interface and subnet are required")
+		}
+		if _, _, err := net.ParseCIDR(route.Subnet); err != nil {
+			return "", fmt.Errorf("invalid WARP route subnet %q: %w", route.Subnet, err)
+		}
 		postUp = append(postUp,
-			fmt.Sprintf("ip route replace %s dev %s table %s", route.Subnet, route.InterfaceName, RoutingTable),
-			fmt.Sprintf("ip rule del from %s lookup %s 2>/dev/null || true", route.Subnet, RoutingTable),
-			fmt.Sprintf("ip rule add from %s lookup %s", route.Subnet, RoutingTable),
+			fmt.Sprintf("ip -4 route add %s dev %s table %s proto %s", route.Subnet, route.InterfaceName, RoutingTable, RoutingProtocol),
+			fmt.Sprintf("ip -4 rule add from %s lookup %s protocol %s", route.Subnet, RoutingTable, RoutingProtocol),
 		)
-	}
-	postDown, err := teardownCommands(routes)
-	if err != nil {
-		return "", err
 	}
 
 	address := strings.TrimSuffix(w.AddressV4, "/32") + "/32"
@@ -223,9 +226,8 @@ func RenderConfig(w config.Warp, routes []TunnelRoute) (string, error) {
 	if w.MTU > 0 {
 		writeLine(&b, "MTU", strconv.Itoa(w.MTU))
 	}
-	writeLine(&b, "Table", RoutingTable)
+	writeLine(&b, "Table", "off")
 	writeLine(&b, "PostUp", strings.Join(postUp, "; ")+";")
-	writeLine(&b, "PostDown", postDown+";")
 	b.WriteString("\n[Peer]\n")
 	writeLine(&b, "PublicKey", w.PeerPublicKey)
 	if w.PresharedKey != "" {
@@ -237,38 +239,6 @@ func RenderConfig(w config.Warp, routes []TunnelRoute) (string, error) {
 	}
 	writeLine(&b, "Endpoint", w.Endpoint)
 	return b.String(), nil
-}
-
-// RenderTeardownConfig reconstructs just the hooks needed to stop a surviving runtime.
-func RenderTeardownConfig(routes []TunnelRoute) (string, error) {
-	postDown, err := teardownCommands(routes)
-	if err != nil {
-		return "", err
-	}
-	var b strings.Builder
-	b.WriteString("[Interface]\n")
-	writeLine(&b, "Table", RoutingTable)
-	if postDown != "" {
-		writeLine(&b, "PostDown", postDown)
-	}
-	return b.String(), nil
-}
-
-func teardownCommands(routes []TunnelRoute) (string, error) {
-	var commands []string
-	for _, route := range routes {
-		if route.InterfaceName == "" || route.Subnet == "" {
-			return "", errors.New("WARP route interface and subnet are required")
-		}
-		if _, _, err := net.ParseCIDR(route.Subnet); err != nil {
-			return "", fmt.Errorf("invalid WARP route subnet %q: %w", route.Subnet, err)
-		}
-		commands = append(commands,
-			fmt.Sprintf("ip rule del from %s lookup %s 2>/dev/null || true", route.Subnet, RoutingTable),
-			fmt.Sprintf("ip route del %s dev %s table %s 2>/dev/null || true", route.Subnet, route.InterfaceName, RoutingTable),
-		)
-	}
-	return strings.Join(commands, "; "), nil
 }
 
 func RoutesForState(state config.State) []TunnelRoute {

@@ -25,15 +25,20 @@ func TestReconcileWarpRuntimeReplacesConfigAfterStoppingOldRuntime(t *testing.T)
 	var calls []string
 	commands := warpRuntimeCommands{
 		interfaceExists: func(string) bool { return true },
-		down: func(string) error {
+		verifyPolicy:    func() error { return nil },
+		down: func(iface string) error {
 			calls = append(calls, "down")
+			if iface != "warp0" {
+				t.Fatal("expected the old WARP link to be removed directly")
+			}
 			contents := readWarpReconcileTestConfig(t, runtimePath)
 			if contents != oldConfig {
 				t.Fatal("WARP runtime config was replaced before the old runtime was stopped")
 			}
-			if !strings.Contains(contents, "ip rule del from 10.9.0.0/24 lookup 200") {
-				t.Fatal("old WARP runtime config does not clean up the removed route")
-			}
+			return nil
+		},
+		cleanup: func() error {
+			calls = append(calls, "cleanup")
 			return nil
 		},
 		up: func(string) error {
@@ -49,8 +54,8 @@ func TestReconcileWarpRuntimeReplacesConfigAfterStoppingOldRuntime(t *testing.T)
 	if err := reconcileWarpRuntime(nextState, runtimeDir, commands); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(calls, []string{"down", "up"}) {
-		t.Fatalf("runtime calls = %v, want [down up]", calls)
+	if !slices.Equal(calls, []string{"down", "cleanup", "up"}) {
+		t.Fatalf("runtime calls = %v, want [down cleanup up]", calls)
 	}
 	info, err := os.Stat(runtimePath)
 	if err != nil {
@@ -67,6 +72,11 @@ func TestReconcileWarpRuntimeWithoutExistingInterface(t *testing.T) {
 	var calls []string
 	commands := warpRuntimeCommands{
 		interfaceExists: func(string) bool { return false },
+		verifyPolicy:    func() error { return nil },
+		cleanup: func() error {
+			calls = append(calls, "cleanup")
+			return nil
+		},
 		down: func(string) error {
 			calls = append(calls, "down")
 			return nil
@@ -80,8 +90,8 @@ func TestReconcileWarpRuntimeWithoutExistingInterface(t *testing.T) {
 	if err := reconcileWarpRuntime(state, runtimeDir, commands); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(calls, []string{"up"}) {
-		t.Fatalf("runtime calls = %v, want [up]", calls)
+	if !slices.Equal(calls, []string{"cleanup", "up"}) {
+		t.Fatalf("runtime calls = %v, want [cleanup up]", calls)
 	}
 }
 
@@ -96,6 +106,7 @@ func TestReconcileWarpRuntimeRecoversMissingConfigForLiveInterface(t *testing.T)
 	var calls []string
 	commands := warpRuntimeCommands{
 		interfaceExists: func(string) bool { return true },
+		verifyPolicy:    func() error { return nil },
 		verifyOwner: func(w config.Warp) error {
 			calls = append(calls, "verify")
 			if w.RuntimeInterface() != "warp0" || w.PrivateKey != state.Warp.PrivateKey {
@@ -103,24 +114,15 @@ func TestReconcileWarpRuntimeRecoversMissingConfigForLiveInterface(t *testing.T)
 			}
 			return nil
 		},
-		down: func(configPath string) error {
+		down: func(iface string) error {
 			calls = append(calls, "down")
-			if configPath == runtimePath || filepath.Base(configPath) != "warp0.conf" {
-				t.Fatal("expected a temporary teardown config named after the interface")
+			if iface != state.Warp.RuntimeInterface() {
+				t.Fatal("only the verified WARP interface should be stopped")
 			}
-			contents := readWarpReconcileTestConfig(t, configPath)
-			for _, want := range []string{
-				"ip rule del from 10.8.0.0/24 lookup 200",
-				"ip rule del from 10.9.0.0/24 lookup 200",
-				"ip route del 10.9.0.0/24 dev awg1 table 200",
-			} {
-				if !strings.Contains(contents, want) {
-					t.Fatalf("recovered teardown config is missing %q", want)
-				}
-			}
-			if strings.Contains(contents, "PrivateKey") {
-				t.Fatal("teardown config includes a private key")
-			}
+			return nil
+		},
+		cleanup: func() error {
+			calls = append(calls, "cleanup")
 			return nil
 		},
 		up: func(string) error {
@@ -134,8 +136,8 @@ func TestReconcileWarpRuntimeRecoversMissingConfigForLiveInterface(t *testing.T)
 	if err := reconcileWarpRuntime(state, runtimeDir, commands); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(calls, []string{"verify", "down", "up"}) {
-		t.Fatalf("runtime calls = %v, want [verify down up]", calls)
+	if !slices.Equal(calls, []string{"verify", "down", "cleanup", "up"}) {
+		t.Fatalf("runtime calls = %v, want [verify down cleanup up]", calls)
 	}
 }
 
@@ -145,6 +147,7 @@ func TestReconcileWarpRuntimeLeavesUnverifiedInterfaceAlone(t *testing.T) {
 	ownerErr := errors.New("wrong public key")
 	commands := warpRuntimeCommands{
 		interfaceExists: func(string) bool { return true },
+		verifyPolicy:    func() error { return nil },
 		verifyOwner:     func(config.Warp) error { return ownerErr },
 	}
 	if err := reconcileWarpRuntime(state, runtimeDir, commands); !errors.Is(err, ownerErr) {
@@ -175,7 +178,7 @@ func TestReconcileWarpRuntimeRejectsUnsupportedCPSBeforeStoppingInterface(t *tes
 	}
 }
 
-func TestReconcileWarpRuntimeStopsLastRouteUsingExistingConfig(t *testing.T) {
+func TestReconcileWarpRuntimeStopsAndCleansLastRoute(t *testing.T) {
 	oldState := warpReconcileTestState(warpReconcileTestTunnel("awg0", "10.8.0.0/24"))
 	runtimeDir := t.TempDir()
 	runtimePath := filepath.Join(runtimeDir, "warp0.conf")
@@ -183,11 +186,16 @@ func TestReconcileWarpRuntimeStopsLastRouteUsingExistingConfig(t *testing.T) {
 	var calls []string
 	commands := warpRuntimeCommands{
 		interfaceExists: func(string) bool { return true },
+		verifyPolicy:    func() error { return nil },
 		down: func(string) error {
 			calls = append(calls, "down")
 			if got := readWarpReconcileTestConfig(t, runtimePath); got != oldConfig {
-				t.Fatal("last WARP route was not stopped with its existing runtime config")
+				t.Fatal("last WARP route modified its original runtime config")
 			}
+			return nil
+		},
+		cleanup: func() error {
+			calls = append(calls, "cleanup")
 			return nil
 		},
 		up: func(string) error {
@@ -199,8 +207,8 @@ func TestReconcileWarpRuntimeStopsLastRouteUsingExistingConfig(t *testing.T) {
 	if err := reconcileWarpRuntime(warpReconcileTestState(), runtimeDir, commands); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(calls, []string{"down"}) {
-		t.Fatalf("runtime calls = %v, want [down]", calls)
+	if !slices.Equal(calls, []string{"down", "cleanup"}) {
+		t.Fatalf("runtime calls = %v, want [down cleanup]", calls)
 	}
 }
 
@@ -217,6 +225,7 @@ func TestReconcileWarpRuntimeDownFailurePreservesExistingConfig(t *testing.T) {
 	upCalled := false
 	commands := warpRuntimeCommands{
 		interfaceExists: func(string) bool { return true },
+		verifyPolicy:    func() error { return nil },
 		down:            func(string) error { return downErr },
 		up: func(string) error {
 			upCalled = true
@@ -285,13 +294,22 @@ func TestReconcileWarpRuntimeCanRestoreAfterUpFailure(t *testing.T) {
 	oldConfig := writeWarpReconcileTestConfig(t, runtimePath, oldState)
 	upErr := errors.New("forced up failure")
 
+	cleanupCalls := 0
 	err := reconcileWarpRuntime(nextState, runtimeDir, warpRuntimeCommands{
 		interfaceExists: func(string) bool { return true },
+		verifyPolicy:    func() error { return nil },
 		down:            func(string) error { return nil },
 		up:              func(string) error { return upErr },
+		cleanup: func() error {
+			cleanupCalls++
+			return nil
+		},
 	})
 	if !errors.Is(err, upErr) {
 		t.Fatalf("error = %v, want forced up failure", err)
+	}
+	if cleanupCalls != 2 {
+		t.Fatal("expected cleanup before startup and after the partial startup failed")
 	}
 	if got := readWarpReconcileTestConfig(t, runtimePath); got == oldConfig || strings.Contains(got, "10.9.0.0/24") {
 		t.Fatal("failed desired WARP config was not persisted for status and rollback handling")
@@ -300,7 +318,9 @@ func TestReconcileWarpRuntimeCanRestoreAfterUpFailure(t *testing.T) {
 	upCalled := false
 	if err := reconcileWarpRuntime(oldState, runtimeDir, warpRuntimeCommands{
 		interfaceExists: func(string) bool { return false },
+		verifyPolicy:    func() error { return nil },
 		down:            func(string) error { return errors.New("unexpected down") },
+		cleanup:         func() error { return nil },
 		up: func(string) error {
 			upCalled = true
 			if got := readWarpReconcileTestConfig(t, runtimePath); got != oldConfig {
@@ -325,7 +345,9 @@ func TestRenderAllRecordsFailedWARPReplacement(t *testing.T) {
 	svc.runtimeOps.reconcileWarp = func(state config.State) error {
 		return reconcileWarpRuntime(state, runtimeDir, warpRuntimeCommands{
 			interfaceExists: func(string) bool { return true },
+			verifyPolicy:    func() error { return nil },
 			verifyOwner:     func(config.Warp) error { return nil },
+			cleanup:         func() error { return nil },
 			down: func(string) error {
 				stopped = true
 				return nil

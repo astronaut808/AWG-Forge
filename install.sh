@@ -1355,7 +1355,7 @@ upgrade_verify_warp() {
 }
 
 upgrade_verify() {
-  local image="$1" schema="${2:-}"
+  local image="$1" schema="${2:-}" verify_warp="${4:-true}"
   local id settings host port expected apply scheme mode request_host observed status initial="" consecutive=0 database_status
   local -a probe_options=(--noproxy '*')
   local deadline=$((SECONDS + 45))
@@ -1409,7 +1409,7 @@ upgrade_verify() {
           grep -Fqx 'OK   database: sqlite' <<<"$database_status" || return 1
           grep -Fqx "$schema" <<<"$database_status" || return 1
         fi
-        if [[ "$apply" == true ]] && ! upgrade_verify_warp "$id"; then
+        if [[ "$verify_warp" == true && "$apply" == true ]] && ! upgrade_verify_warp "$id"; then
           fail "WARP runtime did not become ready for enabled WARP tunnels"
           return 1
         fi
@@ -1442,6 +1442,7 @@ upgrade_rollback() {
   local previous_image="$3"
   local recreated="$4"
   local override="$5"
+  local previous_warp_ready="$6"
 
   warn "upgrade failed; restoring the previous installation"
   if [[ "$recreated" == "true" ]] && ! $compose stop awg-forge; then
@@ -1469,7 +1470,7 @@ EOF
     fail "could not restart the previous container"
     return 1
   fi
-  if ! upgrade_verify "$previous_image"; then
+  if ! upgrade_verify "$previous_image" "" "" "$previous_warp_ready"; then
     fail "previous image did not become ready after restoring $backup_dir"
     return 1
   fi
@@ -1593,7 +1594,7 @@ upgrade_locked() (
       ;;
   esac
 
-  local previous_image backup_dir override target_ref target_image recreated=false schema="" migration_status
+  local previous_image backup_dir override target_ref target_image recreated=false schema="" migration_status previous_warp_ready=false
   if ! previous_image="$(docker inspect --format '{{.Image}}' "$container_id" 2>/dev/null)" ||
      [[ ! "$previous_image" =~ ^sha256:[0-9a-f]{64}$ ]]; then
     fail "could not identify the previous image for rollback"
@@ -1645,6 +1646,10 @@ upgrade_locked() (
     fail "could not verify that the running container uses this data directory; check the installation path and bind mount"
     return 1
   fi
+  # A rollback must recover the old installation, including WARP if it was ready before the stop.
+  if upgrade_verify_warp "$container_id"; then
+    previous_warp_ready=true
+  fi
   backup_dir="$(mktemp -d "upgrade-backup-$(date -u +%Y%m%d-%H%M%S).XXXXXX")" || return 1
   if ! "${base[@]}" stop awg-forge; then
     fail "could not stop the current container"
@@ -1668,7 +1673,7 @@ upgrade_locked() (
   if $enable_sqlite || $create_missing_sqlite; then
     if ! enable_sqlite_env || ! upgrade_compose_layout "$directory" "$data_path" "$compose" "${target_files[@]}"; then
       fail "could not update SQLite settings with a safe Compose layout"
-      upgrade_rollback "$compose" "$backup_dir" "$previous_image" "$recreated" "$override" && rm -f -- "$marker"
+      upgrade_rollback "$compose" "$backup_dir" "$previous_image" "$recreated" "$override" "$previous_warp_ready" && rm -f -- "$marker"
       return 1
     fi
   fi
@@ -1678,7 +1683,7 @@ upgrade_locked() (
        ! grep -Fqx 'OK   database: sqlite' <<<"$migration_status" ||
        ! schema="$(grep -Ex 'OK   schema: [1-9][0-9]*' <<<"$migration_status")"; then
       fail "SQLite migration failed"
-      upgrade_rollback "$compose" "$backup_dir" "$previous_image" "$recreated" "$override" && rm -f -- "$marker"
+      upgrade_rollback "$compose" "$backup_dir" "$previous_image" "$recreated" "$override" "$previous_warp_ready" && rm -f -- "$marker"
       return 1
     fi
   fi
@@ -1687,7 +1692,7 @@ upgrade_locked() (
   if ! "${target[@]}" up -d --no-deps --force-recreate --pull never --no-build awg-forge ||
      ! upgrade_verify "$target_image" "$schema" fresh; then
     fail "replacement container, WARP, or SQLite did not become ready"
-    upgrade_rollback "$compose" "$backup_dir" "$previous_image" "$recreated" "$override" && rm -f -- "$marker"
+    upgrade_rollback "$compose" "$backup_dir" "$previous_image" "$recreated" "$override" "$previous_warp_ready" && rm -f -- "$marker"
     return 1
   fi
   rm -f -- "$marker" || return 1

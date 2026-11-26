@@ -194,9 +194,10 @@ func TestRenderConfigIncludesPolicyRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"Table = 200",
-		"ip route replace 10.20.0.0/24 dev awg20 table 200",
-		"ip rule add from 10.20.0.0/24 lookup 200",
+		"Table = off",
+		"ip -4 route add default dev %i table " + RoutingTable + " proto " + RoutingProtocol,
+		"ip -4 route add 10.20.0.0/24 dev awg20 table " + RoutingTable + " proto " + RoutingProtocol,
+		"ip -4 rule add from 10.20.0.0/24 lookup " + RoutingTable + " protocol " + RoutingProtocol,
 		"Endpoint = engage.cloudflareclient.com:2408",
 	} {
 		if !strings.Contains(rendered, want) {

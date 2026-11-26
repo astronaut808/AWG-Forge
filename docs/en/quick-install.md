@@ -94,6 +94,8 @@ Important: after a full reinstall, old client configs no longer match the server
 
 ## Upgrade
 
+WARP reserves IPv4 routing table `51821` and marks the rules and routes it installs with protocol `242`. When replacing an older WARP interface, AWG-Forge leaves unmarked policy entries in table `200`. The new WARP default route is installed in table `51821`. If table `51821` is used by another rule or route, WARP reports the conflict before replacing the interface.
+
 Starting with v0.21.2, WARP uses the bundled `amneziawg-go` runtime. If any of your WARP `I1`–`I5` signatures use the kernel-only `<c>` tag, reimport a compatible WARP configuration before upgrading. For a WARP interface currently using the kernel module, choose tags supported by both backends, such as `<b 0xHEX>`, `<t>`, `<r N>`, `<rc N>`, and `<rd N>`. See [WARP configuration](configuration.md#tunnel-egress-and-warp).
 
 For a managed installation using the standard `.env`, `docker-compose.yml`, and `./data` layout, update with:
@@ -119,6 +121,8 @@ Immediately before stopping the container, the installer compares the device and
 It stops the container, backs up `.env` and `data/`, and pins migration and startup to the inspected image ID. If copying fails, it attempts to restart the old container. After migration, it waits up to 45 seconds for repeated HTTP or HTTPS readiness responses without a restart. With SQLite enabled, the reported schema must match the migration result. With runtime apply enabled and at least one enabled tunnel using WARP, the WARP interface must start without an apply error. For manual TLS, the local readiness probe accepts private or self-signed certificates and sends no credentials. Check certificate trust and hostname from a browser separately. Doctor remains a separate diagnostic check. Migration, startup, or readiness failure triggers restoration of the previous image, `.env`, and data.
 
 If SQLite is off, the installer offers to enable it. The default answer is `No`. If SQLite is enabled but its database file is missing, the installer asks before creating an empty database.
+
+After a rollback, the installer requires WARP readiness only if WARP was ready before the upgrade. A pre-existing WARP outage does not prevent the installer from confirming recovery of the previous container.
 
 For another installation directory, set `AWG_FORGE_HOME` as in `sudo AWG_FORGE_HOME=/srv/awg-forge ./install.sh upgrade`. The installer also offers upgrade from an existing installation directory. Custom Compose overrides, mounts beyond the managed data bind and read-only `/lib/modules`, mount points at or below `./data`, linked data, and external config, database, or audit paths require a manual upgrade. Back up the relevant volumes first.
 
