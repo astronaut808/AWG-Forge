@@ -89,6 +89,9 @@ jobs:
       - name: Test encrypted traffic and restart for all profiles
         run: make docker-runtime-smoke IMAGE=awg-forge:ci
 
+      - name: Test WARP migration across container recreation
+        run: IMAGE=awg-forge:ci bash scripts/test-docker-warp-migration.sh
+
       - name: Set up Trivy
         uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
         with:

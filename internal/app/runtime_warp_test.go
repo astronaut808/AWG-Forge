@@ -85,6 +85,57 @@ func TestReconcileWarpRuntimeWithoutExistingInterface(t *testing.T) {
 	}
 }
 
+func TestReconcileWarpRuntimeRecoversMissingConfigForLiveInterface(t *testing.T) {
+	state := warpReconcileTestState(warpReconcileTestTunnel("awg0", "10.8.0.0/24"))
+	runtimeDir := t.TempDir()
+	runtimePath := filepath.Join(runtimeDir, "warp0.conf")
+	var calls []string
+	commands := warpRuntimeCommands{
+		interfaceExists: func(string) bool { return true },
+		verifyOwner: func(w config.Warp) error {
+			calls = append(calls, "verify")
+			if w.RuntimeInterface() != "warp0" || w.PrivateKey != state.Warp.PrivateKey {
+				t.Fatal("ownership must be checked against the stored WARP interface and key")
+			}
+			return nil
+		},
+		down: func(string) error {
+			calls = append(calls, "down")
+			contents := readWarpReconcileTestConfig(t, runtimePath)
+			if !strings.Contains(contents, "PostDown = ip rule del from 10.8.0.0/24 lookup 200") {
+				t.Fatal("recovered config is missing WARP rule cleanup")
+			}
+			return nil
+		},
+		up: func(string) error {
+			calls = append(calls, "up")
+			return nil
+		},
+	}
+	if err := reconcileWarpRuntime(state, runtimeDir, commands); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(calls, []string{"verify", "down", "up"}) {
+		t.Fatalf("runtime calls = %v, want [verify down up]", calls)
+	}
+}
+
+func TestReconcileWarpRuntimeLeavesUnverifiedInterfaceAlone(t *testing.T) {
+	state := warpReconcileTestState(warpReconcileTestTunnel("awg0", "10.8.0.0/24"))
+	runtimeDir := t.TempDir()
+	ownerErr := errors.New("wrong public key")
+	commands := warpRuntimeCommands{
+		interfaceExists: func(string) bool { return true },
+		verifyOwner:     func(config.Warp) error { return ownerErr },
+	}
+	if err := reconcileWarpRuntime(state, runtimeDir, commands); !errors.Is(err, ownerErr) {
+		t.Fatalf("expected the ownership error, got %v", err)
+	}
+	if entries, err := os.ReadDir(runtimeDir); err != nil || len(entries) != 0 {
+		t.Fatalf("unexpected runtime files after an ownership check failed (count=%d, error=%v)", len(entries), err)
+	}
+}
+
 func TestReconcileWarpRuntimeRejectsUnsupportedCPSBeforeStoppingInterface(t *testing.T) {
 	state := warpReconcileTestState(warpReconcileTestTunnel("awg0", "10.8.0.0/24"))
 	runtimeDir := t.TempDir()

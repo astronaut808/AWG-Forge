@@ -94,6 +94,8 @@ Important: after a full reinstall, old client configs no longer match the server
 
 ## Upgrade
 
+Starting with v0.21.2, WARP uses the bundled `amneziawg-go` runtime. If any of your WARP `I1`–`I5` signatures use the kernel-only `<c>` tag, reimport a compatible WARP configuration before upgrading. For a WARP interface currently using the kernel module, choose tags supported by both backends, such as `<b HEX>`, `<t>`, `<r N>`, `<rc N>`, and `<rd N>`. See [WARP configuration](configuration.md#tunnel-egress-and-warp).
+
 For a managed installation using the standard `.env`, `docker-compose.yml`, and `./data` layout, update with:
 
 ```bash

@@ -289,6 +289,7 @@ func (s *Service) reconcileWarpRuntime(state config.State) error {
 		interfaceExists: func(interfaceName string) bool {
 			return exec.Command("ip", "link", "show", interfaceName).Run() == nil
 		},
+		verifyOwner: verifyWarpRuntimeOwner,
 		down: func(interfaceName string) error {
 			return runAWGQuick("down", interfaceName)
 		},
@@ -302,6 +303,7 @@ func (s *Service) reconcileWarpRuntime(state config.State) error {
 
 type warpRuntimeCommands struct {
 	interfaceExists func(string) bool
+	verifyOwner     func(config.Warp) error
 	down            func(string) error
 	up              func(string) error
 }
@@ -336,25 +338,57 @@ func reconcileWarpRuntime(state config.State, runtimeDir string, commands warpRu
 	if err != nil {
 		return err
 	}
-	defer func() { _ = os.Remove(stagedPath) }()
+	defer func(path string) { _ = os.Remove(path) }(stagedPath)
 
 	wasRunning := commands.interfaceExists(interfaceName)
 	if wasRunning {
+		// Host-network interfaces can outlive the container that held their config.
+		// Recover the teardown hooks from state only for the managed WARP interface.
+		if _, err := os.Lstat(runtimePath); errors.Is(err, os.ErrNotExist) {
+			if err := commands.verifyOwner(state.Warp); err != nil {
+				return fmt.Errorf("recover missing WARP runtime config: %w", err)
+			}
+			if err := os.Rename(stagedPath, runtimePath); err != nil {
+				return fmt.Errorf("recover missing WARP runtime config: %w", err)
+			}
+			stagedPath = ""
+		} else if err != nil {
+			return fmt.Errorf("inspect WARP runtime config: %w", err)
+		}
 		if err := commands.down(interfaceName); err != nil {
 			return fmt.Errorf("stop WARP runtime: %w", err)
 		}
 	}
-	if err := os.Rename(stagedPath, runtimePath); err != nil {
-		var restoreErr error
-		if wasRunning {
-			if err := commands.up(interfaceName); err != nil {
-				restoreErr = fmt.Errorf("restore previous WARP runtime: %w", err)
+	if stagedPath != "" {
+		if err := os.Rename(stagedPath, runtimePath); err != nil {
+			var restoreErr error
+			if wasRunning {
+				if err := commands.up(interfaceName); err != nil {
+					restoreErr = fmt.Errorf("restore previous WARP runtime: %w", err)
+				}
 			}
+			return errors.Join(fmt.Errorf("replace WARP runtime config: %w", err), restoreErr)
 		}
-		return errors.Join(fmt.Errorf("replace WARP runtime config: %w", err), restoreErr)
 	}
 	if err := commands.up(interfaceName); err != nil {
 		return fmt.Errorf("start WARP runtime: %w", err)
+	}
+	return nil
+}
+
+func verifyWarpRuntimeOwner(w config.Warp) error {
+	pubkey := exec.Command("awg", "pubkey")
+	pubkey.Stdin = strings.NewReader(w.PrivateKey + "\n")
+	expected, err := pubkey.Output()
+	if err != nil {
+		return fmt.Errorf("derive WARP public key: %w", err)
+	}
+	actual, err := exec.Command("awg", "show", w.RuntimeInterface(), "public-key").Output()
+	if err != nil {
+		return fmt.Errorf("read live WARP public key: %w", err)
+	}
+	if strings.TrimSpace(string(actual)) != strings.TrimSpace(string(expected)) {
+		return errors.New("live interface does not match the stored WARP public key")
 	}
 	return nil
 }
