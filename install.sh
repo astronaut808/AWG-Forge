@@ -1452,7 +1452,7 @@ upgrade_retire_retained_kernel_warp() {
   [[ "$interface" != "-" ]] || return 0
   # The restored image lacks the old container's runtime files. Retire only an
   # authenticated kernel link so that image can recreate WARP from restored state.
-  jq -er '.warp.private_key // "" | split("#")[0] | gsub("^[[:space:]]+|[[:space:]]+$"; "")' "$DATA_DIR/state.json" 2>/dev/null |
+  jq -er '.warp.private_key // "" | split("#")[0] | gsub("[ \t\n\r\f\u000b]"; "")' "$DATA_DIR/state.json" 2>/dev/null |
     timeout -k 1s 10s $compose -f "$COMPOSE_FILE" -f "$override" run --rm --no-deps --pull never -T \
       --entrypoint /bin/sh awg-forge -ec '
         case "${APPLY_CONFIG:-}" in 1|true|TRUE|yes) ;; *) exit 0 ;; esac
@@ -1468,6 +1468,37 @@ upgrade_retire_retained_kernel_warp() {
       ' sh "$interface" >/dev/null 2>&1
 }
 
+upgrade_warp_policy_commands() {
+  # Keep these identifiers in sync with internal/warp.
+  local table=51821 protocol=242 rules routes
+  rules="$("$@" -4 -j -N rule show table "$table" protocol "$protocol" 2>/dev/null)" || return 1
+  routes="$("$@" -4 -j -N route show table all proto "$protocol" 2>/dev/null)" || return 1
+  jq -rn --arg table "$table" --arg protocol "$protocol" --argjson rules "$rules" --argjson routes "$routes" '
+    def ipv4: test("^[0-9]+(\\.[0-9]+){3}(/[0-9]+)?$");
+    if ($rules | type) != "array" or ($routes | type) != "array" then error("invalid routing snapshot") else
+      ($rules[] | select(.table == $table and .protocol == $protocol) |
+        select((.src // "" | ipv4) and (.priority | type == "number")) |
+        (if (.src | contains("/")) then .src else "\(.src)/\(.srclen // 32)" end) as $source |
+        select($source | ipv4) |
+        "rule del priority \(.priority) from \($source) lookup \($table) protocol \($protocol)"),
+      ($routes[] | select(.table == $table and .protocol == $protocol) |
+        select((.dst == "default" or (.dst // "" | ipv4)) and (.dev // "" | test("^[A-Za-z][A-Za-z0-9_.-]{0,31}$"))) |
+        "route del \(.dst) dev \(.dev) table \($table) proto \($protocol)")
+    end
+  ' 2>/dev/null
+}
+
+upgrade_remove_replacement_warp_policy() {
+  local compose="$1" override="$2" baseline="$3" current delta
+  local -a runner
+  read -r -a runner <<<"$compose"
+  runner+=(-f "$COMPOSE_FILE" -f "$override" run --rm --no-deps --pull never -T --entrypoint ip awg-forge)
+  current="$(upgrade_warp_policy_commands timeout -k 1s 10s "${runner[@]}")" || return 1
+  delta="$(LC_ALL=C comm -23 <(printf '%s\n' "$current" | LC_ALL=C sort -u) <(printf '%s\n' "$baseline" | LC_ALL=C sort -u))" || return 1
+  [[ -z "$delta" ]] || printf '%s\n' "$delta" |
+    timeout -k 1s 10s "${runner[@]}" -4 -batch - >/dev/null 2>&1
+}
+
 upgrade_rollback() {
   local compose="$1"
   local backup_dir="$2"
@@ -1475,6 +1506,8 @@ upgrade_rollback() {
   local recreated="$4"
   local override="$5"
   local previous_warp_ready="$6"
+  local baseline_warp_policy="$7"
+  local warp_policy_restored=true
 
   warn "upgrade failed; restoring the previous installation"
   if [[ "$recreated" == "true" ]] && ! $compose stop awg-forge; then
@@ -1494,6 +1527,10 @@ EOF
     then
       return 1
     fi
+    if [[ "$baseline_warp_policy" == unknown ]] || ! upgrade_remove_replacement_warp_policy "$compose" "$override" "$baseline_warp_policy"; then
+      warn "could not confirm removal of WARP policy installed by the replacement"
+      warp_policy_restored=false
+    fi
     if ! upgrade_retire_retained_kernel_warp "$compose" "$override"; then
       warn "could not retire a retained WARP kernel interface before restarting the previous image"
     fi
@@ -1507,6 +1544,10 @@ EOF
   fi
   if ! upgrade_verify "$previous_image" "" "" "$previous_warp_ready"; then
     fail "previous image did not become ready after restoring $backup_dir"
+    return 1
+  fi
+  if [[ "$warp_policy_restored" != true ]]; then
+    fail "the previous image is running, but rollback could not verify WARP policy cleanup"
     return 1
   fi
   warn "previous installation restored from $backup_dir"
@@ -1630,7 +1671,7 @@ upgrade_locked() (
   esac
 
   local previous_image backup_dir override target_ref target_image recreated=false schema="" migration_status
-  local previous_warp_ready=true previous_warp_status=0
+  local previous_warp_ready=true previous_warp_status=0 baseline_warp_policy
   if ! previous_image="$(docker inspect --format '{{.Image}}' "$container_id" 2>/dev/null)" ||
      [[ ! "$previous_image" =~ ^sha256:[0-9a-f]{64}$ ]]; then
     fail "could not identify the previous image for rollback"
@@ -1689,6 +1730,7 @@ upgrade_locked() (
   elif [[ "$previous_warp_status" != 0 ]]; then
     warn "could not determine baseline WARP readiness; rollback will require WARP readiness"
   fi
+  baseline_warp_policy="$(upgrade_warp_policy_commands timeout -k 1s 4s docker exec "$container_id" ip)" || baseline_warp_policy=unknown
   backup_dir="$(mktemp -d "upgrade-backup-$(date -u +%Y%m%d-%H%M%S).XXXXXX")" || return 1
   if ! "${base[@]}" stop awg-forge; then
     fail "could not stop the current container"
@@ -1712,7 +1754,7 @@ upgrade_locked() (
   if $enable_sqlite || $create_missing_sqlite; then
     if ! enable_sqlite_env || ! upgrade_compose_layout "$directory" "$data_path" "$compose" "${target_files[@]}"; then
       fail "could not update SQLite settings with a safe Compose layout"
-      upgrade_rollback "$compose" "$backup_dir" "$previous_image" "$recreated" "$override" "$previous_warp_ready" && rm -f -- "$marker"
+      upgrade_rollback "$compose" "$backup_dir" "$previous_image" "$recreated" "$override" "$previous_warp_ready" "$baseline_warp_policy" && rm -f -- "$marker"
       return 1
     fi
   fi
@@ -1722,7 +1764,7 @@ upgrade_locked() (
        ! grep -Fqx 'OK   database: sqlite' <<<"$migration_status" ||
        ! schema="$(grep -Ex 'OK   schema: [1-9][0-9]*' <<<"$migration_status")"; then
       fail "SQLite migration failed"
-      upgrade_rollback "$compose" "$backup_dir" "$previous_image" "$recreated" "$override" "$previous_warp_ready" && rm -f -- "$marker"
+      upgrade_rollback "$compose" "$backup_dir" "$previous_image" "$recreated" "$override" "$previous_warp_ready" "$baseline_warp_policy" && rm -f -- "$marker"
       return 1
     fi
   fi
@@ -1731,7 +1773,7 @@ upgrade_locked() (
   if ! "${target[@]}" up -d --no-deps --force-recreate --pull never --no-build awg-forge ||
      ! upgrade_verify "$target_image" "$schema" fresh; then
     fail "replacement container, WARP, or SQLite did not become ready"
-    upgrade_rollback "$compose" "$backup_dir" "$previous_image" "$recreated" "$override" "$previous_warp_ready" && rm -f -- "$marker"
+    upgrade_rollback "$compose" "$backup_dir" "$previous_image" "$recreated" "$override" "$previous_warp_ready" "$baseline_warp_policy" && rm -f -- "$marker"
     return 1
   fi
   rm -f -- "$marker" || return 1

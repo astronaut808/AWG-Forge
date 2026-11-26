@@ -122,7 +122,7 @@ It stops the container, backs up `.env` and `data/`, and pins migration and star
 
 If SQLite is off, the installer offers to enable it. The default answer is `No`. If SQLite is enabled but its database file is missing, the installer asks before creating an empty database.
 
-After a rollback, the installer requires WARP readiness if WARP was ready before the upgrade or its original status was unknown. A confirmed pre-existing WARP outage allows the installer to accept recovery of the previous container.
+Before restarting the previous container, rollback removes the tagged WARP rules and routes added by the replacement. After a rollback, the installer requires WARP readiness if WARP was ready before the upgrade or its original status was unknown. A confirmed pre-existing WARP outage allows the installer to accept recovery of the previous container.
 
 For another installation directory, set `AWG_FORGE_HOME` as in `sudo AWG_FORGE_HOME=/srv/awg-forge ./install.sh upgrade`. The installer also offers upgrade from an existing installation directory. Custom Compose overrides, mounts beyond the managed data bind and read-only `/lib/modules`, mount points at or below `./data`, linked data, and external config, database, or audit paths require a manual upgrade. Back up the relevant volumes first.
 

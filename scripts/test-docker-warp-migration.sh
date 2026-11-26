@@ -45,8 +45,9 @@ docker exec "$anchor" sh -ec '
   import { readFileSync } from "node:fs";
   const [privateKey, peerPublicKey, ...json] = readFileSync(0, "utf8").split("\n");
   const state = JSON.parse(json.join("\n"));
+  const legacyPrivateKey = privateKey.slice(0, 8) + " \t" + privateKey.slice(8) + " # imported inline comment";
   state.warp = {
-    interface_name: "warp0", private_key: privateKey + " # imported inline comment", peer_public_key: peerPublicKey,
+    interface_name: "warp0", private_key: legacyPrivateKey, peer_public_key: peerPublicKey,
     endpoint: "127.0.0.1:2408", address_v4: "172.16.0.2", mtu: 1280,
   };
   state.tunnels[0].egress_mode = "warp";

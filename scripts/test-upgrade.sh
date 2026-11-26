@@ -51,12 +51,28 @@ fixture_env() {
 curl() {
   printf 'probe %s\n' "${*: -1}" >>"$DOCKER_LOG"
   printf 'probe-options %s\n' "$*" >>"$DOCKER_LOG"
-  if [[ ( "$runtime_result" == timeout || "$runtime_result" == warp-retained-apply-disabled ) &&
+  if [[ ( "$runtime_result" == timeout || "$runtime_result" == warp-retained-apply-disabled ||
+          "$runtime_result" == warp-postup-* ) &&
         "$(<.fixture-image)" == "$NEW_IMAGE" ]]; then
     printf 503
   else
     printf 401
   fi
+}
+
+fixture_warp_policy() {
+  local kind="$1" phase="$2"
+  if [[ "$runtime_result" != warp-postup-* ]]; then
+    printf '[]\n'
+    return
+  fi
+  case "$kind $phase" in
+    'rule before') printf '[{"priority":32760,"src":"10.12.0.0","srclen":24,"table":"51821","protocol":"242"}]\n' ;;
+    'rule during') printf '[{"priority":32760,"src":"10.12.0.0","srclen":24,"table":"51821","protocol":"242"},{"priority":32759,"src":"10.8.0.0","srclen":24,"table":"51821","protocol":"242"},{"priority":32758,"src":"10.8.0.0","srclen":24,"table":"200"}]\n' ;;
+    'route before') printf '[{"dst":"10.12.0.0/24","dev":"awg2","table":"51821","protocol":"242"}]\n' ;;
+    'route during') printf '[{"dst":"10.12.0.0/24","dev":"awg2","table":"51821","protocol":"242"},{"dst":"10.8.0.0/24","dev":"awg0","table":"51821","protocol":"242"}]\n' ;;
+    *) return 1 ;;
+  esac
 }
 
 docker() {
@@ -188,6 +204,19 @@ docker() {
       ;;
     "compose start awg-forge") return 0 ;;
     "compose run --rm")
+      if [[ "$*" == *'--entrypoint ip awg-forge'* ]]; then
+        [[ "$(awk '/image:/{print $2}' "$override")" == "$OLD_IMAGE" ]] || return 1
+        case "$*" in
+          *'-4 -j -N rule show table 51821 protocol 242') fixture_warp_policy rule during ;;
+          *'-4 -j -N route show table all proto 242') fixture_warp_policy route during ;;
+          *'-4 -batch -')
+            cat >.fixture-warp-policy-removed
+            [[ "$runtime_result" != warp-postup-cleanup-failed ]]
+            ;;
+          *) return 1 ;;
+        esac
+        return
+      fi
       if [[ "$*" == *'--entrypoint /bin/sh'* ]]; then
         [[ "$(awk '/image:/{print $2}' "$override")" == "$OLD_IMAGE" ]] || return 1
         if [[ "$runtime_result" == warp-preflight-failed || "$runtime_result" == warp-retained-foreign ||
@@ -245,7 +274,12 @@ docker() {
       printf 'OK   database: %s\nOK   schema: %s\n' "$fixture_database_status" "$fixture_schema"
       ;;
     "exec fixture-container ip")
-      [[ "${*:4}" == '-j link show' ]] || return 1
+      case "${*:4}" in
+        '-4 -j -N rule show table 51821 protocol 242') fixture_warp_policy rule before; return ;;
+        '-4 -j -N route show table all proto 242') fixture_warp_policy route before; return ;;
+        '-j link show') ;;
+        *) return 1 ;;
+      esac
       if [[ "$warp_baseline_unknown" == true ]] && ! grep -Fxq 'compose start awg-forge' "$DOCKER_LOG"; then
         return 124
       fi
@@ -891,7 +925,7 @@ printf 'OK   an unknown baseline does not waive WARP readiness on rollback\n'
 
 for scenario in warp-preflight-failed warp-retained-foreign warp-retained-apply-disabled; do
   setup_case "$scenario"
-  printf '{"tunnels":[{"enabled":true,"egress_mode":"warp"}],"warp":{"private_key":"fixture-key # comment"}}\n' >"$DATA_DIR/state.json"
+  printf '%s\n' '{"tunnels":[{"enabled":true,"egress_mode":"warp"}],"warp":{"private_key":"fix\tture-key # comment"}}' >"$DATA_DIR/state.json"
   mkdir retained-bin
   cat >retained-bin/ip <<'SH'
 #!/bin/sh
@@ -932,6 +966,27 @@ SH
   fi
 done
 printf 'OK   forced rollback retires the retained WARP kernel link before starting the previous image\n'
+
+for scenario in warp-postup-http-failed warp-postup-cleanup-failed; do
+  setup_case "$scenario"
+  printf '{"tunnels":[{"enabled":true,"egress_mode":"warp"}]}\n' >"$DATA_DIR/state.json"
+  runtime_result="$scenario"
+  if upgrade_main; then
+    printf 'FAIL HTTP readiness failure unexpectedly upgraded\n' >&2
+    exit 1
+  fi
+  assert_contains "$OLD_IMAGE" .fixture-image
+  assert_contains 'original' "$DATA_DIR/sentinel"
+  if [[ "$scenario" == warp-postup-cleanup-failed ]]; then
+    [[ -e .awg-forge-upgrade-pending ]]
+  else
+    [[ ! -e .awg-forge-upgrade-pending ]]
+  fi
+  assert_contains 'rule del priority 32759 from 10.8.0.0/24 lookup 51821 protocol 242' .fixture-warp-policy-removed
+  assert_contains 'route del 10.8.0.0/24 dev awg0 table 51821 proto 242' .fixture-warp-policy-removed
+  [[ $(wc -l <.fixture-warp-policy-removed) -eq 2 ]]
+done
+printf 'OK   rollback removes replacement WARP policy and preserves the baseline\n'
 
 setup_case warp-apply-disabled
 printf '{"tunnels":[{"enabled":true,"egress_mode":"warp"}]}\n' >"$DATA_DIR/state.json"

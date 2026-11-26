@@ -459,7 +459,16 @@ func cleanupWarpPolicy() error {
 func verifyWarpRuntimeOwner(w config.Warp) error {
 	pubkey := exec.Command("awg", "pubkey")
 	key, _, _ := strings.Cut(w.PrivateKey, "#")
-	pubkey.Stdin = strings.NewReader(strings.TrimSpace(key) + "\n")
+	// awg setconf strips ASCII whitespace before it parses a private key.
+	key = strings.Map(func(ch rune) rune {
+		switch ch {
+		case ' ', '\t', '\n', '\r', '\v', '\f':
+			return -1
+		default:
+			return ch
+		}
+	}, key)
+	pubkey.Stdin = strings.NewReader(key + "\n")
 	expected, err := pubkey.Output()
 	if err != nil {
 		return fmt.Errorf("derive WARP public key: %w", err)
