@@ -51,7 +51,8 @@ fixture_env() {
 curl() {
   printf 'probe %s\n' "${*: -1}" >>"$DOCKER_LOG"
   printf 'probe-options %s\n' "$*" >>"$DOCKER_LOG"
-  if [[ "$runtime_result" == timeout && "$(<.fixture-image)" == "$NEW_IMAGE" ]]; then
+  if [[ ( "$runtime_result" == timeout || "$runtime_result" == warp-retained-apply-disabled ) &&
+        "$(<.fixture-image)" == "$NEW_IMAGE" ]]; then
     printf 503
   else
     printf 401
@@ -189,10 +190,11 @@ docker() {
     "compose run --rm")
       if [[ "$*" == *'--entrypoint /bin/sh'* ]]; then
         [[ "$(awk '/image:/{print $2}' "$override")" == "$OLD_IMAGE" ]] || return 1
-        if [[ "$runtime_result" == warp-preflight-failed || "$runtime_result" == warp-retained-foreign ]]; then
+        if [[ "$runtime_result" == warp-preflight-failed || "$runtime_result" == warp-retained-foreign ||
+              "$runtime_result" == warp-retained-apply-disabled ]]; then
           while [[ "$1" != awg-forge ]]; do shift; done
           shift
-          PATH="$CURRENT_CASE/retained-bin:$PATH" RETAINED_WARP_KEY="$retained_warp_key" /bin/sh "$@"
+          PATH="$CURRENT_CASE/retained-bin:$PATH" RETAINED_WARP_KEY="$retained_warp_key" APPLY_CONFIG="$fixture_apply" /bin/sh "$@"
           return
         fi
         cat >/dev/null
@@ -213,10 +215,11 @@ docker() {
       if [[ "$image" == "$NEW_IMAGE" ]]; then
         printf 'replacement wrote data\n' >"$DATA_DIR/sentinel"
         if [[ "$runtime_result" == warp-start-failed || "$runtime_result" == warp-preflight-failed ||
-              "$runtime_result" == warp-retained-foreign ]]; then
+              "$runtime_result" == warp-retained-foreign || "$runtime_result" == warp-retained-apply-disabled ]]; then
           printf '{"tunnels":[{"enabled":true,"egress_mode":"warp"}],"warp":{"last_apply_error":"start WARP runtime: unavailable"}}\n' >"$DATA_DIR/state.json"
         fi
-      elif [[ ( "$runtime_result" == warp-preflight-failed || "$runtime_result" == warp-retained-foreign ) &&
+      elif [[ ( "$runtime_result" == warp-preflight-failed || "$runtime_result" == warp-retained-foreign ||
+                "$runtime_result" == warp-retained-apply-disabled ) &&
                ! -e .fixture-kernel-retired ]]; then
         printf '{"tunnels":[{"enabled":true,"egress_mode":"warp"}],"warp":{"last_apply_error":"missing warp0.conf for retained kernel interface"}}\n' >"$DATA_DIR/state.json"
       fi
@@ -886,7 +889,7 @@ assert_contains "$OLD_IMAGE" .fixture-image
 [[ -e .awg-forge-upgrade-pending ]]
 printf 'OK   an unknown baseline does not waive WARP readiness on rollback\n'
 
-for scenario in warp-preflight-failed warp-retained-foreign; do
+for scenario in warp-preflight-failed warp-retained-foreign warp-retained-apply-disabled; do
   setup_case "$scenario"
   printf '{"tunnels":[{"enabled":true,"egress_mode":"warp"}],"warp":{"private_key":"fixture-key # comment"}}\n' >"$DATA_DIR/state.json"
   mkdir retained-bin
@@ -911,6 +914,8 @@ SH
   retained_warp_key=fixture-public
   if [[ "$scenario" == warp-retained-foreign ]]; then
     retained_warp_key=foreign-public
+  elif [[ "$scenario" == warp-retained-apply-disabled ]]; then
+    fixture_apply=false
   fi
   if upgrade_main; then
     printf 'FAIL WARP startup failure unexpectedly upgraded\n' >&2
@@ -920,6 +925,8 @@ SH
   assert_contains 'original' "$DATA_DIR/sentinel"
   if [[ "$scenario" == warp-retained-foreign ]]; then
     [[ ! -e .fixture-kernel-retired && -e .awg-forge-upgrade-pending ]]
+  elif [[ "$scenario" == warp-retained-apply-disabled ]]; then
+    [[ ! -e .fixture-kernel-retired && ! -e .awg-forge-upgrade-pending ]]
   else
     [[ -e .fixture-kernel-retired && ! -e .awg-forge-upgrade-pending ]]
   fi

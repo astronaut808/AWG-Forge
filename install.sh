@@ -1358,6 +1358,7 @@ upgrade_verify_warp() {
   [[ "$reported" == ok ]] || return 1
   links="$(timeout -k 1s 4s docker exec "$id" ip -j link show 2>/dev/null)" || return 2
   status="$(jq -er --arg interface "$interface" '
+    select(type == "array") |
     if any(.[]; .ifname == $interface and (.flags | index("UP") != null)) then "up" else "down" end
   ' <<<"$links" 2>/dev/null)" || return 2
   [[ "$status" == up ]]
@@ -1454,6 +1455,7 @@ upgrade_retire_retained_kernel_warp() {
   jq -er '.warp.private_key // "" | split("#")[0] | gsub("^[[:space:]]+|[[:space:]]+$"; "")' "$DATA_DIR/state.json" 2>/dev/null |
     timeout -k 1s 10s $compose -f "$COMPOSE_FILE" -f "$override" run --rm --no-deps --pull never -T \
       --entrypoint /bin/sh awg-forge -ec '
+        case "${APPLY_CONFIG:-}" in 1|true|TRUE|yes) ;; *) exit 0 ;; esac
         iface=$1
         links=$(ip -o link show type amneziawg)
         if ! printf "%s\n" "$links" | awk -F ": " -v iface="$iface" '\''$2 == iface { found = 1 } END { exit !found }'\''; then
