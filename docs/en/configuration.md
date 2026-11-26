@@ -315,7 +315,9 @@ If WARP is not configured yet, awg-forge automatically registers Cloudflare WARP
 
 `Maintenance` -> `WARP` is for operations: checking status, manually registering or re-registering WARP, restarting `warp0`, deleting WARP config, or importing a config manually.
 
-Manual import is only a fallback when you already have a Cloudflare WARP WireGuard/AmneziaWG config from an external generator or WARP client tool. In that case, open `Manual WARP config import`, paste the full config, and click `Import WARP config`. Optional AmneziaWG parameters are checked before the active config is replaced. `Jmin` must be at most `Jmax`, and each `I1–I5` signature must have non-negative lengths and a total size of at most 65,535 bytes. The same checks run during backup restore and before applying a stored WARP config.
+Manual import is only a fallback when you already have a Cloudflare WARP WireGuard/AmneziaWG config from an external generator or WARP client tool. In that case, open `Manual WARP config import`, paste the full config, and click `Import WARP config`. Optional AmneziaWG parameters are checked before the active config is replaced. The same checks run during backup restore and before applying a stored WARP config.
+
+The WARP interface uses the bundled `amneziawg-go` userspace runtime. `Jmin` must be at most `Jmax`. Signatures in `I1` through `I5` accept `<b HEX>` (with an optional `0x` prefix), `<t>`, `<r N>`, `<rc N>`, `<rd N>`, `<d>`, `<ds>`, and `<dz N>`. The kernel-only `<c>` tag is rejected. Lengths must be non-negative, and each signature may generate up to 65,535 bytes. The UAPI line, including `i1=` (or `i2=` through `i5=`) and the trailing newline, may be at most 65,536 bytes. Outer whitespace and comments are removed from the CPS value before measuring and rendering it.
 
 Existing client configs do not need to change when only egress mode changes, because the client still connects to the same AmneziaWG tunnel endpoint. Runtime routing/NAT changes on the server side.
 

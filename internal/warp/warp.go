@@ -127,8 +127,7 @@ func validateProtocolParams(params config.ProtocolParams) error {
 		if err := validateSingleLine(key, value); err != nil {
 			return err
 		}
-		switch key {
-		case "I1", "I2", "I3", "I4", "I5":
+		if isSignatureParam(key) {
 			if err := protocol.ValidateImportedSignature(key, configValue(value)); err != nil {
 				return err
 			}
@@ -149,6 +148,15 @@ func validateProtocolParams(params config.ProtocolParams) error {
 		return errors.New("parameter Jmin must be less than or equal to Jmax")
 	}
 	return nil
+}
+
+func isSignatureParam(key string) bool {
+	switch key {
+	case "I1", "I2", "I3", "I4", "I5":
+		return true
+	default:
+		return false
+	}
 }
 
 func validateSingleLine(key, value string) error {
@@ -209,9 +217,16 @@ func RenderConfig(w config.Warp, routes []TunnelRoute) (string, error) {
 	writeLine(&b, "PrivateKey", w.PrivateKey)
 	writeLine(&b, "Address", address)
 	for _, key := range protocolParamKeys {
-		if value := w.ProtocolParams[key]; configValue(value) != "" {
-			writeLine(&b, key, value)
+		raw := w.ProtocolParams[key]
+		value := configValue(raw)
+		if value == "" {
+			continue
 		}
+		if isSignatureParam(key) {
+			// Forward the same CPS value that was checked against the UAPI limit.
+			raw = value
+		}
+		writeLine(&b, key, raw)
 	}
 	if w.MTU > 0 {
 		writeLine(&b, "MTU", strconv.Itoa(w.MTU))

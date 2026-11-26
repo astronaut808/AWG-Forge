@@ -1,6 +1,7 @@
 package warp
 
 import (
+	"bufio"
 	"strings"
 	"testing"
 
@@ -83,6 +84,7 @@ func TestImportedAWGParamsValidateBeforeRender(t *testing.T) {
 		{name: "negative character count", key: "I2", value: "<rc -1>"},
 		{name: "negative digit count", key: "I3", value: "<rd -1>"},
 		{name: "negative data size length", key: "I4", value: "<dz -1>"},
+		{name: "kernel-only checksum tag", key: "I3", value: "<c>"},
 		{name: "invalid byte count", key: "I5", value: "<b 0x123>"},
 		{name: "oversized chain", key: "I5", value: "<r 65535><t>"},
 		{name: "oversized number", key: "I1", value: "<r 18446744073709551616>"},
@@ -112,6 +114,60 @@ func TestImportedAWGParamsValidateBeforeRender(t *testing.T) {
 			rendered, err := RenderConfig(parsed, []TunnelRoute{{InterfaceName: "awg20", Subnet: "10.20.0.0/24"}})
 			if err == nil || !strings.Contains(err.Error(), tc.key) || rendered != "" {
 				t.Fatal("expected rendering to reject the stored WARP field")
+			}
+		})
+	}
+}
+
+func TestImportedSignatureUAPILineLimit(t *testing.T) {
+	const maxUAPILineSize = 64 * 1024
+	// A space inside the tag adds one serialized byte without changing the packet size.
+	tag := "<b 0x" + strings.Repeat("00", 32763)
+	routes := []TunnelRoute{{InterfaceName: "awg20", Subnet: "10.20.0.0/24"}}
+	for _, tc := range []struct {
+		name     string
+		value    string
+		lineSize int
+	}{
+		{name: "at limit", value: tag + ">", lineSize: maxUAPILineSize},
+		{name: "one byte over", value: tag + " >", lineSize: maxUAPILineSize + 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			line := "i1=" + tc.value + "\n"
+			if len(line) != tc.lineSize {
+				t.Fatalf("UAPI line length = %d, want %d", len(line), tc.lineSize)
+			}
+			valid := tc.lineSize <= maxUAPILineSize
+			scanner := bufio.NewScanner(strings.NewReader(line + "\n"))
+			if scanner.Scan() != valid {
+				t.Fatal("unexpected result from scanning the UAPI line")
+			}
+			raw := tc.value + " # excluded from UAPI"
+			input := strings.Replace(sampleConfig, "[Interface]\n", "[Interface]\nI1 = "+raw+"\n", 1)
+			parsed, err := ParseWireGuardConfig(input)
+			if !valid {
+				if err == nil || !strings.Contains(err.Error(), "I1 serialized signature") {
+					t.Fatal("expected an import error identifying the oversized serialized I1")
+				}
+				stored, err := ParseWireGuardConfig(sampleConfig)
+				if err != nil {
+					t.Fatal(err)
+				}
+				stored.ProtocolParams = config.ProtocolParams{"I1": raw}
+				if rendered, err := RenderConfig(stored, routes); err == nil || rendered != "" {
+					t.Fatal("expected rendering to reject the oversized serialized I1")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			rendered, err := RenderConfig(parsed, routes)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(rendered, "\nI1 = "+tc.value+"\n") {
+				t.Fatal("expected the rendered CPS value to match the validated value")
 			}
 		})
 	}
@@ -163,14 +219,14 @@ func TestRenderConfigIncludesAWGParams(t *testing.T) {
 		"Jmax": "40",
 		"I1":   "<b 0xc200> <r 1500>",
 		"I2":   "<d><ds><dz 2>",
-		"I3":   "<c><t>",
+		"I3":   "<t>",
 		"I4":   "# unused",
 	}
 	rendered, err := RenderConfig(parsed, []TunnelRoute{{InterfaceName: "awg20", Subnet: "10.20.0.0/24"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Jc = 4", "Jmin = 40 # fixed size", "Jmax = 40", "I1 = <b 0xc200> <r 1500>", "I2 = <d><ds><dz 2>", "I3 = <c><t>"} {
+	for _, want := range []string{"Jc = 4", "Jmin = 40 # fixed size", "Jmax = 40", "I1 = <b 0xc200> <r 1500>", "I2 = <d><ds><dz 2>", "I3 = <t>"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("rendered config missing %q:\n%s", want, rendered)
 		}

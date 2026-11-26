@@ -293,7 +293,8 @@ func (s *Service) reconcileWarpRuntime(state config.State) error {
 			return runAWGQuick("down", interfaceName)
 		},
 		up: func(interfaceName string) error {
-			return runAWGQuick("up", interfaceName)
+			// WARP CPS parameters are validated for the bundled userspace backend.
+			return runAWGQuickUserspace("up", interfaceName)
 		},
 	}
 	return reconcileWarpRuntime(state, runtimeConfigDir, commands)
@@ -666,6 +667,10 @@ func runAWGQuickForTunnel(tunnel config.Tunnel, args ...string) error {
 	if !isAWG3Profile(tunnel.ProtocolProfileID) {
 		return runAWGQuick(args...)
 	}
+	return runAWGQuickUserspace(args...)
+}
+
+func runAWGQuickUserspace(args ...string) error {
 	return runAWGQuickWithEnv([]string{"AWG_QUICK_FORCE_USERSPACE=1"}, args...)
 }
 

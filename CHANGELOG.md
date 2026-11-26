@@ -9,7 +9,7 @@
 ### Security
 
 - Update the bundled `amneziawg-go` runtime to `08fe3d33bbb1` for upstream fixes to CPS length validation, junk packet size ranges, and concurrent CPS updates. [Upstream commit](https://github.com/amnezia-vpn/amneziawg-go/commit/08fe3d33bbb116be09a6183d02609311b8b0c9e8)
-- Validate optional AmneziaWG junk sizes and CPS packets in WARP configs before import, backup restore, and runtime apply.
+- Run WARP with the bundled AmneziaWG userspace backend and validate optional junk sizes, CPS syntax, and UAPI line lengths before import, backup restore, and runtime apply.
 - Hosts that use the AmneziaWG kernel module need version `v3.1.20261113-02` or newer. Update the host module separately. [GHSA-xw5v-mhq7-h2w7](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/security/advisories/GHSA-xw5v-mhq7-h2w7)
 - Apply Debian's `libzstd1` security update in the runtime image. [DSA-6657-1](https://security-tracker.debian.org/tracker/DSA-6657-1)
 

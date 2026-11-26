@@ -6,7 +6,7 @@
 
 Для работы нужен `/dev/net/tun`. Установщик попробует `modprobe tun` и остановится до создания файлов проекта, если ядро или провайдер VPS не предоставляют TUN. Userspace runtime AmneziaWG уже есть в образе: устанавливать AmneziaWG или DKMS-модуль на хост не нужно. Правила firewall провайдера и доступность публичных UDP/TCP-портов остаются ответственностью оператора.
 
-Если на хосте уже доступен модуль ядра AmneziaWG, его могут использовать AWG 1.x, AWG 2.0 и интерфейс WARP. Обнови модуль на хосте отдельно до `v3.1.20261113-02` или новее. [GHSA-xw5v-mhq7-h2w7](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/security/advisories/GHSA-xw5v-mhq7-h2w7)
+Если на хосте уже доступен модуль ядра AmneziaWG, его могут использовать AWG 1.x и AWG 2.0. Обнови модуль на хосте отдельно до `v3.1.20261113-02` или новее. [GHSA-xw5v-mhq7-h2w7](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/security/advisories/GHSA-xw5v-mhq7-h2w7)
 
 На хостах с SELinux (обычно CentOS/RHEL) новая установка задаёт метку только приватному volume `data/` через `:Z`. SELinux остаётся включённым. Для существующего custom Compose подходящие метки volume нужно настроить вручную: установщик его не переписывает. RHEL должен иметь доступ к штатным репозиториям пакетов (подписка или соответствующее зеркало).
 

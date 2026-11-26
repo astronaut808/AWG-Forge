@@ -85,6 +85,26 @@ func TestReconcileWarpRuntimeWithoutExistingInterface(t *testing.T) {
 	}
 }
 
+func TestReconcileWarpRuntimeRejectsUnsupportedCPSBeforeStoppingInterface(t *testing.T) {
+	state := warpReconcileTestState(warpReconcileTestTunnel("awg0", "10.8.0.0/24"))
+	runtimeDir := t.TempDir()
+	runtimePath := filepath.Join(runtimeDir, "warp0.conf")
+	oldConfig := writeWarpReconcileTestConfig(t, runtimePath, state)
+	state.Warp.ProtocolParams = config.ProtocolParams{"I1": "<c>"}
+	commands := warpRuntimeCommands{
+		interfaceExists: func(string) bool {
+			t.Fatal("runtime probed before validating WARP config")
+			return true
+		},
+	}
+	if err := reconcileWarpRuntime(state, runtimeDir, commands); err == nil || !strings.Contains(err.Error(), "I1") {
+		t.Fatal("expected a WARP validation error for I1")
+	}
+	if got := readWarpReconcileTestConfig(t, runtimePath); got != oldConfig {
+		t.Fatal("rejected CPS value replaced the working runtime config")
+	}
+}
+
 func TestReconcileWarpRuntimeStopsLastRouteUsingExistingConfig(t *testing.T) {
 	oldState := warpReconcileTestState(warpReconcileTestTunnel("awg0", "10.8.0.0/24"))
 	runtimeDir := t.TempDir()

@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"bufio"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -16,7 +17,7 @@ const defaultCharsNoiseI4 = "<rc 16><r 10>"
 const defaultRandomNoiseI5 = "<r 32>"
 const maxSignaturePacketSize = 1232
 const maxRandomSignatureTokenSize = 999
-const maxImportedSignaturePacketSize = 65535 // Matches the patched AWG kernel module's CPS limit.
+const maxImportedSignaturePacketSize = 65535
 
 type AWG15 struct{}
 
@@ -81,14 +82,19 @@ func (AWG15) RenderClientPeer(ctx RenderContext, client config.Client) ([]Config
 }
 
 var signatureTokenRE = regexp.MustCompile(`^<(b 0x[0-9a-fA-F]+|r [0-9]+|rd [0-9]+|rc [0-9]+|t)>`)
-var importedSignatureTokenRE = regexp.MustCompile(`^<(?:b[ \t]+(?:0x)?[0-9a-fA-F]+|(?:r|rd|rc|dz)[ \t]+\+?[0-9]+|t|c|d|ds)[ \t]*>`)
+var importedSignatureTokenRE = regexp.MustCompile(`^<(?:b[ \t]+(?:0x)?[0-9a-fA-F]+|(?:r|rd|rc|dz)[ \t]+\+?[0-9]+|t|d|ds)[ \t]*>`)
 
 func validateSignatureParam(key, value string) error {
 	return validateSignaturePacket(key, value, signatureTokenRE, maxRandomSignatureTokenSize, maxSignaturePacketSize)
 }
 
-// ValidateImportedSignature checks a CPS packet from a config produced for an external AWG backend.
+// ValidateImportedSignature checks the CPS syntax and UAPI line length for amneziawg-go.
 func ValidateImportedSignature(key, value string) error {
+	// awg serializes the value verbatim as i1=<value>\n (likewise for i2–i5).
+	maxValueSize := bufio.MaxScanTokenSize - len(key) - len("=\n")
+	if len(value) > maxValueSize {
+		return fmt.Errorf("%s serialized signature value is too long (max %d bytes)", key, maxValueSize)
+	}
 	return validateSignaturePacket(key, value, importedSignatureTokenRE, maxImportedSignaturePacketSize, maxImportedSignaturePacketSize)
 }
 
@@ -116,7 +122,7 @@ func validateSignaturePacket(key, value string, tokenPattern *regexp.Regexp, max
 func signatureTokenSize(token string, maxTokenSize int) (int, error) {
 	parts := strings.Fields(token[1 : len(token)-1])
 	switch parts[0] {
-	case "t", "c":
+	case "t":
 		return 4, nil
 	case "d", "ds":
 		// I1-I5 are generated without an input payload.
