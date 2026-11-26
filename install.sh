@@ -1334,18 +1334,34 @@ upgrade_probe_settings() {
       (.WEBUI_PORT // "" | if . == "" then "51821" else . end) as $port |
       select(($host | test("^[a-zA-Z0-9.:_-]+$")) and
              ($port | test("^[0-9]{1,5}$") and (tonumber | . > 0 and . <= 65535))) |
-      [$host, $port, (if (.PASSWORD // "") == "" then "200" else "401" end)] | @tsv
+      (.APPLY_CONFIG // "") as $apply |
+      [$host, $port, (if (.PASSWORD // "") == "" then "200" else "401" end),
+       (if (["1", "true", "TRUE", "yes"] | index($apply)) == null then "false" else "true" end)] | @tsv
     ' 2>/dev/null
+}
+
+upgrade_verify_warp() {
+  local id="$1" interface
+  interface="$(jq -er '
+    if any(.tunnels[]?; .enabled == true and .egress_mode == "warp") then
+      select((.warp.last_apply_error // "") == "") |
+      (.warp.interface_name // "" | if . == "" then "warp0" else . end) |
+      select(test("^[A-Za-z][A-Za-z0-9_.-]{0,31}$") and (contains("..") | not))
+    else "-" end
+  ' "$DATA_DIR/state.json" 2>/dev/null)" || return 1
+  [[ "$interface" == "-" ]] ||
+    timeout -k 1s 4s docker exec "$id" ip -j link show dev "$interface" 2>/dev/null |
+      jq -e 'any(.[]; .flags | index("UP") != null)' >/dev/null 2>&1
 }
 
 upgrade_verify() {
   local image="$1" schema="${2:-}"
-  local id settings host port expected scheme mode request_host observed status initial="" consecutive=0 database_status
+  local id settings host port expected apply scheme mode request_host observed status initial="" consecutive=0 database_status
   local -a probe_options=(--noproxy '*')
   local deadline=$((SECONDS + 45))
   id="$(timeout -k 1s 4s docker inspect --format '{{.Id}}' "$APP_NAME" 2>/dev/null)" || return 1
   settings="$(upgrade_probe_settings "$id")" || return 1
-  IFS=$'\t' read -r host port expected <<<"$settings"
+  IFS=$'\t' read -r host port expected apply <<<"$settings"
   case "$host" in
     0.0.0.0) host=127.0.0.1 ;;
     ::) host='[::1]' ;;
@@ -1392,6 +1408,10 @@ upgrade_verify() {
           database_status="$(timeout -k 1s 4s docker exec "$id" awg-forge db status 2>/dev/null)" || return 1
           grep -Fqx 'OK   database: sqlite' <<<"$database_status" || return 1
           grep -Fqx "$schema" <<<"$database_status" || return 1
+        fi
+        if [[ "$apply" == true ]] && ! upgrade_verify_warp "$id"; then
+          fail "WARP runtime did not become ready for enabled WARP tunnels"
+          return 1
         fi
         [[ "$(timeout -k 1s 4s docker inspect --format '{{.Image}} {{.State.Status}} {{.RestartCount}} {{.State.StartedAt}}' "$id" 2>/dev/null)" == "$initial" ]]
         return
@@ -1666,7 +1686,7 @@ upgrade_locked() (
   recreated=true
   if ! "${target[@]}" up -d --no-deps --force-recreate --pull never --no-build awg-forge ||
      ! upgrade_verify "$target_image" "$schema" fresh; then
-    fail "replacement container or SQLite did not become ready"
+    fail "replacement container, WARP, or SQLite did not become ready"
     upgrade_rollback "$compose" "$backup_dir" "$previous_image" "$recreated" "$override" && rm -f -- "$marker"
     return 1
   fi

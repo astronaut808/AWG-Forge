@@ -290,8 +290,8 @@ func (s *Service) reconcileWarpRuntime(state config.State) error {
 			return exec.Command("ip", "link", "show", interfaceName).Run() == nil
 		},
 		verifyOwner: verifyWarpRuntimeOwner,
-		down: func(interfaceName string) error {
-			return runAWGQuick("down", interfaceName)
+		down: func(configPath string) error {
+			return runAWGQuick("down", configPath)
 		},
 		up: func(interfaceName string) error {
 			// WARP CPS parameters are validated for the bundled userspace backend.
@@ -314,11 +314,11 @@ func reconcileWarpRuntime(state config.State, runtimeDir string, commands warpRu
 	if err := validateTunnelInterfaceName(interfaceName); err != nil {
 		return fmt.Errorf("invalid WARP interface name: %w", err)
 	}
+	runtimePath := filepath.Join(runtimeDir, interfaceName+".conf")
 	if len(routes) == 0 {
 		if commands.interfaceExists(interfaceName) {
-			if err := commands.down(interfaceName); err != nil {
-				return fmt.Errorf("stop WARP runtime: %w", err)
-			}
+			_, err := stopWarpRuntime(state, runtimePath, commands)
+			return err
 		}
 		return nil
 	}
@@ -332,43 +332,28 @@ func reconcileWarpRuntime(state config.State, runtimeDir string, commands warpRu
 	if err := os.MkdirAll(runtimeDir, 0700); err != nil {
 		return err
 	}
-	runtimePath := filepath.Join(runtimeDir, interfaceName+".conf")
 	// Prepare the complete replacement before stopping the working interface.
 	stagedPath, err := stageRuntimeConfig(runtimePath, []byte(conf))
 	if err != nil {
 		return err
 	}
-	defer func(path string) { _ = os.Remove(path) }(stagedPath)
+	defer func() { _ = os.Remove(stagedPath) }()
 
-	wasRunning := commands.interfaceExists(interfaceName)
-	if wasRunning {
-		// Host-network interfaces can outlive the container that held their config.
-		// Recover the teardown hooks from state only for the managed WARP interface.
-		if _, err := os.Lstat(runtimePath); errors.Is(err, os.ErrNotExist) {
-			if err := commands.verifyOwner(state.Warp); err != nil {
-				return fmt.Errorf("recover missing WARP runtime config: %w", err)
-			}
-			if err := os.Rename(stagedPath, runtimePath); err != nil {
-				return fmt.Errorf("recover missing WARP runtime config: %w", err)
-			}
-			stagedPath = ""
-		} else if err != nil {
-			return fmt.Errorf("inspect WARP runtime config: %w", err)
-		}
-		if err := commands.down(interfaceName); err != nil {
-			return fmt.Errorf("stop WARP runtime: %w", err)
+	var canRestore bool
+	if commands.interfaceExists(interfaceName) {
+		canRestore, err = stopWarpRuntime(state, runtimePath, commands)
+		if err != nil {
+			return err
 		}
 	}
-	if stagedPath != "" {
-		if err := os.Rename(stagedPath, runtimePath); err != nil {
-			var restoreErr error
-			if wasRunning {
-				if err := commands.up(interfaceName); err != nil {
-					restoreErr = fmt.Errorf("restore previous WARP runtime: %w", err)
-				}
+	if err := os.Rename(stagedPath, runtimePath); err != nil {
+		var restoreErr error
+		if canRestore {
+			if err := commands.up(interfaceName); err != nil {
+				restoreErr = fmt.Errorf("restore previous WARP runtime: %w", err)
 			}
-			return errors.Join(fmt.Errorf("replace WARP runtime config: %w", err), restoreErr)
 		}
+		return errors.Join(fmt.Errorf("replace WARP runtime config: %w", err), restoreErr)
 	}
 	if err := commands.up(interfaceName); err != nil {
 		return fmt.Errorf("start WARP runtime: %w", err)
@@ -376,9 +361,61 @@ func reconcileWarpRuntime(state config.State, runtimeDir string, commands warpRu
 	return nil
 }
 
+// stopWarpRuntime reports whether the original config is available for restart.
+func stopWarpRuntime(state config.State, runtimePath string, commands warpRuntimeCommands) (bool, error) {
+	_, err := os.Lstat(runtimePath)
+	if err == nil {
+		if err := commands.down(runtimePath); err != nil {
+			return false, fmt.Errorf("stop WARP runtime: %w", err)
+		}
+		return true, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return false, fmt.Errorf("inspect WARP runtime config: %w", err)
+	}
+	if err := commands.verifyOwner(state.Warp); err != nil {
+		return false, fmt.Errorf("recover missing WARP runtime config: %w", err)
+	}
+
+	// An interrupted change can leave rules for a tunnel now using WAN or disabled.
+	// Scope cleanup to the recorded tunnel subnets and their routes in the WARP table.
+	routes := make([]warp.TunnelRoute, 0, len(state.Tunnels))
+	for _, tunnel := range state.Tunnels {
+		if err := validateTunnelInterfaceName(tunnel.InterfaceName); err != nil {
+			return false, fmt.Errorf("recover WARP route: %w", err)
+		}
+		routes = append(routes, warp.TunnelRoute{InterfaceName: tunnel.InterfaceName, Subnet: tunnel.IPv4Subnet})
+	}
+	conf, err := warp.RenderTeardownConfig(routes)
+	if err != nil {
+		return false, err
+	}
+	runtimeDir := filepath.Dir(runtimePath)
+	if err := os.MkdirAll(runtimeDir, 0700); err != nil {
+		return false, err
+	}
+	dir, err := os.MkdirTemp(runtimeDir, ".warp-teardown-*")
+	if err != nil {
+		return false, err
+	}
+	recoveredPath := filepath.Join(dir, filepath.Base(runtimePath))
+	defer func() {
+		_ = os.Remove(recoveredPath)
+		_ = os.Remove(dir)
+	}()
+	if err := os.WriteFile(recoveredPath, []byte(conf), 0600); err != nil {
+		return false, err
+	}
+	if err := commands.down(recoveredPath); err != nil {
+		return false, fmt.Errorf("stop WARP runtime with recovered config: %w", err)
+	}
+	return false, nil
+}
+
 func verifyWarpRuntimeOwner(w config.Warp) error {
 	pubkey := exec.Command("awg", "pubkey")
-	pubkey.Stdin = strings.NewReader(w.PrivateKey + "\n")
+	key, _, _ := strings.Cut(w.PrivateKey, "#")
+	pubkey.Stdin = strings.NewReader(strings.TrimSpace(key) + "\n")
 	expected, err := pubkey.Output()
 	if err != nil {
 		return fmt.Errorf("derive WARP public key: %w", err)

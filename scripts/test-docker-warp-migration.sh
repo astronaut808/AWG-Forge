@@ -25,6 +25,8 @@ docker exec "$anchor" ip link add testwan0 type dummy
 docker exec "$anchor" ip link set testwan0 up
 docker exec "$anchor" awg-forge init --server-host 127.0.0.1 --external-interface testwan0 \
   --profile awg_legacy_1_0 --tunnel-name awg0 --listen-port 51820 --ipv4-subnet 10.8.0.0/24 >/dev/null
+docker exec "$anchor" awg-forge tunnel create awg_legacy_1_0 awg1 51821 10.9.0.0/24 >/dev/null
+docker exec -e APPLY_CONFIG=true -e EXTERNAL_INTERFACE=testwan0 "$anchor" awg-forge render >/dev/null
 
 docker exec "$anchor" sh -ec '
   umask 077
@@ -36,10 +38,11 @@ docker exec "$anchor" sh -ec '
   const [privateKey, peerPublicKey, ...json] = readFileSync(0, "utf8").split("\n");
   const state = JSON.parse(json.join("\n"));
   state.warp = {
-    interface_name: "warp0", private_key: privateKey, peer_public_key: peerPublicKey,
+    interface_name: "warp0", private_key: privateKey + " # imported inline comment", peer_public_key: peerPublicKey,
     endpoint: "127.0.0.1:2408", address_v4: "172.16.0.2", mtu: 1280,
   };
   state.tunnels[0].egress_mode = "warp";
+  state.tunnels[1].egress_mode = "wan";
   process.stdout.write(JSON.stringify(state));
 ' | docker exec -i "$anchor" sh -ec '
   umask 077
@@ -52,8 +55,8 @@ backend=$(docker exec "$anchor" sh -ec '
   mkdir -p /etc/amnezia/amneziawg
   printf "%s\n" "[Interface]" "PrivateKey = $(cat /tmp/warp-test-private)" \
     "Address = 172.16.0.2/32" "MTU = 1280" "Table = 200" \
-    "PostUp = ip rule add from 10.8.0.0/24 lookup 200" \
-    "PostDown = ip rule del from 10.8.0.0/24 lookup 200" \
+    "PostUp = ip route replace 10.8.0.0/24 dev awg0 table 200; ip rule add from 10.8.0.0/24 lookup 200" \
+    "PostUp = ip route replace 10.9.0.0/24 dev awg1 table 200; ip rule add from 10.9.0.0/24 lookup 200" \
     "[Peer]" "PublicKey = $(cat /tmp/warp-test-peer)" \
     "AllowedIPs = 0.0.0.0/0" "Endpoint = 127.0.0.1:2408" >/etc/amnezia/amneziawg/warp0.conf
   rm /tmp/warp-test-private /tmp/warp-test-peer
@@ -69,6 +72,11 @@ backend=$(docker exec "$anchor" sh -ec '
   fi
 ')
 old_index=$(docker exec "$anchor" cat /sys/class/net/warp0/ifindex)
+docker exec "$anchor" ip -4 rule add from 10.253.0.0/24 lookup 200
+docker exec "$anchor" sh -ec '
+  ip -4 rule show from 10.9.0.0/24 table 200 | grep -q "lookup 200"
+  ip -4 route show table 200 exact 10.9.0.0/24 | grep -q "^10\.9\.0\.0/24 dev awg1 "
+'
 
 # The replacement sees the same legacy link but has a fresh /etc/amnezia.
 docker run --rm --platform linux/amd64 --network "container:$anchor" --entrypoint /bin/sh \
@@ -83,9 +91,13 @@ for _ in $(seq 1 30); do
     test "$(cat /sys/class/net/warp0/ifindex)" != "$1"
     ip -4 route show table 200 | grep -q "^default dev warp0 "
     test "$(ip -4 rule show from 10.8.0.0/24 table 200 | wc -l)" -eq 1
+    wan_rule=$(ip -4 rule show from 10.9.0.0/24 table 200)
+    wan_route=$(ip -4 route show table 200 exact 10.9.0.0/24)
+    test -z "$wan_rule$wan_route"
+    test "$(ip -4 rule show from 10.253.0.0/24 table 200 | wc -l)" -eq 1
     test "$(stat -c %a /etc/amnezia/amneziawg/warp0.conf)" = 600
   ' sh "$old_index" 2>/dev/null; then
-    echo "OK WARP migration ($backend to userspace): fresh config, new interface, restored routing"
+    echo "OK WARP migration ($backend to userspace): commented key accepted, stale WAN policy removed"
     exit 0
   fi
   sleep 1

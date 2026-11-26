@@ -86,7 +86,11 @@ func TestReconcileWarpRuntimeWithoutExistingInterface(t *testing.T) {
 }
 
 func TestReconcileWarpRuntimeRecoversMissingConfigForLiveInterface(t *testing.T) {
-	state := warpReconcileTestState(warpReconcileTestTunnel("awg0", "10.8.0.0/24"))
+	state := warpReconcileTestState(
+		warpReconcileTestTunnel("awg0", "10.8.0.0/24"),
+		warpReconcileTestTunnel("awg1", "10.9.0.0/24"),
+	)
+	state.Tunnels[1].EgressMode = config.EgressWAN
 	runtimeDir := t.TempDir()
 	runtimePath := filepath.Join(runtimeDir, "warp0.conf")
 	var calls []string
@@ -99,16 +103,31 @@ func TestReconcileWarpRuntimeRecoversMissingConfigForLiveInterface(t *testing.T)
 			}
 			return nil
 		},
-		down: func(string) error {
+		down: func(configPath string) error {
 			calls = append(calls, "down")
-			contents := readWarpReconcileTestConfig(t, runtimePath)
-			if !strings.Contains(contents, "PostDown = ip rule del from 10.8.0.0/24 lookup 200") {
-				t.Fatal("recovered config is missing WARP rule cleanup")
+			if configPath == runtimePath || filepath.Base(configPath) != "warp0.conf" {
+				t.Fatal("expected a temporary teardown config named after the interface")
+			}
+			contents := readWarpReconcileTestConfig(t, configPath)
+			for _, want := range []string{
+				"ip rule del from 10.8.0.0/24 lookup 200",
+				"ip rule del from 10.9.0.0/24 lookup 200",
+				"ip route del 10.9.0.0/24 dev awg1 table 200",
+			} {
+				if !strings.Contains(contents, want) {
+					t.Fatalf("recovered teardown config is missing %q", want)
+				}
+			}
+			if strings.Contains(contents, "PrivateKey") {
+				t.Fatal("teardown config includes a private key")
 			}
 			return nil
 		},
 		up: func(string) error {
 			calls = append(calls, "up")
+			if contents := readWarpReconcileTestConfig(t, runtimePath); strings.Contains(contents, "10.9.0.0/24") {
+				t.Fatal("replacement WARP config still routes the WAN subnet")
+			}
 			return nil
 		},
 	}
@@ -294,6 +313,35 @@ func TestReconcileWarpRuntimeCanRestoreAfterUpFailure(t *testing.T) {
 	}
 	if !upCalled {
 		t.Fatal("rollback did not restart the previous WARP runtime")
+	}
+}
+
+func TestRenderAllRecordsFailedWARPReplacement(t *testing.T) {
+	svc, _ := runtimeTransactionService(t)
+	recorder := runtimeRecorder{}
+	svc.runtimeOps = recorder.operations()
+	runtimeDir := t.TempDir()
+	stopped := false
+	svc.runtimeOps.reconcileWarp = func(state config.State) error {
+		return reconcileWarpRuntime(state, runtimeDir, warpRuntimeCommands{
+			interfaceExists: func(string) bool { return true },
+			verifyOwner:     func(config.Warp) error { return nil },
+			down: func(string) error {
+				stopped = true
+				return nil
+			},
+			up: func(string) error { return errors.New("forced userspace startup failure") },
+		})
+	}
+	if err := svc.RenderAll(); err != nil {
+		t.Fatal(err)
+	}
+	state, err := svc.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stopped || state.Warp.LastApplyError != "start WARP runtime: forced userspace startup failure" {
+		t.Fatal("startup did not persist the failed WARP replacement for the upgrade readiness check")
 	}
 }
 

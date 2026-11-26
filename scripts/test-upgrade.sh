@@ -44,8 +44,8 @@ cp() {
 
 fixture_env() {
   jq -n --arg mode "$(env_value DATABASE_MODE)" --arg password "$(env_value PASSWORD)" \
-    --arg config "$1" --arg db "$2" \
-    '{DATABASE_MODE:$mode,PASSWORD:$password,CONFIG_DIR:$config,DATABASE_PATH:$db}'
+    --arg config "$1" --arg db "$2" --arg apply "$fixture_apply" \
+    '{DATABASE_MODE:$mode,PASSWORD:$password,CONFIG_DIR:$config,DATABASE_PATH:$db,APPLY_CONFIG:$apply}'
 }
 
 curl() {
@@ -201,6 +201,9 @@ docker() {
       printf '%s\n' "$image" >.fixture-image
       if [[ "$image" == "$NEW_IMAGE" ]]; then
         printf 'replacement wrote data\n' >"$DATA_DIR/sentinel"
+        if [[ "$runtime_result" == warp-start-failed ]]; then
+          printf '{"tunnels":[{"enabled":true,"egress_mode":"warp"}],"warp":{"last_apply_error":"start WARP runtime: unavailable"}}\n' >"$DATA_DIR/state.json"
+        fi
       fi
       ;;
     "exec awg-forge awg-forge")
@@ -222,6 +225,14 @@ docker() {
     "exec fixture-container awg-forge")
       [[ "${4:-} ${5:-}" == "db status" ]] || return 1
       printf 'OK   database: %s\nOK   schema: %s\n' "$fixture_database_status" "$fixture_schema"
+      ;;
+    "exec fixture-container ip")
+      [[ "${*:4}" == '-j link show dev warp0' ]] || return 1
+      if [[ "$runtime_result" == warp-link-down && "$(<.fixture-image)" == "$NEW_IMAGE" ]]; then
+        printf '[{"flags":["LOWER_UP"]}]\n'
+      else
+        printf '[{"flags":["UP","LOWER_UP"]}]\n'
+      fi
       ;;
     *)
       printf 'unexpected docker invocation: %s\n' "$*" >&2
@@ -280,6 +291,7 @@ EOF
   doctor_result=ok
   migration_result=ok
   runtime_result=ok
+  fixture_apply=true
   copy_failure=none
   compose_container=fixture-container
   compose_override=none
@@ -788,6 +800,30 @@ fi
 assert_contains "$OLD_IMAGE" .fixture-image
 assert_contains 'original' "$DATA_DIR/sentinel"
 printf 'OK   upgrade rolls back when HTTP readiness times out\n'
+
+for failure in warp-start-failed warp-link-down; do
+  setup_case "$failure"
+  printf '{"tunnels":[{"enabled":true,"egress_mode":"warp"}]}\n' >"$DATA_DIR/state.json"
+  runtime_result="$failure"
+  if upgrade_main; then
+    printf 'FAIL unavailable WARP unexpectedly passed readiness (%s)\n' "$failure" >&2
+    exit 1
+  fi
+  assert_log_contains 'probe http://127.0.0.1:51821/api/state'
+  assert_log_contains 'exec fixture-container ip -j link show dev warp0'
+  assert_contains "$OLD_IMAGE" .fixture-image
+  assert_contains 'original' "$DATA_DIR/sentinel"
+  [[ ! -e .awg-forge-upgrade-pending ]]
+done
+printf 'OK   upgrade rolls back failed WARP startup after HTTP readiness\n'
+
+setup_case warp-apply-disabled
+printf '{"tunnels":[{"enabled":true,"egress_mode":"warp"}]}\n' >"$DATA_DIR/state.json"
+fixture_apply=false
+runtime_result=warp-start-failed
+upgrade_main
+assert_contains "$NEW_IMAGE" .fixture-image
+printf 'OK   upgrade respects disabled runtime apply\n'
 
 setup_case tls-readiness
 mkdir "$DATA_DIR/tls"

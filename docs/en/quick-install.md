@@ -94,7 +94,7 @@ Important: after a full reinstall, old client configs no longer match the server
 
 ## Upgrade
 
-Starting with v0.21.2, WARP uses the bundled `amneziawg-go` runtime. If any of your WARP `I1`–`I5` signatures use the kernel-only `<c>` tag, reimport a compatible WARP configuration before upgrading. For a WARP interface currently using the kernel module, choose tags supported by both backends, such as `<b HEX>`, `<t>`, `<r N>`, `<rc N>`, and `<rd N>`. See [WARP configuration](configuration.md#tunnel-egress-and-warp).
+Starting with v0.21.2, WARP uses the bundled `amneziawg-go` runtime. If any of your WARP `I1`–`I5` signatures use the kernel-only `<c>` tag, reimport a compatible WARP configuration before upgrading. For a WARP interface currently using the kernel module, choose tags supported by both backends, such as `<b 0xHEX>`, `<t>`, `<r N>`, `<rc N>`, and `<rd N>`. See [WARP configuration](configuration.md#tunnel-egress-and-warp).
 
 For a managed installation using the standard `.env`, `docker-compose.yml`, and `./data` layout, update with:
 
@@ -116,7 +116,7 @@ The installer checks the running container, the resolved target Compose service,
 
 Immediately before stopping the container, the installer compares the device and inode of its live data mount with the host data directory using `stat` on both sides. If the identifiers differ or cannot be read, it aborts before stopping the container.
 
-It stops the container, backs up `.env` and `data/`, and pins migration and startup to the inspected image ID. If copying fails, it attempts to restart the old container. After migration, it waits up to 45 seconds for repeated HTTP or HTTPS readiness responses without a restart. With SQLite enabled, the reported schema must match the migration result. For manual TLS, the local readiness probe accepts private or self-signed certificates and sends no credentials. Check certificate trust and hostname from a browser separately. Doctor remains a separate diagnostic check. Migration, startup, readiness, or SQLite failure triggers restoration of the previous image, `.env`, and data.
+It stops the container, backs up `.env` and `data/`, and pins migration and startup to the inspected image ID. If copying fails, it attempts to restart the old container. After migration, it waits up to 45 seconds for repeated HTTP or HTTPS readiness responses without a restart. With SQLite enabled, the reported schema must match the migration result. With runtime apply enabled and at least one enabled tunnel using WARP, the WARP interface must start without an apply error. For manual TLS, the local readiness probe accepts private or self-signed certificates and sends no credentials. Check certificate trust and hostname from a browser separately. Doctor remains a separate diagnostic check. Migration, startup, or readiness failure triggers restoration of the previous image, `.env`, and data.
 
 If SQLite is off, the installer offers to enable it. The default answer is `No`. If SQLite is enabled but its database file is missing, the installer asks before creating an empty database.
 
