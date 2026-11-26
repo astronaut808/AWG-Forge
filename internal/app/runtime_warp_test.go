@@ -18,6 +18,7 @@ func TestReconcileWarpRuntimeReplacesConfigAfterStoppingOldRuntime(t *testing.T)
 		warpReconcileTestTunnel("awg1", "10.9.0.0/24"),
 	)
 	nextState := warpReconcileTestState(warpReconcileTestTunnel("awg0", "10.8.0.0/24"))
+	nextState.Warp.PrivateKey = "replacement-private-key"
 	runtimeDir := t.TempDir()
 	runtimePath := filepath.Join(runtimeDir, "warp0.conf")
 	oldConfig := writeWarpReconcileTestConfig(t, runtimePath, oldState)
@@ -26,6 +27,13 @@ func TestReconcileWarpRuntimeReplacesConfigAfterStoppingOldRuntime(t *testing.T)
 	commands := warpRuntimeCommands{
 		interfaceExists: func(string) bool { return true },
 		verifyPolicy:    func() error { return nil },
+		verifyOwner: func(probe config.Warp) error {
+			calls = append(calls, "verify")
+			if strings.TrimSpace(probe.PrivateKey) != oldState.Warp.PrivateKey {
+				t.Fatal("key rotation must verify the live link using the previously applied key")
+			}
+			return nil
+		},
 		down: func(iface string) error {
 			calls = append(calls, "down")
 			if iface != "warp0" {
@@ -54,8 +62,8 @@ func TestReconcileWarpRuntimeReplacesConfigAfterStoppingOldRuntime(t *testing.T)
 	if err := reconcileWarpRuntime(nextState, runtimeDir, commands); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(calls, []string{"down", "cleanup", "up"}) {
-		t.Fatalf("runtime calls = %v, want [down cleanup up]", calls)
+	if !slices.Equal(calls, []string{"verify", "down", "cleanup", "up"}) {
+		t.Fatalf("runtime calls = %v, want [verify down cleanup up]", calls)
 	}
 	info, err := os.Stat(runtimePath)
 	if err != nil {
@@ -158,6 +166,29 @@ func TestReconcileWarpRuntimeLeavesUnverifiedInterfaceAlone(t *testing.T) {
 	}
 }
 
+func TestReconcileWarpRuntimeRejectsForeignInterfaceDespiteStaleConfig(t *testing.T) {
+	state := warpReconcileTestState(warpReconcileTestTunnel("awg0", "10.8.0.0/24"))
+	runtimeDir := t.TempDir()
+	runtimePath := filepath.Join(runtimeDir, "warp0.conf")
+	oldConfig := writeWarpReconcileTestConfig(t, runtimePath, state)
+	ownerErr := errors.New("foreign live interface")
+	commands := warpRuntimeCommands{
+		interfaceExists: func(string) bool { return true },
+		verifyPolicy:    func() error { return nil },
+		verifyOwner:     func(config.Warp) error { return ownerErr },
+		down: func(string) error {
+			t.Fatal("stale runtime config must not authorize deletion of another interface")
+			return nil
+		},
+	}
+	if err := reconcileWarpRuntime(state, runtimeDir, commands); !errors.Is(err, ownerErr) {
+		t.Fatalf("expected the ownership error, got %v", err)
+	}
+	if got := readWarpReconcileTestConfig(t, runtimePath); got != oldConfig {
+		t.Fatal("runtime config changed on an ownership mismatch")
+	}
+}
+
 func TestReconcileWarpRuntimeRejectsUnsupportedCPSBeforeStoppingInterface(t *testing.T) {
 	state := warpReconcileTestState(warpReconcileTestTunnel("awg0", "10.8.0.0/24"))
 	runtimeDir := t.TempDir()
@@ -187,6 +218,7 @@ func TestReconcileWarpRuntimeStopsAndCleansLastRoute(t *testing.T) {
 	commands := warpRuntimeCommands{
 		interfaceExists: func(string) bool { return true },
 		verifyPolicy:    func() error { return nil },
+		verifyOwner:     func(config.Warp) error { return nil },
 		down: func(string) error {
 			calls = append(calls, "down")
 			if got := readWarpReconcileTestConfig(t, runtimePath); got != oldConfig {
@@ -226,6 +258,7 @@ func TestReconcileWarpRuntimeDownFailurePreservesExistingConfig(t *testing.T) {
 	commands := warpRuntimeCommands{
 		interfaceExists: func(string) bool { return true },
 		verifyPolicy:    func() error { return nil },
+		verifyOwner:     func(config.Warp) error { return nil },
 		down:            func(string) error { return downErr },
 		up: func(string) error {
 			upCalled = true
@@ -298,6 +331,7 @@ func TestReconcileWarpRuntimeCanRestoreAfterUpFailure(t *testing.T) {
 	err := reconcileWarpRuntime(nextState, runtimeDir, warpRuntimeCommands{
 		interfaceExists: func(string) bool { return true },
 		verifyPolicy:    func() error { return nil },
+		verifyOwner:     func(config.Warp) error { return nil },
 		down:            func(string) error { return nil },
 		up:              func(string) error { return upErr },
 		cleanup: func() error {

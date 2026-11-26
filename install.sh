@@ -1340,18 +1340,27 @@ upgrade_probe_settings() {
     ' 2>/dev/null
 }
 
-upgrade_verify_warp() {
-  local id="$1" interface
-  interface="$(jq -er '
+upgrade_warp_interface() {
+  jq -er '
     if any(.tunnels[]?; .enabled == true and .egress_mode == "warp") then
-      select((.warp.last_apply_error // "") == "") |
       (.warp.interface_name // "" | if . == "" then "warp0" else . end) |
       select(test("^[A-Za-z][A-Za-z0-9_.-]{0,31}$") and (contains("..") | not))
     else "-" end
-  ' "$DATA_DIR/state.json" 2>/dev/null)" || return 1
-  [[ "$interface" == "-" ]] ||
-    timeout -k 1s 4s docker exec "$id" ip -j link show dev "$interface" 2>/dev/null |
-      jq -e 'any(.[]; .flags | index("UP") != null)' >/dev/null 2>&1
+  ' "$DATA_DIR/state.json" 2>/dev/null
+}
+
+# Return 1 for a confirmed failure and 2 if the probe could not determine readiness.
+upgrade_verify_warp() {
+  local id="$1" interface reported links status
+  interface="$(upgrade_warp_interface)" || return 2
+  [[ "$interface" != "-" ]] || return 0
+  reported="$(jq -er 'if (.warp.last_apply_error // "") == "" then "ok" else "failed" end' "$DATA_DIR/state.json" 2>/dev/null)" || return 2
+  [[ "$reported" == ok ]] || return 1
+  links="$(timeout -k 1s 4s docker exec "$id" ip -j link show 2>/dev/null)" || return 2
+  status="$(jq -er --arg interface "$interface" '
+    if any(.[]; .ifname == $interface and (.flags | index("UP") != null)) then "up" else "down" end
+  ' <<<"$links" 2>/dev/null)" || return 2
+  [[ "$status" == up ]]
 }
 
 upgrade_verify() {
@@ -1436,6 +1445,27 @@ upgrade_doctor() {
   rm -f -- "$doctor_log"
 }
 
+upgrade_retire_retained_kernel_warp() {
+  local compose="$1" override="$2" interface
+  interface="$(upgrade_warp_interface)" || return 1
+  [[ "$interface" != "-" ]] || return 0
+  # The restored image lacks the old container's runtime files. Retire only an
+  # authenticated kernel link so that image can recreate WARP from restored state.
+  jq -er '.warp.private_key // "" | split("#")[0] | gsub("^[[:space:]]+|[[:space:]]+$"; "")' "$DATA_DIR/state.json" 2>/dev/null |
+    timeout -k 1s 10s $compose -f "$COMPOSE_FILE" -f "$override" run --rm --no-deps --pull never -T \
+      --entrypoint /bin/sh awg-forge -ec '
+        iface=$1
+        links=$(ip -o link show type amneziawg)
+        if ! printf "%s\n" "$links" | awk -F ": " -v iface="$iface" '\''$2 == iface { found = 1 } END { exit !found }'\''; then
+          exit 0
+        fi
+        expected=$(awg pubkey)
+        actual=$(awg show "$iface" public-key)
+        [ -n "$expected" ] && [ "$actual" = "$expected" ] || exit 1
+        ip link delete dev "$iface"
+      ' sh "$interface" >/dev/null 2>&1
+}
+
 upgrade_rollback() {
   local compose="$1"
   local backup_dir="$2"
@@ -1461,6 +1491,9 @@ services:
 EOF
     then
       return 1
+    fi
+    if ! upgrade_retire_retained_kernel_warp "$compose" "$override"; then
+      warn "could not retire a retained WARP kernel interface before restarting the previous image"
     fi
     if ! $compose -f "$COMPOSE_FILE" -f "$override" up -d --no-deps --force-recreate --pull never --no-build awg-forge; then
       fail "could not restart the previous image $previous_image"
@@ -1594,7 +1627,8 @@ upgrade_locked() (
       ;;
   esac
 
-  local previous_image backup_dir override target_ref target_image recreated=false schema="" migration_status previous_warp_ready=false
+  local previous_image backup_dir override target_ref target_image recreated=false schema="" migration_status
+  local previous_warp_ready=true previous_warp_status=0
   if ! previous_image="$(docker inspect --format '{{.Image}}' "$container_id" 2>/dev/null)" ||
      [[ ! "$previous_image" =~ ^sha256:[0-9a-f]{64}$ ]]; then
     fail "could not identify the previous image for rollback"
@@ -1647,8 +1681,11 @@ upgrade_locked() (
     return 1
   fi
   # A rollback must recover the old installation, including WARP if it was ready before the stop.
-  if upgrade_verify_warp "$container_id"; then
-    previous_warp_ready=true
+  upgrade_verify_warp "$container_id" || previous_warp_status=$?
+  if [[ "$previous_warp_status" == 1 ]]; then
+    previous_warp_ready=false
+  elif [[ "$previous_warp_status" != 0 ]]; then
+    warn "could not determine baseline WARP readiness; rollback will require WARP readiness"
   fi
   backup_dir="$(mktemp -d "upgrade-backup-$(date -u +%Y%m%d-%H%M%S).XXXXXX")" || return 1
   if ! "${base[@]}" stop awg-forge; then

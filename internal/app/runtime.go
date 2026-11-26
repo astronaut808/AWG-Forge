@@ -379,16 +379,33 @@ func stopWarpRuntime(state config.Warp, runtimePath string, commands warpRuntime
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return false, fmt.Errorf("inspect WARP runtime config: %w", err)
 	}
-	if errors.Is(err, os.ErrNotExist) {
-		if err := commands.verifyOwner(state); err != nil {
-			return false, fmt.Errorf("recover missing WARP runtime config: %w", err)
-		}
+	if key := warpRuntimePrivateKey(string(conf)); key != "" {
+		// A replacement may rotate the key saved in state before the old link stops.
+		state.PrivateKey = key
+	}
+	if err := commands.verifyOwner(state); err != nil {
+		return false, fmt.Errorf("verify WARP runtime ownership: %w", err)
 	}
 	// Remove the link directly so historical configs cannot run unscoped PostDown hooks.
 	if err := commands.down(state.RuntimeInterface()); err != nil {
 		return false, fmt.Errorf("stop WARP runtime: %w", err)
 	}
 	return strings.Contains(string(conf), "\nTable = off\n"), nil
+}
+
+func warpRuntimePrivateKey(conf string) string {
+	inInterface := false
+	for line := range strings.SplitSeq(conf, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "[") {
+			inInterface = strings.EqualFold(line, "[Interface]")
+		}
+		key, value, _ := strings.Cut(line, "=")
+		if inInterface && strings.EqualFold(strings.TrimSpace(key), "PrivateKey") {
+			return value
+		}
+	}
+	return ""
 }
 
 type warpPolicyEntry struct {

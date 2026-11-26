@@ -122,6 +122,27 @@ for _ in $(seq 1 30); do
     test "$(stat -c %a /etc/amnezia/amneziawg/warp0.conf)" = 600
   ' sh "$old_index" 2>/dev/null; then
     echo "OK WARP migration ($backend to userspace): foreign rule preserved, owned orphan policy removed"
+    # A previously generated config must not authorize deletion of a new owner.
+    docker exec "$successor" sh -ec '
+      ip link delete dev warp0
+      for _ in $(seq 1 30); do
+        test -S /var/run/amneziawg/warp0.sock || break
+        sleep 0.1
+      done
+      test ! -S /var/run/amneziawg/warp0.sock
+      amneziawg-go warp0
+      awg genkey | awg set warp0 private-key /dev/stdin
+      test -f /etc/amnezia/amneziawg/warp0.conf
+      foreign_index=$(cat /sys/class/net/warp0/ifindex)
+      awg-forge render
+      test "$(cat /sys/class/net/warp0/ifindex)" = "$foreign_index"
+    ' >/dev/null
+    docker exec "$successor" cat /etc/awg-forge/state.json | node --input-type=module -e '
+      import { readFileSync } from "node:fs";
+      const { warp } = JSON.parse(readFileSync(0, "utf8"));
+      if (!warp.last_apply_error?.includes("live interface does not match the stored WARP public key")) process.exit(1);
+    '
+    echo "OK WARP stale runtime config preserves a foreign live interface"
     exit 0
   fi
   sleep 1
