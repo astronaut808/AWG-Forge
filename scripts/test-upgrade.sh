@@ -132,6 +132,9 @@ docker() {
     "inspect fixture-container --format"|"inspect awg-forge --format")
       local actual_apply="$fixture_apply"
       if [[ "$(<.fixture-image)" == "$NEW_IMAGE" ]]; then
+        if [[ "$2" == awg-forge && "$fixture_replacement_env_unknown" == true ]]; then
+          return 124
+        fi
         actual_apply="${fixture_replacement_apply:-$fixture_apply}"
       fi
       fixture_env "$existing_config" "" "$actual_apply" | jq '[to_entries[] | .key + "=" + .value]'
@@ -171,6 +174,9 @@ docker() {
       [[ -z "$override" ]] || image_ref="$(awk '/image:/{print $2}' "$override")"
       [[ -z "$override" ]] || target_apply="${fixture_replacement_apply:-$fixture_apply}"
       [[ -z "$override" ]] || apply_model="$fixture_target_apply_model"
+      if [[ -n "$override" && "$runtime_result" == warp-postup-disabled-config-changed && "$(<.fixture-image)" == "$NEW_IMAGE" ]]; then
+        target_apply=true
+      fi
       data_path="$(pwd -P)/data"
       [[ "$target_layout" != wrong ]] || data_path="$(pwd -P)/other"
       fixture_env "$target_config" "$target_db" "$target_apply" | jq --arg dir "$PWD" --arg data "$data_path" --arg extra "$target_mount" --arg option "$3" --arg image "$image_ref" --arg shape "$compose_env_file_shape" --arg apply_model "$apply_model" '
@@ -362,6 +368,7 @@ EOF
   runtime_result=ok
   fixture_apply=true
   fixture_replacement_apply=""
+  fixture_replacement_env_unknown=false
   fixture_image_apply=""
   fixture_target_apply_model=explicit
   warp_baseline_unknown=false
@@ -985,7 +992,8 @@ done
 printf 'OK   forced rollback retires the retained WARP kernel link before starting the previous image\n'
 
 for scenario in warp-postup-http-failed warp-postup-cleanup-failed warp-postup-disabled warp-postup-disabled-without-baseline \
-                warp-postup-disabled-image-default warp-postup-disabled-unset warp-postup-enabled-replacement; do
+                warp-postup-disabled-image-default warp-postup-disabled-unset warp-postup-disabled-inspect-timeout \
+                warp-postup-disabled-config-changed warp-postup-live-apply-disabled warp-postup-enabled-replacement; do
   setup_case "$scenario"
   printf '{"tunnels":[{"enabled":true,"egress_mode":"warp"}]}\n' >"$DATA_DIR/state.json"
   runtime_result="$scenario"
@@ -1004,9 +1012,16 @@ for scenario in warp-postup-http-failed warp-postup-cleanup-failed warp-postup-d
   elif [[ "$scenario" == warp-postup-disabled-unset ]]; then
     fixture_target_apply_model="unset"
     fixture_image_apply=true
+  elif [[ "$scenario" == warp-postup-live-apply-disabled ]]; then
+    fixture_target_apply_model=inherit
+    fixture_image_apply=true
+    fixture_replacement_apply=false
   elif [[ "$scenario" == warp-postup-enabled-replacement ]]; then
     fixture_target_apply_model=inherit
     fixture_image_apply=true
+  fi
+  if [[ "$scenario" == warp-postup-disabled-inspect-timeout || "$scenario" == warp-postup-disabled-config-changed ]]; then
+    fixture_replacement_env_unknown=true
   fi
   if upgrade_main; then
     printf 'FAIL HTTP readiness failure unexpectedly upgraded\n' >&2
@@ -1015,9 +1030,22 @@ for scenario in warp-postup-http-failed warp-postup-cleanup-failed warp-postup-d
   assert_contains "$OLD_IMAGE" .fixture-image
   assert_contains 'original' "$DATA_DIR/sentinel"
   if [[ "$scenario" == warp-postup-disabled* ]]; then
-    [[ ! -e .awg-forge-upgrade-pending && ! -e .fixture-warp-policy-removed ]]
+    if [[ "$scenario" == warp-postup-disabled-config-changed ]]; then
+      [[ -e .awg-forge-upgrade-pending ]]
+    else
+      [[ ! -e .awg-forge-upgrade-pending ]]
+    fi
+    [[ ! -e .fixture-warp-policy-removed ]]
     if grep -Fq -e 'rule show table 51821' -e '--entrypoint ip awg-forge' "$DOCKER_LOG"; then
       printf 'FAIL upgrade inspected WARP policy for a replacement with runtime apply disabled\n' >&2
+      exit 1
+    fi
+    continue
+  elif [[ "$scenario" == warp-postup-live-apply-disabled ]]; then
+    [[ ! -e .awg-forge-upgrade-pending && ! -e .fixture-warp-policy-removed ]]
+    assert_log_contains 'rule show table 51821'
+    if grep -Fq -- '--entrypoint ip awg-forge' "$DOCKER_LOG"; then
+      printf 'FAIL rollback ignored the live replacement container mode\n' >&2
       exit 1
     fi
     continue

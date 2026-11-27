@@ -1524,12 +1524,10 @@ upgrade_rollback() {
   local override="$5"
   local previous_warp_ready="$6"
   local baseline_warp_policy="$7"
-  local warp_policy_restored=true replacement_apply=unknown
+  local replacement_apply="${8:-unknown}" warp_policy_restored=true
 
   warn "upgrade failed; restoring the previous installation"
   if [[ "$recreated" == "true" ]]; then
-    replacement_apply="$(upgrade_docker_env timeout -k 1s 4s docker inspect "$APP_NAME" |
-      upgrade_runtime_apply_setting)" || replacement_apply=unknown
     if ! $compose stop awg-forge; then
       fail "could not stop the replacement container before restoring $backup_dir"
       return 1
@@ -1798,7 +1796,17 @@ upgrade_locked() (
   if ! "${target[@]}" up -d --no-deps --force-recreate --pull never --no-build awg-forge ||
      ! upgrade_verify "$target_image" "$schema" fresh; then
     fail "replacement container, WARP, or SQLite did not become ready"
-    upgrade_rollback "$compose" "$backup_dir" "$previous_image" "$recreated" "$override" "$previous_warp_ready" "$baseline_warp_policy" && rm -f -- "$marker"
+    local replacement_apply
+    if ! replacement_apply="$(upgrade_docker_env timeout -k 1s 4s docker inspect "$APP_NAME" |
+      upgrade_runtime_apply_setting)"; then
+      replacement_apply=unknown
+      # An unavailable container can still have a confirmed disabled apply mode.
+      if [[ "$target_apply" == false ]] &&
+         [[ "$(upgrade_target_runtime_apply "$target_image" "${target[@]}")" == false ]]; then
+        replacement_apply=false
+      fi
+    fi
+    upgrade_rollback "$compose" "$backup_dir" "$previous_image" "$recreated" "$override" "$previous_warp_ready" "$baseline_warp_policy" "$replacement_apply" && rm -f -- "$marker"
     return 1
   fi
   rm -f -- "$marker" || return 1
