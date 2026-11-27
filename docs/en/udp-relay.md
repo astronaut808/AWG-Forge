@@ -34,6 +34,14 @@ sudo bash ./awg-forge-install.sh relay remove --id 0123456789abcdef
 
 The container starts with Docker and restores its own rules. The status command checks the container and host rules. The panel checks the public endpoint at startup and repeats the check about once a minute. The exit server initiates an AWG handshake through the relay using a temporary peer without tunnel routes. The panel shows the result and the time of the last successful check. This verifies the round trip between the servers. To verify a particular client network or Internet egress, connect from that network and test traffic.
 
+If the panel shows no response, generate traffic through the relay and run the following command while the UDP flows are active. It checks the local setup and looks for an unanswered forwarded flow and a separate unanswered flow from a different source IP to the same translated UDP port in the same conntrack zone. This indicates a possible mismatch. The panel handshake and a client traffic test are the checks for recovery. The command requires v0.21.2 or later on the relay host.
+
+```bash
+sudo bash ./awg-forge-install.sh relay diagnose --id 0123456789abcdef
+```
+
+For an exit with multiple IPv4 addresses, upgrade the **exit server** to v0.21.2 or later. Its bundled userspace runtime retains the receiving address when Linux UDP GRO is enabled, so it can reply from that address. As a temporary recovery or after rolling the exit back to v0.21.1, you can set the relay destination to the exit's primary IPv4 if the tunnel listens there. Run the updated install command and verify an AWG handshake and client traffic in both directions.
+
 After changing a relay, run the updated install command on the relay host. A destination address change requires reinstalling the relay even when client configs stay current. To remove a relay, reassign its clients, run `relay remove` on the relay host, and delete the relay in the panel. Remove the tunnel's relays before changing its listen port or deleting the tunnel.
 
 The relay uses a separate Compose project. The container manages its own iptables-nft rules, and the Linux kernel forwards packets. Allocate a free UDP port. Check that existing host firewall rules and any third-party firewall chains allow the traffic.

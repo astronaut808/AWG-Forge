@@ -24,8 +24,10 @@ RUN . /tmp/amneziawg.refs \
   && git checkout --detach FETCH_HEAD
 COPY build/amneziawg.refs /tmp/awg-forge/build/amneziawg.refs
 COPY build/patches/amneziawg-go-dependencies.patch /tmp/awg-forge/build/patches/amneziawg-go-dependencies.patch
+COPY build/patches/amneziawg-go-gro-packet-info.patch /tmp/awg-forge/build/patches/amneziawg-go-gro-packet-info.patch
 COPY scripts/prepare-amneziawg-runtime.sh /tmp/awg-forge/scripts/prepare-amneziawg-runtime.sh
 RUN bash /tmp/awg-forge/scripts/prepare-amneziawg-runtime.sh /src \
+  && GOWORK=off GOFLAGS=-mod=readonly go test ./conn -run '^Test_splitCoalescedMessages' \
   && GOWORK=off GOFLAGS=-mod=readonly make && cp amneziawg-go /out-amneziawg-go
 
 FROM debian:trixie@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6 AS tools-builder

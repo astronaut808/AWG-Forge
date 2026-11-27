@@ -1885,9 +1885,9 @@ relay_runtime_action() {
   args="$(relay_compose "$file" config --format json | jq -er '.services.relay.command | .[2:] | @tsv')" || return 1
   local -a rule_args
   read -r -a rule_args <<< "$args"
-  if [[ "$action" == status ]]; then
+  if [[ "$action" == status || "$action" == diagnose ]]; then
     relay_compose "$file" ps || return 1
-    relay_compose "$file" exec -T relay /usr/local/bin/udp-relay.sh status "${rule_args[@]}"
+    relay_compose "$file" exec -T relay /usr/local/bin/udp-relay.sh "$action" "${rule_args[@]}"
     return
   fi
   relay_compose "$file" down || return 1
@@ -2004,7 +2004,7 @@ relay_main() (
   local action=apply relay_id="" version="" listen_port="" destination="" target_host target_ip target_port
   local route local_ip interface relay_root=/opt/awg-forge-relays relay_dir current next
   case "${1:-}" in
-    status|remove) action="$1"; shift ;;
+    status|diagnose|remove) action="$1"; shift ;;
   esac
   while (( $# > 0 )); do
     if (( $# < 2 )); then
@@ -2095,7 +2095,7 @@ relay_main() (
     fi
   fi
   case "$action" in
-    status)
+    status|diagnose)
       if [[ -f "$next" ]]; then
         warn "relay update was interrupted; run the install command again to recover"
         [[ -n "$live" ]] || { fail "relay has no container"; return 1; }
@@ -2103,7 +2103,7 @@ relay_main() (
         live="$current"
       fi
       [[ -f "$live" ]] || { fail "relay is not installed"; return 1; }
-      relay_runtime_action "$live" status
+      relay_runtime_action "$live" "$action"
       return
       ;;
     remove)

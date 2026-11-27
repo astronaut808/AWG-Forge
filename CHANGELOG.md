@@ -10,6 +10,7 @@
 
 - Recover WARP after container recreation and remove stale routing rules and routes owned by AWG-Forge while preserving unrelated host policy.
 - Roll back managed upgrades when required WARP fails to start. Account for a confirmed pre-existing WARP outage and skip WARP policy snapshots and cleanup when runtime apply is disabled in the replacement container.
+- Preserve the destination IPv4 when the bundled AmneziaWG runtime handles UDP GRO, so UDP relays can forward replies from a secondary exit address. Add `relay diagnose` to check for a possible reply source mismatch.
 
 ### Security
 

@@ -197,6 +197,53 @@ status() {
   forwarding_enabled && route_matches && rules_present
 }
 
+diagnose() {
+  local requests replies
+  # Match reply destination ports after SNAT. They can differ from the
+  # original client source ports when Linux resolves tuple collisions.
+  requests="$(timeout 5 conntrack -L -f ipv4 -p udp --dst-nat --orig-dst "$local_ip" --dport "$listen_port" \
+    --reply-src "$target_ip" --reply-port-src "$target_port" --reply-dst "$local_ip")" || return 1
+  replies="$(timeout 5 conntrack -L -f ipv4 -p udp --orig-dst "$local_ip" --sport "$target_port")" || return 1
+  printf '%s\n--\n%s\n' "$requests" "$replies" | awk -v target="$target_ip" '
+    $0 == "--" { reading_replies = 1; next }
+    !/\[UNREPLIED\]/ || /\[ASSURED\]/ { next }
+    {
+      tuples = 0
+      zone = "0"
+      original_zone = reply_zone = ""
+      for (i = 1; i + 3 <= NF; i++) {
+        if ($i ~ /^src=/ && $(i+1) ~ /^dst=/ && $(i+2) ~ /^sport=/ && $(i+3) ~ /^dport=/) {
+          src[++tuples] = substr($i, 5)
+          dst[tuples] = substr($(i+1), 5)
+          sport[tuples] = substr($(i+2), 7)
+          dport[tuples] = substr($(i+3), 7)
+        }
+      }
+      for (i = 1; i <= NF; i++) {
+        if ($i ~ /^zone=/) zone = substr($i, 6)
+        if ($i ~ /^zone-orig=/) original_zone = substr($i, 11)
+        if ($i ~ /^zone-reply=/) reply_zone = substr($i, 12)
+      }
+      if (original_zone == "") original_zone = zone
+      if (reply_zone == "") reply_zone = zone
+    }
+    tuples != 2 { next }
+    !reading_replies { pending[reply_zone, dport[2]] = 1; next }
+    src[1] != target && src[1] != dst[1] && ((original_zone, dport[1]) in pending) &&
+      src[1] == dst[2] && dst[1] == src[2] && sport[1] == dport[2] && dport[1] == sport[2] {
+      if (!(src[1] in observed)) {
+        printf "relay: possible reply source mismatch (expected %s, observed %s)\n", target, src[1]
+        observed[src[1]] = 1
+        found = 1
+      }
+    }
+    END {
+      if (!found)
+        print "relay: no matching evidence of a reply source mismatch in current conntrack entries"
+    }
+  '
+}
+
 apply() {
   local listening rules
   forwarding_enabled && route_matches || return 1
@@ -251,12 +298,20 @@ case "$action" in
       resolve_destination || die "DNS destination has no usable IPv4 route"
     fi
     ;;
-  status)
+  status|diagnose)
     if $dynamic; then
       read -r target_ip local_ip interface < "$state_file" || exit 1
     fi
+    valid_ipv4 "$target_ip" && valid_ipv4 "$local_ip" &&
+      [[ "$target_ip" != "$local_ip" && "$interface" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,14}$ ]] ||
+      die "invalid active relay mapping"
     set_rules
     status
+    if [[ "$action" == diagnose ]]; then
+      unlock
+      printf 'relay: local forwarding rules and route are ready. Check the AWG handshake in the exit panel.\n'
+      diagnose
+    fi
     ;;
   remove) remove_rules ;;
   serve)
@@ -305,5 +360,5 @@ case "$action" in
       unlock
     done
     ;;
-  *) die "expected serve, status, remove, or validate" ;;
+  *) die "expected serve, status, diagnose, remove, or validate" ;;
 esac

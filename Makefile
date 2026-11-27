@@ -98,6 +98,7 @@ docker-runtime-smoke:
 	IMAGE=$(IMAGE) node scripts/test-docker-runtime.mjs
 
 docker-relay-smoke:
+	IMAGE=$(IMAGE) bash scripts/test-docker-relay-awg.sh
 	IMAGE=$(IMAGE) bash scripts/test-docker-relay.sh
 
 updates: updates-local

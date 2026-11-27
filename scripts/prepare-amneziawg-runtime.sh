@@ -14,8 +14,12 @@ if [[ -n "$(git -C "$source_dir" ls-files --others --exclude-standard)" ]]; then
   echo "runtime preparation requires a clean upstream checkout" >&2
   exit 1
 fi
-git -C "$source_dir" apply --check "$root/build/patches/amneziawg-go-dependencies.patch"
-git -C "$source_dir" apply "$root/build/patches/amneziawg-go-dependencies.patch"
+patches=(
+  "$root/build/patches/amneziawg-go-dependencies.patch"
+  "$root/build/patches/amneziawg-go-gro-packet-info.patch"
+)
+git -C "$source_dir" apply --check "${patches[@]}"
+git -C "$source_dir" apply "${patches[@]}"
 
 cd "$source_dir"
 export GOWORK=off
