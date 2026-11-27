@@ -65,10 +65,15 @@ func TestAPIContractRelayLifecycle(t *testing.T) {
 	path := base + "/" + result.Relay.ID
 	t.Setenv("AWG_FORGE_VERSION", "v1.2.3")
 	command := do(w.tunnelAPI, http.MethodGet, path+"/install", origin, "", "", http.StatusOK)
-	if command.Header().Get("Cache-Control") != "no-store" ||
-		!strings.Contains(command.Body.String(), "/v1.2.3/install.sh") ||
+	if command.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("install command must not be cached")
+	}
+	if !strings.Contains(command.Body.String(), "https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh ") {
+		t.Fatalf("install command must fetch the master installer: %s", command.Body.String())
+	}
+	if !strings.Contains(command.Body.String(), "relay --version v1.2.3 ") ||
 		!strings.Contains(command.Body.String(), "--target 192.0.2.20:") {
-		t.Fatal("install command did not pin the release or destination")
+		t.Fatal("install command did not retain the image version and destination")
 	}
 	do(w.tunnelAPI, http.MethodDelete, path, origin, "", "", http.StatusBadRequest)
 	do(w.tunnelAPI, http.MethodPut, path, origin, "", strings.Replace(body, "40123", "40124", 1), http.StatusOK)

@@ -5,6 +5,7 @@
 ### Changed
 
 - Refresh SQLite, Go and frontend dependencies, base images, and CI tools. Verify Go module manifests and checksums in CI.
+- Download the UDP relay installer from `master` in the Web UI command and select the relay image by release version.
 
 ### Fixed
 
