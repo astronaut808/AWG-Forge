@@ -1141,8 +1141,26 @@ upgrade_env_layout() {
 }
 
 upgrade_docker_env() {
-  docker "$@" --format '{{json .Config.Env}}' 2>/dev/null |
+  "$@" --format '{{json .Config.Env}}' 2>/dev/null |
     jq -e 'map(capture("^(?<key>[^=]+)=(?<value>.*)$"; "s")) | from_entries' 2>/dev/null
+}
+
+upgrade_runtime_apply_setting() {
+  jq -er '(.APPLY_CONFIG // "") | IN("1", "true", "TRUE", "yes") | tostring'
+}
+
+upgrade_target_runtime_apply() {
+  local image="$1" setting
+  shift
+  setting="$("$@" config --format json awg-forge 2>/dev/null |
+    jq -er '.services["awg-forge"].environment // {} |
+      if has("APPLY_CONFIG") then (.APPLY_CONFIG // "") | tostring | IN("1", "true", "TRUE", "yes") | tostring
+      else "inherit" end' 2>/dev/null)" || return 1
+  if [[ "$setting" == inherit ]]; then
+    upgrade_docker_env timeout -k 1s 4s docker image inspect "$image" | upgrade_runtime_apply_setting
+  else
+    printf '%s\n' "$setting"
+  fi
 }
 
 upgrade_same_path() {
@@ -1166,7 +1184,7 @@ upgrade_container_layout() {
   upgrade_same_path "$source" "$data_path" || return 1
   [[ "$(docker inspect --format '{{.HostConfig.NetworkMode}}:{{len .HostConfig.Tmpfs}}' "$id" 2>/dev/null)" == "host:0" ]] ||
     return 1
-  upgrade_docker_env inspect "$id" | upgrade_env_layout
+  upgrade_docker_env docker inspect "$id" | upgrade_env_layout
 }
 
 upgrade_compose_can_validate_layout() {
@@ -1327,9 +1345,8 @@ enable_sqlite_env() {
 
 upgrade_probe_settings() {
   local id="$1"
-  timeout -k 1s 4s docker inspect --format '{{json .Config.Env}}' "$id" 2>/dev/null |
+  upgrade_docker_env timeout -k 1s 4s docker inspect "$id" |
     jq -er '
-      map(capture("^(?<key>[^=]+)=(?<value>.*)$"; "s")) | from_entries |
       (.WEBUI_HOST // "" | if . == "" then "127.0.0.1" else . end) as $host |
       (.WEBUI_PORT // "" | if . == "" then "51821" else . end) as $port |
       select(($host | test("^[a-zA-Z0-9.:_-]+$")) and
@@ -1507,12 +1524,16 @@ upgrade_rollback() {
   local override="$5"
   local previous_warp_ready="$6"
   local baseline_warp_policy="$7"
-  local warp_policy_restored=true
+  local warp_policy_restored=true replacement_apply=unknown
 
   warn "upgrade failed; restoring the previous installation"
-  if [[ "$recreated" == "true" ]] && ! $compose stop awg-forge; then
-    fail "could not stop the replacement container before restoring $backup_dir"
-    return 1
+  if [[ "$recreated" == "true" ]]; then
+    replacement_apply="$(upgrade_docker_env timeout -k 1s 4s docker inspect "$APP_NAME" |
+      upgrade_runtime_apply_setting)" || replacement_apply=unknown
+    if ! $compose stop awg-forge; then
+      fail "could not stop the replacement container before restoring $backup_dir"
+      return 1
+    fi
   fi
   if ! restore_upgrade_backup "$backup_dir"; then
     fail "could not restore $backup_dir automatically"
@@ -1527,7 +1548,8 @@ EOF
     then
       return 1
     fi
-    if [[ "$baseline_warp_policy" == unknown ]] || ! upgrade_remove_replacement_warp_policy "$compose" "$override" "$baseline_warp_policy"; then
+    if [[ "$replacement_apply" != false ]] &&
+       { [[ "$baseline_warp_policy" == unknown ]] || ! upgrade_remove_replacement_warp_policy "$compose" "$override" "$baseline_warp_policy"; }; then
       warn "could not confirm removal of WARP policy installed by the replacement"
       warp_policy_restored=false
     fi
@@ -1671,7 +1693,7 @@ upgrade_locked() (
   esac
 
   local previous_image backup_dir override target_ref target_image recreated=false schema="" migration_status
-  local previous_warp_ready=true previous_warp_status=0 baseline_warp_policy
+  local previous_warp_ready=true previous_warp_status=0 baseline_warp_policy=unknown target_apply
   if ! previous_image="$(docker inspect --format '{{.Image}}' "$container_id" 2>/dev/null)" ||
      [[ ! "$previous_image" =~ ^sha256:[0-9a-f]{64}$ ]]; then
     fail "could not identify the previous image for rollback"
@@ -1704,7 +1726,7 @@ upgrade_locked() (
      [[ ! "$target_image" =~ ^sha256:[0-9a-f]{64}$ ]] ||
      ! docker image inspect --format '{{json .Config.Volumes}}' "$target_image" 2>/dev/null |
         jq -e '(keys? // []) | all(. == "/etc/awg-forge")' >/dev/null 2>&1 ||
-     ! upgrade_docker_env image inspect "$target_image" | upgrade_env_layout; then
+     ! upgrade_docker_env docker image inspect "$target_image" | upgrade_env_layout; then
     fail "could not verify a managed target image"
     return 1
   fi
@@ -1730,7 +1752,10 @@ upgrade_locked() (
   elif [[ "$previous_warp_status" != 0 ]]; then
     warn "could not determine baseline WARP readiness; rollback will require WARP readiness"
   fi
-  baseline_warp_policy="$(upgrade_warp_policy_commands timeout -k 1s 4s docker exec "$container_id" ip)" || baseline_warp_policy=unknown
+  target_apply="$(upgrade_target_runtime_apply "$target_image" "${target[@]}")" || target_apply=unknown
+  if [[ "$target_apply" != false ]]; then
+    baseline_warp_policy="$(upgrade_warp_policy_commands timeout -k 1s 4s docker exec "$container_id" ip)" || baseline_warp_policy=unknown
+  fi
   backup_dir="$(mktemp -d "upgrade-backup-$(date -u +%Y%m%d-%H%M%S).XXXXXX")" || return 1
   if ! "${base[@]}" stop awg-forge; then
     fail "could not stop the current container"
