@@ -14,8 +14,12 @@ if [[ -n "$(git -C "$source_dir" ls-files --others --exclude-standard)" ]]; then
   echo "runtime preparation requires a clean upstream checkout" >&2
   exit 1
 fi
-git -C "$source_dir" apply --check "$root/build/patches/amneziawg-go-dependencies.patch"
-git -C "$source_dir" apply "$root/build/patches/amneziawg-go-dependencies.patch"
+patches=(
+  "$root/build/patches/amneziawg-go-dependencies.patch"
+  "$root/build/patches/amneziawg-go-gro-packet-info.patch"
+)
+git -C "$source_dir" apply --check "${patches[@]}"
+git -C "$source_dir" apply "${patches[@]}"
 
 cd "$source_dir"
 export GOWORK=off
@@ -35,7 +39,7 @@ for arch in amd64 arm64; do
     echo "runtime imports an unaudited SDK on linux/$arch" >&2
     exit 1
   fi
-  for dependency in golang.org/x/crypto@v0.58.0 golang.org/x/net@v0.62.0 golang.org/x/sys@v0.49.0; do
+  for dependency in golang.org/x/crypto@v0.59.0 golang.org/x/net@v0.63.0 golang.org/x/sys@v0.50.0; do
     if ! grep -Fxq "$dependency" <<< "$modules"; then
       echo "unexpected runtime dependency version on linux/$arch: $dependency" >&2
       exit 1

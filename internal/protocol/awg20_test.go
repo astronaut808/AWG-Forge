@@ -81,7 +81,7 @@ func TestAWG20DefaultsAvoidParserBoundaryRandomChunks(t *testing.T) {
 			if !strings.HasPrefix(token, "<r ") {
 				continue
 			}
-			size, err := signatureTokenSize(token)
+			size, err := signatureTokenSize(token, maxRandomSignatureTokenSize)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -175,7 +175,7 @@ func signatureSize(value string) (int, error) {
 			return 0, validateSignatureParam("I1", value)
 		}
 		token := rest[loc[0]:loc[1]]
-		size, err := signatureTokenSize(token)
+		size, err := signatureTokenSize(token, maxRandomSignatureTokenSize)
 		if err != nil {
 			return 0, err
 		}

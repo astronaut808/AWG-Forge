@@ -31,7 +31,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
           cache: true
@@ -51,7 +51,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 26.13.0
+          node-version: 26.13.1
           package-manager-cache: false
 
       - name: Install ShellCheck
@@ -92,13 +92,13 @@ jobs:
 
       - name: Install Semgrep and zizmor
         run: |
-          pipx install semgrep==1.183.0
-          pipx install zizmor==1.32.0
+          pipx install semgrep==1.187.0
+          pipx install zizmor==1.33.1
 
       - name: Set up Trivy
         uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
         with:
-          version: v0.76.1
+          version: v0.76.2
           cache: true
 
       - name: Run security gate
@@ -115,7 +115,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
           cache: true

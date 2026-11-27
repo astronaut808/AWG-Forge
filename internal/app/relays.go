@@ -194,6 +194,13 @@ func (s *Service) RelayInstallCommand(tunnelID, relayID string) (string, error) 
 	if !releaseTagPattern.MatchString(version) {
 		return "", errors.New("relay installer command requires a versioned release")
 	}
-	return fmt.Sprintf("curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/%s/install.sh -o awg-forge-install.sh && sudo bash ./awg-forge-install.sh relay --version %s --id %s --listen-port %d --target %s:%d",
-		version, version, relay.ID, relay.Port, relay.Target(), tunnel.ListenPort), nil
+	return fmt.Sprintf(
+		"curl -fsSL https://raw.githubusercontent.com/astronaut808/awg-forge/master/install.sh -o awg-forge-install.sh && "+
+			"sudo bash ./awg-forge-install.sh relay --version %s --id %s --listen-port %d --target %s:%d",
+		version,
+		relay.ID,
+		relay.Port,
+		relay.Target(),
+		tunnel.ListenPort,
+	), nil
 }

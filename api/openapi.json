@@ -134,7 +134,7 @@
       "get": {
         "operationId": "getRelayInstallCommand",
         "parameters": [{ "$ref": "#/components/parameters/TunnelID" }, { "$ref": "#/components/parameters/RelayID" }],
-        "responses": { "200": { "description": "Versioned install command for the relay host.", "content": { "application/json": { "schema": { "type": "object", "required": ["command"], "properties": { "command": { "type": "string" } } } } } }, "default": { "$ref": "#/components/responses/APIError" } }
+        "responses": { "200": { "description": "Command that downloads the installer from master and selects a versioned relay image.", "content": { "application/json": { "schema": { "type": "object", "required": ["command"], "properties": { "command": { "type": "string" } } } } } }, "default": { "$ref": "#/components/responses/APIError" } }
       }
     },
     "/api/clients": {

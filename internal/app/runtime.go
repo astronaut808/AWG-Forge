@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -289,11 +290,15 @@ func (s *Service) reconcileWarpRuntime(state config.State) error {
 		interfaceExists: func(interfaceName string) bool {
 			return exec.Command("ip", "link", "show", interfaceName).Run() == nil
 		},
+		verifyOwner:  verifyWarpRuntimeOwner,
+		verifyPolicy: verifyWarpPolicyTable,
+		cleanup:      cleanupWarpPolicy,
 		down: func(interfaceName string) error {
-			return runAWGQuick("down", interfaceName)
+			return exec.Command("ip", "link", "delete", "dev", interfaceName).Run()
 		},
 		up: func(interfaceName string) error {
-			return runAWGQuick("up", interfaceName)
+			// WARP CPS parameters are validated for the bundled userspace backend.
+			return runAWGQuickUserspace("up", interfaceName)
 		},
 	}
 	return reconcileWarpRuntime(state, runtimeConfigDir, commands)
@@ -301,6 +306,9 @@ func (s *Service) reconcileWarpRuntime(state config.State) error {
 
 type warpRuntimeCommands struct {
 	interfaceExists func(string) bool
+	verifyOwner     func(config.Warp) error
+	verifyPolicy    func() error
+	cleanup         func() error
 	down            func(string) error
 	up              func(string) error
 }
@@ -311,13 +319,14 @@ func reconcileWarpRuntime(state config.State, runtimeDir string, commands warpRu
 	if err := validateTunnelInterfaceName(interfaceName); err != nil {
 		return fmt.Errorf("invalid WARP interface name: %w", err)
 	}
+	runtimePath := filepath.Join(runtimeDir, interfaceName+".conf")
 	if len(routes) == 0 {
 		if commands.interfaceExists(interfaceName) {
-			if err := commands.down(interfaceName); err != nil {
-				return fmt.Errorf("stop WARP runtime: %w", err)
+			if _, err := stopWarpRuntime(state.Warp, runtimePath, commands); err != nil {
+				return err
 			}
 		}
-		return nil
+		return commands.cleanup()
 	}
 	if !state.Warp.Configured() {
 		return errors.New("WARP egress is enabled but WARP config is not imported")
@@ -329,23 +338,29 @@ func reconcileWarpRuntime(state config.State, runtimeDir string, commands warpRu
 	if err := os.MkdirAll(runtimeDir, 0700); err != nil {
 		return err
 	}
-	runtimePath := filepath.Join(runtimeDir, interfaceName+".conf")
 	// Prepare the complete replacement before stopping the working interface.
 	stagedPath, err := stageRuntimeConfig(runtimePath, []byte(conf))
 	if err != nil {
 		return err
 	}
 	defer func() { _ = os.Remove(stagedPath) }()
+	if err := commands.verifyPolicy(); err != nil {
+		return err
+	}
 
-	wasRunning := commands.interfaceExists(interfaceName)
-	if wasRunning {
-		if err := commands.down(interfaceName); err != nil {
-			return fmt.Errorf("stop WARP runtime: %w", err)
+	var canRestore bool
+	if commands.interfaceExists(interfaceName) {
+		canRestore, err = stopWarpRuntime(state.Warp, runtimePath, commands)
+		if err != nil {
+			return err
 		}
+	}
+	if err := commands.cleanup(); err != nil {
+		return err
 	}
 	if err := os.Rename(stagedPath, runtimePath); err != nil {
 		var restoreErr error
-		if wasRunning {
+		if canRestore {
 			if err := commands.up(interfaceName); err != nil {
 				restoreErr = fmt.Errorf("restore previous WARP runtime: %w", err)
 			}
@@ -353,7 +368,117 @@ func reconcileWarpRuntime(state config.State, runtimeDir string, commands warpRu
 		return errors.Join(fmt.Errorf("replace WARP runtime config: %w", err), restoreErr)
 	}
 	if err := commands.up(interfaceName); err != nil {
-		return fmt.Errorf("start WARP runtime: %w", err)
+		return errors.Join(fmt.Errorf("start WARP runtime: %w", err), commands.cleanup())
+	}
+	return nil
+}
+
+// stopWarpRuntime reports whether the original config can restart with managed policy.
+func stopWarpRuntime(state config.Warp, runtimePath string, commands warpRuntimeCommands) (bool, error) {
+	conf, err := os.ReadFile(runtimePath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, fmt.Errorf("inspect WARP runtime config: %w", err)
+	}
+	if key := warpRuntimePrivateKey(string(conf)); key != "" {
+		// A replacement may rotate the key saved in state before the old link stops.
+		state.PrivateKey = key
+	}
+	if err := commands.verifyOwner(state); err != nil {
+		return false, fmt.Errorf("verify WARP runtime ownership: %w", err)
+	}
+	// Remove the link directly so historical configs cannot run unscoped PostDown hooks.
+	if err := commands.down(state.RuntimeInterface()); err != nil {
+		return false, fmt.Errorf("stop WARP runtime: %w", err)
+	}
+	return strings.Contains(string(conf), "\nTable = off\n"), nil
+}
+
+func warpRuntimePrivateKey(conf string) string {
+	inInterface := false
+	for line := range strings.SplitSeq(conf, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "[") {
+			inInterface = strings.EqualFold(line, "[Interface]")
+		}
+		key, value, _ := strings.Cut(line, "=")
+		if inInterface && strings.EqualFold(strings.TrimSpace(key), "PrivateKey") {
+			return value
+		}
+	}
+	return ""
+}
+
+type warpPolicyEntry struct {
+	Table    string `json:"table"`
+	Protocol string `json:"protocol"`
+}
+
+func warpPolicyEntries(args ...string) ([]warpPolicyEntry, error) {
+	out, err := exec.Command("ip", append([]string{"-4", "-j", "-N"}, args...)...).Output()
+	if err != nil {
+		return nil, err
+	}
+	var entries []warpPolicyEntry
+	err = json.Unmarshal(out, &entries)
+	return entries, err
+}
+
+func verifyWarpPolicyTable() error {
+	for _, args := range [][]string{{"rule", "show", "table", warp.RoutingTable}, {"route", "show", "table", "all"}} {
+		entries, err := warpPolicyEntries(args...)
+		if err != nil {
+			return fmt.Errorf("inspect WARP routing table: %w", err)
+		}
+		for _, entry := range entries {
+			if entry.Table == warp.RoutingTable && entry.Protocol != warp.RoutingProtocol {
+				return fmt.Errorf("WARP routing table %s contains an external %s", warp.RoutingTable, args[0])
+			}
+		}
+	}
+	return nil
+}
+
+func cleanupWarpPolicy() error {
+	if err := exec.Command("ip", "-4", "rule", "flush", "table", warp.RoutingTable, "protocol", warp.RoutingProtocol).Run(); err != nil {
+		return fmt.Errorf("remove managed WARP policy rules: %w", err)
+	}
+	// Listing all tables first avoids treating an absent WARP table as a flush error.
+	routes, err := warpPolicyEntries("route", "show", "table", "all", "proto", warp.RoutingProtocol)
+	if err != nil {
+		return fmt.Errorf("list managed WARP routes: %w", err)
+	}
+	if !slices.ContainsFunc(routes, func(route warpPolicyEntry) bool { return route.Table == warp.RoutingTable }) {
+		return nil
+	}
+	if err := exec.Command("ip", "-4", "route", "flush", "table", warp.RoutingTable, "proto", warp.RoutingProtocol).Run(); err != nil {
+		return fmt.Errorf("remove managed WARP routes: %w", err)
+	}
+	return nil
+}
+
+func verifyWarpRuntimeOwner(w config.Warp) error {
+	pubkey := exec.Command("awg", "pubkey")
+	key, _, _ := strings.Cut(w.PrivateKey, "#")
+	// awg setconf strips ASCII whitespace before it parses a private key.
+	key = strings.Map(func(ch rune) rune {
+		switch ch {
+		case ' ', '\t', '\n', '\r', '\v', '\f':
+			return -1
+		default:
+			return ch
+		}
+	}, key)
+	pubkey.Stdin = strings.NewReader(key + "\n")
+	expected, err := pubkey.Output()
+	if err != nil {
+		return fmt.Errorf("derive WARP public key: %w", err)
+	}
+	actual, err := exec.Command("awg", "show", w.RuntimeInterface(), "public-key").Output()
+	if err != nil {
+		return fmt.Errorf("read live WARP public key: %w", err)
+	}
+	if strings.TrimSpace(string(actual)) != strings.TrimSpace(string(expected)) {
+		return errors.New("live interface does not match the stored WARP public key")
 	}
 	return nil
 }
@@ -666,6 +791,10 @@ func runAWGQuickForTunnel(tunnel config.Tunnel, args ...string) error {
 	if !isAWG3Profile(tunnel.ProtocolProfileID) {
 		return runAWGQuick(args...)
 	}
+	return runAWGQuickUserspace(args...)
+}
+
+func runAWGQuickUserspace(args ...string) error {
 	return runAWGQuickWithEnv([]string{"AWG_QUICK_FORCE_USERSPACE=1"}, args...)
 }
 

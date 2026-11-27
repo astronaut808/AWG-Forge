@@ -1,0 +1,2 @@
+# Unified diff context lines start with a space, including tabs and blank lines.
+build/patches/amneziawg-go-gro-packet-info.patch whitespace=-blank-at-eol,-space-before-tab

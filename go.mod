@@ -3,10 +3,10 @@ module github.com/astronaut808/awg-forge
 go 1.27.4
 
 require (
-	github.com/boombuler/barcode v1.1.0
+	github.com/boombuler/barcode v1.1.1
 	github.com/eggsampler/acme/v3 v3.8.2
-	golang.org/x/crypto v0.58.0
-	modernc.org/sqlite v1.61.1
+	golang.org/x/crypto v0.59.0
+	modernc.org/sqlite v1.63.0
 )
 
 require (
@@ -15,10 +15,10 @@ require (
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/ncruces/go-strftime v1.1.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	golang.org/x/net v0.62.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
-	golang.org/x/text v0.43.0 // indirect
-	modernc.org/libc v1.80.0 // indirect
+	golang.org/x/net v0.63.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
+	golang.org/x/text v0.44.0 // indirect
+	modernc.org/libc v1.80.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )

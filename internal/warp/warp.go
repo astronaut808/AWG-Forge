@@ -9,11 +9,14 @@ import (
 	"strings"
 
 	"github.com/astronaut808/awg-forge/internal/config"
+	"github.com/astronaut808/awg-forge/internal/protocol"
 )
 
 const (
 	DefaultInterfaceName = "warp0"
-	RoutingTable         = "200"
+	// Keep legacy, unmarked rules for table 200 away from the new WARP default.
+	RoutingTable    = "51821"
+	RoutingProtocol = "242"
 )
 
 var protocolParamKeys = []string{"Jc", "Jmin", "Jmax", "S1", "S2", "S3", "S4", "H1", "H2", "H3", "H4", "I1", "I2", "I3", "I4", "I5"}
@@ -109,7 +112,77 @@ func Validate(w config.Warp) error {
 	if w.PersistentKeepalive < 0 || w.PersistentKeepalive > 65535 {
 		return errors.New("WARP persistent keepalive must be between 0 and 65535")
 	}
+	for _, field := range []struct{ name, value string }{
+		{"PrivateKey", w.PrivateKey}, {"PublicKey", w.PeerPublicKey},
+		{"PresharedKey", w.PresharedKey}, {"Endpoint", w.Endpoint},
+	} {
+		if err := validateSingleLine(field.name, field.value); err != nil {
+			return err
+		}
+	}
+	return validateProtocolParams(w.ProtocolParams)
+}
+
+func validateProtocolParams(params config.ProtocolParams) error {
+	for _, key := range protocolParamKeys {
+		value := params[key]
+		if err := validateSingleLine(key, value); err != nil {
+			return err
+		}
+		if isSignatureParam(key) {
+			if err := protocol.ValidateImportedSignature(key, configValue(value)); err != nil {
+				return err
+			}
+		}
+	}
+	if _, err := junkParam(params, "Jc"); err != nil {
+		return err
+	}
+	jmin, err := junkParam(params, "Jmin")
+	if err != nil {
+		return err
+	}
+	jmax, err := junkParam(params, "Jmax")
+	if err != nil {
+		return err
+	}
+	if jmin > jmax {
+		return errors.New("parameter Jmin must be less than or equal to Jmax")
+	}
 	return nil
+}
+
+func isSignatureParam(key string) bool {
+	switch key {
+	case "I1", "I2", "I3", "I4", "I5":
+		return true
+	default:
+		return false
+	}
+}
+
+func validateSingleLine(key, value string) error {
+	if strings.ContainsAny(value, "\x00\r\n") {
+		return fmt.Errorf("%s must be a single config line", key)
+	}
+	return nil
+}
+
+func configValue(raw string) string {
+	value, _, _ := strings.Cut(raw, "#")
+	return strings.TrimSpace(value)
+}
+
+func junkParam(params config.ProtocolParams, key string) (uint64, error) {
+	value := configValue(params[key])
+	if value == "" {
+		return 0, nil // The runtime starts each new WARP interface with zero junk parameters.
+	}
+	n, err := strconv.ParseUint(strings.TrimPrefix(value, "+"), 10, 16)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be between 0 and 65535", key)
+	}
+	return n, nil
 }
 
 func RenderConfig(w config.Warp, routes []TunnelRoute) (string, error) {
@@ -119,9 +192,7 @@ func RenderConfig(w config.Warp, routes []TunnelRoute) (string, error) {
 	if len(routes) == 0 {
 		return "", errors.New("at least one WARP tunnel route is required")
 	}
-	interfaceName := w.RuntimeInterface()
-	var postUp []string
-	var postDown []string
+	postUp := []string{fmt.Sprintf("ip -4 route add default dev %%i table %s proto %s", RoutingTable, RoutingProtocol)}
 	for _, route := range routes {
 		if route.InterfaceName == "" || route.Subnet == "" {
 			return "", errors.New("WARP route interface and subnet are required")
@@ -130,13 +201,8 @@ func RenderConfig(w config.Warp, routes []TunnelRoute) (string, error) {
 			return "", fmt.Errorf("invalid WARP route subnet %q: %w", route.Subnet, err)
 		}
 		postUp = append(postUp,
-			fmt.Sprintf("ip route replace %s dev %s table %s", route.Subnet, route.InterfaceName, RoutingTable),
-			fmt.Sprintf("ip rule del from %s lookup %s 2>/dev/null || true", route.Subnet, RoutingTable),
-			fmt.Sprintf("ip rule add from %s lookup %s", route.Subnet, RoutingTable),
-		)
-		postDown = append(postDown,
-			fmt.Sprintf("ip rule del from %s lookup %s 2>/dev/null || true", route.Subnet, RoutingTable),
-			fmt.Sprintf("ip route del %s dev %s table %s 2>/dev/null || true", route.Subnet, route.InterfaceName, RoutingTable),
+			fmt.Sprintf("ip -4 route add %s dev %s table %s proto %s", route.Subnet, route.InterfaceName, RoutingTable, RoutingProtocol),
+			fmt.Sprintf("ip -4 rule add from %s lookup %s protocol %s", route.Subnet, RoutingTable, RoutingProtocol),
 		)
 	}
 
@@ -146,16 +212,22 @@ func RenderConfig(w config.Warp, routes []TunnelRoute) (string, error) {
 	writeLine(&b, "PrivateKey", w.PrivateKey)
 	writeLine(&b, "Address", address)
 	for _, key := range protocolParamKeys {
-		if value := w.ProtocolParams[key]; strings.TrimSpace(value) != "" {
-			writeLine(&b, key, value)
+		raw := w.ProtocolParams[key]
+		value := configValue(raw)
+		if value == "" {
+			continue
 		}
+		if isSignatureParam(key) {
+			// Forward the same CPS value that was checked against the UAPI limit.
+			raw = value
+		}
+		writeLine(&b, key, raw)
 	}
 	if w.MTU > 0 {
 		writeLine(&b, "MTU", strconv.Itoa(w.MTU))
 	}
-	writeLine(&b, "Table", RoutingTable)
+	writeLine(&b, "Table", "off")
 	writeLine(&b, "PostUp", strings.Join(postUp, "; ")+";")
-	writeLine(&b, "PostDown", strings.Join(postDown, "; ")+";")
 	b.WriteString("\n[Peer]\n")
 	writeLine(&b, "PublicKey", w.PeerPublicKey)
 	if w.PresharedKey != "" {
@@ -166,7 +238,6 @@ func RenderConfig(w config.Warp, routes []TunnelRoute) (string, error) {
 		writeLine(&b, "PersistentKeepalive", strconv.Itoa(w.PersistentKeepalive))
 	}
 	writeLine(&b, "Endpoint", w.Endpoint)
-	_ = interfaceName
 	return b.String(), nil
 }
 

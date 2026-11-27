@@ -1,6 +1,28 @@
 # Changelog
 
-## Unreleased
+## v0.21.2 - 2026-11-27
+
+### Changed
+
+- Refresh SQLite, Go and frontend dependencies, base images, and CI tools. Verify Go module manifests and checksums in CI.
+- Download the UDP relay installer from `master` in the Web UI command and select the relay image by release version.
+
+### Fixed
+
+- Recover WARP after container recreation and remove stale routing rules and routes owned by AWG-Forge while preserving unrelated host policy.
+- Roll back managed upgrades when required WARP fails to start. Account for a confirmed pre-existing WARP outage and skip WARP policy snapshots and cleanup when runtime apply is disabled in the replacement container.
+- Preserve the destination IPv4 when the bundled AmneziaWG runtime handles UDP GRO, so UDP relays can forward replies from a secondary exit address. Add `relay diagnose` to check for a possible reply source mismatch.
+
+### Security
+
+- Update the bundled `amneziawg-go` runtime to `08fe3d33bbb1` for upstream fixes to CPS length validation, junk packet size ranges, and concurrent CPS updates. [Upstream commit](https://github.com/amnezia-vpn/amneziawg-go/commit/08fe3d33bbb116be09a6183d02609311b8b0c9e8)
+- Run WARP with the bundled AmneziaWG userspace backend and validate optional junk sizes, CPS syntax, and UAPI line lengths before import, backup restore, and runtime apply.
+- Hosts that use the AmneziaWG kernel module need version `v3.1.20261113-02` or newer. Update the host module separately. [GHSA-xw5v-mhq7-h2w7](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/security/advisories/GHSA-xw5v-mhq7-h2w7)
+- Apply Debian's `libzstd1` security update in the runtime image. [DSA-6657-1](https://security-tracker.debian.org/tracker/DSA-6657-1)
+
+### Upgrading
+
+- Reimport a compatible WARP configuration before upgrading if any `I1`–`I5` signature contains the kernel-only `<c>` tag. WARP uses IPv4 routing table `51821` with protocol `242` for its managed rules and routes. See the [upgrade guide](docs/en/quick-install.md#upgrade).
 
 ## v0.21.1 - 2026-11-16
 

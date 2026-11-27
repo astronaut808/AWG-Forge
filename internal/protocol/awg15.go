@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"bufio"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -16,6 +17,7 @@ const defaultCharsNoiseI4 = "<rc 16><r 10>"
 const defaultRandomNoiseI5 = "<r 32>"
 const maxSignaturePacketSize = 1232
 const maxRandomSignatureTokenSize = 999
+const maxImportedSignaturePacketSize = 65535
 
 type AWG15 struct{}
 
@@ -80,51 +82,61 @@ func (AWG15) RenderClientPeer(ctx RenderContext, client config.Client) ([]Config
 }
 
 var signatureTokenRE = regexp.MustCompile(`^<(b 0x[0-9a-fA-F]+|r [0-9]+|rd [0-9]+|rc [0-9]+|t)>`)
+var importedSignatureTokenRE = regexp.MustCompile(`^<(?:b[ \t]+(?:0x)?[0-9a-fA-F]+|(?:r|rd|rc|dz)[ \t]+\+?[0-9]+|t|d|ds)[ \t]*>`)
 
 func validateSignatureParam(key, value string) error {
-	if value == "" {
-		return nil
+	return validateSignaturePacket(key, value, signatureTokenRE, maxRandomSignatureTokenSize, maxSignaturePacketSize)
+}
+
+// ValidateImportedSignature checks the CPS syntax and UAPI line length for amneziawg-go.
+func ValidateImportedSignature(key, value string) error {
+	// awg serializes the value verbatim as i1=<value>\n (likewise for i2–i5).
+	maxValueSize := bufio.MaxScanTokenSize - len(key) - len("=\n")
+	if len(value) > maxValueSize {
+		return fmt.Errorf("%s serialized signature value is too long (max %d bytes)", key, maxValueSize)
 	}
+	return validateSignaturePacket(key, value, importedSignatureTokenRE, maxImportedSignaturePacketSize, maxImportedSignaturePacketSize)
+}
+
+func validateSignaturePacket(key, value string, tokenPattern *regexp.Regexp, maxTokenSize, maxPacketSize int) error {
 	rest := value
 	totalSize := 0
 	for rest != "" {
-		loc := signatureTokenRE.FindStringIndex(rest)
-		if loc == nil || loc[0] != 0 {
+		token := tokenPattern.FindString(rest)
+		if token == "" {
 			return fmt.Errorf("%s has invalid signature token syntax", key)
 		}
-		token := rest[loc[0]:loc[1]]
-		size, err := signatureTokenSize(token)
+		size, err := signatureTokenSize(token, maxTokenSize)
 		if err != nil {
 			return fmt.Errorf("%s: %w", key, err)
 		}
+		if size > maxPacketSize-totalSize {
+			return fmt.Errorf("%s signature packet is too large; max %d bytes", key, maxPacketSize)
+		}
 		totalSize += size
-		rest = strings.TrimSpace(rest[loc[1]:])
-	}
-	if totalSize > maxSignaturePacketSize {
-		return fmt.Errorf("%s signature packet is too large; max %d bytes", key, maxSignaturePacketSize)
+		rest = strings.TrimSpace(rest[len(token):])
 	}
 	return nil
 }
 
-func signatureTokenSize(token string) (int, error) {
-	body := strings.TrimSuffix(strings.TrimPrefix(token, "<"), ">")
-	if body == "t" {
+func signatureTokenSize(token string, maxTokenSize int) (int, error) {
+	parts := strings.Fields(token[1 : len(token)-1])
+	switch parts[0] {
+	case "t":
 		return 4, nil
-	}
-	if strings.HasPrefix(body, "b 0x") {
-		hex := strings.TrimPrefix(body, "b 0x")
+	case "d", "ds":
+		// I1-I5 are generated without an input payload.
+		return 0, nil
+	case "b":
+		hex := strings.TrimPrefix(parts[1], "0x")
 		if len(hex)%2 != 0 {
 			return 0, fmt.Errorf("hex blob must have even length")
 		}
 		return len(hex) / 2, nil
 	}
-	parts := strings.Split(body, " ")
-	if len(parts) != 2 {
-		return 0, fmt.Errorf("invalid token")
-	}
 	n, err := strconv.Atoi(parts[1])
-	if err != nil || n < 0 || n > maxRandomSignatureTokenSize {
-		return 0, fmt.Errorf("random token size must be 0..%d", maxRandomSignatureTokenSize)
+	if err != nil || n < 0 || n > maxTokenSize {
+		return 0, fmt.Errorf("signature token size must be 0..%d", maxTokenSize)
 	}
 	return n, nil
 }

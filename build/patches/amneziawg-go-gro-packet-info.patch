@@ -1,0 +1,72 @@
+diff --git a/conn/bind_std.go b/conn/bind_std.go
+index 6908ba8..8677da3 100644
+--- a/conn/bind_std.go
++++ b/conn/bind_std.go
+@@ -526,6 +526,11 @@ func splitCoalescedMessages(msgs []ipv6.Message, firstMsgAt int, getGSO getGSOFu
+ 			copied := copy(msgs[n].Buffers[0], msg.Buffers[0][start:end])
+ 			msgs[n].N = copied
+ 			msgs[n].Addr = msg.Addr
++			if n != i {
++				// Preserve packet info for the reply's local address and interface.
++				msgs[n].OOB = append(msgs[n].OOB[:0], msg.OOB[:msg.NN]...)
++				msgs[n].NN = msg.NN
++			}
+ 			start = end
+ 			end += gsoSize
+ 			if end > msg.N {
+diff --git a/conn/sticky_linux_test.go b/conn/sticky_linux_test.go
+index 1b1ee68..9cfd751 100644
+--- a/conn/sticky_linux_test.go
++++ b/conn/sticky_linux_test.go
+@@ -15,6 +15,7 @@ import (
+ 	"testing"
+ 	"unsafe"
+ 
++	"golang.org/x/net/ipv6"
+ 	"golang.org/x/sys/unix"
+ )
+ 
+@@ -264,3 +265,43 @@ func Test_listenConfig(t *testing.T) {
+ 		}
+ 	})
+ }
++
++func Test_splitCoalescedMessagesPreservesPacketInfo(t *testing.T) {
++	for _, tc := range []struct {
++		name    string
++		source  string
++		groSize int
++		want    int
++	}{
++		{name: "single IPv4 packet", source: "192.0.2.66", want: 1},
++		{name: "coalesced IPv4 packets", source: "192.0.2.66", groSize: 1, want: 2},
++		{name: "coalesced IPv6 packets", source: "2001:db8::66", groSize: 1, want: 2},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			source := netip.MustParseAddr(tc.source)
++			endpoint := new(StdNetEndpoint)
++			setSrc(endpoint, source, 5)
++			messages := make([]ipv6.Message, 3)
++			for i := range messages {
++				messages[i].Buffers = net.Buffers{make([]byte, 2)}
++				messages[i].OOB = make([]byte, stickyControlSize)
++			}
++			const batchStart = 2
++			messages[batchStart].N = 2
++			messages[batchStart].NN = copy(messages[batchStart].OOB, endpoint.src)
++			n, err := splitCoalescedMessages(messages, batchStart, func([]byte) (int, error) {
++				return tc.groSize, nil
++			})
++			if err != nil || n != tc.want {
++				t.Fatalf("split produced (%d, %v), want (%d, nil)", n, err, tc.want)
++			}
++			for i, message := range messages[:n] {
++				got := new(StdNetEndpoint)
++				getSrcFromControl(message.OOB[:message.NN], got)
++				if got.SrcIP() != source || got.SrcIfidx() != 5 {
++					t.Errorf("packet %d: got source %v ifindex %d, want %v ifindex 5", i, got.SrcIP(), got.SrcIfidx(), source)
++				}
++			}
++		})
++	}
++}

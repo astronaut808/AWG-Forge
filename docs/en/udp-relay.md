@@ -7,7 +7,7 @@ The first release supports Ubuntu 24.04 LTS and 26.04 LTS on x86_64 relay hosts.
 ## Setup
 
 1. In the panel, open **Tunnels**, select a tunnel, and open **UDP relays**. Choose **Add relay** and enter its public address. The panel fills in the tunnel port and configured endpoint. You can enter a different DNS name or IPv4 address reachable from the relay. AWG-Forge uses the tunnel's listen port as the destination port. Leave the name blank to use the public address.
-2. Copy the install command and run it on the relay host. It downloads the installer for a specific release and runs `install.sh relay`. The installer offers to install Docker Engine, Compose v2 and missing host tools. It reuses a working Docker installation. Enable `net.ipv4.ip_forward` on the relay host. Allow inbound UDP on the relay port in your provider firewall and allow the relay to reach the tunnel's UDP port.
+2. Copy the install command and run it on the relay host. It downloads `install.sh` from `master` and selects the relay image for the panel's release with `--version`. The installer offers to install Docker Engine, Compose v2 and missing host tools. It reuses a working Docker installation. Enable `net.ipv4.ip_forward` on the relay host. Allow inbound UDP on the relay port in your provider firewall and allow the relay to reach the tunnel's UDP port.
 3. When creating or editing a client, choose a relay in **Connect via**. **Direct** uses the tunnel endpoint. Export the configuration and import it on the device. After changing the relay address or port, distribute updated configurations to affected clients.
 
 Use an IPv4 DNS record for the relay hostname. The installer takes the local address and interface from the route to the exit server. Inbound UDP must reach that address and interface. For a fixed IPv4 destination, run the installer again if the route changes. For a DNS destination, the relay resolves IPv4 locally at startup and refreshes it every minute. It keeps the current address while it remains in the DNS answer, and retains the current rules if resolution temporarily fails.
@@ -33,6 +33,14 @@ sudo bash ./awg-forge-install.sh relay remove --id 0123456789abcdef
 ```
 
 The container starts with Docker and restores its own rules. The status command checks the container and host rules. The panel checks the public endpoint at startup and repeats the check about once a minute. The exit server initiates an AWG handshake through the relay using a temporary peer without tunnel routes. The panel shows the result and the time of the last successful check. This verifies the round trip between the servers. To verify a particular client network or Internet egress, connect from that network and test traffic.
+
+If the panel shows no response, generate traffic through the relay and run the following command while the UDP flows are active. It checks the local setup and looks for an unanswered forwarded flow and a separate unanswered flow from a different source IP to the same translated UDP port in the same conntrack zone. This indicates a possible mismatch. The panel handshake and a client traffic test are the checks for recovery. The command requires v0.21.2 or later on the relay host.
+
+```bash
+sudo bash ./awg-forge-install.sh relay diagnose --id 0123456789abcdef
+```
+
+For an exit with multiple IPv4 addresses, upgrade the **exit server** to v0.21.2 or later. Its bundled userspace runtime retains the receiving address when Linux UDP GRO is enabled, so it can reply from that address. As a temporary recovery or after rolling the exit back to v0.21.1, you can set the relay destination to the exit's primary IPv4 if the tunnel listens there. Run the updated install command and verify an AWG handshake and client traffic in both directions.
 
 After changing a relay, run the updated install command on the relay host. A destination address change requires reinstalling the relay even when client configs stay current. To remove a relay, reassign its clients, run `relay remove` on the relay host, and delete the relay in the panel. Remove the tunnel's relays before changing its listen port or deleting the tunnel.
 

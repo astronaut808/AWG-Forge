@@ -132,9 +132,9 @@ printf 'OK   uninstall does not duplicate legacy WARP cleanup when WARP is the e
 have() {
   [[ "$1" == "iptables" || "$1" == "ip" ]]
 }
-output="$(cleanup_warp_route "awg0" "10.8.0.0/24")"
-assert_contains "$output" "DRY ip rule del from 10.8.0.0/24 lookup 200" "WARP policy rule cleanup"
-assert_contains "$output" "DRY ip route del 10.8.0.0/24 dev awg0 table 200" "WARP route cleanup"
+output="$(cleanup_warp_policy)"
+assert_contains "$output" "DRY ip -4 rule flush table 51821 protocol 242" "WARP policy rule cleanup"
+assert_contains "$output" "DRY ip -4 route flush table 51821 proto 242" "WARP route cleanup"
 
 printf 'OK   uninstall dry-run removes WARP policy routing\n'
 

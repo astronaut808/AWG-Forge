@@ -1009,6 +1009,18 @@ test("UDP relay installation, client assignment, and configuration export", asyn
 
   await openRelays();
   await expect(relayRow.getByRole("button", { name: m.common.delete, exact: true })).toBeDisabled();
+  const newTarget = "new-exit.example.test";
+  await relayRow.getByRole("button", { name: m.common.edit, exact: true }).click();
+  await dialog.getByRole("textbox", { name: m.relays.target, exact: true }).fill(newTarget);
+  await dialog.getByRole("button", { name: m.common.save, exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  const afterTargetEdit = await state();
+  expect(afterTargetEdit.relays?.find((relay) => relay.id === relayID)?.target_host).toBe(newTarget);
+  expect(afterTargetEdit.clients.find((item) => item.id === assigned.id)?.needs_new_config).toBe(false);
+  await openClients();
+  await expect(client.getByText(m.common.stale, { exact: true })).toHaveCount(0);
+
+  await openRelays();
   await relayRow.getByRole("button", { name: m.common.edit, exact: true }).click();
   await dialog.getByRole("spinbutton", { name: m.relays.port, exact: true }).fill(String(publicPort + 1));
   await dialog.getByRole("button", { name: m.common.save, exact: true }).click();
@@ -1172,19 +1184,34 @@ test("backup file picker supports upload, password retry and dry-run verificatio
   const stream = await download.createReadStream();
   const chunks: Buffer[] = [];
   for await (const chunk of stream) chunks.push(Buffer.from(chunk));
-  await restore.locator('input[type="file"]').setInputFiles({ name: "validation.afbackup", mimeType: "application/octet-stream", buffer: Buffer.concat(chunks) });
-  await restore.getByLabel(m.backup.password, { exact: true }).fill("incorrect-disposable-passphrase");
-  await restore.getByRole("button", { name: m.backup.verify, exact: true }).click();
-  await expect(restore.getByRole("alert")).toHaveText(m.backup.verifyFailed);
-  await expect(restore).toContainText("validation.afbackup");
-  await restore.getByLabel(m.backup.password, { exact: true }).fill("disposable-backup-passphrase");
-  const verified = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/restore/verify");
-  await restore.getByRole("button", { name: m.backup.verify, exact: true }).click();
-  const result = await (await verified).json();
-  await expect(restore.locator(".fact").filter({ has: page.getByText(m.backup.schema, { exact: true }) }).locator("strong")).toHaveText(String(result.report.schema_version));
-  await expect(restore.getByRole("alert")).not.toBeVisible();
-  await expect(restore.locator(".metric-grid")).toBeVisible();
-  await expectContained(page, restore);
+
+  const before = await (await page.request.get("/api/state")).json() as AppState;
+  const nameAfterBackup = `Backup${randomBytes(4).toString("hex")}`;
+  const headers = { Origin: new URL(page.url()).origin };
+  const renamed = await page.request.patch("/api/server-name", { headers, data: { name: nameAfterBackup } });
+  expect(renamed.ok()).toBe(true);
+  try {
+    await restore.locator('input[type="file"]').setInputFiles({ name: "validation.afbackup", mimeType: "application/octet-stream", buffer: Buffer.concat(chunks) });
+    await restore.getByLabel(m.backup.password, { exact: true }).fill("incorrect-disposable-passphrase");
+    await restore.getByRole("button", { name: m.backup.verify, exact: true }).click();
+    await expect(restore.getByRole("alert")).toHaveText(m.backup.verifyFailed);
+    await expect(restore).toContainText("validation.afbackup");
+    await restore.getByLabel(m.backup.password, { exact: true }).fill("disposable-backup-passphrase");
+    const verified = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/restore/verify");
+    await restore.getByRole("button", { name: m.backup.verify, exact: true }).click();
+    const response = await verified;
+    expect(response.status()).toBe(200);
+    const result = await response.json();
+    await expect(restore.locator(".fact").filter({ has: page.getByText(m.backup.schema, { exact: true }) }).locator("strong")).toHaveText(String(result.report.schema_version));
+    await expect(restore.getByRole("alert")).not.toBeVisible();
+    await expect(restore.locator(".metric-grid")).toBeVisible();
+    await expectContained(page, restore);
+    const after = await (await page.request.get("/api/state")).json() as AppState;
+    expect(after.server_name).toBe(nameAfterBackup);
+  } finally {
+    const restoredName = await page.request.patch("/api/server-name", { headers, data: { name: before.server_name || "" } });
+    expect(restoredName.ok()).toBe(true);
+  }
 });
 
 

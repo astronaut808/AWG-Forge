@@ -40,6 +40,19 @@ func TestValidateStateSanityRejectsInvalidServerNames(t *testing.T) {
 	}
 }
 
+func TestValidateStateSanityRejectsInvalidWarpParams(t *testing.T) {
+	state := config.State{Warp: config.Warp{
+		PrivateKey:     "backup-private-key",
+		PeerPublicKey:  "backup-peer-key",
+		Endpoint:       "warp.example:2408",
+		AddressV4:      "172.16.0.2",
+		ProtocolParams: config.ProtocolParams{"I3": "<rd -1>"},
+	}}
+	if err := validateStateSanity(state); err == nil || !strings.Contains(err.Error(), "I3") {
+		t.Fatalf("expected WARP I3 validation error, got %v", err)
+	}
+}
+
 func TestBackupRestoreRoundTripEncrypted(t *testing.T) {
 	cfg := testConfig(t)
 	svc := app.New(cfg)
